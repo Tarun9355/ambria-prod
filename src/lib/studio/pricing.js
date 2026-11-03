@@ -161,13 +161,16 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
   if (!config || !H || H <= 0) return null;
   const eng = engSettings || {};
   const maxSpan = eng.maxSpanFt || 30;
-  const pillarWidth = eng.pillarWidthFt || 0.75;        // physical width (for maskingL etc.)
-  const pillarBudget = eng.pillarBudgetFt || 0.75;      // §23 Phase 5 — math budget per pillar = physical width
-                                                         // Allocator absorbs fractional budgets via Math.floor + 1ft tolerance.
+  const pillarWidth = eng.pillarWidthFt || 0.75;        // physical width (for maskingL etc. only — not beam math, see below)
   const depth = backDepth || eng.defaultBackDepthFt || 4;
 
-  // §23 Phase 5 (28 May 2026) — Smart allocator: beam_total = span − pillarCount (1ft per pillar).
-  // Pillar physical = 0.75ft → 0.25ft slack per pillar = engineering buffer for joint plates.
+  // §23 Phase 6 (2026-11-03, owner convention) — the entered span IS the beam total, no pillar
+  // deduction. Supersedes §23 Phase 5's own pillar-budget subtraction (28 May 2026) — the sales
+  // team is now instructed to pad the entered width/depth themselves, by the pillar count, BEFORE
+  // typing it (see StudioBuild.jsx's pillar-padding tip, "enter span + 1ft per pillar"), so a span
+  // of 32 already has room for its own pillars built in. The engine subtracting its own pillar
+  // budget on top of that double-counted it — the beams ordered came out shorter than the width the
+  // team actually meant.
   const pillarCountForThisSpan = (spanLen) => pillarCountForSpan(spanLen, maxSpan);
   // Split total beam length into per-segment lengths (one per pillar-gap)
   const splitBeamSegments = (totalBeamLen, segments) => {
@@ -180,7 +183,7 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
     // Method A: inside-out — beam length total = spanFt − totalPillars (each 1ft budget).
     const method = "A";
     const totalPillars = pillarCountForThisSpan(spanFt);
-    const beamTotalLen = Math.max(0, spanFt - totalPillars * pillarBudget);
+    const beamTotalLen = spanFt;
     const segLengths = splitBeamSegments(beamTotalLen, totalPillars - 1);
     const pillars = Array.from({ length: totalPillars }, (_, i) => {
       const id = i === 0 ? "P-left" : i === totalPillars - 1 ? "P-right" : `P-mid${i}`;
@@ -203,7 +206,7 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
     // Method A: inside-out — front beam total follows spanFt − totalFrontPillars; sides are full depth.
     const method = "A";
     const totalFrontPillars = pillarCountForThisSpan(spanFt);
-    const beamTotalLen = Math.max(0, spanFt - totalFrontPillars * pillarBudget);
+    const beamTotalLen = spanFt;
     const segLengths = splitBeamSegments(beamTotalLen, totalFrontPillars - 1);
     // Front pillars: 2 corners + middle. Back pillars: 2 corners only (depth too small for mid).
     const frontPillars = Array.from({ length: totalFrontPillars }, (_, i) => {
@@ -234,14 +237,15 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
 
   if (config === "full_box") {
     // Method B: outside-out — both L and W axes get mid-pillars. Corners are shared.
-    // For Method B with the new formula: still subtract pillars on each axis (smart truss).
+    // §23 Phase 6: each axis's beam total is that axis's own entered span, no subtraction — same
+    // rule as u_only/half_box above.
     const method = "B";
     const lAxisPillars = pillarCountForThisSpan(L);
     const wAxisPillars = pillarCountForThisSpan(W);
     const lMidCount = lAxisPillars - 2;
     const wMidCount = wAxisPillars - 2;
-    const lBeamTotal = Math.max(0, L - lAxisPillars * pillarBudget);
-    const wBeamTotal = Math.max(0, W - wAxisPillars * pillarBudget);
+    const lBeamTotal = L;
+    const wBeamTotal = W;
     const lSegLens = splitBeamSegments(lBeamTotal, lAxisPillars - 1);
     const wSegLens = splitBeamSegments(wBeamTotal, wAxisPillars - 1);
     const pillars = [
@@ -262,12 +266,12 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
       config, method, pillars, beams,
       // physicalL/W: Method-A-interior, same rule as u_only/half_box above (see this file's own
       // calcZoneFabric comment: "Different from physicalL/W which is Method-A-interior for cost
-      // calc... regardless of Method A/B"). L/W already IS the final footprint — lAxisPillars/
-      // wAxisPillars and the beam-budget subtraction above already account for EVERY pillar on each
-      // axis, not just the 2 corners — so adding pillarWidth again here double-counted it. Confirmed
-      // live (2026-11-01): a 43×43 full-box entry showed 44.5×44.5 "Physical Footprint" instead of
-      // matching the 43×43 customer demand, and silently over-fed the Full Box ceiling-drape Liza
-      // calc (area = physicalL×physicalW below) for every full-box truss ever quoted.
+      // calc... regardless of Method A/B"). L/W already IS the final footprint (the entered span,
+      // §23 Phase 6 — see this function's own header), so adding pillarWidth again here would
+      // double-count it. Confirmed live (2026-11-01): a 43×43 full-box entry showed 44.5×44.5
+      // "Physical Footprint" instead of matching the 43×43 customer demand, and silently over-fed
+      // the Full Box ceiling-drape Liza calc (area = physicalL×physicalW below) for every full-box
+      // truss ever quoted.
       physicalL: L,
       physicalW: W,
       // masking outer DOES get +2×pillarWidth — fabric wraps fully around the two outer corner
@@ -473,16 +477,21 @@ function pickCleanSpan(span, trussInvForMat, engSettings) {
   if (!(span > 0)) return span;
   const eng = engSettings || {};
   const maxSpan = eng.maxSpanFt || 30;
-  const pillarWidth = eng.pillarWidthFt || 0.75;
   // A "shortage" result (resolveBeamSegment couldn't find any combo within its own 1ft-gap
   // tolerance) falls back to a single undersized piece with a misleadingly low joint count — that
   // is a BAD placement, not a genuinely clean one, so it's scored as Infinity rather than trusted
   // at face value. Otherwise a span that's already unresolvable at its own entered size would look
   // artificially "perfect" (0 joints) and block every real improvement a smaller span could offer.
+  // §23 Phase 6 (2026-11-03) — segLen = s / segments, no pillar-width deduction, matching
+  // buildTopology's own beam math (lib/ims/trussEngine.js, lib/studio/pricing.js above): the
+  // entered span already has room for its own pillars built in (sales pads it before typing), so
+  // this has to assume the SAME beam length buildTopology will actually produce for that span, or
+  // its "fewest joints" recommendation would be snapping to a span that builds differently than it
+  // scored.
   const totalJointsFor = (s) => {
     const pillars = pillarCountForSpan(s, maxSpan);
     const segments = Math.max(1, pillars - 1);
-    const segLen = Math.max(0, s - pillars * pillarWidth) / segments;
+    const segLen = s / segments;
     const r = resolveBeamSegment(segLen, trussInvForMat);
     return { joints: r.shortage ? Infinity : (r.joints || 0) * segments, shortage: !!r.shortage };
   };

@@ -1,25 +1,64 @@
 import { describe, it, expect } from "vitest";
-import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric } from "./pricing";
+import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology } from "./pricing";
+
+// §23 Phase 6 (2026-11-03, owner convention): the sales team now pads a zone's entered
+// width/depth themselves, by the pillar count, BEFORE typing it (e.g. a true 50ft span gets typed
+// as 53ft — 50 + 3 pillars), so the engine must NOT also subtract a pillar budget from whatever is
+// entered — that would double-count the padding and order beams shorter than intended. Confirmed
+// incident this closes: a 43×43 full-box entry used to show a 44.5×44.5 "Physical Footprint" for
+// an unrelated reason (fixed 2026-11-01), but the underlying pillar-subtraction formula itself
+// stayed in place until today, when it was found to conflict with the team's own padding practice.
+describe("buildTopology — the entered span IS the beam total, no pillar deduction", () => {
+  it("u_only: a 32ft span splits into exactly 2×16ft beams, not 2×14.875ft", () => {
+    const topo = buildTopology("u_only", 0, 32, 10, 32, 0, { maxSpanFt: 30 });
+    expect(topo.beams.map((b) => b.lengthFt)).toEqual([16, 16]);
+    expect(topo.pillarCount).toBe(3); // 2 corners + 1 mid, span > maxSpan
+    expect(topo.physicalL).toBe(32); // the entered span, unchanged
+  });
+
+  it("half_box: the front span is not reduced by the pillar count either", () => {
+    const topo = buildTopology("half_box", 0, 32, 10, 32, 4, { maxSpanFt: 30 });
+    const frontBeams = topo.beams.filter((b) => b.side.startsWith("front"));
+    expect(frontBeams.map((b) => b.lengthFt)).toEqual([16, 16]);
+    expect(topo.physicalL).toBe(32);
+  });
+
+  it("full_box: BOTH axes use their own entered span directly, independently", () => {
+    const topo = buildTopology("full_box", 32, 50, 10, null, 0, { maxSpanFt: 30 });
+    // L=32 → 2 segments of 16ft; W=50 → 3 pillars (2 corner + 1 mid for span>maxSpan twice-over is
+    // still just ceil(50/30)=2 → 3 pillars), 2 segments of 25ft.
+    const frontBeams = topo.beams.filter((b) => b.side.startsWith("front"));
+    const leftBeams = topo.beams.filter((b) => b.side.startsWith("left"));
+    expect(frontBeams.map((b) => b.lengthFt)).toEqual([16, 16]);
+    expect(leftBeams.map((b) => b.lengthFt)).toEqual([25, 25]);
+    expect(topo.physicalL).toBe(32);
+    expect(topo.physicalW).toBe(50);
+  });
+
+  it("masking dims are untouched by this — still span + 2×pillarWidth, a real physical fabric-wrap addition", () => {
+    const topo = buildTopology("u_only", 0, 32, 10, 32, 0, { maxSpanFt: 30, pillarWidthFt: 0.75 });
+    expect(topo.maskingL).toBe(32 + 2 * 0.75);
+  });
+});
 
 // Isolated from real IMS stock numbers on purpose: maxSpanFt huge (always 2 pillars, 1 segment)
 // turns "how many joints does this span need" into "can one or two 10ft beams reach this length,
 // within resolveBeamSegment's own 1ft gap tolerance" — hand-verifiable, unlike real mixed stock
 // (15/12/10/8/5/4/3/2ft) where working out the expected answer by hand is itself error-prone.
-// pillarWidthFt is left at its real default (0.75ft, same as IMS Admin's own default) rather than
-// zeroed out — snapRowDimsForProduction reads it the same `|| 0.75` way buildTopology always has,
-// so an explicit 0 would silently fall back to 0.75 anyway, same as it does everywhere else in
-// this truss engine. The real engine (resolveBeamSegment, lib/ims/trussEngine.js) is exercised
-// as-is; only the inputs are simplified. (segment length = span − 2×0.75 = span − 1.5.)
+// The real engine (resolveBeamSegment, lib/ims/trussEngine.js) is exercised as-is; only the inputs
+// are simplified. §23 Phase 6 (2026-11-03): segment length = span itself — no pillar-width
+// deduction (the entered span already has room for its own pillars built in; see pricing.js's
+// buildTopology/pickCleanSpan for why).
 const trussInv = { settings: { maxSpanFt: 1000 }, beams: { 10: { stock: 100 } } };
 
 describe("snapRowDimsForProduction — Deal Check Truss tab's minimum-joints dimension snap", () => {
   it("snaps down to the nearest span that actually resolves cleanly, when the entered one doesn't", () => {
-    // 23ft → segment 21.5ft: no combo of 10ft beams lands within 1ft of 21.5 (10 is 11.5 short,
-    // 20 is 1.5 short) — unbuildable without a visible gap. 22.5ft → segment 21ft: two 10ft beams
-    // (sum 20) land within the 1ft tolerance — the nearest clean span, half a foot into the window.
+    // 23ft: no combo of 10ft beams lands within 1ft of 23 (10 is 13 short, 20 is 3 short) —
+    // unbuildable without a visible gap. 21ft: two 10ft beams (sum 20) land within the 1ft
+    // tolerance — the nearest clean span, 2ft into the window.
     const row = { dims: { L: 23, W: 8, H: 10 }, trussMaterial: "iron" };
     const snapped = snapRowDimsForProduction(row, trussInv);
-    expect(snapped.dims.L).toBe(22.5);
+    expect(snapped.dims.L).toBe(21);
   });
 
   it("never grows a span, and never shrinks past the 5ft window", () => {
@@ -30,11 +69,11 @@ describe("snapRowDimsForProduction — Deal Check Truss tab's minimum-joints dim
   });
 
   it("leaves an already-clean span untouched, returning the SAME object (no needless clone)", () => {
-    // 21.5ft → segment 20ft: exactly two 10ft beams, 0 gap — already as clean as this stock gets.
-    const row = { dims: { L: 21.5, W: 8, H: 10 }, trussMaterial: "iron" };
+    // 20ft: exactly two 10ft beams, 0 gap — already as clean as this stock gets.
+    const row = { dims: { L: 20, W: 8, H: 10 }, trussMaterial: "iron" };
     const snapped = snapRowDimsForProduction(row, trussInv);
     expect(snapped).toBe(row); // reference equality — nothing needed to change
-    expect(snapped.dims.L).toBe(21.5);
+    expect(snapped.dims.L).toBe(20);
   });
 
   it("only touches L/W — H, trussQty, material and everything else pass through untouched", () => {
@@ -65,13 +104,13 @@ describe("snapRowDimsForProduction — Deal Check Truss tab's minimum-joints dim
 describe("trussRowCost / calcZoneTrussPreview — bill off the snapped span, not the raw one", () => {
   it("trussRowCost prices the Single U area off the snapped W, once real trussInv stock is given", () => {
     // W=23,H=10 unsnapped area = 230 sqft × default singleU rate 30 = 6900. Same stock/tolerance as
-    // the snap tests above: 23 → 22.5 (two 10ft beams resolve the 21ft segment within 1ft gap).
-    // Snapped area = 22.5×10 = 225 sqft × 30 = 6750 — strictly less, never more.
+    // the snap tests above: 23 → 21 (two 10ft beams resolve the 21ft segment within 1ft gap).
+    // Snapped area = 21×10 = 210 sqft × 30 = 6300 — strictly less, never more.
     const row = { dims: { W: 23, H: 10 }, trT: "singleU", trussMaterial: "iron", trussQty: 1 };
     const unsnapped = trussRowCost(row, {}); // no trussInv — no stock to snap against, prices raw
     const snapped = trussRowCost(row, { trussInv });
     expect(unsnapped.truss).toBe(6900);
-    expect(snapped.truss).toBe(6750);
+    expect(snapped.truss).toBe(6300);
     expect(snapped.truss).toBeLessThan(unsnapped.truss);
   });
 
@@ -82,7 +121,7 @@ describe("trussRowCost / calcZoneTrussPreview — bill off the snapped span, not
     expect(previewRaw.topology.beams).toEqual(previewPreSnapped.topology.beams);
     expect(previewRaw.topology.pillars).toEqual(previewPreSnapped.topology.pillars);
     // And it's strictly the smaller, cleaner span — not the raw 23ft segment.
-    expect(previewRaw.spanFt).toBe(22.5);
+    expect(previewRaw.spanFt).toBe(21);
   });
 });
 
