@@ -12,7 +12,7 @@ import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { venueWithParent, standingQty, assembleFixedVenuesFromRows, fixedVenueFor } from "../../lib/ims/fixedVenues";
 import { supabase, fetchAll } from "../../lib/supabase";
-import { ZONE_META, trussBaseArea, CARPET_OFF, carpetPricingFor } from "../../lib/studio/taxonomy";
+import { ZONE_META, trussBaseArea, CARPET_OFF, carpetPricingFor, carpetTakesStockPick } from "../../lib/studio/taxonomy";
 import { prefsOf, floorSqftOf } from "../../lib/studio/carpetPrefs";
 import { carpetFloorsOf, planCarpets, carpetKey, carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
@@ -3823,7 +3823,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       });
       return out;
     };
-    const zoneStructOf = (z) => {
+    const zoneStructOf = (z, fi, zk, fn) => {
       if (!z) return [];
       if (!showStruct) return [];
       const floor = ftArea(z.floorDims);
@@ -3845,7 +3845,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       ].filter(Boolean);
       if (plats.length) out.push({ k: t("Platform"), v: plats.join("; ") });
       // "— None —" is stored as the CARPET_OFF sentinel: no carpet, so no Carpet chip (it printed "Carpet __off__")
-      const hasCarpet = !!z.cpT && z.cpT !== CARPET_OFF;
+      // Only a carpet that is actually chosen (owner ask 2026-11-03): Build defaults every floor to Carpet Old, so a floor nobody
+      // picked a carpet for printed "Carpet Old". A stock carpet (Old) shows once sales picked one in Build or Planning decided
+      // one; a New / Flex carpet (not picked from stock) shows when that material is set.
+      const hasCarpet = (() => {
+        if (!z.cpT || z.cpT === CARPET_OFF) return false;
+        if (!carpetTakesStockPick(carpetPricingFor(z.cpT, settings?.carpetMaterials).label)) return true;
+        if (prefsOf(z).length > 0) return true;
+        return fi != null && !!validDecision(carpetDecided[carpetKey(fi, zk, 0)], { date: fn?.date, fnLabel: fn?.type || fn?.name });
+      })();
       if (hasCarpet) out.push({ k: t("Carpet"), v: [hn(carpetName(z.cpT)), floor].filter(Boolean).join(" · ") });
       // No "Masking Yes" chip (owner ask 2026-11-03): the wall masking prints with its colour and pieces in the fabric row.
       if (!z.plH && !hasCarpet && floor) out.push({ k: t("Floor"), v: floor });
@@ -4175,7 +4183,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           : t("Zone");
         // The only zone still worth skipping is one with nothing to put on the page at all: none
         // of our items, no reference photo and no dimensions. That page would be a heading.
-        const zStruct = zoneStructOf(zCfg);
+        const zStruct = zoneStructOf(zCfg, fi, zk, fn);
         // ── THE FLOWER PALETTE ── what Build set for this function's flowers ("Maroon:60, White:40"), on every zone page of the
         // Floral book only (not the all-departments book — owner ask), each colour as a dot with its share — the colours the florists are building in.
         // ── THE FLORAL MIX ── Build's floral slider for this function: floralRatio is the ARTIFICIAL share, real is the rest
