@@ -3946,13 +3946,23 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         if (!pv?.topology) return;
         const ed = tentingPlan[key] || null;
         const matInv = trussInvForMaterial(trussInv, row.trussMaterial);
-        const realGroupsOf = (arr, resolver) => {
-          const m = {};
-          (arr || []).forEach(x => { (resolver(x, matInv).pieces || []).forEach(pc => { m[pc.size] = (m[pc.size] || 0) + pc.qty; }); });
-          return Object.entries(m).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, n]) => ({ len: Number(len), n }));
+        // A pillar / beam the stock sizes cannot make (a 6 or 9 ft pillar when only 10 and 12 ft are held - owner report 2026-11-03)
+        // came back with no pieces and simply vanished, so the card read as if the truss needed none. It is listed at the length it
+        // needs, marked missing, so the crew knows to arrange it.
+        const realGroupsOf = (arr, resolver, idealOf) => {
+          const m = {}, miss = {};
+          (arr || []).forEach(x => {
+            const pcs = resolver(x, matInv).pieces || [];
+            if (!pcs.length && idealOf) { const L = Number(idealOf(x)) || 0; if (L > 0) miss[L] = (miss[L] || 0) + 1; return; }
+            pcs.forEach(pc => { m[pc.size] = (m[pc.size] || 0) + pc.qty; });
+          });
+          return [
+            ...Object.entries(m).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, n]) => ({ len: Number(len), n })),
+            ...Object.entries(miss).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, n]) => ({ len: Number(len), n, missing: true })),
+          ];
         };
-        const pillars = Array.isArray(ed?.pillars) ? ed.pillars : realGroupsOf(pv.topology.pillars, (p, inv) => resolvePillarHeight(p.H, inv));
-        const beams = Array.isArray(ed?.beams) ? ed.beams : realGroupsOf(pv.topology.beams, (b, inv) => resolveBeamSegment(b.lengthFt, inv));
+        const pillars = Array.isArray(ed?.pillars) ? ed.pillars : realGroupsOf(pv.topology.pillars, (p, inv) => resolvePillarHeight(p.H, inv), p => p.H);
+        const beams = Array.isArray(ed?.beams) ? ed.beams : realGroupsOf(pv.topology.beams, (b, inv) => resolveBeamSegment(b.lengthFt, inv), b => b.lengthFt);
         const bRft = ed?.batta?.rft ?? pv.batta?.rftRequired ?? 0;
         const bBuf = ed?.batta?.buf ?? pv.batta?.bufferPct ?? 10;
         const battaRft = ed?.batta ? Math.round((Number(bRft) || 0) * (1 + (Number(bBuf) || 0) / 100)) : (pv.batta?.rftWithBuffer ?? 0);
@@ -4382,7 +4392,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // the fabric row comes out of the photo's floor too, so it never makes a page taller than it was without it
       const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(Math.max(160, 260 - (fabStrip ? 44 : 0) - trussPx - notePx), PAGE_PX - headPx - rows * (ROW_H + ARROW));
       const pieces = (groups) => groups.reduce((a, g) => a + (Number(g.n) || 0), 0);
-      const sizeLines = (groups) => groups.map(g => `<div class="ztk-l"><b>${esc(g.n)}</b><span>× ${esc(g.len)} ft</span></div>`).join("");
+      const sizeLines = (groups) => groups.map(g => `<div class="ztk-l${g.missing ? " ztk-miss" : ""}"><b>${esc(g.n)}</b><span>× ${esc(g.len)} ft${g.missing ? ` ⚠ ${t("not in stock")}` : ""}</span></div>`).join("");
       const tkCard = (icon, title, count, body) => `<div class="ztk-c"><div class="ztk-h"><span>${icon} ${title}</span>${count != null ? `<b>${esc(count)}</b>` : ""}</div>${body}</div>`;
       const trussCard = trussRows.map(tt => `<div class="ztk-w">
           ${tt.label ? `<div class="ztk-t">${esc(tt.label)}</div>` : ""}
@@ -4934,6 +4944,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .ztk-l b{font-weight:700;min-width:18px}
   .ztk-l span{font-weight:500;color:#4A453C}
   .ztk-big{font-size:15px}
+  .ztk-l.ztk-miss b,.ztk-l.ztk-miss span{color:#B42318}
   .ztk-s{font-size:10.5px;color:#7A7263;margin-top:2px}
   .zst span{box-sizing:border-box;height:30px;line-height:30px;padding:0 12px;font-size:12px;font-weight:700;color:#1A1A1A;background:#EFE9DC;border:1px solid #DDD4C2;border-radius:8px;white-space:nowrap}
   .zst .zl{font-style:normal;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263;margin-right:7px}
@@ -7965,6 +7976,11 @@ ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t
                       const matInv = trussInvForMaterial(trussInv, row.trussMaterial);
                       const realGroupsOf = (arr, resolver) => { const m = {}; (arr || []).forEach(x => { (resolver(x, matInv).pieces || []).forEach(pc => { m[pc.size] = (m[pc.size] || 0) + pc.qty; }); }); return Object.entries(m).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, n]) => ({ len: Number(len), n })); };
                       const pillarGroups = Array.isArray(ed?.pillars) ? ed.pillars : realGroupsOf(topo.pillars, (p, inv) => resolvePillarHeight(p.H, inv));
+                      // Pillars / beams the stock sizes cannot make (a 9 ft pillar when only 10 and 12 ft are held) left the tiles
+                      // above without them, as if none were needed - said out loud under the tiles (the Setup Book lists them too).
+                      const cannotMake = (arr, resolver, lenOf) => { const m = {}; (arr || []).forEach(x => { if (!(resolver(x, matInv).pieces || []).length) { const L = Number(lenOf(x)) || 0; if (L > 0) m[L] = (m[L] || 0) + 1; } }); return Object.entries(m).map(([L, k]) => `${k} × ${L} ft`); };
+                      const missingPillars = Array.isArray(ed?.pillars) ? [] : cannotMake(topo.pillars, (p, inv) => resolvePillarHeight(p.H, inv), p => p.H);
+                      const missingBeams = Array.isArray(ed?.beams) ? [] : cannotMake(topo.beams, (b, inv) => resolveBeamSegment(b.lengthFt, inv), b => b.lengthFt);
                       const beamGroups = Array.isArray(ed?.beams) ? ed.beams : realGroupsOf(topo.beams, (b, inv) => resolveBeamSegment(b.lengthFt, inv));
                       const rftOfG = (gs) => Math.round(gs.reduce((a, g) => a + (Number(g.len) || 0) * (Number(g.n) || 0), 0) * 100) / 100;
                       const countOfG = (gs) => gs.reduce((a, g) => a + (Number(g.n) || 0), 0);
@@ -8045,6 +8061,11 @@ ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t
                             {groupTile(`🔗 Beams (${beamPieceCount})`, "beams", beamGroups, beamRft)}
                             {(batta || ed?.batta) && battaTile()}
                           </div>
+                          {(missingPillars.length > 0 || missingBeams.length > 0) && (
+                            <div className="mt-2 text-[12px] font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                              ⚠ Not in stock sizes - arrange separately: {[...missingPillars.map(x => `pillar ${x}`), ...missingBeams.map(x => `beam ${x}`)].join(", ")}
+                            </div>
+                          )}
                           {fabRows.length > 0 && (
                             <div className="mt-2 rounded-lg border border-dashed border-gray-300 p-2">
                               <div className="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-1.5">🧵 Fabric allocation</div>

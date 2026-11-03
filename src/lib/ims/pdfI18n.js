@@ -124,6 +124,7 @@ export const PDF_HI = {
   "Beams": "बीम",
   "Truss breakdown": "ट्रस का हिसाब",
   "Power": "बिजली",
+  "not in stock": "स्टॉक में नहीं",
   "Drape": "ड्रेप",
   "Minimum": "कम",
   "Moderate": "मध्यम",
