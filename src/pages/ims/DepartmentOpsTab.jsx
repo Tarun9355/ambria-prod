@@ -4603,7 +4603,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // event's functions use; from Settings → Fixed Venues (fvSettings).
     // ── POWER / GENSET ── (owner ask 2026-11-03) the Lighting book opens with the gensets: every function's 125 kVA and
     // 62.5 kVA units and the total, right after the cover. Each function's own plan from Studio (functionsDetail[].gensets),
-    // else its venue's standard count, marked as such. Lighting's book and the all-departments book.
+    // else its venue's standard count. Lighting's book and the all-departments book.
     const gensetPage = (() => {
       if (!(combined || dept === "Lighting")) return "";
       const list = (fns.length ? fns : [{ type: sel?.eventType || "", date: selDateStr, venue: sel?.venue }]).map((fn, fi) => ({ fn, fi, g: gensetsForFn(fn, trVenues) })).filter(r => r.g);
@@ -4615,7 +4615,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         return `<div class="gs-c">
           <div class="gs-h"><span>⚡ ${esc(name || t("The event"))}</span>${fn?.venue ? `<i>${esc(hn(fn.venue))}</i>` : ""}</div>
           ${none ? `<div class="gs-none">${t("No genset")}</div>` : `${unit(g.kva125, "125")}${unit(g.kva62, "62.5")}<div class="gs-t">${t("Total {n} kVA", { n: esc(totalKva(g)) })}</div>`}
-          ${g.source === "venue" ? `<div class="gs-n">${t("Venue standard - sync the deal in Studio to confirm")}</div>` : ""}
         </div>`;
       }).join("");
       return `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
@@ -4947,7 +4946,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .gs-u span{font-size:16px;font-weight:600;color:#4A453C}
   .gs-t{margin-top:10px;padding-top:10px;border-top:1px solid #E7DFCF;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#7A7263}
   .gs-none{font-size:15px;font-weight:700;color:#7A7263}
-  .gs-n{margin-top:8px;font-size:10.5px;color:#9A6B1F}
   /* ── THE TWO CORNER BADGES MUST BE ONE BOX ──
      They sit at the same top on the same card, so any difference in their metrics reads as a
      misalignment. The size badge is outlined and the kit badge was not, which made it 3px taller
