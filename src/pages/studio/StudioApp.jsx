@@ -4034,7 +4034,9 @@ export default function StudioApp() {
     // salesperson reopening Build/Deal Check on a booked deal, with no warning to the dept head, and
     // discarded real-world facts (what was actually bought, which truck was used) that have nothing
     // to do with a pricing regenerate — so the dept head's edits looked like they silently reverted.
-    const withLayout = (fns) => Array.isArray(fns) && layout.size ? fns.map(f => (f && layout.has(f.fnIdx)) ? { ...f, ...layout.get(f.fnIdx) } : f) : fns;
+    // A function is matched by its fnIdx; an older order whose functions were written without one is matched by position
+    // (its list is in function order) - those were silently never refreshed, so notes and layout edits never reached IMS.
+    const withLayout = (fns) => Array.isArray(fns) && layout.size ? fns.map((f, i) => { const k = f?.fnIdx ?? i; return (f && layout.has(k)) ? { ...f, ...layout.get(k) } : f; }) : fns;
     // The order's own date follows its first function's (what IMS falls back to when it needs one date).
     const firstDate = [...layout.values()].map(l => l.date).filter(Boolean).sort()[0];
     const applySnap = (base) => ({ ...base, ...(firstDate ? { date: firstDate } : {}), functionsDetail: withLayout(base.functionsDetail), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION, floralDetail: snap.floralDetail || base.floralDetail || null, dealValue: snap.dealValue || base.dealValue || null, transportPlan: snap.transportPlan ?? null });
@@ -4109,7 +4111,7 @@ export default function StudioApp() {
       if (!row || !row.data) return;
       const cur = row.data;
       if (cur.layoutSig === laySig) return; // already in sync — no write
-      const withLayout = (fns) => Array.isArray(fns) ? fns.map(f => (f && layout.has(f.fnIdx)) ? { ...f, ...layout.get(f.fnIdx) } : f) : fns;
+      const withLayout = (fns) => Array.isArray(fns) ? fns.map((f, i) => { const k = f?.fnIdx ?? i; return (f && layout.has(k)) ? { ...f, ...layout.get(k) } : f; }) : fns; // fnIdx, else position (see persistDeptSnapshot)
       await supabase.from("event_orders").update({ data: { ...cur, functionsDetail: withLayout(cur.functionsDetail), layoutSig: laySig } }).eq("id", eo.id);
     } catch (e) { /* best-effort, same as persistDeptSnapshot/syncDealValueNow */ }
   }, [eventOrders, activeClientId, clientName]);
