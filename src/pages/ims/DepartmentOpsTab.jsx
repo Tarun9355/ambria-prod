@@ -3682,6 +3682,23 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // A custom zone's key is a generated id ("cz_1789…") — its name only reaches IMS through
     // fn.zoneNames (Studio's sync). Without it the title printed as "Cz 1789216840977".
     const zoneName = (zk, fn) => (fn?.zoneNames?.[zk]) || zoneLabels[zk] || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    // The truss chip prints the PHYSICAL footprint (owner ask 2026-11-03), never the customer-demand size: the same figure as
+    // Planning's "Physical footprint" tile (topology.physicalL / physicalW; a single-U has no depth), with the Tenting head's
+    // own edit of it (deptOps.Tenting.trussPlan[key].physical) winning. A zone with no worked-out truss keeps its saved size.
+    const physDimsByZone = new Map();
+    try {
+      const tentingPlanP = sel?.deptOps?.Tenting?.trussPlan || {};
+      trussPlanOf().forEach(z => {
+        if (z.ri !== 0 || physDimsByZone.has(`${z.fi}|${z.zk}`)) return;
+        const topo = z.pv?.topology || {};
+        const r2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
+        const H = parseFloat(z.row?.dims?.H) || 0;
+        const base = z.pv?.config === "u_only" ? { W: r2(topo.physicalL), H } : { W: r2(topo.physicalW), D: r2(topo.physicalL), H };
+        const v = { ...base, ...((tentingPlanP[z.key] || {}).physical || {}) };
+        const parts = [["W", v.W], ["D", v.D], ["H", v.H]].filter(([, x]) => Number(x) > 0);
+        if (Number(v.W) > 0 && parts.length) physDimsByZone.set(`${z.fi}|${z.zk}`, parts.map(([k, x]) => `${k} ${x}`).join(" × ") + " ft");
+      });
+    } catch { /* the saved size it is */ }
     const zoneDimsText = (d) => {
       if (!d) return "";
       const parts = [["L", d.L], ["W", d.W], ["H", d.H]].filter(([, v]) => Number(v) > 0);
@@ -4196,7 +4213,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         });
         const items = [...merged.values()];
         const zPhoto = fn.elSelectedPhoto?.[zk]?.src || "";
-        const zDims = zoneDimsText(fn.dims?.[zk] || fn.zones?.[zk]?.dims);
+        const zDims = physDimsByZone.get(`${fi}|${zk}`) || zoneDimsText(fn.dims?.[zk] || fn.zones?.[zk]?.dims);
         // ── WHOSE DIMENSIONS ARE THESE? ──
         // The chip used to say "Zone", which names where the figures apply, not what they
         // measure. A zone's L x W x H is the span of the STRUCTURE standing in it: across every
