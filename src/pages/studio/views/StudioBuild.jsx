@@ -2035,10 +2035,11 @@ export default function StudioBuild({ ctx }) {
     return <button onClick={() => setCustomPicker({ k, kind: "masking", rowIdx, wallId, wallMatSnapshot: zc.mkWallMat })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 5, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer" }}><IconCamera size={11}/> Custom Masking</button>;
   };
   // Same rule as StudioApp.jsx's structDiscountFor: a Fixed Venue (or its sub-venue) switches the structure
-  // discount on by itself, Fresh chip or not; elsewhere it follows the Repeat chips.
+  // discount on by itself, Fresh chip or not, unconditionally; the Repeat chips' own discount still follows
+  // the checkbox (owner ask, 2026-11-03).
   const structDiscountFor = (zc, venueName) => {
-    if (hideDiscountFromClient) return false;
     const fv = !!fixedVenueFor({ fixedVenues: sharedFloralSettings?.fixedVenues || [], venueParents: venueParents || {} }, venueName);
+    if (hideDiscountFromClient) return { truss: fv, platform: fv, print: fv };
     return { truss: fv || repeatCatFor(zc, "truss"), platform: fv || repeatCatFor(zc, "platform"), print: fv || repeatCatFor(zc, "print") };
   };
   // Same scaleStruct StudioApp.jsx uses for its own guest-facing calcStructCost calls (getElPrice/
@@ -3760,12 +3761,14 @@ undefined
         the reference, so it does not belong inside a card that describes the reference — and a
         control that stays put is one people can find without looking. */}
     <div style={{flexShrink:0, display:"flex", alignItems:"center", justifyContent:"flex-end", gap:8}}>
-      {/* Discrete, deliberately unlabeled — see hideDiscountFromClient (StudioApp.jsx). OFF by
-          default (unticked = hidden): every guest-facing number here in Build, Summary, and every
-          export prices at full rate. Ticking it applies the Fixed-Venue/Repeat discount to the
-          guest build too. Deal Check is unaffected either way — it has its own separate cost engine
-          and always applies the real discount regardless of this checkbox. */}
-      <label title="Apply fixed-venue / repeat discount to this customer's build too (off by default — Deal Check always applies it)"
+      {/* Discrete, deliberately unlabeled — see hideDiscountFromClient (StudioApp.jsx). The
+          Fixed-Venue standing / cross-function-reuse discount is NOT gated by this anymore (owner
+          ask, 2026-11-03): it's a fact about what's physically already there, so it prices
+          discounted for the guest in Build, Summary and every export whether or not this is ticked.
+          OFF by default (unticked = hidden) only hides the ♻️ Repeat-zone discount — ticking it
+          applies that one to the guest build too. Deal Check is unaffected either way — it has its
+          own separate cost engine and always applies the real discount regardless of this checkbox. */}
+      <label title="Apply the ♻️ Repeat-zone discount to this customer's build too (off by default — Fixed-Venue discount always applies; Deal Check always applies both)"
         style={{display:"inline-flex",alignItems:"center",opacity:!hideDiscountFromClient?0.85:0.25,cursor:activeClientId?"pointer":"not-allowed"}}>
         <input type="checkbox" checked={!hideDiscountFromClient} disabled={!activeClientId}
           onChange={e=>{

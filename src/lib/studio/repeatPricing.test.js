@@ -19,8 +19,12 @@ describe("guest price — Repeat / standing / reuse discount, switch OFF (normal
     expect(guestRepeatLineCost({ ...base, standingUnits: 4, crossFnReuseQty: 3 })).toBe(825);  // 7×75 + 3×100
     expect(guestRepeatLineCost({ ...base, standingUnits: 40 })).toBe(750);                     // capped at qty
   });
-  it("the client-discount toggle off hides every discount", () => {
+  it("the client-discount toggle off hides only the Repeat-zone discount", () => {
     expect(guestRepeatLineCost({ ...base, isRepeat: true, hidden: true })).toBe(1000);
+  });
+  it("the client-discount toggle does NOT hide the Fixed-Venue/cross-function discount — that applies by default", () => {
+    expect(guestRepeatLineCost({ ...base, standingUnits: 4, hidden: true })).toBe(900);
+    expect(guestRepeatLineCost({ ...base, standingUnits: 4, crossFnReuseQty: 3, hidden: true })).toBe(825);
   });
 });
 
