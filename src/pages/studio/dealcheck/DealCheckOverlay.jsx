@@ -646,7 +646,7 @@ export default function DealCheckOverlay({ ctx }) {
           };
           // ═══ §Department income (7 depts) — every rupee tagged to a department ═══
           const DEPTS = OPS_DEPTS;
-          const dept = {}; DEPTS.forEach(d => { dept[d] = { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, manpower: 0, production: 0, buying: 0, total: 0 }; });
+          const dept = {}; DEPTS.forEach(d => { dept[d] = { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, power: 0, manpower: 0, production: 0, buying: 0, total: 0 }; });
           const deptInv = {}; DEPTS.forEach(d => { deptInv[d] = []; }); // per-dept blocked-inventory detail (name/photo/qty/unit/total)
           const mpByType = {}; // manpower cost per labour type (distributed to depts at the end)
           let mpRateByType = {}; // rate per type (for editable, reconciling crew rows in Dept Ops)
@@ -1018,7 +1018,7 @@ export default function DealCheckOverlay({ ctx }) {
             // (the old "add genset to Lighting dept income" branch below this) never existed on
             // calcFunctionBreakdown's return at all — confirmed no writer anywhere in the codebase —
             // so it never once ran; removed rather than left as dead code that looks intentional.
-            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; const truckTotal = Number(bd?.transport?.truckTotal) || 0; if (truckTotal > 0) { transport += truckTotal; byFn[fi].transport += truckTotal; addD("Transport", "transport", truckTotal); } const gO = Number(bd?.transport?.gensetCostOurs) || 0; genset += gO; byFn[fi].genset += gO; } catch {}
+            try { const bd = calcFunctionBreakdown ? calcFunctionBreakdown(fn) : null; const truckTotal = Number(bd?.transport?.truckTotal) || 0; if (truckTotal > 0) { transport += truckTotal; byFn[fi].transport += truckTotal; addD("Transport", "transport", truckTotal); } const gO = Number(bd?.transport?.gensetCostOurs) || 0; genset += gO; byFn[fi].genset += gO; addD("Lighting", "power", gO); } catch {}
             try {
               const tInv = dealCheckData?.trussInv;
               if (tInv) {
@@ -1806,7 +1806,7 @@ export default function DealCheckOverlay({ ctx }) {
             } else if (directTotal > 0) DEPTS.forEach(d => { const sh = amt * (directOf(d) / directTotal); addD(d, "manpower", sh); deptMp[d][t] = (deptMp[d][t] || 0) + sh; });
             else { addD("Structure", "manpower", amt); deptMp["Structure"][t] = (deptMp["Structure"][t] || 0) + amt; }
           });
-          DEPTS.forEach(d => { dept[d].total = dept[d].rental + dept[d].florals + dept[d].truss + dept[d].fabric + dept[d].transport + dept[d].manpower + dept[d].production + dept[d].buying; });
+          DEPTS.forEach(d => { dept[d].total = dept[d].rental + dept[d].florals + dept[d].truss + dept[d].fabric + dept[d].transport + dept[d].power + dept[d].manpower + dept[d].production + dept[d].buying; });
           // ── Per-dept manpower detail (the exact crew rows the head edits in IMS Dept Ops). Built here
           // so the actuals delta below reconciles head edits — count/rate overrides AND day-wise labour —
           // via the SAME formula IMS uses (deptMpReconciled). Reused by buildDeptSnapshot. ──
@@ -1846,8 +1846,11 @@ export default function DealCheckOverlay({ ctx }) {
           const effManpower = manpower + mpDelta;
           const hasActuals = actualMandi > 0 || actualExpenses > 0 || mpDelta !== 0;
           const effFlorals = actualMandi > 0 ? actualMandi : florals;
-          const base = rental + florals + transport + manpower + truss + buyTotal + produceTotal;
-          const baseActual = rental + effFlorals + transport + effManpower + truss + buyTotal + produceTotal + actualExpenses;
+          // genset (our genset cost, the Power tab) is part of what the deal costs us - it was worked out for the Power tab's
+          // pill only and left out of the total (owner report 2026-11-03: "power is not added in the overall cost"). It sits in
+          // the Lighting department (dept.power), so the departments still add up to this base.
+          const base = rental + florals + transport + genset + manpower + truss + buyTotal + produceTotal;
+          const baseActual = rental + effFlorals + transport + genset + effManpower + truss + buyTotal + produceTotal + actualExpenses;
           const gyvFixed = Math.round((hasActuals ? baseActual : base) * 0.05);
           const bufferCost = Math.round((hasActuals ? baseActual : base) * 0.03);
           const grand = base + Math.round(base * 0.05) + Math.round(base * 0.03);
@@ -5082,7 +5085,7 @@ export default function DealCheckOverlay({ ctx }) {
                   );
                 })() : dcActiveTab === "gyv" ? (() => {
                   // ═══ GYV FIXED & BUFFER COST TAB — reads from shared dcCostRollup ═══
-                  const { rental, florals, transport, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, venueDiscount, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta, smartQuoteActive, smartOrigProfitPct, smartDesiredPct, liveQuote, liveCommissionTotal } = dcCostRollup;
+                  const { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, venueDiscount, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta, smartQuoteActive, smartOrigProfitPct, smartDesiredPct, liveQuote, liveCommissionTotal } = dcCostRollup;
                   const baseCost = hasActuals ? baseActual : baseProj;
                   // Project total = production cost + GYV/buffer + venue commission. Commission used
                   // to be excluded here (a "company-level payout" kept out of "what building this event
@@ -5105,6 +5108,7 @@ export default function DealCheckOverlay({ ctx }) {
                       flag: actualMandi > 0 ? "actual" : null,
                       note: actualMandi > 0 ? `actual mandi bill · projected ${fmt(projFlorals)}` : null },
                     { icon: "🚚", label: "Transport",  value: transport },
+                    ...(genset > 0 ? [{ icon: "⚡", label: "Power", value: genset, note: "gensets, our cost" }] : []),
                     { icon: "👷", label: "Manpower",   value: mpDelta ? effManpower : manpower,
                       flag: mpDelta ? "adjusted" : null,
                       note: mpDelta ? `dept heads changed the crew · projected ${fmt(manpower)}` : null },
@@ -5554,13 +5558,13 @@ export default function DealCheckOverlay({ ctx }) {
                   const dd = dcCostRollup.dept || {};
                   const depts = dcCostRollup.DEPTS || [];
                   const deptIcon = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
-                  const cur = dd[dcDept] || { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, manpower: 0, production: 0, buying: 0, total: 0 };
+                  const cur = dd[dcDept] || { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, power: 0, manpower: 0, production: 0, buying: 0, total: 0 };
                   const grandAll = depts.reduce((s, d) => s + (dd[d]?.total || 0), 0);
                   const f2 = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "₹0";
                   const lines = [
                     ["📦 Inventory rental", cur.rental], ["🌸 Floral (mandi)", cur.florals], ["🏗️ Truss", cur.truss],
                     ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
-                    ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport],
+                    ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport], ["⚡ Power / genset", cur.power],
                   ].filter(([, v]) => v > 0);
                   const syncToOps = async () => { const r = await (persistDeptSnapshot && persistWithDetail(buildDeptSnapshot())); showMsg && (r === false ? showMsg("Deal Check is still loading — try again in a moment", "orange") : showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green")); };
                   return (
@@ -5599,13 +5603,13 @@ export default function DealCheckOverlay({ ctx }) {
               const dd = dcCostRollup.dept || {};
               const depts = dcCostRollup.DEPTS || [];
               const deptIcon = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
-              const cur = dd[dcDept] || { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, manpower: 0, production: 0, buying: 0, total: 0 };
+              const cur = dd[dcDept] || { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, power: 0, manpower: 0, production: 0, buying: 0, total: 0 };
               const grandAll = depts.reduce((s, d) => s + (dd[d]?.total || 0), 0);
               const f2 = (n) => n > 0 ? "₹" + Math.round(n).toLocaleString("en-IN") : "₹0";
               const lines = [
                 ["📦 Inventory rental", cur.rental], ["🌸 Floral (mandi)", cur.florals], ["🏗️ Truss", cur.truss],
                 ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
-                ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport],
+                ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport], ["⚡ Power / genset", cur.power],
               ].filter(([, v]) => v > 0);
               const syncToOps = async () => { const r = await (persistDeptSnapshot && persistWithDetail(buildDeptSnapshot())); showMsg && (r === false ? showMsg("Deal Check is still loading — try again in a moment", "orange") : showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green")); };
               return (

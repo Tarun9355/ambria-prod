@@ -2,6 +2,7 @@
 // the screen builds around a number or a name. One per line: English ¦ Hindi.
 const LIST = String.raw`
 Add a site ¦ साइट जोड़ें
+Power / genset ¦ बिजली / जेनसेट
 Send items to another event ¦ सामान दूसरे इवेंट में भेजें
 Send item to another event ¦ सामान दूसरे इवेंट में भेजें
 None yet, so everything returns to the production house. Add a site to send items straight there instead. ¦ अभी कोई नहीं, इसलिए सब प्रोडक्शन हाउस वापस जाएगा। सामान सीधे वहाँ भेजने के लिए साइट जोड़ें।

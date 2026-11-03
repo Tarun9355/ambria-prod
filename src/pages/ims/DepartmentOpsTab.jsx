@@ -2417,6 +2417,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       { label: "Production", value: deptIncome.production },
       { label: "Buying", value: deptIncome.buying },
       { label: "Transport", value: deptIncome.transport },
+      { label: "Power / genset", value: deptIncome.power },
     ];
     // ── SHARE OF THE DEPARTMENT'S OWN INCOME ──
     // The percentages are taken against the SUM OF THE HEADS SHOWN, not against liveTotal.
