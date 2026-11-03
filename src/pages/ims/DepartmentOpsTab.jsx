@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { withSetupSlot } from "../../lib/studio/dihariWindows.js";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits, flowerPaletteHexFor } from "../../lib/ims/helpers";
-import { parseFlowerPalette } from "../../lib/studio/pricing";
+import { parseFlowerPalette, parseFabricPalette } from "../../lib/studio/pricing";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel } from "../../lib/ims/deptClassify";
 import { TabsMenu, useConfirm } from "../../components/ui";
@@ -4753,7 +4753,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       shift: f.shift ? String(f.shift) : "",
       pax: Number(f.pax) > 0 ? String(f.pax) : "",
       place: f.venue && f.venue !== venue ? f.venue : "",
+      // The function's palettes as Build set them (owner ask 2026-11-03: on the cover) - fabric colours and the flower mix.
+      fabric: parseFabricPalette(f.fabricPalette).map(c => c.name),
+      flowers: parseFlowerPalette(f.flowerPalette),
     }));
+    const anyPalette = sessions.some(s => s.fabric.length || s.flowers.length);
+    const palDot = (hex) => `<i style="background:${esc(hex)}"></i>`;
+    const sessionPalettes = (s) => (s.fabric.length || s.flowers.length) ? `<div class="spal">
+        ${s.fabric.length ? `<div class="sp"><span class="k">${t("Fabric")}</span>${s.fabric.map(c => `<b>${palDot(swatchHexFor(c, settings?.colourCatalogue))}${esc(hn(c))}</b>`).join("")}</div>` : ""}
+        ${s.flowers.length ? `<div class="sp"><span class="k">${t("Flowers")}</span>${s.flowers.map(c => `<b>${palDot(flowerPaletteHexFor(c.name))}${esc(hn(c.name))} ${esc(c.pct)}%</b>`).join("")}</div>` : ""}
+      </div>` : "";
     // One colour per kind of function, so a three-function book reads at a glance. Anything not
     // listed takes the next colour in the rotation.
     const SES_TONES = { wedding: "wine", reception: "navy", cocktail: "navy", sangeet: "plum", mehendi: "sage", mehndi: "sage", haldi: "amber", engagement: "rose", ring: "rose", birthday: "amber" };
@@ -4874,6 +4883,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .cv-sessions.dense .cv-ses .sf .v{font-size:13px}
   .cv-sessions.dense{gap:14px}
   .cv-ses .sm{font-size:12.5px;line-height:1.8;color:#6F6A5E;margin-top:8px;padding-bottom:2px}
+  .cv-ses .spal{margin-top:12px;display:flex;flex-direction:column;align-items:center;gap:5px}
+  .cv-ses .sp{display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:3px 10px;font-size:12.5px;line-height:1.5;color:#1A1A1A}
+  .cv-ses .sp .k{font-size:9.5px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:#7A7468;margin-right:2px}
+  .cv-ses .sp b{display:inline-flex;align-items:center;gap:4px;font-weight:600;white-space:nowrap}
+  .cv-ses .sp i{display:inline-block;width:10px;height:10px;border-radius:50%;border:1px solid rgba(0,0,0,.18)}
+  .cv-sessions.dense .cv-ses .spal{margin-top:7px;gap:3px}
+  .cv-sessions.dense .cv-ses .sp{font-size:10.5px;gap:2px 7px}
+  .cv-sessions.dense .cv-ses .sp .k{font-size:8px;letter-spacing:.12em}
+  .cv-sessions.dense .cv-ses .sp i{width:8px;height:8px}
   .t-wine{--d:#7A2E3B;--l:#F6E3E5}
   .t-navy{--d:#23345C;--l:#E3E9F5}
   .t-sage{--d:#3F6150;--l:#E2EEE5}
@@ -5121,7 +5139,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       <div><div class="k">${t("Prepared by")}</div><div class="v">${esc(hn(deptData.updatedBy || authUser?.name) || "—")}</div></div>
     </div>
     ${sessions.length ? `<div class="cv-sec">${sessions.length === 1 ? t("The event") : t("{n} sessions", { n: sessions.length })}</div>
-    <div class="cv-sessions${sessions.length > 4 ? " many dense" : sessions.length > 2 ? " many" : ""}">${sessions.map((s, i) => `<div class="cv-ses t-${sesTone(s.type, i)}">
+    <div class="cv-sessions${sessions.length > 4 || (anyPalette && sessions.length > 2) ? " many dense" : sessions.length > 2 ? " many" : ""}">${sessions.map((s, i) => `<div class="cv-ses t-${sesTone(s.type, i)}">
       <div class="sk">${t("Event type")}</div>
       <div class="st">${esc(hn(s.type))}</div>
       <div class="sl"></div>
@@ -5130,6 +5148,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         ${s.shift ? `<div class="sf"><div class="k">${t("Shift")}</div><div class="v">${esc(hn(s.shift))}</div></div>` : ""}
         ${s.pax ? `<div class="sf"><div class="k">${t("Guests")}</div><div class="v">${esc(s.pax)}</div></div>` : ""}
       </div>
+      ${sessionPalettes(s)}
       ${s.place ? `<div class="sm">${esc(hn(s.place))}</div>` : ""}
     </div>`).join("")}</div>` : ""}
   </div>
