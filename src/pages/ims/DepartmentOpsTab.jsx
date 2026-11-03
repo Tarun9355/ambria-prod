@@ -4329,9 +4329,25 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const strip = !cont && (pg.struct || []).length > 0;
       // the fabric colours get a row of their own under it, so the truss strip never wraps past the height set aside for it
       const fabStrip = !cont && (pg.fabric || []).length > 0;
-      const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + (strip ? 44 : 0) + (fabStrip ? 44 : 0);
+      // The truss breakdown (pillars / beams / batta, as Planning's Truss plan shows it - owner ask 2026-11-03): one card row
+      // per truss of the zone, under the truss and fabric strips, on the zone's first page; its height comes out of the
+      // photo like the fabric row, so the page still adds up to one sheet.
+      const trussRows = !cont ? (pg.trussTable || []) : [];
+      // A truss with many sizes would run past the page width on one line: such a row wraps onto two, and is given the
+      // height for it (about 80 characters fit on one line of the card).
+      const sizes = (groups) => groups.map(g => `${g.n} × ${g.len}ft`).join(", ");
+      const trussRowLen = (tt) => (tt.label || "Truss breakdown").length + (tt.pillars.length ? 8 + sizes(tt.pillars).length : 0) + (tt.beams.length ? 6 + sizes(tt.beams).length : 0) + (tt.battaRft > 0 ? 14 : 0);
+      const trussRowPx = (tt) => (trussRowLen(tt) > 80 ? 74 : 50);
+      const trussPx = trussRows.length ? trussRows.reduce((h, tt) => h + trussRowPx(tt), 0) + 12 : 0;
+      const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + (strip ? 44 : 0) + (fabStrip ? 44 : 0) + trussPx;
       // the fabric row comes out of the photo's floor too, so it never makes a page taller than it was without it
-      const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(260 - (fabStrip ? 44 : 0), PAGE_PX - headPx - rows * (ROW_H + ARROW));
+      const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(260 - (fabStrip ? 44 : 0) - trussPx, PAGE_PX - headPx - rows * (ROW_H + ARROW));
+      const trussCard = trussRows.length ? `<div class="ztc">${trussRows.map(tt => `<div class="ztc-r${trussRowPx(tt) > 50 ? " ztc-2" : ""}">
+          ${tt.label ? `<b class="ztc-n">${esc(tt.label)}</b>` : `<b class="ztc-n">${t("Truss breakdown")}</b>`}
+          ${tt.pillars.length ? `<span><i class="zl">${t("Pillars")}</i>${esc(sizes(tt.pillars))}</span>` : ""}
+          ${tt.beams.length ? `<span><i class="zl">${t("Beams")}</i>${esc(sizes(tt.beams))}</span>` : ""}
+          ${tt.battaRft > 0 ? `<span><i class="zl">${t("Batta")}</i>${esc(tt.battaRft)} RFT</span>` : ""}
+        </div>`).join("")}</div>` : "";
       const photoTop = bare ? 0 : ROW_H + ARROW;
       const botTop = photoTop + PHOTO_H + ARROW;
       const stageH = bare ? PHOTO_H : bot.length ? botTop + ROW_H : photoTop + PHOTO_H;
@@ -4352,6 +4368,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         </div>`}
         ${strip ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html != null ? c.html : esc(c.v)}</span>`).join("")}</div>` : ""}
         ${fabStrip ? `<div class="zst">${pg.fabric.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html}</span>`).join("")}</div>` : ""}
+        ${trussCard}
         <div class="zs" style="height:${stageH}px">
           <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : `<span>${t("No zone photo")}</span>`}</div>
           ${cards}
@@ -4525,18 +4542,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const q = list.reduce((t, a) => t + (Number(a.qty) || 0), 0);
         if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", list[0].el || t("Arrangement"), q || "", "", parts, t("Artificial")) });
       });
-      // ── TRUSS CUT LIST (pillars/beams/batta by real stock size) ──
-      // Reuses detailCard/detailH as-is (a "part" is just {name,qty,unit} — Pillar/Beam/Batta fit
-      // that shape fine) rather than inventing a parallel table + its own height math: this page's
-      // per-block chunking already has to fit everything on one sheet, and that logic lives here.
-      (pg.trussTable || []).forEach(tt => {
-        const parts = [
-          ...tt.pillars.map(g => ({ name: t("Pillar"), qty: g.n, unit: `× ${g.len}ft` })),
-          ...tt.beams.map(g => ({ name: t("Beam"), qty: g.n, unit: `× ${g.len}ft` })),
-          ...(tt.battaRft > 0 ? [{ name: t("Batta"), qty: tt.battaRft, unit: "RFT" }] : []),
-        ];
-        if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🏗️", t("Truss cut list") + (tt.label ? ` · ${tt.label}` : ""), "", "", parts) });
-      });
+      // The truss cut list (pillars / beams / batta) is on the zone's own page now, under the truss strip (trussCard) - not repeated here.
       if (!blocks.length) return [];
       const dChunks = [];
       blocks.forEach(b => {
@@ -4845,6 +4851,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   /* Says WHAT is being measured. On its own "L 52 × W 14 × H 12 ft" could be the zone, the
      structure or a single prop; it is the zone's own span. */
   .zst{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+  .ztc{box-sizing:border-box;margin:0 0 12px;border:1px solid #DDD4C2;border-radius:10px;background:#FBF8F1;overflow:hidden}
+  .ztc-r{box-sizing:border-box;height:50px;display:flex;align-items:center;gap:18px;padding:0 14px;font-size:12.5px;font-weight:700;color:#1A1A1A;white-space:nowrap;overflow:hidden}
+  .ztc-r + .ztc-r{border-top:1px solid #E7DFCF}
+  .ztc-r.ztc-2{height:74px;flex-wrap:wrap;align-content:center;row-gap:6px;white-space:normal}
+  .ztc-r.ztc-2 span{white-space:nowrap}
+  .ztc-n{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#7A7263;min-width:74px}
+  .ztc .zl{font-style:normal;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263;margin-right:7px}
   .zst span{box-sizing:border-box;height:30px;line-height:30px;padding:0 12px;font-size:12px;font-weight:700;color:#1A1A1A;background:#EFE9DC;border:1px solid #DDD4C2;border-radius:8px;white-space:nowrap}
   .zst .zl{font-style:normal;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263;margin-right:7px}
   /* Flower palette colours: a dot in the colour, then its name and share. */
