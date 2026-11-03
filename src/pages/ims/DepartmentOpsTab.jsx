@@ -3794,7 +3794,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const floorTxt = `${Number(fd.L) || Number(fd.S) || 0} x ${Number(fd.W) || Number(fd.S) || 0} ft${qtyTxt}`;
         if (dec?.other && !pdfAllCarpetsRef.current) {
           // none of the stock carpets could be used: the carpet is bought or hired outside stock
-          out.push({ name: t("Carpet arranged separately"), qty: area, unit: "sqft", photo: "", dims: "", kit: 0, recipe: [], deptTag: combined ? "Tenting" : "",
+          out.push({ name: t("Carpet arranged separately"), qty: area, unit: "sqft", photo: "", dims: "", kit: 0, recipe: [], deptTag: combined ? "Tenting" : "", _role: t("To use"), _floor: floorTxt,
             extra: [[t("Carpet"), t("To use") + (ri === 0 ? "" : " " + t("(floor {n})", { n: ri + 1 }))], [t("Source"), t("Bought / hired outside stock")], [t("Floor"), floorTxt]] });
           return;
         }
@@ -3804,7 +3804,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         if (!prefs.length && !(dec?.manual && dec.id && !pdfAllCarpetsRef.current)) {
           if (!row.cpT) return;
           out.push({ name: carpetPricingFor(row.cpT, settings?.carpetMaterials).label || carpetName(row.cpT) || t("Carpet"), qty: area, unit: "sqft", photo: row.cpPhoto || "", dims: "", kit: 0, recipe: [],
-            deptTag: combined ? "Tenting" : "", extra: [[t("Carpet"), t("To lay") + (ri === 0 ? "" : " " + t("(floor {n})", { n: ri + 1 }))], [t("Floor"), floorTxt]] });
+            deptTag: combined ? "Tenting" : "", _role: t("To lay"), _floor: floorTxt, extra: [[t("Carpet"), t("To lay") + (ri === 0 ? "" : " " + t("(floor {n})", { n: ri + 1 }))], [t("Floor"), floorTxt]] });
           return;
         }
         // Planning's decided carpet once there is one; otherwise sales' 1st choice ONLY - the 2nd/3rd preferences printed as
@@ -3812,16 +3812,31 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         const chosen = dec && !pdfAllCarpetsRef.current ? (prefs.find(p => p.id === dec.id) || (dec.manual ? { id: dec.id, name: dec.name } : null)) : null;
         const byHand = !!chosen && !prefs.some(p => p.id === chosen.id);
         const lbl = ri === 0 ? "" : " " + t("(floor {n})", { n: ri + 1 });
-        (chosen ? [{ p: chosen, role: (byHand ? t("To use (Planning's pick)") : t("To use")) + lbl }] : prefs.slice(0, 1).map((p, i) => ({ p, role: choiceLbl(i) + lbl }))).forEach(({ p, role }) => {
+        (chosen ? [{ p: chosen, base: byHand ? t("To use (Planning's pick)") : t("To use") }] : prefs.slice(0, 1).map((p, i) => ({ p, base: choiceLbl(i) }))).forEach(({ p, base }) => {
+          const role = base + lbl;
           const inv = invById.get(String(p.id));
           out.push({
             name: inv?.name || p.name || t("Carpet"), qty: area, unit: "sqft", photo: invPhoto(inv, null), dims: invDims(inv), kit: 0, recipe: [],
-            deptTag: combined ? "Tenting" : "",
+            deptTag: combined ? "Tenting" : "", _role: base, _floor: floorTxt, _key: "inv:" + p.id,
             extra: [[t("Carpet"), role], [t("Floor"), floorTxt]],
           });
         });
       });
-      return out;
+      // The same carpet on two floors of the zone (a stage and its side platform, say) is one card, not two (owner ask 2026-11-03):
+      // its sqft added up, every floor's size listed, the role said once. A different carpet keeps its own card.
+      const merged = [];
+      out.forEach(c => {
+        const key = c._key || "name:" + c.name;
+        const m = merged.find(x => (x._key || "name:" + x.name) === key);
+        if (!m) { merged.push({ ...c, _roles: [c._role], _floors: [c._floor] }); return; }
+        m.qty += c.qty;
+        if (!m._roles.includes(c._role)) m._roles.push(c._role);
+        m._floors.push(c._floor);
+      });
+      return merged.map(({ _role, _floor, _key, _roles, _floors, ...c }) => _floors.length < 2 ? c : ({ // eslint-disable-line no-unused-vars
+        ...c,
+        extra: (c.extra || []).map(([k, v]) => k === t("Carpet") ? [k, _roles.join(" · ")] : k === t("Floor") ? [k, _floors.join(" + ")] : [k, v]),
+      }));
     };
     const zoneStructOf = (z, fi, zk, fn) => {
       if (!z) return [];
