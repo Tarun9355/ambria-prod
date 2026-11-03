@@ -967,12 +967,18 @@ export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems,
       else addSub(sub, Number(el.qty) || 0);
     });
   });
+  // A Fixed Venue's own standing structure (truss/platform/carpet/masking — same rig every event,
+  // never struck) needs no truck either, same "already there" reasoning inventory items get via
+  // kitBuiltQty above — owner-confirmed gap (2026-11-03): this used to only waive a ♻️ Repeat zone,
+  // so a Fixed Venue's structure still trucked in full unless the zone was ALSO flagged Repeat.
+  // Unconditional, like the inventory-item standing waiver — not gated by guestDiscountOn.
+  const fvStruct = !!(fvCfg && venueName && fixedVenueFor(fvCfg, venueName));
   Object.entries(zoneConfig || {}).forEach(([zk, cfg]) => {
     if (!enabledEls[zk] || !cfg) return;
     // Same repeat waiver as the elements loop above, per chip (RC-30): truss, masking, liza and
     // curtains follow Truss & Masking; platform and carpet follow Platform.
-    const skipTruss = guestDiscountOn && repeatCatFor(cfg, "truss");
-    const skipPlat = guestDiscountOn && repeatCatFor(cfg, "platform");
+    const skipTruss = fvStruct || (guestDiscountOn && repeatCatFor(cfg, "truss"));
+    const skipPlat = fvStruct || (guestDiscountOn && repeatCatFor(cfg, "platform"));
     // Zone dims use uppercase L/W/H (see buildZoneConfig) — this used to read lowercase dims.w/
     // dims.d, which never exist, so sqft was always 0 and every truss/platform/carpet truck-load
     // silently dropped out of Build's transport total (only element-based items ever counted).
@@ -5929,12 +5935,15 @@ export default function StudioApp() {
           else addSub(sub, Number(el.qty) || 0);
         });
       });
+      // A Fixed Venue's own standing structure needs no truck either, same reasoning as the
+      // inventory-item standing waiver (kitBuiltQty) above — see computeTruckItems' matching comment.
+      const fvStruct = !!(fVenue && fixedVenueFor(fvCfgForRepeat, fVenue));
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
         if (!cfg || !fEnabledEls[zk]) return;
         // Per chip (RC-30), same as computeTruckItems: Truss & Masking for truss/masking/liza/
         // curtains, Platform for platform/carpet.
-        const skipTruss = !hideDiscountFromClient && repeatCatFor(cfg, "truss");
-        const skipPlat = !hideDiscountFromClient && repeatCatFor(cfg, "platform");
+        const skipTruss = fvStruct || (!hideDiscountFromClient && repeatCatFor(cfg, "truss"));
+        const skipPlat = fvStruct || (!hideDiscountFromClient && repeatCatFor(cfg, "platform"));
         const d = cfg.dims || {};
         const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
         if (!skipTruss && cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
@@ -6665,25 +6674,35 @@ export default function StudioApp() {
         });
       });
       const bdTrussInv = sharedFloralSettings.trussInv;
+      // A Fixed Venue's own standing structure needs no truck either (owner-confirmed gap,
+      // 2026-11-03 — this loop only ever waived a ♻️ Repeat zone, never a Fixed Venue, unlike the
+      // inventory-item path above which already nets standing stock via kitBuiltQty). Unconditional
+      // on Ambria's own cost side (qty), same as the Repeat waiver already is; on the guest side
+      // (qtyClient) it's ALSO unconditional — not gated by hideDiscountFromClient — matching the
+      // Fixed-Venue rental discount's own "applies by default" rule, while the Repeat-zone waiver
+      // stays checkbox-gated for the guest exactly as before.
+      const fvStruct = !!(fVenue && fixedVenueFor(fvCfgForRepeat, fVenue));
       Object.entries(fZoneConfig).forEach(([zk, cfg]) => {
         if (!cfg || !fEnabledEls[zk]) return;
         // Truss, masking, liza and curtains follow the Truss & Masking chip; platform and carpet
         // follow the Platform chip (RC-30) — each defaulting to the zone toggle via repeatCatFor.
         const trussRepeat = repeatCatFor(cfg, "truss"), platRepeat = repeatCatFor(cfg, "platform");
+        const trussClientWaived = fvStruct || (!hideDiscountFromClient && trussRepeat);
+        const platClientWaived = fvStruct || (!hideDiscountFromClient && platRepeat);
         const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", trussRepeat ? 0 : tSqft, tSqft, zk, "Truss structure"); }
+        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", (trussRepeat || fvStruct) ? 0 : tSqft, tSqft, zk, "Truss structure", "", trussClientWaived ? 0 : tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) {
-          if (cfg.plH) addSub("Platform", platRepeat ? 0 : sqft, sqft, zk, "Platform");
-          if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", platRepeat ? 0 : sqft, sqft, zk, "Carpet");
+          if (cfg.plH) addSub("Platform", (platRepeat || fvStruct) ? 0 : sqft, sqft, zk, "Platform", "", platClientWaived ? 0 : sqft);
+          if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", (platRepeat || fvStruct) ? 0 : sqft, sqft, zk, "Carpet", "", platClientWaived ? 0 : sqft);
         }
         { const pSqft = printSqftOf(cfg, structRates.printMaterials); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft, pSqft, zk, "Print jobs"); } // big prints by area, never a repeat — see computeTruckItems
         // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
         if (bdTrussInv) {
           const fab = calcZoneFabric(cfg, bdTrussInv, "moderate");
-          if (fab.maskingPieces > 0) addSub("Masking", trussRepeat ? 0 : fab.maskingPieces, fab.maskingPieces, zk, "Wall masking");
-          if (fab.lizaKg > 0) addSub("Liza", trussRepeat ? 0 : fab.lizaKg, fab.lizaKg, zk, "Liza drape");
-          if (fab.curtainPieces > 0) addSub("Curtains", trussRepeat ? 0 : fab.curtainPieces, fab.curtainPieces, zk, "Velvet curtains");
+          if (fab.maskingPieces > 0) addSub("Masking", (trussRepeat || fvStruct) ? 0 : fab.maskingPieces, fab.maskingPieces, zk, "Wall masking", "", trussClientWaived ? 0 : fab.maskingPieces);
+          if (fab.lizaKg > 0) addSub("Liza", (trussRepeat || fvStruct) ? 0 : fab.lizaKg, fab.lizaKg, zk, "Liza drape", "", trussClientWaived ? 0 : fab.lizaKg);
+          if (fab.curtainPieces > 0) addSub("Curtains", (trussRepeat || fvStruct) ? 0 : fab.curtainPieces, fab.curtainPieces, zk, "Velvet curtains", "", trussClientWaived ? 0 : fab.curtainPieces);
         }
       });
       // Floral material (real mandi + artificial) — see computeTruckItems' matching comment.
