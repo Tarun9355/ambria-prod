@@ -3213,6 +3213,9 @@ export default function StudioApp() {
   // re-derives it), while propertyId still points at the right property row and always resolves to
   // its CURRENT name. Falling back to the stale `.parent` (then to the sub-venue's own name) only
   // covers a sub-venue whose property has since been deleted, or one from before propertyId existed.
+  // One function's gensets for IMS (functionsDetail[].gensets): the venue's counts or this deal's own override - the same
+  // resolution calcFunctionBreakdown prices. Through a ref so the layout writers below (useCallbacks) always read the current venues.
+  const gensetsOfFnRef = useRef(null);
   const venueParents = useMemo(() => {
     const propNameById = new Map((customProperties || []).map((p) => [p.id, p.name]));
     const out = {};
@@ -3223,6 +3226,12 @@ export default function StudioApp() {
     (customOutdoor || []).forEach((v) => { if (v.name) out[v.name] = v.name; });
     return out;
   }, [customInhouse, customOutdoor, customProperties]);
+  gensetsOfFnRef.current = (fd) => {
+    if (!fd?.fnVenue) return undefined;
+    const plan = resolveGensetPlan(resolveTrVenue(trVenues, fd.fnVenue, venueParents),
+      typeof fd.customGensets === "number" ? fd.customGensets : null, typeof fd.genset62 === "number" ? fd.genset62 : null, 0, 0);
+    return { kva125: Number(plan.genset125) || 0, kva62: Number(plan.genset62) || 0 };
+  };
   useEffect(() => { if (!customInhouse.length) return; reliableSave("venueParents", JSON.stringify(venueParents), "Venue parents").catch(() => {}); }, [venueParents]);
   // The Rate Card admin editor (Studio's RateCard.jsx, IMS's RateCardPanel.jsx) is gone — nobody
   // edits `rate_card` by hand anymore, recipes are IMS-native (flowerPatterns), and every element
@@ -3996,6 +4005,8 @@ export default function StudioApp() {
           zoneOrder: Array.isArray(fd.zoneOrder) ? [...fd.zoneOrder] : [],
           // Build's zone notes, so Deal Check's notes print on the Setup Book's zone pages and follow an edit at once.
           notes: zoneNotesOf(fd.elNotes),
+          // The gensets (Deal Check's Power tab edits them), so the Lighting book's Power page follows a change without a full Apply.
+          ...(gensetsOfFnRef.current?.(fd) ? { gensets: gensetsOfFnRef.current(fd) } : {}),
           // The function's Fabric Palette as Build has it right now, so IMS's Fabric block follows a palette change at once (it works the colours out from this
           // and the live fabric stock) instead of waiting for the next Deal Check sync. fabricPaletteLive marks the field as kept live (a constant, not a time, so it never changes the layout fingerprint).
           fabricPalette: fd.fnPalette || "",
@@ -4096,6 +4107,8 @@ export default function StudioApp() {
           zoneOrder: Array.isArray(fd.zoneOrder) ? [...fd.zoneOrder] : [],
           // Build's zone notes, so Deal Check's notes print on the Setup Book's zone pages and follow an edit at once.
           notes: zoneNotesOf(fd.elNotes),
+          // The gensets (Deal Check's Power tab edits them), so the Lighting book's Power page follows a change without a full Apply.
+          ...(gensetsOfFnRef.current?.(fd) ? { gensets: gensetsOfFnRef.current(fd) } : {}),
           // The function's Fabric Palette as Build has it right now, so IMS's Fabric block follows a palette change at once (it works the colours out from this
           // and the live fabric stock) instead of waiting for the next Deal Check sync. fabricPaletteLive marks the field as kept live (a constant, not a time, so it never changes the layout fingerprint).
           fabricPalette: fd.fnPalette || "",
@@ -8540,7 +8553,7 @@ export default function StudioApp() {
     // add-then-immediately-refresh lost it every time, in Build and in Deal Check (same session field).
   }, [activeClientId, clientName, clientDate, venue, fn, clientShift, clientPax, clientBrideGroom, extraFunctions, clientPalette, clientFlowerPalette,
       zoneElements, elSelectedPhoto, elTiers, zoneConfig, enabledEls, elNotes, floralRatio, itemQty, itemGrades,
-      customZones, customMode, activeFnIdx, fnBuilds, dcCustomItems, autoSaveBuild]);
+      customZones, customMode, activeFnIdx, fnBuilds, dcCustomItems, customGensets, genset62, customTripRate, autoSaveBuild]);
   // 2) Periodic fallback + 3) save on tab hide / refresh.
   // pagehide and visibility→hidden both mean "the page may never get another tick" (tab close, real
   // navigation, backgrounding on mobile) — keepalive:true on both, so this save is a fetch the browser
