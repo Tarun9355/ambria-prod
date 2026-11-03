@@ -1405,7 +1405,7 @@ export default function StudioBuild({ ctx }) {
       const els = zoneElements[k] || [], n = els.length;
       if (!n) return "No items yet";
       // Anything short or out of stock on this date is said on the tile itself, in red like a short carpet - so it shows without opening the card.
-      // Same two signals the element card's own "⚠ short" badge reads: the held qty below the asked one, and the price check's stock warning.
+      // The same signal the element card's own "⚠ short" badge reads: the price check's stock warning (and a kit part short on the date).
       const pool = crossFnPool();
       const shortN = els.reduce((a, el, idx) => {
         if (!el?.invId) return a;
