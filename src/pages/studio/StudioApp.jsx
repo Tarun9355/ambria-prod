@@ -9224,13 +9224,12 @@ export default function StudioApp() {
           if (sawRun && !dcHeadlessRef.current && Date.now() - t0 > 4000) { await sleep(1500); break; }
           if (!sawRun && Date.now() - t0 > 40000) break; // the run never started (empty build / already fresh)
         }
-        await sleep(400); // let the run's last flush land before the deal is closed (the sync's own write has already echoed back)
+        await sleep(1200); // let the run's last flush land before the deal is closed
         sw.id = null;
         if (activeClientIdRef.current === c.id) sweepFnsRef.current.startNewDeal();
         done++;
         tell("progress", { done, total: queue.length });
-        // the closed deal settles before the next one opens - not needed after the last (a one-event sync ends here)
-        if (done < queue.length) for (let w = 0; w < 10 && activeClientIdRef.current; w++) await sleep(300);
+        for (let w = 0; w < 10 && activeClientIdRef.current; w++) await sleep(300); // closed deal settles
       }
       tell("done", { done, total: queue.length, skipped });
     } catch { tell("done", { done, total: 0, error: true }); /* best effort — the auto-sync on open still covers each deal */ }
