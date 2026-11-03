@@ -109,7 +109,7 @@ import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDef
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
-import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc } from "../../lib/supabase";
+import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc, claimDealPresence } from "../../lib/supabase";
 import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
 import { guestRepeatLineCost, flaggedUnitRate } from "../../lib/studio/repeatPricing.js";
 import {
@@ -9132,6 +9132,54 @@ export default function StudioApp() {
     // The single-function path's toast, gone for the reason given on the multi-function one above.
   }, [events, allVideos, ytVideoTags]);
 
+  // ── STOP TWO USERS EDITING THE SAME DEAL AT ONCE ──
+  // Confirmed race-condition risk (Sangeeta, 2026-11-03) — two concurrent editors on the same
+  // client's build is exactly the kind of thing that let one function's content land on a
+  // different function's slot. suspiciousDuplicateFnIdxs (sessionData.js) stops that symptom from
+  // reaching the database; this stops a second live editor from starting in the first place.
+  // Which client this tab's presence channel currently claims, so switching clients (by ANY path,
+  // not just loadClientSessionGuarded below) can always find and release it, and so a second claim
+  // on the SAME client this tab already holds doesn't leak a channel.
+  const dealPresenceRef = useRef(null);
+  // Release the moment this tab is no longer actually on the client it was claiming — covers every
+  // path that changes activeClientId (startNewDeal, the phone-auto-attach fold in saveSession,
+  // not just loadClientSessionGuarded itself), so the "someone's editing this" signal can never
+  // outlive this tab actually leaving the deal.
+  useEffect(() => {
+    if (dealPresenceRef.current && dealPresenceRef.current.clientId !== activeClientId) {
+      try { supabase.removeChannel(dealPresenceRef.current.channel); } catch { /* ignore */ }
+      dealPresenceRef.current = null;
+    }
+  }, [activeClientId]);
+  useEffect(() => () => {
+    if (dealPresenceRef.current) { try { supabase.removeChannel(dealPresenceRef.current.channel); } catch { /* ignore */ } dealPresenceRef.current = null; }
+  }, []);
+  // Wraps loadClientSession for Event Info's "Load →" button only — the one place this was asked
+  // for. Every OTHER caller of loadClientSession still calls it directly, unguarded, on purpose:
+  // the automated planning-sync sweep is a system process re-opening a booked deal headlessly, not
+  // a second person; the page-refresh mount-restore is this SAME tab/user returning to its own
+  // already-active deal, not a new one starting; startNewDeal creates a brand-new client nobody
+  // else can possibly already be on. loadLmsLead (matching an LMS lead to an existing client) is
+  // NOT guarded either, despite also opening an existing client — it calls setActiveClientId
+  // unconditionally before any session-exists branching, so wrapping it safely would need
+  // restructuring that function, which this deliberately does not do.
+  const loadClientSessionGuarded = useCallback(async (client, session, landingStep, opts) => {
+    if (dealPresenceRef.current) {
+      try { supabase.removeChannel(dealPresenceRef.current.channel); } catch { /* ignore */ }
+      dealPresenceRef.current = null;
+    }
+    if (!client?.id || !authUser?.id) { loadClientSession(client, session, landingStep, opts); return; }
+    const { channel, others } = await claimDealPresence(client.id, { id: authUser.id, name: authUser.name || "Someone" });
+    if (others.length) {
+      try { supabase.removeChannel(channel); } catch { /* ignore */ }
+      const who = others.map(o => o?.userName || "Someone").join(", ");
+      showMsg?.(`${who} ${others.length > 1 ? "are" : "is"} already editing this deal right now — wait for them to finish before opening it.`, "red");
+      return;
+    }
+    dealPresenceRef.current = { channel, clientId: client.id };
+    loadClientSession(client, session, landingStep, opts);
+  }, [authUser, loadClientSession, showMsg]);
+
   // ── Close the open deal: back to a blank builder ──
   // Lived inline in StudioSummary, where "Start New" and the Summary's own delete link both used it.
   // The Client Tracker's delete could not reach it and cleared only activeClientId, which is a
@@ -12594,7 +12642,7 @@ export default function StudioApp() {
     activeClient, meetingNumber, allInhouseVenues, allOutdoorDB, allInhouseGroups, subVenuesOfParent, inhouseParentNames, allInhouseVenueOrParentNames, leafInhouseVenues,
     allVenueData, outdoorVenueList, browseVideos, browseVideosAll, allVideos,
     // handlers
-    loadClientSession, startNewDeal, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
+    loadClientSession, loadClientSessionGuarded, startNewDeal, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     resumeSavedSession, toggleEl, selectElPhoto, handleZoneUpload, aiTagImage, findTemplate,
     getLibPhotosForZone, maxRepaintCostInSubcat, saveSession, markSold, applyBookedChanges, loadEvent,
