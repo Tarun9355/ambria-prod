@@ -13,14 +13,23 @@ import { innerDiscountFactor } from "./discounts.js";
 // date multiplier the caller multiplies onto the result afterwards; a date below 1 competes with the
 // discount instead of stacking (innerDiscountFactor). `flaggedUnitRate` is the part of unitRate that
 // belongs to kit components switched out of the discount — that part of every unit is never reduced.
+// `hidden` (the discreet Build-page checkbox) only gates the Repeat-zone branch — a Fixed-Venue
+// standing item (or a unit reused from an earlier function of the same deal, the same eligibility
+// bucket) is a fact about what's physically already there, not an opt-in discount, so it prices
+// discounted for the guest whether or not the checkbox is ticked (owner ask, 2026-11-03: "I want the
+// fixed venue discounts to come applied by default, and the checkbox will only apply the repeat
+// logic discounts").
 export function guestRepeatLineCost({ qty, unitRate, flaggedUnitRate = 0, noDiscount = false, hidden = false, isRepeat = false, standingUnits = 0, crossFnReuseQty = 0, dateFactor = 1, pct = 25 }) {
   const full = qty * unitRate;
-  if (noDiscount || hidden) return full;
+  if (noDiscount) return full;
   const flagged = Math.max(0, Math.min(unitRate, Number(flaggedUnitRate) || 0));
   const discountable = unitRate - flagged;
   const eachDiscounted = discountable * innerDiscountFactor(dateFactor, pct) + flagged;
   // Rounded to the rupee — a 25% cut rarely lands on a whole number otherwise.
-  if (isRepeat) return Math.round(qty * eachDiscounted);
+  if (isRepeat) {
+    if (hidden) return full;
+    return Math.round(qty * eachDiscounted);
+  }
   const eligible = Math.min(qty, Math.max(0, standingUnits) + Math.max(0, crossFnReuseQty));
   if (eligible <= 0) return full;
   return Math.round(eligible * eachDiscounted + (qty - eligible) * unitRate);

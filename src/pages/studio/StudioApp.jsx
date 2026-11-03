@@ -4459,13 +4459,16 @@ export default function StudioApp() {
     fixedVenueSubcatDiscount: sharedFloralSettings.fixedVenueSubcatDiscount,
   }), [sharedFloralSettings, dealCheckData, venueParents]);
   // Owner ask: a discrete per-deal toggle (Build's reference banner, beside Upload) — OFF (hidden)
-  // BY DEFAULT: every Fixed-Venue/Repeat discount prices at full rate for the GUEST-facing numbers
-  // — Build's live canvas, Summary, and every export — until the checkbox is explicitly ticked to
-  // client_ledger.applyDiscountToClient. Deal Check (Ambria's own internal cost/ops side — it never
-  // reads any of the functions below, it has its own separate repeatAdjustedRental/dcCostRollup)
-  // always applies the real discount regardless of this checkbox. zc.repeat itself is untouched
-  // either way (the ✨Fresh/♻️Repeat toggle stays available and still flows to Deal Check as before)
-  // — only what that flag PRICES for the client depends on this.
+  // BY DEFAULT: the ♻️ Repeat-zone discount prices at full rate for the GUEST-facing numbers — Build's
+  // live canvas, Summary, and every export — until the checkbox is explicitly ticked to
+  // client_ledger.guestDiscount. The Fixed-Venue standing-stock / cross-function-reuse discount is
+  // NOT gated by this (owner ask, 2026-11-03: "I want the fixed venue discounts to come applied by
+  // default, and the checkbox will only apply the repeat logic discounts") — it's a fact about what's
+  // physically already there, so it always prices discounted for the guest, checkbox or not. Deal
+  // Check (Ambria's own internal cost/ops side — it never reads any of the functions below, it has
+  // its own separate repeatAdjustedRental/dcCostRollup) always applies both regardless of this
+  // checkbox. zc.repeat itself is untouched either way (the ✨Fresh/♻️Repeat toggle stays available
+  // and still flows to Deal Check as before) — only what that flag PRICES for the client depends on this.
   const hideDiscountFromClient = !clientDiscountOn(clientLedger.find(c => c.id === activeClientId));
   // The checkbox flipped by someone else (their click reaches this tab live through the client_ledger subscription): say who,
   // or the price here just jumps by itself every time a colleague on the same deal clicks it.
@@ -4486,16 +4489,14 @@ export default function StudioApp() {
   // discounts every structural group alike, unlike the zone's own Repeat toggle which Build's
   // Truss & Masking/Platform/Print chips can each override independently — see repeatCatFor).
   // Returns a per-category object (not a single bool) once discount-eligible in principle, so
-  // calcStructCost can gate its three structural groups separately; false short-circuits it
-  // entirely, same as before, when the client-facing discount toggle itself is off.
+  // calcStructCost can gate its three structural groups separately.
   // A Fixed Venue (or one of its sub-venues — Aura/Valencia under Exotica) switches the structure discount on
-  // by itself again, Fresh chip or not: the 2026-10-18 "Repeat chips only" rule left every Fresh zone at an
-  // in-house venue at full price, which sales read as the discount checkbox not working (owner ask
-  // 2026-10-30). Elsewhere it still follows the Repeat chips. (Elements keep their own Fixed-Venue
-  // standing-stock discount — repeatAdjustedLineCost.)
+  // by itself, Fresh chip or not — and, like the elements' own Fixed-Venue standing-stock discount
+  // (repeatAdjustedLineCost), unconditionally: it's a fact about the venue, not an opt-in (owner ask,
+  // 2026-11-03). The Repeat chips' own discount still follows the checkbox — off by default, same as before.
   const structDiscountFor = (zc, venueName) => {
-    if (hideDiscountFromClient) return false;
     const fv = !!fixedVenueFor(fvCfgForRepeat, venueName);
+    if (hideDiscountFromClient) return { truss: fv, platform: fv, print: fv };
     return { truss: fv || repeatCatFor(zc, "truss"), platform: fv || repeatCatFor(zc, "platform"), print: fv || repeatCatFor(zc, "print") };
   };
   // Owner ask: a second discrete per-deal lever, alongside hideDiscountFromClient — the small dot on
@@ -5542,7 +5543,7 @@ export default function StudioApp() {
     // is declared further down (TDZ). The active function's own build is taken from live state.
     const allFnsNow = collectAllFunctionDataRef.current?.() || [];
     const activeFnData = { ...(allFnsNow.find(f => f.fnIdx === activeFnIdx) || {}), fnIdx: activeFnIdx, fnDate: aDate, fnVenue: aVenue, zoneElements, zoneConfig, enabledEls };
-    const crossFnPrev = (!hideDiscountFromClient && !isFillerDateFor(aDate) && allFnsNow.length > 1) ? findCrossFnReuseSource(activeFnData, allFnsNow) : null;
+    const crossFnPrev = (!isFillerDateFor(aDate) && allFnsNow.length > 1) ? findCrossFnReuseSource(activeFnData, allFnsNow) : null;
     const reusePool = crossFnPrev ? new Map(Object.entries(computeFnInvQty(crossFnPrev))) : null;
     const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, sharedFloralSettings.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, aVenue, !hideDiscountFromClient, reusePool, structRates.printMaterials);
     itemBd.forEach(b => breakdown.push(b));
@@ -5794,10 +5795,10 @@ export default function StudioApp() {
   const activeCrossFnReuseQty = useMemo(() => {
     const all = collectAllFunctionData();
     const fnData = all[activeFnIdx];
-    if (!fnData || hideDiscountFromClient || isFillerDateFor(fnData.fnDate)) return null;
+    if (!fnData || isFillerDateFor(fnData.fnDate)) return null;
     const prevFn = findCrossFnReuseSource(fnData, all);
     return prevFn ? computeFnInvQty(prevFn) : null;
-  }, [collectAllFunctionData, activeFnIdx, hideDiscountFromClient, dealCheckData, studioFloralData]);
+  }, [collectAllFunctionData, activeFnIdx, dealCheckData, studioFloralData]);
   // Layout, same TDZ reasoning as collectAllFunctionDataRef — totalCost (declared above this) reads
   // the ref instead of the memo directly.
   useLayoutEffect(() => { activeCrossFnReuseQtyRef.current = activeCrossFnReuseQty; });
@@ -5842,7 +5843,7 @@ export default function StudioApp() {
     // in the same order, so they land on identical per-element allocations without needing to
     // share mutable state across the two unrelated loops. Never fires when THIS function (the one
     // being priced/billed) is on a Filler date — see isFillerDateFor above.
-    const crossFnPrevFn = (!hideDiscountFromClient && !isFillerDateFor(fnData.fnDate)) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
+    const crossFnPrevFn = !isFillerDateFor(fnData.fnDate) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
     const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
     let decor = 0;
     // Always derive zones fresh from the live zoneConfig/enabledEls — see totalCost's matching
@@ -6452,7 +6453,7 @@ export default function StudioApp() {
     // Cross-function reuse (guest-facing) — same source calcFunctionCost uses, so Summary's
     // accordion/Build's Live Estimate agree with the revenue total on which units are discounted.
     // Never fires when THIS function is on a Filler date — see isFillerDateFor above.
-    const crossFnPrevFn = (!hideDiscountFromClient && !isFillerDateFor(fnData.fnDate)) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
+    const crossFnPrevFn = !isFillerDateFor(fnData.fnDate) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
     const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
     // Sorted by IMS/Studio Admin → Settings → Zone Types' configured order (zoneKeys), same as
     // buildZonesForFn below — enabledEls' own key order is whenever each zone was first toggled on
@@ -6635,7 +6636,7 @@ export default function StudioApp() {
               // preceding function already has on site are not trucked again. Kit walks scale
               // linearly with the element qty, so the reused share is applied as a ratio per node.
               const elQty = Number(el.qty) || 0;
-              const reused = (!hideDiscountFromClient && clientTruckPool) ? Math.min(elQty, clientTruckPool.get(el.invId) || 0) : 0;
+              const reused = clientTruckPool ? Math.min(elQty, clientTruckPool.get(el.invId) || 0) : 0;
               if (reused > 0) clientTruckPool.set(el.invId, (clientTruckPool.get(el.invId) || 0) - reused);
               const effRatio = elQty > 0 ? Math.max(0, elQty - reused) / elQty : 0;
               walkKitUnits(invItem, elQty, imsInventory, el.kitOverrides, (node, nodeQty) => {
@@ -10472,7 +10473,7 @@ export default function StudioApp() {
     // disagreed with the Total Estimate whenever an item was short in stock or reused from an
     // earlier function.
     const fBlocksForDate = blocksByDate[fnData.fnDate];
-    const crossFnPrevFn = (!hideDiscountFromClient && !isFillerDateFor(fnData.fnDate)) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
+    const crossFnPrevFn = !isFillerDateFor(fnData.fnDate) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
     const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
     // Sorted by IMS/Studio Admin → Settings → Zone Types' configured order (zoneKeys, same order
     // Build's own zone list renders in — see StudioBuild.jsx's `[...zoneKeys, ...customZones]`),
