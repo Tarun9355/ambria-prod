@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual, findLatestBuild, sessionToRows } from "./sessionData";
+import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual, findLatestBuild, sessionToRows, suspiciousDuplicateFnIdxs } from "./sessionData";
 
 const withVideo = { sourceVideo: { id: "vid_1", title: "Poolside Haldi" } };
 const withZones = { zoneElements: { stage: ["truss"] } };
@@ -229,6 +229,39 @@ describe("sessionToRows — custom items", () => {
     const s = { id: "SES_1", savedAt: 1, fnSnapshots: { 0: withZones } };
     expect(() => sessionToRows("client_1", s)).not.toThrow();
     expect(sessionToRows("client_1", s)[0].build).toEqual(withZones);
+  });
+});
+
+// Confirmed incident: client Sangeeta, 2026-11-03 — Wedding's entire zones/elements ended up saved
+// under Sangeet's fnIdx (a different, genuinely distinct function) and kept re-saving that way for
+// ~90 minutes because nothing checked for it before writing.
+describe("suspiciousDuplicateFnIdxs", () => {
+  const fn = (fnIdx, zoneElements) => ({ fnIdx, zoneConfig: { stage: {} }, zoneElements, enabledEls: { stage: true } });
+
+  it("flags the non-active side when two different functions are byte-identical", () => {
+    const allFns = [fn(0, { stage: ["chair"] }), fn(1, { stage: ["truss"] }), fn(2, { stage: ["truss"] })];
+    expect(suspiciousDuplicateFnIdxs(allFns, 1)).toEqual(new Set([2]));
+  });
+
+  it("distrusts both sides when neither is the active function", () => {
+    const allFns = [fn(0, { stage: ["chair"] }), fn(1, { stage: ["truss"] }), fn(2, { stage: ["truss"] })];
+    expect(suspiciousDuplicateFnIdxs(allFns, 0)).toEqual(new Set([1, 2]));
+  });
+
+  it("does not flag genuinely distinct functions", () => {
+    const allFns = [fn(0, { stage: ["chair"] }), fn(1, { stage: ["truss"] })];
+    expect(suspiciousDuplicateFnIdxs(allFns, 0).size).toBe(0);
+  });
+
+  it("does not flag two functions that are both simply blank", () => {
+    const blank = (fnIdx) => ({ fnIdx, zoneConfig: {}, zoneElements: {}, enabledEls: {} });
+    expect(suspiciousDuplicateFnIdxs([blank(0), blank(1)], 0).size).toBe(0);
+  });
+
+  it("handles no collision, no functions, and a missing activeFnIdx without throwing", () => {
+    expect(suspiciousDuplicateFnIdxs([], 0).size).toBe(0);
+    expect(suspiciousDuplicateFnIdxs(null, 0).size).toBe(0);
+    expect(suspiciousDuplicateFnIdxs([fn(0, { stage: ["chair"] })], undefined).size).toBe(0);
   });
 });
 

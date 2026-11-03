@@ -320,14 +320,16 @@ export function sessionToRows(clientId, s) {
       auto: !!s.auto,
       is_active_fn: !!isActive,
       has_data: built,
-      fn_label: s.fn || null,
-      // b.fnDate/b.fnVenue — THIS function's own date/venue, stamped onto its snapshot at save time
-      // (StudioApp.jsx's saveSession) — preferred over the session-level eventDate/venue, which is
-      // only ever Function 1's/whichever function was active when Save fired, and stamping it onto
-      // EVERY function's row is exactly the bug this closes (confirmed live, 2026-11-02 — see
-      // saveSession's own comment). Falls back to the session-level fields for any save taken before
-      // this existed, so an old session's rows don't go from "wrong for every function but 1" to
-      // "blank for every function but 1".
+      // b.fnType/b.fnDate/b.fnVenue — THIS function's own type/date/venue, stamped onto its snapshot
+      // at save time (StudioApp.jsx's saveSession) — preferred over the session-level fn/eventDate/
+      // venue, which is only ever Function 1's/whichever function was active when Save fired, and
+      // stamping it onto EVERY function's row is exactly the bug this closes (confirmed live,
+      // 2026-11-02 — see saveSession's own comment; fn_label itself was missed in that same fix and
+      // stayed wrong until the Sangeeta/Vedi incident, 2026-11-03, surfaced it — every function's
+      // card showed whichever one was on screen at save time). Falls back to the session-level fields
+      // for any save taken before this existed, so an old session's rows don't go from "wrong for
+      // every function but 1" to "blank for every function but 1".
+      fn_label: b?.fnType || s.fn || null,
       event_date: b?.fnDate || s.eventDate || null,
       venue: b?.fnVenue || s.venue || null,
       source_video_id: b?.sourceVideo?.id || b?.sourceVideoId || null,
@@ -343,4 +345,54 @@ export function sessionToRows(clientId, s) {
       build: buildOut || null,
     };
   });
+}
+
+/**
+ * Which functions' decor content is suspiciously identical to a DIFFERENT function's — real,
+ * distinct functions essentially never match byte-for-byte, so a match means one's zones/elements
+ * got aliased onto the other somewhere upstream, not a coincidence.
+ *
+ * Confirmed incident this closes: client Sangeeta, 2026-11-03 — Wedding's entire zones/elements
+ * ended up saved under Sangeet's fnIdx in both event_orders and studio_sessions, and kept re-saving
+ * that way for ~90 minutes because nothing checked for it before writing. Root trigger (a stale
+ * tab's fnBuilds[idx] already holding another function's content) was never conclusively pinned
+ * down — this guard doesn't need to know the trigger; it only needs the SYMPTOM (two different
+ * fnIdx values about to be written with identical decor content) to be structurally impossible to
+ * persist.
+ *
+ * Call this right before any per-function write (persistBuildLayoutSnapshot, saveSession's
+ * fnSnapshots) and leave a flagged fnIdx OUT of that write entirely — never guess which side is the
+ * "real" one, just don't touch the server's existing value for it this cycle. A collision involving
+ * the active function (just edited, live, most likely to be genuinely current) is trusted over a
+ * frozen one; if neither side of a collision is active, neither is trusted.
+ *
+ * Ignores two functions that are both simply blank/untouched (zoneConfig and zoneElements both
+ * empty) — that's normal for new functions, not a collision.
+ *
+ * @param {Array<{fnIdx:number, zoneConfig?:object, zoneElements?:object, enabledEls?:object}>} allFns
+ * @param {number} activeFnIdx
+ * @returns {Set<number>} fnIdx values unsafe to write this cycle
+ */
+export function suspiciousDuplicateFnIdxs(allFns, activeFnIdx) {
+  const sigOf = (fd) => {
+    const zc = fd?.zoneConfig || {};
+    const ze = fd?.zoneElements || {};
+    if (!Object.keys(zc).length && !Object.keys(ze).length) return null; // blank — never a collision
+    return stableStringify({ zoneConfig: zc, zoneElements: ze, enabledEls: fd?.enabledEls || {} });
+  };
+  const bySig = new Map();
+  (allFns || []).forEach((fd) => {
+    if (!fd || typeof fd.fnIdx !== "number") return;
+    const sig = sigOf(fd);
+    if (sig == null) return;
+    if (!bySig.has(sig)) bySig.set(sig, []);
+    bySig.get(sig).push(fd.fnIdx);
+  });
+  const unsafe = new Set();
+  for (const idxs of bySig.values()) {
+    if (idxs.length < 2) continue;
+    if (idxs.includes(activeFnIdx)) idxs.forEach((i) => { if (i !== activeFnIdx) unsafe.add(i); });
+    else idxs.forEach((i) => unsafe.add(i));
+  }
+  return unsafe;
 }
