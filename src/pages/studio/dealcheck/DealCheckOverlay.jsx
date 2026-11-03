@@ -2776,6 +2776,11 @@ export default function DealCheckOverlay({ ctx }) {
                       if (zc && zc.cpT !== CARPET_OFF && !byZone[zk]) byZone[zk] = [];
                     });
                   }
+                  // Same for a switched-on zone with a Build note but no cards of its own (a truss-only zone, say): it is listed
+                  // so its note shows - the note is the one thing on it the team needs to read.
+                  Object.entries(activeFnForFlorals?.elNotes || {}).forEach(([zk, note]) => {
+                    if (String(note || "").trim() && activeFnForFlorals.enabledEls?.[zk] && !byZone[zk]) byZone[zk] = [];
+                  });
                   const recipeSubcatsLC = (dealCheckData?.flowerRecipeSubcats || ["Flower Pattern"]).map(s => String(s||"").toLowerCase());
                   const flowerPatternsForCheck = dealCheckData?.flowerPatterns || [];
                   const findPatternByName = (name) => {

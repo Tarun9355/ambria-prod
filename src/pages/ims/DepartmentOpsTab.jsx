@@ -3950,7 +3950,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // and dropped every zone whose elements all belong to OTHER departments, which on a Floral
       // book is most of the bar, the food stalls and the centrepieces. The crew sets up alongside
       // everyone else, so those zones belong in the book too — as the reference photo, at least.
-      const zoneKeysFound = [...new Set([...Object.keys(els), ...Object.keys(fn?.zones || {}), ...Object.keys(fn?.elSelectedPhoto || {})])];
+      const zoneKeysFound = [...new Set([...Object.keys(els), ...Object.keys(fn?.zones || {}), ...Object.keys(fn?.elSelectedPhoto || {}), ...Object.keys(fn?.notes || {})])]; // a zone with only a note still gets its page, so the note prints
       // ── THE ORDER THE BUILD PAGE SHOWS ──
       // Same rule as Studio's Build / Summary: a hand-dragged order (zoneOrder) first, in the sequence it
       // was dragged; then Admin → Zone Types' order; then the deal's own custom zones in the order they
