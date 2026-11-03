@@ -4334,7 +4334,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // Structure book the strip is reference (Tenting's frame they build on), so it isn't counted.
     const zoneCountText = (pg) => {
       const n = pg.items.length + (combined || dept === "Tenting" ? (pg.struct || []).length : 0);
-      return n ? t("{n} item|{n} items", { n }) : (combined ? t("No items") : t("No {dept} items", { dept: esc(t(dept)) }));
+      // No item count on the page (owner ask 2026-11-03) - only the note that this department has nothing in the zone.
+      return n ? "" : (combined ? t("No items") : t("No {dept} items", { dept: esc(t(dept)) }));
     };
     const zoneSection = (pg, chunk, part, parts, zoneNo, offset) => {
       // A zone this department has nothing in still gets its page — the reference photo, run the
@@ -4395,7 +4396,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           <div><div class="zk"><b>${t("Zone {n}", { n: String(zoneNo).padStart(2, "0") })}</b>${parts > 1 ? ` · ${t("Part {part} of {parts}", { part, parts })}` : ""}</div><h2>${esc(hn(pg.title))}</h2>
             <div class="orn l"><i></i><b></b><i></i></div>
             <div class="zm">${esc(pg.fnLabel || selDateStr || "")}</div></div>
-          <div class="zt">${pg.zoneDims ? `<span><i class="zl">${esc(pg.dimsOf)}</i>${esc(pg.zoneDims)}</span>` : ""}<span>${zoneCountText(pg)}</span></div>
+          <div class="zt">${pg.zoneDims ? `<span><i class="zl">${esc(pg.dimsOf)}</i>${esc(pg.zoneDims)}</span>` : ""}${zoneCountText(pg) ? `<span>${zoneCountText(pg)}</span>` : ""}</div>
         </div>`}
         ${strip ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html != null ? c.html : esc(c.v)}</span>`).join("")}</div>` : ""}
         ${fabStrip ? `<div class="zst">${pg.fabric.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html}</span>`).join("")}</div>` : ""}
@@ -4414,7 +4415,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         <div class="zh"><div><div class="zk"><b>${esc(eyebrow)}</b>${all.length > 1 ? ` · ${t("Part {part} of {parts}", { part: i + 1, parts: all.length })}` : ""}</div><h2>${esc(title)}</h2>
           <div class="orn l"><i></i><b></b><i></i></div>
           <div class="zm">${esc(note)}</div></div>
-          <div class="zt"><span>${t("{n} item|{n} items", { n: items.length })}</span></div></div>
+</div>
         <div class="zg">${c.map(it => `<div class="zc st${npCls(it)}">${card(it, "")}</div>`).join("")}</div>
       </section>`) : [];
     /* ── WHAT IS INSIDE EVERY KIT ──
