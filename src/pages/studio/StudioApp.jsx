@@ -8659,6 +8659,9 @@ export default function StudioApp() {
         zoneOrder: Array.isArray(fnData.zoneOrder) ? [...fnData.zoneOrder] : [],
         decorCost: bd.decorTotal,
         transportCost: bd.transportTotal,
+        // The gensets this function runs on - the venue's counts or this deal's override, as Deal Check prices them. The
+        // Lighting Setup Book opens with them (IMS Dept Ops, lib/ims/gensetPlan). Left out when no transport venue matched.
+        ...(bd.transport ? { gensets: { kva125: Number(bd.transport.gensets) || 0, kva62: Number(bd.transport.genset62) || 0 } } : {}),
         customItemsCost: dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx).reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0),
         total: bd.grand + dcCustomItems.filter(c => c.fnIdx === fnData.fnIdx).reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0),
         floralRatio: typeof fnData.floralRatio === "number" ? fnData.floralRatio : floralRatio,

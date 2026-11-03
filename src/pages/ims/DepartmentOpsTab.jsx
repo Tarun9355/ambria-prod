@@ -42,6 +42,7 @@ import { toHindi } from "../../lib/ims/hindiTranslit";
 import useHindiDom from "../../lib/ims/useHindiDom";
 import PdfLangToggle from "./PdfLangToggle";
 import { splitCrewByDept } from "../../lib/ims/crewSplit";
+import { gensetsForFn, totalKva } from "../../lib/ims/gensetPlan";
 
 // ── THE OFFICIAL LOGO, READY FOR THE PDF ──
 // ambria-logo.png is a WHITE wordmark with a gold dot and gold "DESIGN & DECOR", on a transparent
@@ -827,6 +828,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
   const fvSettings = useMemo(() => ({ ...(settings || {}), fixedVenues: assembleFixedVenuesFromRows(fvRows) }), [settings, fvRows]);
+  // Admin → Transport's venue list (one settings row): the venue's standard genset counts, for the Lighting book's Power page
+  // on an event synced before Studio sent each function's own gensets (lib/ims/gensetPlan). Read with truckCap below.
+  const [trVenues, setTrVenues] = useState([]);
   const [opsView, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
   // The mini calendar that used to sit in this rail is gone — the IMS Calendar tab is the one
   // calendar, and clicking an event there lands here with that event already selected. Its
@@ -2072,6 +2076,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       let o = v;
       for (let i = 0; i < 2 && typeof o === "string"; i++) { try { o = JSON.parse(o); } catch { break; } }
       if (on && Array.isArray(o?.truckCap)) setTruckCap(o.truckCap);
+      if (on && Array.isArray(o?.venues)) setTrVenues(o.venues);
     }).catch(() => {});
     return () => { on = false; };
   }, []);
@@ -4596,6 +4601,30 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // ── WHAT IS ALREADY STANDING AT THE VENUE ── (owner ask 2026-11-02) right after the cover: the event venue's Fixed Venue stock
     // for this department (every department's in the combined book) - already there, not to be loaded. One page per Fixed Venue the
     // event's functions use; from Settings → Fixed Venues (fvSettings).
+    // ── POWER / GENSET ── (owner ask 2026-11-03) the Lighting book opens with the gensets: every function's 125 kVA and
+    // 62.5 kVA units and the total, right after the cover. Each function's own plan from Studio (functionsDetail[].gensets),
+    // else its venue's standard count, marked as such. Lighting's book and the all-departments book.
+    const gensetPage = (() => {
+      if (!(combined || dept === "Lighting")) return "";
+      const list = (fns.length ? fns : [{ type: sel?.eventType || "", date: selDateStr, venue: sel?.venue }]).map((fn, fi) => ({ fn, fi, g: gensetsForFn(fn, trVenues) })).filter(r => r.g);
+      if (!list.length) return "";
+      const unit = (n, kva) => n > 0 ? `<div class="gs-u"><b>${esc(n)}</b><span>× ${kva} kVA</span></div>` : "";
+      const cards = list.map(({ fn, fi, g }) => {
+        const name = [hn(fn?.type) || (list.length > 1 ? t("Function {n}", { n: fi + 1 }) : ""), fn?.date].filter(Boolean).join(" · ");
+        const none = !(g.kva125 > 0) && !(g.kva62 > 0);
+        return `<div class="gs-c">
+          <div class="gs-h"><span>⚡ ${esc(name || t("The event"))}</span>${fn?.venue ? `<i>${esc(hn(fn.venue))}</i>` : ""}</div>
+          ${none ? `<div class="gs-none">${t("No genset")}</div>` : `${unit(g.kva125, "125")}${unit(g.kva62, "62.5")}<div class="gs-t">${t("Total {n} kVA", { n: esc(totalKva(g)) })}</div>`}
+          ${g.source === "venue" ? `<div class="gs-n">${t("Venue standard - sync the deal in Studio to confirm")}</div>` : ""}
+        </div>`;
+      }).join("");
+      return `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
+        <div class="zh"><div><div class="zk"><b>${t("Power")}</b></div><h2>${t("Genset")}</h2>
+          <div class="orn l"><i></i><b></b><i></i></div>
+          <div class="zm">${t("Gensets for this event")}</div></div></div>
+        <div class="gs-g">${cards}</div>
+      </section>`;
+    })();
     const fixedVenuePages = (() => {
       const names = [...new Set((fns.length ? fns.map(f => f?.venue) : [sel?.venue]).filter(Boolean))];
       const seen = new Set();
@@ -4909,6 +4938,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .za.up::before{bottom:-3px}
   .zpin{position:absolute;width:22px;height:22px;border-radius:50%;background:#1A1A1A;color:#F4F1EA;font-size:11px;font-weight:700;line-height:22px;text-align:center;box-shadow:0 0 0 2px rgba(255,253,248,.9),0 3px 8px rgba(0,0,0,.35)}
   .zg{display:grid;grid-template-columns:repeat(3,224px);gap:17px;justify-content:center}
+  .gs-g{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  .gs-c{box-sizing:border-box;padding:18px 20px;border:1px solid #DDD4C2;border-radius:14px;background:#FBF8F1}
+  .gs-h{display:flex;flex-direction:column;gap:3px;margin-bottom:14px;font-size:14px;font-weight:700;color:#1A1A1A}
+  .gs-h i{font-style:normal;font-size:11.5px;font-weight:600;color:#7A7263}
+  .gs-u{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}
+  .gs-u b{font-size:30px;font-weight:800;color:#1A1A1A;line-height:1.1}
+  .gs-u span{font-size:16px;font-weight:600;color:#4A453C}
+  .gs-t{margin-top:10px;padding-top:10px;border-top:1px solid #E7DFCF;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#7A7263}
+  .gs-none{font-size:15px;font-weight:700;color:#7A7263}
+  .gs-n{margin-top:8px;font-size:10.5px;color:#9A6B1F}
   /* ── THE TWO CORNER BADGES MUST BE ONE BOX ──
      They sit at the same top on the same card, so any difference in their metrics reads as a
      misalignment. The size badge is outlined and the kit badge was not, which made it 3px taller
@@ -5015,6 +5054,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
 ${/* Money, the priced inventory table, the crew plan and logged spend are left out: this sheet
      goes to the people setting up the event, who need what goes where, not what it costs. The
      zone layout pages below carry every item, with photo, qty and size. */ ""}
+${gensetPage}
 ${fixedVenuePages}
 ${zoneHtml}
 ${combined ? "" : (truckRows.length || loadRows.length) ? sect(t("Loading & dispatch"),
