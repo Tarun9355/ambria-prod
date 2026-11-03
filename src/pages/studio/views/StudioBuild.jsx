@@ -164,8 +164,9 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   // that amount. Fabric is never in it, same as calcStructCost.
   const guestDisc = guestDiscPct > 0 ? Math.round(rowCost.truss * guestDiscPct / 100) : 0;
   // Masking has its own Repeat button (zc.mkRep): marked Repeat, or — when never touched — following the zone's
-  // Truss & Masking Repeat chip, as it always did. The discount reaches the price only with the client-discount
-  // toggle on (guestFabricDiscPct is 25 exactly then). Same helper calcStructCost uses, so card and bill agree.
+  // Truss & Masking Repeat chip, as it always did. guestFabricDiscPct follows the same Fixed-Venue/Repeat
+  // split as guestDiscPct (structDiscountFor(...).truss) — 25 when either applies, else 0. Same helper
+  // calcStructCost uses, so card and bill agree.
   const maskRepOn = maskingRepeatOn(zc, trussRepeat);
   const maskingShown = guestFabricDiscPct > 0 ? maskingGuestCost(rowCost.masking, zc, trussRepeat, guestFabricDiscPct) : rowCost.masking;
   const maskingRepOff = Math.max(0, rowCost.masking - maskingShown);
@@ -5722,7 +5723,7 @@ undefined
                   DCTrussTab still shows that detailed breakdown for its own purposes, unaffected. */}
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(zc,"truss")||!!structDiscountFor(zc,aVenue)?.truss} />}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(zc,"truss")||!!structDiscountFor(zc,aVenue)?.truss} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseNow()} guestPriceMultiplier={guestPriceMultiplier} />}
@@ -6237,7 +6238,7 @@ undefined
                   {secHead(<IconRuler size={14}/>,"Zone Dimensions","#C9A96E")}
                   <TrussStack S={S} customCeilingField={ownsLive?customCeilingField:noCustomField} k={zk} zc={cfgCur} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(cfgCur,aVenue)?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(cfgCur,"truss")||!!structDiscountFor(cfgCur,aVenue)?.truss} />
+                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(cfgCur,"truss")||!!structDiscountFor(cfgCur,aVenue)?.truss} />
                   <FloorStack S={S} zc={cfgCur} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} guestPriceMultiplier={guestPriceMultiplier} />
                 </div>

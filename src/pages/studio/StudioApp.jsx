@@ -2189,7 +2189,6 @@ export default function StudioApp() {
   const [gensetCostRate62, setGensetCostRate62] = useState(0);  // 62 KVA — our cost
   const [genset62, setGenset62] = useState(null);           // override for the smaller unit, per deal — null = follow venue
   const [bufferTiers, setBufferTiers] = useState(TR_DBT);
-  const [newVenue, setNewVenue] = useState({ tier: "inhouse", name: "", rate: 0, gensets: 1 });
   const [newTC, setNewTC] = useState({ item: "", perTruck: 0, unit: "pc" });
 
   // ═══ TEMPLATE STATE ═══
@@ -12623,7 +12622,7 @@ export default function StudioApp() {
     // pre-built map directly rather than re-deriving it from rcSubcatFactors itself.
     rcFloralModeByKey,
     trVenues, setTrVenues, truckCap, setTruckCap, floralPerTruck, setFloralPerTruck, gensetRate, setGensetRate, bufferTiers, setBufferTiers,
-    newVenue, setNewVenue, newTC, setNewTC, TR_TIERS,
+    newTC, setNewTC, TR_TIERS,
     // templates
     templates, setTemplates, saveTpl, tplEdit, setTplEdit, tplTab, setTplTab,
     // zones

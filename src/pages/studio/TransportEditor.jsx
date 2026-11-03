@@ -6,9 +6,9 @@ import { resolveVenueGensets } from "../../lib/studio/taxonomy";
 
 export default function TransportEditor({ ctx }) {
   const {
-    S, isDark, accent, border, textP, textS, showMsg,
+    S, isDark, accent, border, textP, textS,
     trVenues, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, saveTR,
-    newVenue, setNewVenue, TR_TIERS,
+    TR_TIERS,
     allInhouseVenues, allOutdoorDB,
   } = ctx;
   // Venue NAMES come from Settings → Venues (central list); transport only holds rate/tier/genset per venue.
@@ -48,14 +48,6 @@ export default function TransportEditor({ ctx }) {
   // (TruckCapacityEditor.jsx, owner ask 2026-10-16) — this screen no longer touches truckCap/
   // bufferTiers at all.
 
-  // Venues
-  const updTrVenue = (id, f, v) => { const num = f === "rate" || f === "gensets"; saveTR(trVenues.map((x) => (x.id === id ? { ...x, [f]: num ? Number(v) || 0 : v } : x))); };
-  const delTrVenue = (id) => saveTR(trVenues.filter((x) => x.id !== id));
-  const addTrVenue = (tierId) => {
-    if (newVenue.tier !== tierId || !(newVenue.name || "").trim()) { showMsg && showMsg("Enter a venue name", "red"); return; }
-    saveTR([...trVenues, { id: "V" + Date.now().toString(36).slice(-5).toUpperCase(), tier: tierId, name: newVenue.name.trim(), rate: newVenue.rate || 0, gensets: newVenue.gensets || 1 }]);
-    setNewVenue({ tier: "", name: "", rate: 0, gensets: 1 });
-  };
   const numInput = { padding: "6px 10px", borderRadius: 8, border: `1px solid ${border}`, background: isDark ? "#0F0F1A" : "#fff", color: isDark ? "#fff" : "#000", fontSize: 14, fontWeight: 700, textAlign: "right", outline: "none", fontFamily: "inherit" };
 
   return (<div style={{ maxWidth: 900 }}>
