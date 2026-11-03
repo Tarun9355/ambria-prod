@@ -3915,11 +3915,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const ids = new Set(); src.forEach(({ g }) => usedIdsOf(g).forEach(id => ids.add(id)));
       return { ids, label: src.map(({ g }) => g?.type || g?.name || "").filter(Boolean).join(" + ") };
     };
-    const itemStatusOf = (fn, reuseSrc, zk, el, inv) => {
+    const itemStatusOf = (fn, reuseSrc, zk, el, inv) => { // eslint-disable-line no-unused-vars
       const out = [];
-      const zc = fn?.zones?.[zk];
-      if (typeof el?.repeatOverride === "boolean" ? el.repeatOverride : repeatCatFor(zc, "elements")) out.push("♻ " + t("Repeat"));
-      else if (inv && reuseSrc?.ids.has(String(inv.id))) out.push("♻ " + t("Reused from {fn}", { fn: reuseSrc.label || t("the earlier function") }));
+      // Only a Repeat set by hand on the item in Build (owner ask 2026-11-03) - not the zone's Elements chip nor the automatic
+      // reuse from an earlier function, which marked most of a booking "Repeat" without anyone choosing it.
+      if (el?.repeatOverride === true) out.push("♻ " + t("Repeat"));
       const standing = inv ? standingQty(fvSettings, fn?.venue, inv.id) : 0;
       if (standing > 0) out.push("📌 " + t("Fixed at venue ({n} standing)", { n: standing }));
       return out.join(" · ");
