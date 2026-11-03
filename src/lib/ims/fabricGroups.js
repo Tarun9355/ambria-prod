@@ -96,21 +96,27 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
     let allLive = true, anyEntry = false;
     entries.forEach((e) => {
       const q = Number(kind.qtyOf(e.fab || {})) || 0;
-      if (!(q > 0)) return;
+      // Build's own "Loose fabric" rows on this truss (row.looseFabric: [{ kind, colour, qty }], the salesperson's colour) - priced
+      // with the rest (pricing.js looseFabricQty) and recorded by Deal Check, but left out here, so a zone's loose Liza / masking /
+      // curtains never reached the Setup Book or the Fabric block (owner report 2026-11-03).
+      const looseRows = (Array.isArray(e.row?.looseFabric) ? e.row.looseFabric : []).filter((lf) => lf?.kind === kind.key && num(lf.qty) > 0);
+      const looseQ = looseRows.reduce((t, lf) => t + num(lf.qty), 0);
+      const looseCols = looseRows.map((lf) => ({ colour: String(lf.colour || "").trim() || "(unassigned)", qty: num(lf.qty) }));
+      if (!(q > 0) && !(looseQ > 0)) return;
       anyEntry = true;
       const isLive = !!fnPalettes && typeof fnPalettes[e.fi] === "string";
       if (!isLive) allLive = false;
       const k = `${e.fi}|${e.zk}`;
       const z = byZone.get(k) || { fi: e.fi, zoneKey: e.zk, name: e.zLabel, fnLabel: e.fnLabel || "", photo: e.photo || "", qty: 0, notes: [], tier: new Set(), dims: [], colours: new Map(), standing: true };
-      z.qty += q;
+      z.qty += q + looseQ;
       if (!e.repeat) z.standing = false;
       const dt = trussDimsText(e.row);
       if (dt && !z.dims.includes(dt)) z.dims.push(dt);
       let rowCols;
       if (isLive) {
         // the colour this row's fabric goes in under the function's palette - a repeat zone's standing fabric too
-        rowCols = resolveFabricAllocation(e.row?.[kind.allocField], Math.ceil(q), anchorsForPaletteByMaterial([], fnPalettes[e.fi], kind.key), liveStock, kind.qtyField)
-          .map((a) => ({ colour: a.colour || "(unassigned)", qty: num(a.qty) }));
+        rowCols = [...(q > 0 ? resolveFabricAllocation(e.row?.[kind.allocField], Math.ceil(q), anchorsForPaletteByMaterial([], fnPalettes[e.fi], kind.key), liveStock, kind.qtyField)
+          .map((a) => ({ colour: a.colour || "(unassigned)", qty: num(a.qty) })) : []), ...looseCols];
         // only new fabric counts towards what is pulled from stock; a repeat zone's is already standing
         if (!e.repeat) rowCols.forEach((c) => {
           const ck = colourKey(c.colour);
@@ -118,10 +124,16 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
           g[e.row?.useNewFabric ? "new" : "old"] += c.qty;
           liveGroup.set(ck, g);
         });
-      } else rowCols = rowColours(kind, e, fabricPlan);
+      } else {
+        rowCols = rowColours(kind, e, fabricPlan);
+        // Deal Check's record of this row already holds its loose fabric; the row's own saved allocation (no record yet) does not
+        const recorded = (Array.isArray(fabricPlan?.rows) ? fabricPlan.rows : []).some((r) => r.kind === kind.key && r.fi === e.fi && r.zk === e.zk && (r.ri || 0) === (e.ri || 0));
+        if (!recorded) rowCols = [...rowCols, ...looseCols];
+      }
       rowCols.forEach((c) => { const ck = colourKey(c.colour); const cur = z.colours.get(ck) || { colour: c.colour, qty: 0 }; cur.qty += c.qty; z.colours.set(ck, cur); });
-      const note = applicationText(kind, e.fab, e.row);
+      const note = q > 0 ? applicationText(kind, e.fab, e.row) : "";
       if (note) z.notes.push(note);
+      if (looseQ > 0) z.notes.push(`${r2(looseQ)} ${kind.unit} loose`);
       z.tier.add(e.row?.useNewFabric ? "New" : "Old");
       byZone.set(k, z);
     });
