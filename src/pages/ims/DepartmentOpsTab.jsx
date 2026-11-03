@@ -4196,6 +4196,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           struct: zStruct,
           fabric: fabricByZone.get(`${fi}|${zk}`) || [],
           trussTable: trussTableByZone.get(`${fi}|${zk}`) || [],
+          note: String(fn?.notes?.[zk] || "").trim(),
           items,
         });
       });
@@ -4347,9 +4348,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const TK_LINE = 19, TK_BASE = 52, TK_LABEL = 20, TK_GAP = 10;
       const trussBlockPx = (tt) => (tt.label ? TK_LABEL : 0) + TK_BASE + Math.max(tt.battaRft > 0 && tt.battaBuf > 0 ? 2 : 1, tt.pillars.length, tt.beams.length) * TK_LINE;
       const trussPx = trussRows.length ? trussRows.reduce((h, tt) => h + trussBlockPx(tt) + TK_GAP, 0) + 2 : 0;
-      const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + (strip ? 44 : 0) + (fabStrip ? 44 : 0) + trussPx;
+      // Build's note for the zone (owner ask 2026-11-03), on its first page under the strips: up to 8 lines of about 95
+      // characters, its height out of the photo like the strips above, so the page still fits one sheet.
+      const NOTE_LINE = 18, NOTE_MAX_LINES = 8;
+      const noteText = !cont ? (pg.note || "") : "";
+      const noteLines = noteText ? Math.min(NOTE_MAX_LINES, noteText.split(/\r?\n/).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 95)), 0)) : 0;
+      const notePx = noteLines ? 30 + noteLines * NOTE_LINE : 0;
+      const noteBox = noteLines ? `<div class="znote" style="max-height:${notePx - 12}px"><b>📝 ${t("Note")}</b><span>${esc(noteText)}</span></div>` : "";
+      const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + (strip ? 44 : 0) + (fabStrip ? 44 : 0) + trussPx + notePx;
       // the fabric row comes out of the photo's floor too, so it never makes a page taller than it was without it
-      const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(Math.max(160, 260 - (fabStrip ? 44 : 0) - trussPx), PAGE_PX - headPx - rows * (ROW_H + ARROW));
+      const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(Math.max(160, 260 - (fabStrip ? 44 : 0) - trussPx - notePx), PAGE_PX - headPx - rows * (ROW_H + ARROW));
       const pieces = (groups) => groups.reduce((a, g) => a + (Number(g.n) || 0), 0);
       const sizeLines = (groups) => groups.map(g => `<div class="ztk-l"><b>${esc(g.n)}</b><span>× ${esc(g.len)} ft</span></div>`).join("");
       const tkCard = (icon, title, count, body) => `<div class="ztk-c"><div class="ztk-h"><span>${icon} ${title}</span>${count != null ? `<b>${esc(count)}</b>` : ""}</div>${body}</div>`;
@@ -4382,6 +4390,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         ${strip ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html != null ? c.html : esc(c.v)}</span>`).join("")}</div>` : ""}
         ${fabStrip ? `<div class="zst">${pg.fabric.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html}</span>`).join("")}</div>` : ""}
         ${trussCard}
+        ${noteBox}
         <div class="zs" style="height:${stageH}px">
           <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : `<span>${t("No zone photo")}</span>`}</div>
           ${cards}
@@ -4890,6 +4899,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
      structure or a single prop; it is the zone's own span. */
   .zst{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
   .ztk-w{margin:0 0 10px}
+  .znote{box-sizing:border-box;margin:0 0 12px;padding:8px 14px;border:1px solid #F1D99A;border-radius:10px;background:#FFF9E8;font-size:12.5px;line-height:18px;color:#5A3E0A;white-space:pre-wrap;overflow:hidden}
+  .znote b{display:inline;margin-right:8px;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9A6B1F}
   .ztk-t{height:20px;font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263}
   .ztk{display:flex;box-sizing:border-box;border:1px solid #DDD4C2;border-radius:12px;background:#FBF8F1;overflow:hidden}
   .ztk-c{flex:1;min-width:0;box-sizing:border-box;padding:10px 16px;overflow:hidden}

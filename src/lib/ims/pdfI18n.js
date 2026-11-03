@@ -124,6 +124,7 @@ export const PDF_HI = {
   "Beams": "बीम",
   "Truss breakdown": "ट्रस का हिसाब",
   "Power": "बिजली",
+  "Note": "नोट",
   "Genset": "जेनसेट",
   "Gensets for this event": "इस इवेंट के जेनसेट",
   "No genset": "कोई जेनसेट नहीं",

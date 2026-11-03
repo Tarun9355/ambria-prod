@@ -3094,6 +3094,13 @@ export default function DealCheckOverlay({ ctx }) {
                                 {unmatchedCount>0 && <span title={`${unmatchedCount} not matched`} style={{display:"inline-flex",alignItems:"center",gap:4,height:26,padding:"0 9px",borderRadius:7,background:"rgba(239,68,68,0.14)",color:"#DC2626",fontWeight:700,fontSize:11}}><IconAlert size={12}/>{unmatchedCount}</span>}
                               </div>
                             </div>
+                            {/* Build's note for this zone (owner ask 2026-11-03) - shown even when the zone is folded, it is what the team needs to know about it. */}
+                            {(() => { const note = String(fns[fnIdx]?.elNotes?.[zk] || "").trim(); return note ? (
+                              <div style={{display:"flex",gap:8,alignItems:"flex-start",padding:"9px 16px",background:"#FFFBEB",borderBottom:"1px solid #FDE68A",fontSize:12.5,lineHeight:1.45,color:"#78350F"}}>
+                                <span aria-hidden="true">📝</span>
+                                <span style={{whiteSpace:"pre-wrap",minWidth:0,overflowWrap:"anywhere"}}><b style={{fontWeight:700}}>Note:</b> {note}</span>
+                              </div>
+                            ) : null; })()}
                             {!collapsed && (
                               <div style={{padding:"10px 14px",display:"flex",flexDirection:"column",gap:10}}>
                                 {/* Platform card(s), one per platform row — re-based onto Platform Config

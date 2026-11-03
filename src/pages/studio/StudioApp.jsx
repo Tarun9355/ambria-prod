@@ -1079,6 +1079,10 @@ function rowToAlloc(row) { return { ...(row.pool || {}), date: row.date, events:
 // IMS already persists this table row-level; Studio now reads/writes the SAME table so it finally
 // sees IMS-owned fields (deptOps / dept actuals) live — the missing link behind stale Dept-Ops data.
 // Full eo in `data`; column map mirrors IMS's writer exactly.
+// A function's zone notes as IMS gets them: only zones with something written, trimmed (Build's "Client Notes" per zone).
+function zoneNotesOf(elNotes) {
+  return Object.fromEntries(Object.entries(elNotes || {}).map(([zk, v]) => [zk, String(v || "").trim()]).filter(([, v]) => v));
+}
 function rowToEO(row) { return { ...(row?.data || {}), id: row.id, status: row.status ?? row?.data?.status }; }
 function eoToRow(eo) {
   return { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo };
@@ -3985,6 +3989,8 @@ export default function StudioApp() {
           zoneNames: Object.fromEntries((fd.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
           // The Build page's own zone order (dragged by hand); IMS's PDFs list zones in it.
           zoneOrder: Array.isArray(fd.zoneOrder) ? [...fd.zoneOrder] : [],
+          // Build's zone notes, so Deal Check's notes print on the Setup Book's zone pages and follow an edit at once.
+          notes: zoneNotesOf(fd.elNotes),
           // The function's Fabric Palette as Build has it right now, so IMS's Fabric block follows a palette change at once (it works the colours out from this
           // and the live fabric stock) instead of waiting for the next Deal Check sync. fabricPaletteLive marks the field as kept live (a constant, not a time, so it never changes the layout fingerprint).
           fabricPalette: fd.fnPalette || "",
@@ -4081,6 +4087,8 @@ export default function StudioApp() {
           zoneNames: Object.fromEntries((fd.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
           // The Build page's own zone order (dragged by hand); IMS's PDFs list zones in it.
           zoneOrder: Array.isArray(fd.zoneOrder) ? [...fd.zoneOrder] : [],
+          // Build's zone notes, so Deal Check's notes print on the Setup Book's zone pages and follow an edit at once.
+          notes: zoneNotesOf(fd.elNotes),
           // The function's Fabric Palette as Build has it right now, so IMS's Fabric block follows a palette change at once (it works the colours out from this
           // and the live fabric stock) instead of waiting for the next Deal Check sync. fabricPaletteLive marks the field as kept live (a constant, not a time, so it never changes the layout fingerprint).
           fabricPalette: fd.fnPalette || "",
@@ -8657,6 +8665,7 @@ export default function StudioApp() {
         dims: Object.fromEntries(Object.entries(fnData.zoneConfig || {}).map(([zk, zc]) => [zk, zc?.dims || {}])),
         zoneNames: Object.fromEntries((fnData.customZones || []).filter(cz => cz && cz.id).map(cz => [cz.id, cz.name || ""])),
         zoneOrder: Array.isArray(fnData.zoneOrder) ? [...fnData.zoneOrder] : [],
+        notes: zoneNotesOf(fnData.elNotes),
         decorCost: bd.decorTotal,
         transportCost: bd.transportTotal,
         // The gensets this function runs on - the venue's counts or this deal's override, as Deal Check prices them. The
