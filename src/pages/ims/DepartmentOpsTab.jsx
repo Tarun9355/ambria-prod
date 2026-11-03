@@ -3847,8 +3847,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       // "— None —" is stored as the CARPET_OFF sentinel: no carpet, so no Carpet chip (it printed "Carpet __off__")
       const hasCarpet = !!z.cpT && z.cpT !== CARPET_OFF;
       if (hasCarpet) out.push({ k: t("Carpet"), v: [hn(carpetName(z.cpT)), floor].filter(Boolean).join(" · ") });
-      // Masking hangs on a truss — with no sized truss there is nothing to mask (and nothing billed).
-      if (z.mkOn && (hasTruss || sizedExtra.length)) out.push({ k: t("Masking"), v: t("Yes") });
+      // No "Masking Yes" chip (owner ask 2026-11-03): the wall masking prints with its colour and pieces in the fabric row.
       if (!z.plH && !hasCarpet && floor) out.push({ k: t("Floor"), v: floor });
       return out;
     };
