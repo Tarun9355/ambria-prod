@@ -9216,7 +9216,7 @@ export default function StudioApp() {
         // the unseen run started and ended; give up on this deal after 90 s so one stuck run
         // cannot hold the rest.
         while (Date.now() - t0 < 90000 && !sw.stop) {
-          await sleep(500);
+          await sleep(250);
           if (activeClientIdRef.current !== c.id) break;
           if (dcHeadlessRef.current) sawRun = true;
           const eo = eoOf(c);
@@ -9224,12 +9224,13 @@ export default function StudioApp() {
           if (sawRun && !dcHeadlessRef.current && Date.now() - t0 > 4000) { await sleep(1500); break; }
           if (!sawRun && Date.now() - t0 > 40000) break; // the run never started (empty build / already fresh)
         }
-        await sleep(1200); // let the run's last flush land before the deal is closed
+        await sleep(400); // let the run's last flush land before the deal is closed (the sync's own write has already echoed back)
         sw.id = null;
         if (activeClientIdRef.current === c.id) sweepFnsRef.current.startNewDeal();
         done++;
         tell("progress", { done, total: queue.length });
-        for (let w = 0; w < 10 && activeClientIdRef.current; w++) await sleep(300); // closed deal settles
+        // the closed deal settles before the next one opens - not needed after the last (a one-event sync ends here)
+        if (done < queue.length) for (let w = 0; w < 10 && activeClientIdRef.current; w++) await sleep(300);
       }
       tell("done", { done, total: queue.length, skipped });
     } catch { tell("done", { done, total: 0, error: true }); /* best effort — the auto-sync on open still covers each deal */ }
@@ -9243,7 +9244,7 @@ export default function StudioApp() {
     if (sweepStartedRef.current) return;
     // Why it has not started yet, told to the page that opened this frame (IMS's button) so a stuck
     // run says what it is waiting for instead of just never finishing.
-    const why = restoring ? "still restoring a deal" : !authUser ? "not signed in inside the hidden frame" : !(clientLedger || []).length ? "clients not loaded yet" : !(eventOrders || []).length ? "events not loaded yet" : !buildRestoredRef.current ? "start-up restore not finished" : activeClientId ? "a deal is open" : step !== 0 ? "not on Event Info (step " + step + ")" : (clientName || clientPhone) ? "Event Info is pre-filled" : dcRun ? "Deal Check is running" : "";
+    const why = restoring ? "still restoring a deal" : !authUser ? "not signed in inside the hidden frame" : !(clientLedger || []).length ? "clients not loaded yet" : !(eventOrders || []).length ? "events not loaded yet" : !buildRestoredRef.current ? "start-up restore not finished" : activeClientId ? "a deal is open" : step !== 0 ? "not on Event Info (step " + step + ")" : (clientName || clientPhone) ? "Event Info is pre-filled" : dcRun ? "Deal Check is running" : !pricingReady ? "prices not loaded yet" : "";
     if (why !== sweepWhyRef.current) {
       sweepWhyRef.current = why;
       try { window.parent?.postMessage({ type: "ambria-planning-sweep", phase: "wait", reason: why || "starting" }, window.location.origin); } catch { /* not framed */ }
@@ -9253,9 +9254,9 @@ export default function StudioApp() {
       if (sweepStartedRef.current || activeClientIdRef.current) return;
       sweepStartedRef.current = true;
       runPlanningSweepRef.current?.();
-    }, 4000);
+    }, 500); // was a flat 4s: the gate above now waits for the prices themselves (pricingReady), which is what that time was for
     return () => clearTimeout(t);
-  }, [restoring, authUser, activeClientId, step, clientName, clientPhone, dcRun, clientLedger, eventOrders]);
+  }, [restoring, authUser, activeClientId, step, clientName, clientPhone, dcRun, clientLedger, eventOrders, pricingReady]);
 
   // Backstop: if the ledger never arrives — offline, a failed fetch — drop the gate anyway rather
   // than leaving the app on a spinner with no way forward.
@@ -11375,6 +11376,9 @@ export default function StudioApp() {
     // gate that fetches them back in, the moment Deal Check actually opens for this client. Every
     // other Deal Check read of these fields happens strictly after this point (Generate, the restore
     // effect below, reconcileSoldInventoryBlocks), so this one await is sufficient.
+    // The inventory + blocks download (the biggest of the open) starts now, alongside this client's own heavy fields, instead
+    // of after them: fetchIMSData below picks up this same request (fetchRawIMS shares one for a few seconds).
+    void fetchRawIMS();
     const clientRec = activeClientId ? await ensureClientHeavyFieldsLoaded(activeClientId) : null;
     const rowDraft = (clientRec?.dcDraft && typeof clientRec.dcDraft === "object" && !Array.isArray(clientRec.dcDraft)) ? clientRec.dcDraft : null;
     const cachedForThisClient = rowDraft;
