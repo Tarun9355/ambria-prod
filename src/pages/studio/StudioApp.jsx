@@ -9132,11 +9132,13 @@ export default function StudioApp() {
     // The single-function path's toast, gone for the reason given on the multi-function one above.
   }, [events, allVideos, ytVideoTags]);
 
-  // ── STOP TWO USERS EDITING THE SAME DEAL AT ONCE ──
+  // ── STOP A SECOND LIVE EDITOR ON THE SAME DEAL — EVEN THE SAME PERSON'S OWN OTHER DEVICE ──
   // Confirmed race-condition risk (Sangeeta, 2026-11-03) — two concurrent editors on the same
   // client's build is exactly the kind of thing that let one function's content land on a
   // different function's slot. suspiciousDuplicateFnIdxs (sessionData.js) stops that symptom from
-  // reaching the database; this stops a second live editor from starting in the first place.
+  // reaching the database; this stops a second live editor from starting in the first place. One
+  // device at a time PER PERSON (2026-11-03, owner ask) — this person's own second tab/device is
+  // exactly as able to end up holding stale/aliased state as a different person's would.
   // Which client this tab's presence channel currently claims, so switching clients (by ANY path,
   // not just loadClientSessionGuarded below) can always find and release it, and so a second claim
   // on the SAME client this tab already holds doesn't leak a channel.
@@ -9169,11 +9171,18 @@ export default function StudioApp() {
       dealPresenceRef.current = null;
     }
     if (!client?.id || !authUser?.id) { loadClientSession(client, session, landingStep, opts); return; }
-    const { channel, others } = await claimDealPresence(client.id, { id: authUser.id, name: authUser.name || "Someone" });
+    const { channel, others, selfElsewhere } = await claimDealPresence(client.id, { id: authUser.id, name: authUser.name || "Someone" });
     if (others.length) {
       try { supabase.removeChannel(channel); } catch { /* ignore */ }
       const who = others.map(o => o?.userName || "Someone").join(", ");
       showMsg?.(`${who} ${others.length > 1 ? "are" : "is"} already editing this deal right now — wait for them to finish before opening it.`, "red");
+      return;
+    }
+    // One device at a time PER PERSON too, not just "no two different people" — this user's own
+    // other tab/device already has it open.
+    if (selfElsewhere) {
+      try { supabase.removeChannel(channel); } catch { /* ignore */ }
+      showMsg?.("You already have this deal open on another device or tab — close that one before opening it here.", "red");
       return;
     }
     dealPresenceRef.current = { channel, clientId: client.id };
