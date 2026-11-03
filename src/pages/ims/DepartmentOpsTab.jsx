@@ -3855,6 +3855,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // colours the Fabric block works out (lib/ims/fabricGroups - Deal Check's allocation, live from Build's Fabric Palette), in the
     // books that put up the truss and its fabric.
     const fabricByZone = new Map(); // "fi|zk" -> [{ k, html }]
+    // The drape density the zone's fabric is worked out at (owner ask 2026-11-03) - each sized truss row's own setting from
+    // Build (copied from its photo's library tag), Moderate when unset, the same default the fabric quantities use. Leads the
+    // fabric row, so it only shows where there is fabric; two trusses at different densities list both.
+    const DRAPE_LBL = { minimum: "Minimum", moderate: "Moderate", dense: "Dense" };
+    const withDrape = (fabric, z) => {
+      if (!fabric.length || !z) return fabric;
+      const rows = [z, ...(Array.isArray(z.extraTrussRows) ? z.extraTrussRows : [])].filter(r => r && (trussBaseArea(r).area || 0) > 0 && r.trussQty !== 0 && !r.noFabric);
+      const dens = [...new Set(rows.map(r => String(r.drapeDensity || "moderate").toLowerCase()))].filter(d => DRAPE_LBL[d]);
+      return dens.length ? [{ k: t("Drape"), html: esc(dens.map(d => t(DRAPE_LBL[d])).join(" / ")) }, ...fabric] : fabric;
+    };
     if (showStruct || dept === "Fabric") {
       try {
         buildFabricGroups({ entries: fabricEntriesOf(), lines: [], fabricPlan: sel?.fabricPlan, stock: trussInv, fnPalettes: fabricPalettesOf() }).groups.forEach(g => {
@@ -4194,7 +4204,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           zoneDims: zDims,
           dimsOf: zDimsOf,
           struct: zStruct,
-          fabric: fabricByZone.get(`${fi}|${zk}`) || [],
+          fabric: withDrape(fabricByZone.get(`${fi}|${zk}`) || [], fn?.zones?.[zk]),
           trussTable: trussTableByZone.get(`${fi}|${zk}`) || [],
           note: String(fn?.notes?.[zk] || "").trim(),
           items,
