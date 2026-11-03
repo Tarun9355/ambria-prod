@@ -3862,6 +3862,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // ── THE FABRIC COLOURS ── Liza / Velvet curtain / Wall masking colour of each zone, under the truss size (owner ask 2026-11-01): the
     // colours the Fabric block works out (lib/ims/fabricGroups - Deal Check's allocation, live from Build's Fabric Palette), in the
     // books that put up the truss and its fabric.
+    // A fabric colour on the page: its photo from the fabric stock where it has one (owner ask 2026-11-03), else a dot of its colour.
+    const colourMark = (name, hex, photo) => photo
+      ? `<i class="fph" style="${bgCss(photo, 60)}" ${bgData(photo, 60)}></i>`
+      : `<i style="background:${esc(swatchHexFor(name, settings?.colourCatalogue, hex))}"></i>`;
     const fabricByZone = new Map(); // "fi|zk" -> [{ k, html }]
     // The drape density the zone's fabric is worked out at (owner ask 2026-11-03) - each sized truss row's own setting from
     // Build (copied from its photo's library tag), Moderate when unset, the same default the fabric quantities use. Leads the
@@ -3883,7 +3887,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             // quantity, so the crew could not tell how much Liza / Velvet the zone takes); no colour picked yet: the zone's own quantity.
             const qtyTxt = (q) => Number(q) > 0 ? ` ${esc(q)} ${esc(hu(g.unit))}` : "";
             const html = cols.length
-              ? cols.map(c => `<b class="fpc"><i style="background:${esc(swatchHexFor(c.colour, settings?.colourCatalogue, c.hex))}"></i>${esc(hn(c.colour))}${qtyTxt(c.qty)}</b>`).join("") + (z.standing ? `<b class="fpc">♻ ${t("Repeat")}</b>` : "")
+              ? cols.map(c => `<b class="fpc">${colourMark(c.colour, c.hex, c.photo)}${esc(hn(c.colour))}${qtyTxt(c.qty)}</b>`).join("") + (z.standing ? `<b class="fpc">♻ ${t("Repeat")}</b>` : "")
               : esc(t("Colour not picked")) + (Number(z.qty) > 0 ? ` · <b>${qtyTxt(z.qty).trim()}</b>` : "");
             const key = `${z.fi}|${z.zoneKey}`;
             fabricByZone.set(key, [...(fabricByZone.get(key) || []), { k: t(g.label), html }]);
@@ -4937,6 +4941,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .zst .fpc{font-weight:700;margin-right:10px}
   .zst .fpc:last-child{margin-right:0}
   .zst .fpc i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:-1px;border:1px solid rgba(0,0,0,.18)}
+  .zst .fpc i.fph{width:20px;height:20px;border-radius:5px;border:1px solid rgba(0,0,0,.15);background-size:cover;background-position:center;vertical-align:-6px;margin-right:6px}
   .zt .zl{font-style:normal;font-size:9px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263;margin-right:7px}
   .zs{position:relative;width:706px}
   /* The zone photo is mounted like a print: a white mat and a gold hairline, lifted off the
