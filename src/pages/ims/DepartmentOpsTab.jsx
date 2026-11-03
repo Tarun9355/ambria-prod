@@ -4609,20 +4609,22 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const list = (fns.length ? fns : [{ type: sel?.eventType || "", date: selDateStr, venue: sel?.venue }]).map((fn, fi) => ({ fn, fi, g: gensetsForFn(fn, trVenues) })).filter(r => r.g);
       if (!list.length) return "";
       const unit = (n, kva) => n > 0 ? `<div class="gs-u"><b>${esc(n)}</b><span>× ${kva} kVA</span></div>` : "";
-      const cards = list.map(({ fn, fi, g }) => {
+      const cardOf = ({ fn, fi, g }) => {
         const name = [hn(fn?.type) || (list.length > 1 ? t("Function {n}", { n: fi + 1 }) : ""), fn?.date].filter(Boolean).join(" · ");
         const none = !(g.kva125 > 0) && !(g.kva62 > 0);
         return `<div class="gs-c">
           <div class="gs-h"><span>⚡ ${esc(name || t("The event"))}</span>${fn?.venue ? `<i>${esc(hn(fn.venue))}</i>` : ""}</div>
           ${none ? `<div class="gs-none">${t("No genset")}</div>` : `${unit(g.kva125, "125")}${unit(g.kva62, "62.5")}<div class="gs-t">${t("Total {n} kVA", { n: esc(totalKva(g)) })}</div>`}
         </div>`;
-      }).join("");
-      return `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
-        <div class="zh"><div><div class="zk"><b>${t("Power")}</b></div><h2>${t("Genset")}</h2>
+      };
+      // Six cards a page (three rows of two) - a long multi-function booking continues on the next page.
+      const pages = chunks(list, 6);
+      return pages.map((c, i) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
+        <div class="zh"><div><div class="zk"><b>${t("Power")}</b>${pages.length > 1 ? ` · ${t("Part {part} of {parts}", { part: i + 1, parts: pages.length })}` : ""}</div><h2>${t("Genset")}</h2>
           <div class="orn l"><i></i><b></b><i></i></div>
           <div class="zm">${t("Gensets for this event")}</div></div></div>
-        <div class="gs-g">${cards}</div>
-      </section>`;
+        <div class="gs-g">${c.map(cardOf).join("")}</div>
+      </section>`).join("");
     })();
     const fixedVenuePages = (() => {
       const names = [...new Set((fns.length ? fns.map(f => f?.venue) : [sel?.venue]).filter(Boolean))];
