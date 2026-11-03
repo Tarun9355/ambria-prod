@@ -32,7 +32,6 @@ export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardC
   const [venues, setVenues] = useState({ inhouse: [], outdoor: [] });
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const [newVenue, setNewVenue] = useState({ tier: "inhouse", name: "", rate: 0, gensets: 1 });
   const [newTC, setNewTC] = useState({ item: "", perTruck: 0, unit: "pc" });
 
   useEffect(() => {
@@ -108,7 +107,7 @@ export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardC
     gensetCostRate62: tr.gensetCostRate62,
     bufferTiers: tr.bufferTiers || [],
     saveTR,
-    newVenue, setNewVenue, newTC, setNewTC,
+    newTC, setNewTC,
     TR_TIERS, TC_UNITS,
     rcItems, rcCats, rateCardCategories, inventory,
     allInhouseVenues, allOutdoorDB,
