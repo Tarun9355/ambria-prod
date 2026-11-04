@@ -4544,7 +4544,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // (by name — a zone-card item only ever carries a component COUNT, not the parts themselves).
     const kitBlocksByName = new Map(kitBlocks.map(k => [String(k.name || "").trim().toLowerCase(), k]));
     const detailCols = (parts) => (parts.length >= 4 ? 2 : 1);
-    const detailLongNames = (parts, cols) => { const per = cols === 2 ? 44 : 100; return parts.filter(p => String(p.name || "").trim().length + (p.tag ? p.tag.length + 1 : 0) > per).length; };
+    const detailLongNames = (parts, cols) => { const per = cols === 2 ? 44 : 100; return parts.filter(p => String(p.name || "").trim().length + (p.tag ? p.tag.length + 1 : 0) + (p.size ? p.size.length + 1 : 0) > per).length; };
     const detailH = (parts) => { const cols = detailCols(parts); return 68 + (Math.ceil(parts.length / cols) + Math.ceil(detailLongNames(parts, cols) / cols)) * 24 + 14; };
     // mix: a flower piece's real / artificial make-up (zone card's "Flowers" line) - in the header, and as a tag on every
     // flower line so whoever pulls a flower knows whether it is the real one or the artificial one (owner ask).
