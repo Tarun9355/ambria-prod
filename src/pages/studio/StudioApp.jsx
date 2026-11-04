@@ -141,7 +141,7 @@ import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/phot
 import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH, assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher.js";
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
-import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs } from "../../lib/studio/sessionData.js";
+import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs, mergeLmsFunctions } from "../../lib/studio/sessionData.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 import { thumbUrl } from "../../lib/studio/thumb.js";
@@ -9143,25 +9143,58 @@ export default function StudioApp() {
     const f0 = Array.isArray(client.functions) && client.functions[0] ? client.functions[0] : null;
     setClientPalette(f0?.palette || "Custom");
     setClientFlowerPalette(f0?.flowerPalette || "");
-    if (Array.isArray(client.functions) && client.functions.length > 1) {
-      setExtraFunctions(client.functions.slice(1).map(f => ({
-        type: f?.type || "",
-        date: f?.date || "",
-        venue: f?.venue || "",
-        shift: f?.shift || "",
-        pax: f?.pax || "",
-        palette: f?.palette || "Custom",
-        flowerPalette: f?.flowerPalette || "",
-      })));
-    } else {
-      setExtraFunctions([]);
-    }
+    // Hoisted out of the setExtraFunctions call so the LMS merge below (opts.lmsFunctions) can
+    // build its own "what did we just restore" picture from the SAME array, instead of a second,
+    // possibly-drifting re-derivation of this mapping.
+    const restoredExtras = (Array.isArray(client.functions) && client.functions.length > 1)
+      ? client.functions.slice(1).map(f => ({
+          type: f?.type || "",
+          date: f?.date || "",
+          venue: f?.venue || "",
+          shift: f?.shift || "",
+          pax: f?.pax || "",
+          palette: f?.palette || "Custom",
+          flowerPalette: f?.flowerPalette || "",
+        }))
+      : [];
+    setExtraFunctions(restoredExtras);
     setExpandedFnIdx(0);
     setActiveFnIdx(0);
+    // ── LMS LOAD: ADD WHAT LMS HAS THAT STUDIO DOESN'T (opts.lmsFunctions) ──
+    // Only ever appends a function LMS reports that nothing just-restored already represents —
+    // never reorders or overwrites a restored function's own identity/content. See
+    // mergeLmsFunctions' own comment (lib/studio/sessionData.js) for the full matching rules.
+    // Gated on the option being an array at all, so every OTHER caller of loadClientSession (the
+    // plain "Load →" re-open, the mount-restore effect, loadClientSessionGuarded) is byte-for-byte
+    // unaffected — this only ever runs from loadLmsLead.
+    const applyLmsMerge = (fn0Type, fn0Date, fn0Shift, buildsMap, landingIdx) => {
+      if (!Array.isArray(opts.lmsFunctions)) return null;
+      const restored = [{ type: fn0Type, date: fn0Date, shift: fn0Shift }, ...restoredExtras.map(f => ({ type: f.type, date: f.date, shift: f.shift }))];
+      const occupiedBuildIdxs = Object.keys(buildsMap || {}).map(Number).filter((n) => n >= restored.length);
+      const buildStamps = {};
+      occupiedBuildIdxs.forEach((idx) => {
+        const snap = buildsMap[idx];
+        buildStamps[idx] = { fnType: snap?.fnType || "", fnDate: snap?.fnDate || "" };
+      });
+      const merge = mergeLmsFunctions(restored, opts.lmsFunctions, { occupiedBuildIdxs, buildStamps, landingFnIdx: landingIdx });
+      if (merge.blocked || !merge.toAppend.length) return merge;
+      setExtraFunctions([...restoredExtras, ...merge.toAppend]);
+      if (merge.evictIdxs.length) {
+        const nextBuilds = { ...(buildsMap || {}) };
+        merge.evictIdxs.forEach((idx) => delete nextBuilds[idx]);
+        setFnBuilds(nextBuilds);
+        console.warn(`[loadClientSession] LMS merge: discarded a leftover build at index(es) ${merge.evictIdxs.join(", ")} that didn't match the function landing there.`);
+      }
+      if (merge.dateConflicts.length) {
+        console.warn(`[loadClientSession] LMS merge: ${merge.dateConflicts.length} function(s) have the same type but a different date in LMS than in Studio — left untouched.`, merge.dateConflicts);
+      }
+      return merge;
+    };
     if (!session) {
       setFnBuilds({});
+      const merge = applyLmsMerge(client.fn || "", client.eventDate || "", client.shift || "", {}, 0);
       setStep(landingStep);
-      return;
+      return merge;
     }
     if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
       const fn0Snap = session.fnSnapshots[0] || session.fnSnapshots["0"] || null;
@@ -9200,6 +9233,7 @@ export default function StudioApp() {
       if (!client.fn && fn0Snap?.fnType) setFn(fn0Snap.fnType);
       if (!client.eventDate && fn0Snap?.fnDate) setClientDate(fn0Snap.fnDate);
       if (!client.venue && fn0Snap?.fnVenue) setVenue(fn0Snap.fnVenue);
+      const mergeResult = applyLmsMerge(client.fn || fn0Snap?.fnType || "", client.eventDate || fn0Snap?.fnDate || "", client.shift || "", restoredBuilds, landingFnIdx);
       // Missing here left dcCustomItems holding whatever the PREVIOUS client/session had (state
       // never resets on its own) — so switching clients without a refresh could leak one client's
       // Deal Check custom items into another's snapshot, and the very next auto-save after a Load
@@ -9219,7 +9253,7 @@ export default function StudioApp() {
       // happened is telling you what you just watched, and it lands over the step nav while you are
       // trying to read it. Its companion further down (the single-function path) is gone for the
       // same reason. Failures still speak; this was only ever a success message.
-      return;
+      return mergeResult;
     }
     setFnBuilds({});
     if (session.eventDate) setClientDate(session.eventDate);
@@ -9246,8 +9280,10 @@ export default function StudioApp() {
     }
     if (session.elSelectedPhoto) setElSelectedPhoto(session.elSelectedPhoto);
     setGrpSel(Object.fromEntries(Object.entries(session.grpSel || {}).map(([k, arr]) => [k, new Set(arr)])));
+    const mergeResult = applyLmsMerge(session.fn || client.fn || "", session.eventDate || client.eventDate || "", client.shift || "", {}, 0);
     setStep(landingStep);
     // The single-function path's toast, gone for the reason given on the multi-function one above.
+    return mergeResult;
   }, [events, allVideos, ytVideoTags]);
 
   // ── STOP A SECOND LIVE EDITOR ON THE SAME DEAL — EVEN THE SAME PERSON'S OWN OTHER DEVICE ──
@@ -9609,6 +9645,16 @@ export default function StudioApp() {
       };
     });
     setExtraFunctions(extras);
+    // The full function list LMS currently reports for this contract, fn1 included — reusing f1/
+    // f1Venue/extras' own already-resolved values rather than a second resolveVenue pass, so this
+    // can never disagree with what was just set above. Handed to loadClientSession below so it can
+    // ADD any function LMS has that an existing client's restored session doesn't yet (owner report
+    // 2026-11-04, lead #00342 "Kamal": LMS had 3 functions, the client's last saved session only
+    // knew 2, and loading silently kept the stale 2 — see mergeLmsFunctions, lib/studio/sessionData.js).
+    const allLmsFns = [
+      { type: f1.fnLabel || "", date: f1.fnDate || "", venue: f1Venue.venue, venueOther: f1Venue.custom, shift: f1.shift || "", pax: Number(f1.pax) > 0 ? String(f1.pax) : "" },
+      ...extras,
+    ];
     const phoneKey = (lead.phone || "").replace(/\D/g, "");
     const phoneMatches = phoneKey
       ? clientLedger.filter(c => (c.phone || "").replace(/\D/g, "") === phoneKey)
@@ -9689,10 +9735,25 @@ export default function StudioApp() {
     const resumable = findLatestBuild(client.sessions, 0);
     const latestSession = resumable ? resumable.session : null;
     if (latestSession) {
-      loadClientSession(client, latestSession, 2, { landingFnIdx: resumable.fnIdx });
-      showMsg(existing?.status === "booked"
+      const merge = loadClientSession(client, latestSession, 2, { landingFnIdx: resumable.fnIdx, lmsFunctions: allLmsFns });
+      // Folded into this ONE toast, not a second showMsg call — a second call would just overwrite
+      // the first before anyone reads it.
+      let extra = "";
+      let tone = "green";
+      if (merge?.toAppend?.length) {
+        extra += ` · added from LMS: ${merge.toAppend.map(f => f.type || "function").join(", ")}`;
+      }
+      if (merge?.dateConflicts?.length) {
+        extra += ` · LMS has a different date for ${merge.dateConflicts.map(c => c.lms?.type || "a function").join(", ")} than Studio does — check before building`;
+        tone = "red";
+      }
+      if (merge?.blocked === "landing") {
+        extra += ` · couldn't check for new LMS functions while viewing a function Studio doesn't have saved`;
+        tone = "red";
+      }
+      showMsg((existing?.status === "booked"
         ? `Loaded LMS lead #${lead.entryNo} — opened the existing BOOKED deal for this phone (₹${Math.round(latestSession.total || 0).toLocaleString("en-IN")} estimate)`
-        : `Loaded LMS lead #${lead.entryNo} + restored last session`, "green");
+        : `Loaded LMS lead #${lead.entryNo} + restored last session`) + extra, tone);
     } else if (existing) {
       // Matched an existing client (booked or open) that has no saved session to restore —
       // an edge case (e.g. a legacy record), not the normal booked-with-a-real-estimate path above.

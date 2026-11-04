@@ -396,3 +396,145 @@ export function suspiciousDuplicateFnIdxs(allFns, activeFnIdx) {
   }
   return unsafe;
 }
+
+// ═══ LMS LOAD: ADD WHAT LMS HAS THAT STUDIO DOESN'T, WITHOUT REORDERING ANYTHING ═══
+//
+// Loading an LMS lead for a client who already has a saved Studio session used to let the SAVED
+// session's own function list silently win over LMS's current one — so a deal LMS now shows 3
+// functions for (Wedding/Haldi/Engagement) kept loading with only the 2 the last Studio save knew
+// about (owner report 2026-11-04, lead #00342 "Kamal"). The fix is additive only: never reorder or
+// overwrite a function Studio already has (that's live array-index content — reordering it is
+// exactly the class of bug that corrupted Sangeeta's and Sahiba's builds), only APPEND a function
+// LMS reports that nothing restored already represents.
+const normType = (s) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+const normDate = (d) => String(d ?? "").trim().slice(0, 10);
+const normShift = (s) => String(s ?? "").trim().toLowerCase();
+const LMS_SHIFT_RANK = { breakfast: 0, lunch: 1, evening: 2, dinner: 3 };
+const lmsShiftRank = (s) => { const k = normShift(s); return k in LMS_SHIFT_RANK ? LMS_SHIFT_RANK[k] : 99; };
+
+/**
+ * restored: this deal's CURRENT function list as Studio just restored it, index 0 = fn1 —
+ *   [{type, date, shift}, ...].
+ * lms: the LMS contract's current function list, in whatever order LMS returned it —
+ *   [{type, date, venue, venueOther, shift, pax, flowerPalette}, ...].
+ * opts.occupiedBuildIdxs: indices (>= restored.length) whose in-memory fnBuilds already holds SOME
+ *   snapshot — an older function's build left behind after it was removed from the function list.
+ * opts.buildStamps: { [idx]: {fnType, fnDate} } — what that leftover snapshot's OWN stamped identity
+ *   is (saveSession's per-function fnType/fnDate stamp), used to tell "this is genuinely that same
+ *   function's earlier work" apart from "this is a different function's build sitting in the way".
+ * opts.landingFnIdx: the function index the screen is actually about to show.
+ *
+ * Matching is type+date, one restored function to at most one LMS function (shift only breaks a
+ * tie between several same-type-same-date candidates — Studio's own hand-typed shift is often blank
+ * or edited, and requiring it in the key would append a false duplicate of an ordinary match). A
+ * same-type DIFFERENT-date pair is flagged (dateConflicts) and left untouched on both sides —
+ * auto-editing a function's date could silently move its stock blocks/availability pooling if it
+ * already has a build (the exact class of bug the Sangeeta incident was), and auto-appending a
+ * second copy is confusing noise for what is probably the SAME function with its date just moved in
+ * LMS. Only a genuinely unmatched LMS function gets appended — at the END of the function list,
+ * never inserted, so every already-restored index's content stays exactly where it is.
+ */
+export function mergeLmsFunctions(restored, lms, opts = {}) {
+  const { occupiedBuildIdxs = [], buildStamps = {}, landingFnIdx = 0 } = opts;
+  const restoredList = Array.isArray(restored) ? restored : [];
+  const lmsList = Array.isArray(lms) ? lms : [];
+  const R = restoredList.length;
+
+  // The screen is live on an index beyond what's restored (an orphan being viewed) — don't touch
+  // the function list out from under it.
+  if (landingFnIdx >= R) {
+    return { toAppend: [], adoptedIdxs: [], evictIdxs: [], dateConflicts: [], unmatchedRestoredCount: restoredList.length, blocked: "landing" };
+  }
+
+  const usedRestored = new Set();
+  const resolvedLms = new Set(); // LMS indices already matched, conflicted, or ignored (blank)
+  const dateConflicts = [];
+  const byShiftThenIdx = (f) => (a, b) => {
+    const sa = normShift(a.r?.shift) === normShift(f?.shift) ? 0 : 1;
+    const sb = normShift(b.r?.shift) === normShift(f?.shift) ? 0 : 1;
+    return sa !== sb ? sa - sb : a.ri - b.ri;
+  };
+
+  // Pass 1 — exact type+date match: that restored function already IS this LMS function; leave it.
+  // Bucketed by (type, date) rather than one greedy pass over LMS rows in order — two same-day
+  // functions of the same type (a Lunch sitting and a Dinner sitting) must each find THEIR OWN
+  // shift's restored row, not have whichever LMS row happens to come first grab the only candidate
+  // regardless of whether its shift actually matches.
+  const keyOf = (type, date) => `${normType(type)}|${normDate(date)}`;
+  const buckets = new Map(); // "type|date" -> { restoredIdxs: number[], lmsIdxs: number[] }
+  const bucketFor = (k) => { if (!buckets.has(k)) buckets.set(k, { restoredIdxs: [], lmsIdxs: [] }); return buckets.get(k); };
+  restoredList.forEach((r, ri) => bucketFor(keyOf(r?.type, r?.date)).restoredIdxs.push(ri));
+  lmsList.forEach((f, li) => {
+    const ft = normType(f?.type);
+    const fd = normDate(f?.date);
+    if (!ft && !fd) { resolvedLms.add(li); return; } // nothing to match or append
+    bucketFor(keyOf(f?.type, f?.date)).lmsIdxs.push(li);
+  });
+  buckets.forEach(({ restoredIdxs, lmsIdxs }) => {
+    if (!restoredIdxs.length || !lmsIdxs.length) return; // nothing to match in this bucket
+    const availRestored = [...restoredIdxs];
+    const pendingLms = [...lmsIdxs];
+    // Sub-pass a: give each LMS row its exact shift match first, in LMS order.
+    [...pendingLms].forEach((li) => {
+      const f = lmsList[li];
+      const pos = availRestored.findIndex((ri) => normShift(restoredList[ri]?.shift) === normShift(f?.shift));
+      if (pos === -1) return;
+      const ri = availRestored.splice(pos, 1)[0];
+      usedRestored.add(ri);
+      resolvedLms.add(li);
+      pendingLms.splice(pendingLms.indexOf(li), 1);
+    });
+    // Sub-pass b: whatever's left in this bucket (shift blank/edited on one side), pair by order.
+    pendingLms.forEach((li) => {
+      if (!availRestored.length) return;
+      const ri = availRestored.shift();
+      usedRestored.add(ri);
+      resolvedLms.add(li);
+    });
+  });
+
+  // Pass 2 — same type, different date: flag it, touch nothing (see function comment for why).
+  lmsList.forEach((f, li) => {
+    if (resolvedLms.has(li)) return;
+    const ft = normType(f?.type);
+    if (!ft) return;
+    const candidates = restoredList
+      .map((r, ri) => ({ r, ri }))
+      .filter(({ r, ri }) => !usedRestored.has(ri) && normType(r?.type) === ft && normDate(r?.date) !== normDate(f?.date))
+      .sort(byShiftThenIdx(f));
+    if (!candidates.length) return;
+    usedRestored.add(candidates[0].ri);
+    resolvedLms.add(li);
+    dateConflicts.push({ lms: f, restoredIdx: candidates[0].ri });
+  });
+
+  // Pass 3 — everything LMS still has that nothing restored matched: append, sorted date-then-shift
+  // (this is safe to sort — it only orders new TRAILING indices, never touches 0..R-1).
+  const toAppend = lmsList
+    .filter((f, li) => !resolvedLms.has(li))
+    .sort((a, b) => {
+      const da = normDate(a?.date), db = normDate(b?.date);
+      if (da !== db) return da < db ? -1 : 1;
+      return lmsShiftRank(a?.shift) - lmsShiftRank(b?.shift);
+    })
+    .map((f) => ({
+      type: f?.type || "", date: f?.date || "", venue: f?.venue || "", venueOther: f?.venueOther || "",
+      shift: f?.shift || "", pax: f?.pax || "", palette: "Custom", flowerPalette: f?.flowerPalette || "",
+    }));
+
+  // An appended function may land on an index that already has a leftover build in memory (an
+  // older function's content that outlived its own removal from the function list) — adopt it only
+  // if that leftover's OWN stamped identity actually matches what's landing there; otherwise it's a
+  // different function's decor and must not be silently inherited.
+  const adoptedIdxs = [];
+  const evictIdxs = [];
+  toAppend.forEach((entry, i) => {
+    const idx = R + i;
+    if (!occupiedBuildIdxs.includes(idx)) return;
+    const stamp = buildStamps[idx] || {};
+    const matches = normType(stamp.fnType) === normType(entry.type) && normDate(stamp.fnDate) === normDate(entry.date);
+    (matches ? adoptedIdxs : evictIdxs).push(idx);
+  });
+
+  return { toAppend, adoptedIdxs, evictIdxs, dateConflicts, unmatchedRestoredCount: restoredList.length - usedRestored.size, blocked: null };
+}
