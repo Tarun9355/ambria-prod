@@ -6361,13 +6361,15 @@ undefined
                       {sel?<span style={{fontSize:10,fontWeight:700,color:"#4F46E5"}}>✓ In use</span>:kit.id==="default"?<span style={{fontSize:10,color:textS}}>default</span>:null}
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {/* each part with its stock photo, so two kits are told apart at a glance */}
-                      {parts.map((c,i)=>{const pt=partOf(c);return(
+                      {/* the kit item itself first, then each part with its stock photo - as Build's "Kit - includes" list reads */}
+                      {[{itemId:item?.id,qty:1,_main:true},...parts].map((c,i)=>{const pt=partOf(c);return(
                         <span key={i} style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
                           {pt.photo
                             ? <img src={thumbUrl(pt.photo,64)} loading="lazy" decoding="async" alt="" style={{width:32,height:32,borderRadius:6,objectFit:"cover",flexShrink:0,background:isDark?"#1a1a2e":"#eee"}}/>
                             : <span aria-hidden="true" style={{width:32,height:32,borderRadius:6,flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>{pt.flower?"🌸":"📦"}</span>}
-                          <span style={{fontSize:11.5,color:textS,lineHeight:1.35,overflowWrap:"anywhere",minWidth:0}}>{pt.name} <b style={{color:textP}}>×{Number(c.qty)||1}</b></span>
+                          {c._main
+                            ? <span style={{fontSize:12,fontWeight:700,color:textP,lineHeight:1.35,overflowWrap:"anywhere",minWidth:0}}>{pt.name}</span>
+                            : <span style={{fontSize:11.5,color:textS,lineHeight:1.35,overflowWrap:"anywhere",minWidth:0}}>{pt.name} <b style={{color:textP}}>×{Number(c.qty)||1}</b></span>}
                         </span>);})}
                     </div>
                   </button>
