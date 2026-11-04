@@ -150,3 +150,78 @@ export const subscribeRow = (table, id, callback) => {
     .on("postgres_changes", { event: "*", schema: "public", table, filter: `id=eq.${id}` }, callback)
     .subscribe();
 };
+
+/**
+ * Claim presence on a client's deal — peek who's already there and, only if nobody (including this
+ * SAME user from another device/tab) is, mark this one present too, as ONE operation (peek-then-
+ * separately-track would let two opens in the same instant both see "nobody here" and both
+ * proceed). One device at a time PER PERSON, not just "no two different people" — the same user's
+ * own second tab/device is exactly as able to end up holding stale/aliased in-memory state as a
+ * different person's would (see suspiciousDuplicateFnIdxs, lib/studio/sessionData.js, the fix for
+ * the symptom when two concurrent editors — same person or different — already got one; this is
+ * the fix for not starting a second one in the first place).
+ *
+ * Realtime Presence, not a DB lock row on purpose — a crashed tab or dropped connection drops off
+ * this channel automatically within seconds, so there is no stale lock to find and clear by hand
+ * the way a lock row would need.
+ *
+ * Resolves with `{ channel, others, selfElsewhere }` once the channel's initial presence state
+ * lands (the same subscribe round-trip subscribeTable/subscribeRow already cost, nothing new):
+ *   - `others`: every DIFFERENT user (key !== me.id) already tracked on this deal right now.
+ *   - `selfElsewhere`: true when `me.id`'s OWN key is already tracked — i.e. this same person has
+ *     this deal open on another device/tab already (not this one, which hasn't tracked yet).
+ *   - `channel`: already tracking `me` (so the NEXT caller, anyone's, sees this tab) only when
+ *     BOTH `others` is empty AND `selfElsewhere` is false; left as a bare, untracked subscriber
+ *     otherwise — the caller must not call `.track()` on it themselves in that case, just
+ *     `supabase.removeChannel(channel)` it and block.
+ *
+ * Cleanup when this user navigates away: `supabase.removeChannel(channel)`, same as
+ * subscribeTable/subscribeRow.
+ *
+ * FAILS OPEN, never silently stuck: if the channel never reaches SUBSCRIBED (a dropped
+ * connection, a Realtime hiccup, an auth blip) the "sync" event this resolves on would otherwise
+ * never fire — a secondary safety feature has no business freezing the actual Load click with no
+ * feedback forever. A subscribe-status callback resolves immediately on an error/timeout status,
+ * and a 5s backstop resolves it regardless if even that never arrives, both with
+ * `{others: [], selfElsewhere: false}` — i.e. let the open proceed rather than hang. Logged, not
+ * silent, so a real outage is still visible.
+ *
+ * @param {string} clientId
+ * @param {{id:string, name?:string}} me
+ * @returns {Promise<{channel: object, others: Array<{userId:string, userName:string, since:number}>, selfElsewhere: boolean}>}
+ */
+export const claimDealPresence = (clientId, me) => new Promise((resolve) => {
+  const channel = supabase.channel(`realtime:presence:client:${clientId}`, { config: { presence: { key: me.id } } });
+  let settled = false;
+  let backstop;
+  const settle = (result) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(backstop);
+    resolve({ channel, ...result });
+  };
+  backstop = setTimeout(() => {
+    console.warn(`[claimDealPresence] Presence check for client ${clientId} never synced — letting the open proceed rather than block on it.`);
+    settle({ others: [], selfElsewhere: false });
+  }, 5000);
+  channel
+    .on("presence", { event: "sync" }, async () => {
+      if (settled) return;
+      const state = channel.presenceState();
+      const others = Object.entries(state)
+        .filter(([key]) => key !== me.id)
+        .map(([, metas]) => metas[0])
+        .filter(Boolean);
+      const selfElsewhere = Array.isArray(state[me.id]) && state[me.id].length > 0;
+      if (!others.length && !selfElsewhere) {
+        try { await channel.track({ userId: me.id, userName: me.name || "Someone", since: Date.now() }); } catch { /* best-effort */ }
+      }
+      settle({ others, selfElsewhere });
+    })
+    .subscribe((status) => {
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        console.warn(`[claimDealPresence] Presence channel for client ${clientId} failed to subscribe (${status}) — letting the open proceed rather than block on it.`);
+        settle({ others: [], selfElsewhere: false });
+      }
+    });
+});

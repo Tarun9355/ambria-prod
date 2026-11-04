@@ -110,7 +110,7 @@ import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDef
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
-import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc } from "../../lib/supabase";
+import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc, claimDealPresence } from "../../lib/supabase";
 import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
 import { guestRepeatLineCost, flaggedUnitRate } from "../../lib/studio/repeatPricing.js";
 import {
@@ -2318,6 +2318,16 @@ export default function StudioApp() {
   // starting from the same stale point.
   const activeFnIdxRef = useRef(0);
   const fnBuildsRef = useRef({});
+  // Same reason as activeFnIdxRef/fnBuildsRef: saveSession stamps each function's OWN type/date/
+  // venue from these four (fn/clientDate/venue = function 1's own fields, extraFunctions = every
+  // other function's), and a timer-fired autosave can land in the same gap between a Event-Info
+  // edit's setState and the re-render that refreshes saveSession's closure — filing function 1's
+  // (or another function's) OLD type/date/venue onto a snapshot whose index/content were already
+  // reading fresh from activeFnIdxRef/fnBuildsRef. Confirmed live (Sahiba & Vineet, 2026-11-04):
+  // Haldi's (fn_idx 0) own studio_sessions row got stamped fn_label "Wedding"/event_date 2026-11-24
+  // while its zoneElements kept evolving as ordinary, distinct Haldi edits — the metadata went stale
+  // the exact way the content used to before activeFnIdxRef/fnBuildsRef existed.
+  const fnMetaRef = useRef({ fn: "", clientDate: "", venue: "", extraFunctions: [], clientShift: "", clientPax: "", clientPalette: "Custom", clientFlowerPalette: "", clientBrideGroom: "" });
   const snapshotFnRef = useRef(null);
   const switchingRef = useRef(false);
   // Switching functions replaces zoneElements/zoneConfig/etc with the target function's own
@@ -2349,6 +2359,12 @@ export default function StudioApp() {
   const buildConflictWarnedAtRef = useRef(0);
   useEffect(() => { activeFnIdxRef.current = activeFnIdx; switchingRef.current = false; }, [activeFnIdx]);
   useEffect(() => { fnBuildsRef.current = fnBuilds; }, [fnBuilds]);
+  // useLayoutEffect, not useEffect, and no deps array — runs on EVERY commit, matching saveSessionRef's
+  // own stronger guarantee (a plain useEffect is a passive effect; React can run it in a later task
+  // than the commit, leaving a window where a timer could fire between this commit and that effect —
+  // confirmed real by the stricter regression pass on this fix: a Deal Check/client-switch edit inside
+  // that window could file a NEWLY-active client's own metadata under the PREVIOUS client's state).
+  useLayoutEffect(() => { fnMetaRef.current = { fn, clientDate, venue, extraFunctions, clientShift, clientPax, clientPalette, clientFlowerPalette, clientBrideGroom }; });
   // Layout for the same reason as saveSessionRef below — switchActiveFn calls this one
   // SYNCHRONOUSLY on the click and files the result as the function's build, so it should be
   // reading the latest commit rather than whatever was current before the last paint.
@@ -2469,6 +2485,11 @@ export default function StudioApp() {
   // ═══ AUTH- derived helpers (verbatim) ═══
   const [teamData, setTeamData] = useState(DEFAULT_TEAM);
   const [saveError, setSaveError] = useState(null);
+  // Event Info's "Load →" was blocked because someone (this user's own other device, or someone
+  // else) already has this deal open — same "important, must be read, not a toast" class as the
+  // stale-save conflict dialog above it, not a quick confirmation, so it gets the same centred,
+  // dimmed-backdrop modal treatment rather than the auto-dismissing toast. { message } or null.
+  const [dealOpenConflict, setDealOpenConflict] = useState(null);
 
   // MEMOIZED, and it has to be. As a plain function this got a new identity on every render, and
   // that identity is load-bearing: saveClientLedger is useCallback(..., [showMsg]), so it churned
@@ -4060,10 +4081,52 @@ export default function StudioApp() {
     // to do with a pricing regenerate — so the dept head's edits looked like they silently reverted.
     // A function is matched by its fnIdx; an older order whose functions were written without one is matched by position
     // (its list is in function order) - those were silently never refreshed, so notes and layout edits never reached IMS.
-    const withLayout = (fns) => Array.isArray(fns) && layout.size ? fns.map((f, i) => { const k = f?.fnIdx ?? i; return (f && layout.has(k)) ? { ...f, ...layout.get(k) } : f; }) : fns;
-    // The order's own date follows its first function's (what IMS falls back to when it needs one date).
-    const firstDate = [...layout.values()].map(l => l.date).filter(Boolean).sort()[0];
-    const applySnap = (base) => ({ ...base, ...(firstDate ? { date: firstDate } : {}), functionsDetail: withLayout(base.functionsDetail), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION, floralDetail: snap.floralDetail || base.floralDetail || null, dealValue: snap.dealValue || base.dealValue || null, transportPlan: snap.transportPlan ?? null });
+    const withLayout = (fns) => {
+      if (!Array.isArray(fns) || !layout.size) return fns;
+      return fns.map((f, i) => {
+        const k = f?.fnIdx ?? i;
+        if (!(f && layout.has(k))) return f;
+        const patch = { ...layout.get(k) };
+        // ── REFUSE TO STAMP A DIFFERENT FUNCTION'S IDENTITY ONTO THIS ONE ──
+        // Confirmed live (Sangeeta, 2026-11-02/03): function 1's type flipped between its real name
+        // and two OTHER functions' names 14 times in a day — including 3 changes in 21 seconds, far
+        // faster than anyone retypes a function's own name. This is more than one tab, each with a
+        // different belief about which function index is which, periodically re-asserting its own
+        // (wrong, for at least some of them) answer over the others'. A type-only match isn't
+        // specific enough to flag alone — two functions CAN legitimately share a type — but type AND
+        // date BOTH matching a DIFFERENT function already on this order is: that's not "the type
+        // changed", that's "this tab thinks index k is actually a different, already-existing
+        // function", so its type/date/venue for this index is untrustworthy this cycle. Everything
+        // else in patch (zones/elements/etc — already guarded above, for a different reason) still
+        // applies normally.
+        // ALSO gated on this actually being a CHANGE from what the server already has for THIS slot
+        // (f.type/f.date, read before the patch) — a real, deliberately-named pair of same-type
+        // same-date functions settles into matching once and then never proposes a different value
+        // again, so it stops tripping this the moment it's already stable. Only a genuinely NEW
+        // incoming value that happens to collide gets refused, not an established legitimate one.
+        if (patch.type && patch.date && (f.type !== patch.type || f.date !== patch.date)) {
+          const belongsToAnother = fns.some((other, j) => {
+            const otherK = other?.fnIdx ?? j;
+            return otherK !== k && other?.type === patch.type && other?.date === patch.date;
+          });
+          if (belongsToAnother) {
+            console.warn(`[persistDeptSnapshot] Function ${k + 1}'s type/date ("${patch.type}", ${patch.date}) matches a DIFFERENT function already on this order — refusing to overwrite its identity this cycle.`);
+            showMsg?.(`Function ${k + 1}'s name/date looked like it matched a different function — IMS wasn't updated this time. Check it in Event Info.`, "red");
+            delete patch.type; delete patch.date; delete patch.venue;
+          }
+        }
+        return { ...f, ...patch };
+      });
+    };
+    const applySnap = (base) => {
+      const nextFunctionsDetail = withLayout(base.functionsDetail);
+      // The order's own date follows its first function's (what IMS falls back to when it needs
+      // one date) — derived from the POST-GUARD functionsDetail, not the raw local layout, so a
+      // function whose type/date got refused above (because it actually belonged to a different
+      // function) can't still leak its wrong date in here.
+      const firstDate = Array.isArray(nextFunctionsDetail) ? nextFunctionsDetail.map(f => f?.date).filter(Boolean).sort()[0] : null;
+      return { ...base, ...(firstDate ? { date: firstDate } : {}), functionsDetail: nextFunctionsDetail, deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION, floralDetail: snap.floralDetail || base.floralDetail || null, dealValue: snap.dealValue || base.dealValue || null, transportPlan: snap.transportPlan ?? null };
+    };
     try {
       // Read the FRESHEST row so we never clobber IMS-owned fields with Studio's stale local copy.
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
@@ -7977,7 +8040,9 @@ export default function StudioApp() {
   // ── Save session — VERBATIM ──
   const saveSession = useCallback((opts = {}) => {
     if (!clientName.trim()) return;
-    const totalFns = 1 + (extraFunctions || []).length;
+    // liveMeta read here too (not the extraFunctions closure) — a stale count would under/over-iterate
+    // the loop below against liveBuilds' real functions.
+    const totalFns = 1 + (fnMetaRef.current.extraFunctions || []).length;
     const fnSnapshots = {};
     // Refs, not the closure: the periodic/visibility autosaves fire from timers, which can land
     // between a function switch's setState and the re-render that would refresh this callback.
@@ -7985,6 +8050,7 @@ export default function StudioApp() {
     // wrong function — the same class of bug switchActiveFn had.
     const liveIdx = activeFnIdxRef.current;
     const liveBuilds = fnBuildsRef.current;
+    const liveMeta = fnMetaRef.current;
     // The most recent save of THIS deal, read the same way the write below reads it. Only needed so
     // each function's own price can be carried forward — see fnTotals in the snapshot.
     const prevSnapForTotals = (((clientLedgerRef.current || clientLedger)
@@ -8060,7 +8126,10 @@ export default function StudioApp() {
         // event_date 2026-11-04 — Haldi/Sangeet's date, whichever of the two was the active tab —
         // because all three functions were saved in the same batch. That wrong date then pooled
         // Wedding's own stock needs into Haldi/Sangeet's same-day availability check.
-        snap = { ...snap, fnType: (i === 0 ? fn : extraFunctions[i - 1]?.type) || "", fnDate: (i === 0 ? clientDate : extraFunctions[i - 1]?.date) || "", fnVenue: (i === 0 ? venue : extraFunctions[i - 1]?.venue) || "" };
+        // Read liveMeta (fnMetaRef), not the fn/clientDate/venue/extraFunctions closures — see
+        // fnMetaRef's own comment (next to activeFnIdxRef above): this is the exact same stale-timer
+        // race, just for the metadata stamp instead of the index/content.
+        snap = { ...snap, fnType: (i === 0 ? liveMeta.fn : liveMeta.extraFunctions[i - 1]?.type) || "", fnDate: (i === 0 ? liveMeta.clientDate : liveMeta.extraFunctions[i - 1]?.date) || "", fnVenue: (i === 0 ? liveMeta.venue : liveMeta.extraFunctions[i - 1]?.venue) || "" };
         fnSnapshots[i] = snap;
       }
     }
@@ -8092,8 +8161,9 @@ export default function StudioApp() {
       id: "SES_" + Date.now().toString(36),
       savedAt: Date.now(),
       savedBy: authUser?.name || "—",
-      eventDate: clientDate,
-      venue, fn,
+      // liveMeta (fnMetaRef), not the closures — same reason as the per-function stamp above.
+      eventDate: liveMeta.clientDate,
+      venue: liveMeta.venue, fn: liveMeta.fn,
       // Owner decision: a real edit (an added Production item, a zone change, anything) must never
       // be dropped just because the rate tables haven't finished loading yet — that's a data-loss
       // risk, worse than the stale-price-on-boot problem pricingReady exists for. So the save itself
@@ -8232,15 +8302,17 @@ export default function StudioApp() {
       client.phone = clientPhone.trim();
     }
     client.lastContactAt = Date.now();
-    client.eventDate = clientDate || client.eventDate || "";
-    client.venue = venue || client.venue || "";
-    client.fn = fn || client.fn || "";
-    client.shift = clientShift || client.shift || "";
-    client.pax = clientPax || client.pax || "";
-    client.brideGroom = clientBrideGroom || client.brideGroom || "";
+    // liveMeta (fnMetaRef), not the closures — same stale-timer race as the per-function studio_sessions
+    // stamp above, just writing to the client_ledger row's own fn/eventDate/venue/functions instead.
+    client.eventDate = liveMeta.clientDate || client.eventDate || "";
+    client.venue = liveMeta.venue || client.venue || "";
+    client.fn = liveMeta.fn || client.fn || "";
+    client.shift = liveMeta.clientShift || client.shift || "";
+    client.pax = liveMeta.clientPax || client.pax || "";
+    client.brideGroom = liveMeta.clientBrideGroom || client.brideGroom || "";
     client.functions = [
-      { type: fn, date: clientDate, venue: venue, shift: clientShift, pax: clientPax, palette: clientPalette || "Custom", flowerPalette: clientFlowerPalette || "" },
-      ...extraFunctions
+      { type: liveMeta.fn, date: liveMeta.clientDate, venue: liveMeta.venue, shift: liveMeta.clientShift, pax: liveMeta.clientPax, palette: liveMeta.clientPalette || "Custom", flowerPalette: liveMeta.clientFlowerPalette || "" },
+      ...liveMeta.extraFunctions
     ];
     if (!client.createdBy) client.createdBy = authUser?.name || "—";
     if (!client.status) client.status = "ongoing";
@@ -8859,6 +8931,37 @@ export default function StudioApp() {
         showMsg?.(`Function ${i + 1} looks like it duplicated another function's build — booked anyway, but check it in IMS.`, "red");
       }
     });
+    // ── REFUSE TO BOOK A DIFFERENT FUNCTION'S IDENTITY ONTO THIS ONE ──
+    // Confirmed live (Sangeeta, 2026-11-02/03): function 1's type/date flipped between its real
+    // identity and two OTHER functions' 14 times in a day, including 3 changes in 21 seconds — far
+    // faster than a human retypes a function's own name, so this is more than one tab disagreeing
+    // about which function index is which. Same reasoning as the content guard just above, but for
+    // type/date/venue instead of decor: a type-only match isn't specific enough to flag alone (two
+    // functions CAN legitimately share a type), but type AND date BOTH matching a DIFFERENT
+    // function — either another entry in THIS SAME booking, or the existing booked order's — means
+    // this tab's own local index is carrying a different function's identity, not this one's.
+    fnEOs.forEach((f, idx) => {
+      if (!f.type || !f.date) return;
+      const prior = existingActive?.functionsDetail?.find((other) => other?.fnIdx === f.fnIdx);
+      // Only a genuinely NEW proposed identity for this exact function gets scrutinised — a
+      // function whose type/date hasn't changed since the last successful booking is left alone
+      // even if it happens to collide with a sibling, the same "already stable, not a new problem"
+      // escape hatch persistDeptSnapshot's own copy of this guard uses, so two legitimately
+      // identical same-type same-date functions can't get stuck refusing their own re-push forever.
+      const isActualChange = !prior || prior.type !== f.type || prior.date !== f.date;
+      if (!isActualChange) return;
+      const matchesSiblingInThisBooking = fnEOs.some((other, j) => j !== idx && other.type === f.type && other.date === f.date);
+      const matchesOtherInExisting = (existingActive?.functionsDetail || []).some((other) => other?.fnIdx !== f.fnIdx && other?.type === f.type && other?.date === f.date);
+      if (!matchesSiblingInThisBooking && !matchesOtherInExisting) return;
+      if (prior?.type && prior?.date) {
+        console.warn(`[pushEventOrderPlan] Function ${idx + 1}'s type/date ("${f.type}", ${f.date}) matches a DIFFERENT function — booking the existing, already-booked identity instead.`);
+        showMsg?.(`Function ${idx + 1}'s name/date looked like it matched a different function — kept its previous name/date instead. Check it in Event Info.`, "red");
+        fnEOs[idx] = { ...f, type: prior.type, date: prior.date, venue: prior.venue ?? f.venue };
+      } else {
+        console.warn(`[pushEventOrderPlan] Function ${idx + 1}'s type/date ("${f.type}", ${f.date}) matches a DIFFERENT function and there is no prior booked identity to fall back to — booking it anyway, but this needs a human look.`);
+        showMsg?.(`Function ${idx + 1} looks like it has another function's name/date — booked anyway, but check it in IMS.`, "red");
+      }
+    });
     // Computed AFTER the substitution loop above, not before — these have to reflect whatever
     // fnEOs actually ends up holding, not whatever it held before a suspect entry got swapped out.
     const eventTotal = fnEOs.reduce((s, f) => s + (f.total || 0), 0);
@@ -9085,9 +9188,18 @@ export default function StudioApp() {
       restoreBuildState(landingFnIdx === 0 ? fn0Snap : restoredBuilds[landingFnIdx]);
       setFnBuilds(restoredBuilds);
       setActiveFnIdx(landingFnIdx);
-      if (session.eventDate) setClientDate(session.eventDate);
-      if (session.venue) setVenue(session.venue);
-      if (session.fn) setFn(session.fn);
+      // client.fn/eventDate/venue (set a few lines above, from the client_ledger row) are already
+      // function 1's own, correct identity — do NOT re-stamp them from session.fn/eventDate/venue,
+      // which is rowsToSessions' `active` row: whichever function was ACTIVE when this session was
+      // last saved, not necessarily fn_idx 0. Confirmed live (Sahiba & Vineet, 2026-11-04): a save
+      // while Wedding was the active/on-screen function, followed by a Load landing on Haldi (fn_idx
+      // 0), stamped Haldi's own type/date/venue with Wedding's via exactly this override. Only fall
+      // back to fn0Snap's own fnType/fnDate/fnVenue (function 1's own stamped identity, never
+      // "whichever was active") when the client row itself has nothing yet — a pre-existing record
+      // saved before these client-level fields existed.
+      if (!client.fn && fn0Snap?.fnType) setFn(fn0Snap.fnType);
+      if (!client.eventDate && fn0Snap?.fnDate) setClientDate(fn0Snap.fnDate);
+      if (!client.venue && fn0Snap?.fnVenue) setVenue(fn0Snap.fnVenue);
       // Missing here left dcCustomItems holding whatever the PREVIOUS client/session had (state
       // never resets on its own) — so switching clients without a refresh could leak one client's
       // Deal Check custom items into another's snapshot, and the very next auto-save after a Load
@@ -9137,6 +9249,66 @@ export default function StudioApp() {
     setStep(landingStep);
     // The single-function path's toast, gone for the reason given on the multi-function one above.
   }, [events, allVideos, ytVideoTags]);
+
+  // ── STOP A SECOND LIVE EDITOR ON THE SAME DEAL — EVEN THE SAME PERSON'S OWN OTHER DEVICE ──
+  // Confirmed race-condition risk (Sangeeta, 2026-11-03) — two concurrent editors on the same
+  // client's build is exactly the kind of thing that let one function's content land on a
+  // different function's slot. suspiciousDuplicateFnIdxs (sessionData.js) stops that symptom from
+  // reaching the database; this stops a second live editor from starting in the first place. One
+  // device at a time PER PERSON (2026-11-03, owner ask) — this person's own second tab/device is
+  // exactly as able to end up holding stale/aliased state as a different person's would.
+  // Which client this tab's presence channel currently claims, so switching clients (by ANY path,
+  // not just loadClientSessionGuarded below) can always find and release it, and so a second claim
+  // on the SAME client this tab already holds doesn't leak a channel.
+  const dealPresenceRef = useRef(null);
+  // Release the moment this tab is no longer actually on the client it was claiming — covers every
+  // path that changes activeClientId (startNewDeal, the phone-auto-attach fold in saveSession,
+  // not just loadClientSessionGuarded itself), so the "someone's editing this" signal can never
+  // outlive this tab actually leaving the deal.
+  useEffect(() => {
+    if (dealPresenceRef.current && dealPresenceRef.current.clientId !== activeClientId) {
+      try { supabase.removeChannel(dealPresenceRef.current.channel); } catch { /* ignore */ }
+      dealPresenceRef.current = null;
+    }
+  }, [activeClientId]);
+  useEffect(() => () => {
+    if (dealPresenceRef.current) { try { supabase.removeChannel(dealPresenceRef.current.channel); } catch { /* ignore */ } dealPresenceRef.current = null; }
+  }, []);
+  // Wraps loadClientSession for Event Info's "Load →" button only — the one place this was asked
+  // for. Every OTHER caller of loadClientSession still calls it directly, unguarded, on purpose:
+  // the automated planning-sync sweep is a system process re-opening a booked deal headlessly, not
+  // a second person; the page-refresh mount-restore is this SAME tab/user returning to its own
+  // already-active deal, not a new one starting; startNewDeal creates a brand-new client nobody
+  // else can possibly already be on. loadLmsLead (matching an LMS lead to an existing client) is
+  // NOT guarded either, despite also opening an existing client — it calls setActiveClientId
+  // unconditionally before any session-exists branching, so wrapping it safely would need
+  // restructuring that function, which this deliberately does not do.
+  const loadClientSessionGuarded = useCallback(async (client, session, landingStep, opts) => {
+    if (dealPresenceRef.current) {
+      try { supabase.removeChannel(dealPresenceRef.current.channel); } catch { /* ignore */ }
+      dealPresenceRef.current = null;
+    }
+    if (!client?.id || !authUser?.id) { loadClientSession(client, session, landingStep, opts); return; }
+    const { channel, others, selfElsewhere } = await claimDealPresence(client.id, { id: authUser.id, name: authUser.name || "Someone" });
+    if (others.length) {
+      try { supabase.removeChannel(channel); } catch { /* ignore */ }
+      const who = others.map(o => o?.userName || "Someone").join(", ");
+      // A modal, not a toast (setDealOpenConflict, not showMsg) — this has to actually be read and
+      // dismissed, the same reasoning the stale-save-conflict dialog above already follows, not
+      // flash past in 2 seconds while someone's looking at the client list.
+      setDealOpenConflict({ message: `${who} ${others.length > 1 ? "are" : "is"} already editing this deal right now — wait for them to finish before opening it.` });
+      return;
+    }
+    // One device at a time PER PERSON too, not just "no two different people" — this user's own
+    // other tab/device already has it open.
+    if (selfElsewhere) {
+      try { supabase.removeChannel(channel); } catch { /* ignore */ }
+      setDealOpenConflict({ message: "You already have this deal open on another device or tab — close that one before opening it here." });
+      return;
+    }
+    dealPresenceRef.current = { channel, clientId: client.id };
+    loadClientSession(client, session, landingStep, opts);
+  }, [authUser, loadClientSession]);
 
   // ── Close the open deal: back to a blank builder ──
   // Lived inline in StudioSummary, where "Start New" and the Summary's own delete link both used it.
@@ -10688,9 +10860,9 @@ export default function StudioApp() {
         _trussRows.forEach((row, ri) => {
           if (row.trussQty === 0) return; // dims-only placeholder — no structure billed (trussRowCost agrees)
           const _tShape = row.trT === "box" ? "box" : "singleU";
-          // Owner ask (2026-10-22): trussRowCost (called above for _trussRaw/share, and for zl.truss
-          // itself via calcStructCost) now bills the minimum-joints CLEAN SPAN internally — snap here
-          // too so the displayed Size/Qty describe the SAME structure, not the raw typed dims.
+          // snapRowDimsForProduction is a no-op as of 2026-11-04 (owner decision: bill/display the
+          // raw typed dims, no auto-shrink-to-minimum-joints) — kept as a passthrough so this still
+          // describes the SAME structure trussRowCost/calcStructCost bill, in case snapping returns.
           const snappedRow = structRates?.trussInv ? snapRowDimsForProduction(row, structRates.trussInv) : row;
           // The two dims a truss is actually charged on (trussBaseArea — same authority calcStructCost's
           // trussRowCost uses), not the raw L×W×H: a Box charges its two LARGEST dims, a Single U
@@ -11477,13 +11649,22 @@ export default function StudioApp() {
         const newUnit = pick?.unit || original.unit;
         const unitChanged = newUnit !== original.unit;
         const lineQty = unitChanged ? 1 : qty;
-        // The lines of a split are separate elements; the original's ranked choices (overlays / cushion covers) and their id stay behind.
-        const { prefs: _choices, pid: _choicePid, ...originalRest } = original;
+        // The lines of a split are separate elements; the original's ranked choices (overlays / cushion
+        // covers), their id, and its kitOverrides all stay behind — kitOverrides is a per-instance edit
+        // of the ORIGINAL item's own kit recipe (lib/studio/elementPick.js's elementAfterPick drops it
+        // on an ordinary swap for the same reason: it has no meaning once a split line points at a
+        // different inventory id, and every reader trusts it once that id happens to be a kit too).
+        const { prefs: _choices, pid: _choicePid, kitOverrides: _oldKitOverrides, ...originalRest } = original;
+        // ...unless this particular split line is still the ORIGINAL item itself (e.g. 9 of the
+        // original design + 9 of another) — same rule elementAfterPick uses for "the same item picked
+        // again": its own kitOverrides still describes it correctly, so it comes back here.
+        const sameItem = String(id) === String(original.invId);
         return {
           ...originalRest,
           invId: id, imsId: id, unit: newUnit,
           name: pick?.name || original.name, imsName: pick?.name || "", imsPhoto: pick?.photo || "",
           qty: lineQty, baseQty: unitChanged ? 1 : (scale > 1 ? qty / scale : qty),
+          ...(sameItem && Array.isArray(_oldKitOverrides) ? { kitOverrides: _oldKitOverrides } : null),
         };
       });
       elems.splice(idx, 1, ...splitEls);
@@ -11992,14 +12173,17 @@ export default function StudioApp() {
         }
         return proj;
       };
-      // Keyed by DATE, not re-derived per function — two functions of this SAME event sharing a
-      // date (Haldi + Sangeet, one day) used to each find `row` undefined off the one-time fnRows
-      // fetch above (neither had a row yet) and each mint its OWN backfill `functions` row for the
-      // same date, because the loop never recorded what the FIRST one just created before the
-      // second one looked. Confirmed live, 2026-11-02 (Sangeeta): one date, two `functions` rows,
-      // same projectId. Seeding this map from fnRows and writing into it the instant a row is
-      // created (not waiting for its insert to land) makes the second function see it.
-      const rowByDate = new Map((fnRows || []).map((r) => [(r.date || r.data?.date), r]));
+      // Keyed by (DATE, TYPE), not date alone — two functions of this SAME event sharing a date
+      // (Haldi + Sangeet, one day) are two DIFFERENT functions.ROWS, and a date-only key collapses
+      // them onto one Map slot: whichever function is processed SECOND in the loop below looks up
+      // "the row for this date", gets the FIRST function's row back instead of its own, and
+      // overwrites it with its own venue/shift/pax. Confirmed live, 2026-11-04 (Sangeeta): Haldi's
+      // row ended up with Sangeet's shift ("Night") and pax (100) this exact way. (A related, already-
+      // fixed bug lived here too — 2026-11-02, "two functions sharing a date used to each find `row`
+      // undefined and each mint its own backfill row" — fixed by seeding/updating this map as rows
+      // are found/created; that fix is still correct, it just needed the richer key below as well.)
+      const fnRowKey = (date, type) => `${date}||${type || ""}`;
+      const rowByDate = new Map((fnRows || []).map((r) => [fnRowKey(r.date || r.data?.date, r.data?.type || r.name), r]));
       // Every new fnId actually created this run, collected locally and written to the project's
       // own functions array ONCE after the whole loop — not per function. The old code updated
       // projects.data.functions separately for each function needing a backfill row, each update
@@ -12013,7 +12197,7 @@ export default function StudioApp() {
         const req = requiredByFn[fnIdx] || {};
         const date = fn.fnDate || "";
         if (!date) continue;
-        const row = rowByDate.get(date);
+        const row = rowByDate.get(fnRowKey(date, fn.fnType));
         const nextItems = ids.reduce((acc, id) => {
           const qty = req[id] || 0;
           if (qty <= 0) return acc;
@@ -12036,19 +12220,32 @@ export default function StudioApp() {
           // preserve; a row with no venue object yet defaults to "outdoor" (matching the backfill
           // branch below, and every other place in this app an untyped venue defaults the same way).
           const prevVenueObj = (row.data?.venue && typeof row.data.venue === "object") ? row.data.venue : { type: "outdoor", fullAddress: "" };
+          // Defensive, on top of the key fix above — refuse the venue/shift/pax resync (items still
+          // sync normally, those are already keyed per-fnIdx via requiredByFn) if this row's own
+          // established type disagrees with the function we think we're syncing. A row with no type
+          // yet (pre-dates this field) is trusted as before; this only fires on an actual mismatch.
+          const identityOk = !row.data?.type || !fn.fnType || row.data.type === fn.fnType;
+          if (!identityOk) {
+            console.warn(`[reconcile] functions row ${row.id} is "${row.data.type}" but this sync is for "${fn.fnType}" (date ${date}) — leaving its venue/shift/pax untouched this run.`);
+            supabase.from("functions").update({ data: { ...row.data, items: [...kept, ...nextItems] } }).eq("id", row.id)
+              .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); });
+            continue;
+          }
           supabase.from("functions").update({ data: { ...row.data, items: [...kept, ...nextItems], venue: { ...prevVenueObj, name: fn.fnVenue || "" }, shift: fn.fnShift || row.data?.shift || "", pax: fn.fnPax || row.data?.pax || "" } }).eq("id", row.id)
             .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); else console.info("[reconcile] synced functions.items for fn", row.id, "date", date); });
           continue;
         }
         const p = await ensureProject();
         if (!p) { console.warn("[reconcile] no functions row AND no projects row for event", eo.id, "date", date, "— this deal never went through the real markSold confirm at all. IMS's date-filtered Inventory view has nothing to show regardless of the blocks write below."); continue; }
-        // Deterministic, not random — a pure function of (event, date), so two reconcile calls
-        // racing to backfill the SAME missing (event, date) combo always compute the SAME id and
-        // collide on ONE row via the upsert below, instead of each minting its own random id and
-        // both landing as separate rows. Confirmed live, 2026-11-02 (Anuja Berry): two calls 229ms
-        // apart each found no row for the date and each inserted its own — this makes a second row
-        // for the same (event, date) structurally impossible, not just less likely.
-        const fnId = `fn_bck_${eo.id}_${date}`;
+        // Deterministic, not random — a pure function of (event, date, type), so two reconcile
+        // calls racing to backfill the SAME missing (event, date, type) combo always compute the
+        // SAME id and collide on ONE row via the upsert below, instead of each minting its own
+        // random id and both landing as separate rows. Confirmed live, 2026-11-02 (Anuja Berry): two
+        // calls 229ms apart each found no row for the date and each inserted its own — this makes a
+        // second row for the same (event, date, type) structurally impossible, not just less likely.
+        // Type is part of the id too (not just date) for the same reason rowByDate's own key just
+        // above needed it — two functions sharing a date must never compute the same backfill id.
+        const fnId = `fn_bck_${eo.id}_${date}_${(fn.fnType || "fn").toLowerCase().replace(/[^a-z0-9]+/g, "")}`;
         const fnData = {
           id: fnId, projectId: p.id, name: fn.fnType || "Function", type: fn.fnType || "Function", date,
           budget: 0, venue: { type: "outdoor", name: fn.fnVenue || "", fullAddress: "" }, items: nextItems, flowerOrders: [],
@@ -12059,8 +12256,8 @@ export default function StudioApp() {
         };
         // Recorded before the upsert resolves — a second function of THIS deal on the same date,
         // later in this same loop, must see this row already exists rather than racing to create
-        // its own (see rowByDate's own comment above).
-        rowByDate.set(date, { id: fnId, date, data: fnData });
+        // its own (see rowByDate's own comment above). Same (date, type) key as the lookup above.
+        rowByDate.set(fnRowKey(date, fn.fnType), { id: fnId, date, data: fnData });
         if (!newFnIds) newFnIds = new Set(p.data?.functions || []);
         newFnIds.add(fnId);
         // Plain upsert, not insert — the deterministic id means a concurrent call backfilling the
@@ -12623,7 +12820,7 @@ export default function StudioApp() {
     activeClient, meetingNumber, allInhouseVenues, allOutdoorDB, allInhouseGroups, subVenuesOfParent, inhouseParentNames, allInhouseVenueOrParentNames, leafInhouseVenues,
     allVenueData, outdoorVenueList, browseVideos, browseVideosAll, allVideos,
     // handlers
-    loadClientSession, startNewDeal, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
+    loadClientSession, loadClientSessionGuarded, startNewDeal, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     resumeSavedSession, toggleEl, selectElPhoto, handleZoneUpload, aiTagImage, findTemplate,
     getLibPhotosForZone, maxRepaintCostInSubcat, saveSession, markSold, applyBookedChanges, loadEvent,
@@ -13024,6 +13221,28 @@ export default function StudioApp() {
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
               <button onClick={() => setSaveError(null)} style={{ background: "transparent", color: isDark ? "#CFCBBE" : "#6B6B80", border: "1px solid rgba(201,169,110,0.5)", padding: "9px 14px", borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Keep working (not saved)</button>
               <button onClick={() => window.location.reload()} style={{ background: "#C9A96E", color: "#1A1A2E", border: "none", padding: "9px 16px", borderRadius: 9, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Reload latest</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DEAL-OPEN CONFLICT — Event Info's "Load →" was blocked (claimDealPresence,
+          loadClientSessionGuarded). Same "centred, dimmed backdrop, must be read" treatment as the
+          stale-save-conflict dialog above — a toast that auto-dismisses in a couple seconds isn't
+          enough for something that has to change what the salesperson does next (owner ask,
+          2026-11-04). Dismiss is the only action here — there is nothing to redo or reload. */}
+      {dealOpenConflict && (
+        <div role="alertdialog" aria-modal="true" aria-label="This deal is already open"
+          style={{ position: "fixed", inset: 0, zIndex: 100000, background: "rgba(15,15,26,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => setDealOpenConflict(null)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 440, background: isDark ? "#1B1B2B" : "#FFFBF2", color: isDark ? "#F3F1EA" : "#1A1A2E", borderRadius: 16, border: "1px solid #C9A96E", borderTop: "4px solid #C9A96E", boxShadow: "0 18px 50px rgba(0,0,0,0.45)", padding: "20px 22px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <span style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(201,169,110,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🔒</span>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>This deal is already open</div>
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.55, marginBottom: 16 }}>{dealOpenConflict.message}</div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button onClick={() => setDealOpenConflict(null)} style={{ background: "#C9A96E", color: "#1A1A2E", border: "none", padding: "9px 16px", borderRadius: 9, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Got it</button>
             </div>
           </div>
         </div>

@@ -22,7 +22,7 @@ import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
 import { trussRowCost, calcZoneFabricCost, calcZoneFabric, guestFabricMultiplier, fabricRepeatDiscount, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
-import { resolveTrussConfig, pillarCountForSpan, trussInvForMaterial } from "../../../lib/studio/pricing";
+import { resolveTrussConfig } from "../../../lib/studio/pricing";
 import { fabricColourOptions } from "../../../lib/studio/fabricColourOptions";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { crossedMiddle } from "../../../lib/studio/zoneDrop";
@@ -257,10 +257,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         Shows this ROW's base structure; front extension and a custom ceiling item are
                         priced on top and are visible in their own fields. */}
                     {showCosts&&(()=>{
-                      // Owner ask (2026-10-22): trussRowCost now bills the minimum-joints CLEAN SPAN,
-                      // not necessarily the dims typed above — snap here too so this caption's sqft/
-                      // rate describe the SAME structure the card's own ₹ total (rowCost.truss) was
-                      // just computed from, instead of a stale pre-snap area.
+                      // snapRowDimsForProduction is a no-op as of 2026-11-04 (owner decision: bill/
+                      // display the raw typed dims, no auto-shrink-to-minimum-joints) — kept as a
+                      // passthrough so this caption's sqft/rate still describe the SAME structure the
+                      // card's own ₹ total (rowCost.truss) was computed from, in case snapping returns.
                       const snappedZc = fabricInv ? snapRowDimsForProduction(zc, fabricInv) : zc;
                       const base=trussBaseArea(snappedZc);
                       if(!base.area) return null;
@@ -318,73 +318,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 {zc.trT&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
                   <NumField min={0} value={zc.trussFrontExtH||""} onCommit={n=>sZ({trussFrontExtH:n})} blankCommit commitOn="blur" placeholder={String(zc.dims?.H||0)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
               </div>
-              {/* Pillar-padding tip (owner convention, 2026-11-02): enter span + 1ft per pillar so the
-                  TRUE built footprint lands near what you actually want, instead of the engine
-                  shrinking to fit under whatever you typed (it never builds OVER the entered number —
-                  see pricing.js's buildTopology, "never exceed" rule). Replaces an earlier hardcoded
-                  "sweet spot" list that assumed a single span and a flat 1ft/pillar budget everywhere —
-                  wrong for Full Box's two INDEPENDENT axes (it only ever checked Math.max(L,W), so the
-                  other axis's own padding need went silently unchecked) and for any material whose
-                  maxSpanFt isn't the Iron default. This reads the zone's own live config instead.
-                  Pillar count via pillarCountForSpan (pricing.js) — the exact same formula
-                  buildTopology itself uses, so this can't drift from what actually gets built.
-                  Label fix (2026-11-02): the Width/Depth inputs just above bind "Width" to dims.W and
-                  "Depth" to dims.L — this used to label the hint the other way round, so it told you to
-                  pad whichever field you were NOT looking at.
-                  One-shot per value (2026-11-02, owner report): the hint recomputes off whatever is
-                  currently typed, so if you type exactly the ft it just suggested, THAT becomes the new
-                  "raw" value and it suggests padding it again — forever. zc.trussPadAck{label:value}
-                  remembers the exact value a hint was taken at (recognised via zc.trussPadSeen, the
-                  suggestion recorded the render before) and that value never shows the hint again,
-                  including after a reload; typing any other value starts the cycle fresh. */}
-              {(() => {
-                const dims = zc.dims || {};
-                const L = parseFloat(dims.L) || 0;
-                const W = parseFloat(dims.W) || 0;
-                if (L < 4 && W < 4) return null; // no dims yet
-                const tr = resolveTrussConfig(zc);
-                const matInv = trussInvForMaterial(trussInv, zc.trussMaterial);
-                const maxSpan = matInv?.settings?.maxSpanFt || 30;
-                const axes = tr.config === "full_box"
-                  ? [["Width", W], ["Depth", L]].filter(([, v]) => v >= 4)
-                  : [["Span", tr.spanFt || Math.max(L, W)]];
-                const ack = zc.trussPadAck || {};
-                const seen = zc.trussPadSeen || {};
-                const ackPatch = { ...ack }, seenPatch = { ...seen };
-                let ackChanged = false, seenChanged = false;
-                const rows = [];
-                axes.forEach(([label, v]) => {
-                  if (!(v > 0)) return;
-                  const pillars = pillarCountForSpan(v, maxSpan);
-                  const suggestion = v + pillars;
-                  if (ack[label] === v) return; // this exact value already had its hint taken
-                  if (seen[label] === v) {
-                    // what's typed now IS the suggestion shown last render — hint just got taken
-                    ackPatch[label] = v; ackChanged = true;
-                    if (label in seenPatch) { delete seenPatch[label]; seenChanged = true; }
-                    return;
-                  }
-                  rows.push({ label, v, pillars, suggestion });
-                  if (seen[label] !== suggestion) { seenPatch[label] = suggestion; seenChanged = true; }
-                });
-                if (ackChanged || seenChanged) {
-                  const patch = {};
-                  if (ackChanged) patch.trussPadAck = ackPatch;
-                  if (seenChanged) patch.trussPadSeen = seenPatch;
-                  setTimeout(() => sZ(patch), 0);
-                }
-                if (rows.length === 0) return null;
-                return (
-                  <div style={{marginBottom:10,padding:"4px 8px",borderRadius:6,background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.25)",fontSize:11.5,color:"#1E40AF",display:"flex",flexDirection:"column",gap:3}}>
-                    {rows.map(({ label, v, pillars, suggestion }) => (
-                      <div key={label} style={{display:"flex",alignItems:"center",gap:6}}>
-                        <span style={{display:"flex",color:"#B45309",flexShrink:0}}><IconBulb size={12}/></span>
-                        <span>{label} {v}ft → {pillars} pillar{pillars===1?"":"s"}. If you want the true footprint to land near {v}ft, enter <strong>{suggestion}ft</strong> (+1ft/pillar) instead.</span>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
+              {/* Pillar-padding tip removed (owner decision, 2026-11-04) — it suggested +1ft/pillar
+                  to land the footprint near the entered value, which is now the wrong direction
+                  under §23 Phase 7's budget→built→physical formula (pricing.js's buildTopology):
+                  entering v+pillars now OVERSHOOTS the footprint rather than landing near v. */}
               {/* ── §23 Truss Type selector + Height-anchor validation ── */}
               {(()=>{
                 const tr = resolveTrussConfig(zc);

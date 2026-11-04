@@ -188,7 +188,7 @@ export default function StudioEventInfo({ ctx }) {
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, switchActiveFn,
     clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch, ledgerReady, houseAgencyFeePct,
-    activeClient, loadClientSession, resumeSavedSession, startNewDeal, askConfirm,
+    activeClient, loadClientSession, loadClientSessionGuarded, resumeSavedSession, startNewDeal, askConfirm,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     lmsLeads, lmsLoading, lmsError, lmsFilling, lmsCacheRef, setLmsRefreshCounter, loadLmsLead,
     refreshLmsSync, lmsSyncing,
@@ -1685,7 +1685,7 @@ export default function StudioEventInfo({ ctx }) {
                             reason to make someone re-click through Event Info/Browse to see work
                             they've already done. Nothing saved yet lands on Browse instead, where a
                             fresh deal actually starts. */}
-                        <button className="ei-btn ei-solid" onClick={() => loadClientSession(c, latest || null, latest ? 2 : 1)} style={{padding:"5px 12px",borderRadius:6,border:"none",background:accent,color:isDark?"#1a1a2e":"#fff",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
+                        <button className="ei-btn ei-solid" onClick={() => loadClientSessionGuarded(c, latest || null, latest ? 2 : 1)} style={{padding:"5px 12px",borderRadius:6,border:"none",background:accent,color:isDark?"#1a1a2e":"#fff",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
                       </div>;
                     })}
                   </div>) : null;
