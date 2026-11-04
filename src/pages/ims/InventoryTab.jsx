@@ -1,4 +1,5 @@
 import React, { useState, useRef, useMemo } from "react";
+import { DEFAULT_KIT_ID, normKitParts } from "../../lib/studio/kitVariants";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { Badge, TypeBadge, Modal } from "../../components/ui";
 import { fmt } from "../../lib/format";
@@ -534,6 +535,10 @@ Rules:
       isKit: Array.isArray(it.subItems) && it.subItems.length > 0,
       kitBase: it.kitBase ?? 0,
       subItems: Array.isArray(it.subItems) ? it.subItems.map((s) => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1 } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : [],
+      // Every kit of the item, Kit 1 (its own subItems) first; the tab being edited is the one in subItems (kitsOf).
+      kits: [{ id: DEFAULT_KIT_ID, name: it.kitName || "Kit 1", subItems: [] },
+        ...(Array.isArray(it.altKits) ? it.altKits : []).map((k) => ({ id: k.id, name: k.name || "", subItems: normKitParts(k.subItems) }))],
+      kitTab: 0,
     });
     setEditModal(itemId);
     setDetailItem(null); // close detail modal if it was open
@@ -579,9 +584,35 @@ Rules:
     }, 0);
   }
 
+  // ── MORE THAN ONE KIT ── (lib/studio/kitVariants.js) The editor works on one kit at a time: the open tab's parts are editForm.subItems,
+  // so every existing component control edits whichever kit is open; kitsOf folds them back into the full list.
+  const kitsOf = (f) => {
+    const base = Array.isArray(f.kits) && f.kits.length ? f.kits : [{ id: DEFAULT_KIT_ID, name: "Kit 1", subItems: [] }];
+    const t = Math.min(Number(f.kitTab) || 0, base.length - 1);
+    return base.map((k, i) => (i === t ? { ...k, subItems: f.subItems || [] } : k));
+  };
+  const openKitTab = (i) => setEditForm((f) => { const kits = kitsOf(f); return { ...f, kits, kitTab: i, subItems: kits[i].subItems }; });
+  // A new kit starts as a copy of the open one (the table itself is usually shared) - its parts are its own from then on.
+  const addKit = () => setEditForm((f) => {
+    const kits = kitsOf(f);
+    const k = { id: "k" + Date.now().toString(36), name: `Kit ${kits.length + 1}`, subItems: (f.subItems || []).map((s) => ({ ...s })) };
+    return { ...f, kits: [...kits, k], kitTab: kits.length, subItems: k.subItems };
+  });
+  const renameKit = (i, name) => setEditForm((f) => ({ ...f, kits: kitsOf(f).map((k, j) => (j === i ? { ...k, name } : k)) }));
+  const removeKit = (i) => setEditForm((f) => {
+    if (!(i > 0)) return f;
+    const kits = kitsOf(f).filter((_, j) => j !== i);
+    const cur = Number(f.kitTab) || 0;
+    const t = cur === i ? 0 : cur > i ? cur - 1 : cur;
+    return { ...f, kits, kitTab: t, subItems: kits[t].subItems };
+  });
+
   function saveEdit() {
     if (!canAdd) return;
-    const f = editForm;
+    const f0 = editForm;
+    // Kit 1 is the item's own subItems (its price and what it blocks); the others go to altKits, empty ones dropped.
+    const allKits = kitsOf(f0);
+    const f = { ...f0, subItems: allKits[0].subItems };
     if (!f.id) return;
     const lNum = parseFloat(f.dimL), wNum = parseFloat(f.dimW), hNum = parseFloat(f.dimH);
     const hasDims = !isNaN(lNum) || !isNaN(wNum) || !isNaN(hNum);
@@ -631,6 +662,8 @@ Rules:
         paintCost: f.paintCost !== "" && f.paintCost != null ? (parseFloat(f.paintCost) || 0) : (i.paintCost ?? 0),
         paintable: f.paintable === true, // OFF unless ticked (2026-10-31) - never inferred from the category
         subItems: cleanSubItems,
+        kitName: isKit && allKits.length > 1 ? (String(allKits[0].name || "").trim() || undefined) : undefined,
+        altKits: isKit ? (() => { const alts = allKits.slice(1).map((k, j) => ({ id: k.id, name: String(k.name || "").trim() || `Kit ${j + 2}`, subItems: normKitParts(k.subItems) })).filter((k) => k.subItems.length); return alts.length ? alts : undefined; })() : undefined,
         kitBase: kitBaseNum,
         printable_LxW: (f.printL || f.printW) ? { l: f.printL || "", w: f.printW || "", unit: f.printUnit || "Feet" } : (i.printable_LxW || null),
       };
@@ -1541,7 +1574,11 @@ Rules:
           const catOptsMine = catOptsAll.filter((c) => c === editForm.cat || canSeeDept(authUser, catToDept(c, settings?.categoryDepartments)));
           const catOpts = catOptsMine.length ? catOptsMine : catOptsAll;
           const isLegacy = isLegacyCat(editForm.cat);
-          const kitPrice = kitPriceFrom(editForm.subItems, Number(editForm.kitBase) || 0);
+          // kitPrice: Kit 1's - the item's rental; openKitPrice: the kit open in the editor
+          const editKits = kitsOf(editForm);
+          const kitTabNow = Math.min(Number(editForm.kitTab) || 0, editKits.length - 1);
+          const kitPrice = kitPriceFrom(editKits[0].subItems, Number(editForm.kitBase) || 0);
+          const openKitPrice = kitPriceFrom(editForm.subItems, Number(editForm.kitBase) || 0);
           const kitComponentOpts = inventory.filter((i) => i.id !== editForm.id && !(editForm.subItems || []).some((s) => s.itemId === i.id));
           // Flower recipes addable as kit "add-ons" — a pure denotation that this kit includes a
           // flower recipe, contributing ₹0 to Kit rental price (auto). Its studio rate gets added
@@ -1810,6 +1847,28 @@ Rules:
 
                 {editForm.isKit && (
                   <div className="space-y-2">
+                    {/* Kits of this item - Kit 1 is what Build starts with; with two or more, Build offers Exchange Kit. */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {editKits.map((k, i) => (
+                        <button key={k.id} type="button" onClick={() => openKitTab(i)}
+                          className={`px-2.5 py-1 rounded-full text-xs font-semibold border focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${i === kitTabNow ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-indigo-200 text-indigo-700 hover:bg-indigo-100"}`}>
+                          {k.name || `Kit ${i + 1}`}{i === 0 && editKits.length > 1 ? " · default" : ""}
+                        </button>
+                      ))}
+                      <button type="button" onClick={addKit} title="Another kit for this item - starts as a copy of the open one"
+                        className="px-2.5 py-1 rounded-full text-xs font-semibold border border-dashed border-indigo-300 text-indigo-700 hover:bg-indigo-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">+ Add More Kit</button>
+                    </div>
+                    {editKits.length > 1 && (
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-indigo-800 font-semibold shrink-0" htmlFor="kit-name-input">Kit name</label>
+                        <input id="kit-name-input" value={editKits[kitTabNow].name} onChange={(e) => renameKit(kitTabNow, e.target.value)} placeholder={`Kit ${kitTabNow + 1}`}
+                          className="flex-1 min-w-0 px-2 py-1 text-xs border border-indigo-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+                        {kitTabNow > 0 && (
+                          <button type="button" onClick={() => { if (window.confirm(`Remove ${editKits[kitTabNow].name || "this kit"}? Deals already using it keep their parts.`)) removeKit(kitTabNow); }}
+                            className="text-xs font-semibold text-red-600 hover:text-red-700 px-2 py-1 rounded-lg hover:bg-red-50 shrink-0">Remove kit</button>
+                        )}
+                      </div>
+                    )}
                     {(editForm.subItems || []).length === 0 && (
                       <p className="text-xs text-gray-500 italic">No components yet — add the items this kit contains (e.g. Console Table ×1, Flower Pot ×3, Candle ×6).</p>
                     )}
@@ -1964,9 +2023,10 @@ Rules:
 
                     {/* Live kit price */}
                     <div className="flex items-center justify-between border-t border-indigo-200 pt-2 mt-1">
-                      <span className="text-xs font-bold text-indigo-800">Kit rental price (auto)</span>
-                      <span className="text-sm font-bold text-indigo-700">₹{kitPrice.toLocaleString("en-IN")}</span>
+                      <span className="text-xs font-bold text-indigo-800">Kit rental price (auto){editKits.length > 1 ? ` - ${editKits[kitTabNow].name || `Kit ${kitTabNow + 1}`}` : ""}</span>
+                      <span className="text-sm font-bold text-indigo-700">₹{openKitPrice.toLocaleString("en-IN")}</span>
                     </div>
+                    {editKits.length > 1 && kitTabNow > 0 && <p className="text-xs text-gray-500 italic">The item's own rental is Kit 1's (₹{kitPrice.toLocaleString("en-IN")}); a deal on this kit is priced at its own parts.</p>}
                     <p className="text-xs text-gray-500 italic">Auto-summed from each component's rental × qty. Editing a component's rental anywhere updates this automatically.</p>
                   </div>
                 )}

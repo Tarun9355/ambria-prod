@@ -16,7 +16,8 @@ const num = (v) => Number(v) || 0;
 // write too) and fell back to the auto-detected default on next load, no matter how many times an
 // admin unchecked it in IMS. `false` survives this list's own filter below (false !== "" / null /
 // undefined), same as the other booleans already here.
-const FLAG_EXTRAS = ["source", "usageChargePct", "tier", "kitBase", "oosCostPct", "canBeMade", "noRepeatDiscount", "paintable"];
+// altKits / kitName: an item's extra kits and its default kit's name (lib/studio/kitVariants.js).
+const FLAG_EXTRAS = ["source", "usageChargePct", "tier", "kitBase", "oosCostPct", "canBeMade", "noRepeatDiscount", "paintable", "altKits", "kitName"];
 
 // DB row (snake_case) → component item (camelCase superset).
 export function rowToItem(row) {

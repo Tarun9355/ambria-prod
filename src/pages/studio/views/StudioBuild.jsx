@@ -55,6 +55,7 @@ import { sizeClassToPatternKey, resolveSizeKey } from "../../../lib/ims/flowerHe
 import { itemDimsText, kitDescendantIds, flowerPaletteTuplesOf } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
+import { kitVariants, hasKitChoice, elementWithKit, currentKitId } from "../../../lib/studio/kitVariants";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
 import PrintedWallsModal from "../../../components/studio/PrintedWallsModal.jsx";
@@ -1196,6 +1197,8 @@ export default function StudioBuild({ ctx }) {
   // colour/variant of a raw mandi flower it's using. A grid of photo cards, same visual language
   // as the Availability Checker (StudioModals.jsx), instead of a plain <select>.
   const [mandiVariantPicker, setMandiVariantPicker] = useState(null);
+  // Exchange Kit: { k, idx } of the kit element whose kit is being chosen (an item with more than one kit - lib/studio/kitVariants.js)
+  const [kitPicker, setKitPicker] = useState(null);
   // Full-screen photo preview — { items: [{src, name}], idx }. Carries the zone's whole matched
   // set, not just the one photo, so you can step through them without closing and reopening.
   const [lightbox, setLightbox] = useState(null);
@@ -5132,6 +5135,11 @@ undefined
                         {el.invId&&priceInfo.warning&&<span title={priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>{priceInfo.outOfStock?"⚠ out of stock":"⚠ short"}</span>}
                         {kitShort.length>0&&<span title={`Short for this date inside this kit:\n${kitShort.map(p=>`${p.name}: ${p.short} of ${p.need} short${p.canMake?" (production can make it)":" (can't be made, pick another part)"}`).join("\n")}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:kitShortOut?"rgba(239,68,68,0.15)":"rgba(245,158,11,0.15)",color:kitShortOut?"#EF4444":"#B45309",fontWeight:700}}>⚠ {kitShort.length} part{kitShort.length===1?"":"s"} short</span>}
                         {(rc||el.invId)&&<span onClick={()=>((!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))||(()=>openAvailModal(k, idx, el, rc)))()} title={(!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))?`Check what is free and name up to ${ELEMENT_PREF_MAX} ${/cover/i.test(invItem?.name||"")?"cushion cover":"overlay"} designs in order of preference - Planning decides which one is used`:_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}
+                        {/* Exchange Kit - only on an item with more than one kit; names the kit the element is on */}
+                        {isKit&&hasKitChoice(invItem)&&(()=>{const kid=currentKitId(el,invItem);const cur=kitVariants(invItem).find(x=>x.id===kid);return(
+                          <button type="button" onClick={()=>setKitPicker({k,idx})} title="Exchange the whole kit for another kit of this item"
+                            style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10.5,fontWeight:700,padding:"2px 8px",borderRadius:999,border:"1px solid rgba(99,102,241,0.45)",background:"rgba(99,102,241,0.08)",color:isDark?"#A5B4FC":"#4F46E5",cursor:"pointer",whiteSpace:"nowrap",maxWidth:150,overflow:"hidden",textOverflow:"ellipsis"}}>
+                            ⇄ {cur?cur.name:"Edited kit"}</button>);})()}
                         {/* Only when the manually-pinned stock item's name actually differs from
                             what's already shown above (invItem?.name || el.name) — the box icon
                             right before this already opens the same "tap to change" picker, so a
@@ -6311,6 +6319,58 @@ undefined
     {/* ═══ MANDI VARIANT PICKER — same visual language as the Availability Checker: a grid of
         photo cards instead of a plain <select>, so picking a flower colour/variant looks and
         feels like picking a specific stock item. ═══ */}
+    {kitPicker && (()=>{
+      const {k,idx}=kitPicker;
+      const el=(zoneElements[k]||[])[idx];
+      const item=el?.invId?(imsInventory||[]).find(i=>i.id===el.invId):null;
+      const kits=kitVariants(item);
+      if(!el||kits.length<2) return null;
+      const curId=currentKitId(el,item);
+      const close=()=>setKitPicker(null);
+      // The whole kit is replaced, never merged: the element's parts become the chosen kit's (Kit 1 clears them back to the master).
+      // Deal Check's copy of this kit's parts follows at once, as a part swapped in the kit breakdown does.
+      const pick=(kitId)=>{
+        if(kitId===curId){close();return;}
+        const elems=[...(zoneElements[k]||[])]; if(!elems[idx]||elems[idx].invId!==el.invId){close();return;}
+        const next=elementWithKit(elems[idx],item,kitId);
+        elems[idx]=next;
+        setZoneElements(p=>({...p,[k]:elems}));
+        if(setDcKitEdits&&buildElCardKey){const ck=buildElCardKey(k,el.name||"",idx);const fi=activeFnIdx||0;const ov=Array.isArray(next.kitOverrides)?next.kitOverrides:null;setDcKitEdits(prev=>({...prev,[fi]:{...(prev?.[fi]||{}),[ck]:ov}}));persistDcKitEditsNow?.(fi,ck,ov);}
+        close();
+      };
+      const partName=(c)=>{if(c.patternId)return "🌸 flowers";const it=(imsInventory||[]).find(i=>i.id===c.itemId);return it?.name||"Item";};
+      return createPortal((
+        <div className="ui-overlay-in" onClick={close} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(10,10,20,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div className="ui-pop-in" role="dialog" aria-label={`Kits of ${item?.name||"this item"}`} onClick={e=>e.stopPropagation()} onKeyDown={e=>{if(e.key==="Escape")close();}} style={{width:"min(640px,100%)",maxHeight:"82vh",background:isDark?"#15151f":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:14.5,fontWeight:700,color:textP}}>⇄ Exchange kit - {item?.name||"Kit"}</div>
+                <div style={{fontSize:11.5,color:textS,marginTop:3}}>The chosen kit replaces every part of this one{curId===null?" (including your own edits to it)":""}. Qty and the rest of the build stay as they are.</div>
+              </div>
+              <button autoFocus onClick={close} aria-label="Close" style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textP,fontSize:14.5,cursor:"pointer",flexShrink:0}}>✕</button>
+            </div>
+            <div style={{padding:"14px 18px",overflowY:"auto",flex:1,display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:10}}>
+              {kits.map(kit=>{
+                const sel=kit.id===curId;
+                const parts=(Array.isArray(kit.subItems)?kit.subItems:[]).filter(c=>c&&(c.itemId||c.patternId));
+                return (
+                  <button type="button" key={kit.id} onClick={()=>pick(kit.id)} aria-pressed={sel}
+                    style={{textAlign:"left",cursor:"pointer",padding:12,borderRadius:10,border:sel?"2px solid #4F46E5":`1px solid ${border}`,background:sel?"rgba(79,70,229,0.07)":isDark?"rgba(255,255,255,0.03)":"#FAFAFA",display:"flex",flexDirection:"column",gap:6,color:textP,font:"inherit"}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
+                      <span style={{fontSize:13,fontWeight:700}}>{kit.name}</span>
+                      {sel?<span style={{fontSize:10,fontWeight:700,color:"#4F46E5"}}>✓ In use</span>:kit.id==="default"?<span style={{fontSize:10,color:textS}}>default</span>:null}
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                      {parts.map((c,i)=><span key={i} style={{fontSize:11.5,color:textS,lineHeight:1.35,overflowWrap:"anywhere"}}>{partName(c)} <b style={{color:textP}}>×{Number(c.qty)||1}</b></span>)}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ), document.body);
+    })()}
     {mandiVariantPicker && (()=>{
       const {k,idx,mandiId}=mandiVariantPicker;
       const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
