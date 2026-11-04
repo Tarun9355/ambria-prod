@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology, pillarCountForSpan } from "./pricing";
+import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology, pillarCountForSpan, nearestCleanSpans } from "./pricing";
 
 // §23 Phase 7 (2026-11-04, owner-confirmed worked examples): the sales team pads a zone's entered
 // width/depth themselves by a round 1ft per pillar (easy mental math) BEFORE typing it — a true
@@ -81,6 +81,57 @@ describe("buildTopology — 1ft/pillar budget, stock-resolved beams, footprint =
     expect(pillarCountForSpan(33, 30)).toBe(3);
     expect(pillarCountForSpan(64, 30)).toBe(4);
     expect(pillarCountForSpan(95, 30)).toBe(5);
+  });
+});
+
+describe("nearestCleanSpans — the smart dim tip (owner ask, 2026-11-04, replaces the removed +1ft/pillar hint)", () => {
+  const realStockWithPillars = { ...realStock, pillars: { 10: { stock: 20 }, 12: { stock: 20 } } };
+  it("16ft typed (owner's own worked example): budget 14ft isn't in stock — suggests 14ft (12ft beam) down and 17ft (15ft beam) up", () => {
+    const tip = nearestCleanSpans(16, 10, { ...eng, trussInv: realStockWithPillars });
+    expect(tip.pillarCount).toBe(2);
+    expect(tip.down).toEqual({ span: 14, budget: 12 });
+    expect(tip.up).toEqual({ span: 17, budget: 15 });
+  });
+  it("already clean (14ft → 12ft budget, exactly in stock): no tip", () => {
+    expect(nearestCleanSpans(14, 10, { ...eng, trussInv: realStockWithPillars })).toBeNull();
+  });
+  it("a span needing a middle pillar (2+ gaps) doesn't get a single-beam tip", () => {
+    expect(nearestCleanSpans(33, 10, { ...eng, trussInv: realStockWithPillars })).toBeNull();
+  });
+  it("pillars for this height can't be assembled from stock at all — no beam choice fixes that, so no tip", () => {
+    const noPillars = { ...realStock, pillars: {} };
+    expect(nearestCleanSpans(16, 10, { ...eng, trussInv: noPillars })).toBeNull();
+  });
+  it("budget below every stock size: only an upward suggestion", () => {
+    const tip = nearestCleanSpans(3, 10, { ...eng, trussInv: realStockWithPillars }); // budget = 3-2 = 1
+    expect(tip.down).toBeNull();
+    expect(tip.up).toEqual({ span: 4, budget: 2 });
+  });
+  it("a single beam up to 1ft short of budget is ALREADY clean (resolveBeamSegment's own tolerance) — no false 'needs a joint', even though the budget isn't an exact stock size", () => {
+    // 13ft → budget 11 → resolveBeamSegment picks one 10ft beam (0 joints, 1ft gap) over any 2-piece
+    // combo, since joints (weight 100) dominates gap (weight 10) in its own cost ranking.
+    expect(nearestCleanSpans(13, 10, { ...eng, trussInv: realStockWithPillars })).toBeNull();
+    // 15ft → budget 13 → one 12ft beam, 0 joints, 1ft gap.
+    expect(nearestCleanSpans(15, 10, { ...eng, trussInv: realStockWithPillars })).toBeNull();
+    // 17.5ft → budget 15.5 → one 15ft beam, 0 joints, 0.5ft gap.
+    expect(nearestCleanSpans(17.5, 10, { ...eng, trussInv: realStockWithPillars })).toBeNull();
+    // 18ft → budget 16 → one 15ft beam, 0 joints, 1ft gap (beats 12+4, which would be a joint).
+    expect(nearestCleanSpans(18, 10, { ...eng, trussInv: realStockWithPillars })).toBeNull();
+  });
+  it("a bigger nudge than ~6ft stops suggesting rather than jumping to a wildly different span", () => {
+    // 31ft → budget 29 — nothing in stock within 6ft either direction (largest stock size is 15ft).
+    expect(nearestCleanSpans(31, 10, { ...eng, trussInv: realStockWithPillars })).toBeNull();
+  });
+  it("Full Box needs 2 units of the same beam size (front+back / left+right reuse one segment length) — 1 unit in stock is not enough, so it keeps looking", () => {
+    const tightStock = { pillars: { 10: { stock: 5 } }, beams: { 7: { stock: 1 }, 5: { stock: 20 } } };
+    // typed 9 → budget 7 — exactly matches the 7ft size.
+    expect(nearestCleanSpans(9, 10, { ...eng, trussInv: tightStock, piecesNeeded: 1 })).toBeNull(); // 1 unit is enough for a single-row axis
+    const tip = nearestCleanSpans(9, 10, { ...eng, trussInv: tightStock, piecesNeeded: 2 }); // Full Box: needs 2
+    expect(tip.down).toEqual({ span: 7, budget: 5 }); // the 7ft size only has 1 unit — not enough — falls back to 5ft (20 in stock)
+    expect(tip.up).toBeNull();
+  });
+  it("no beam stock at all: no tip (nothing to suggest)", () => {
+    expect(nearestCleanSpans(16, 10, { ...eng, trussInv: { pillars: { 10: { stock: 5 } } } })).toBeNull();
   });
 });
 

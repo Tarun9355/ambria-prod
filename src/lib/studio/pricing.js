@@ -11,7 +11,7 @@ import { CARPET_OFF, trussRateFor, maskingRateFor, trussBaseArea } from "./taxon
 import { priceForInvItem } from "../ims/helpers.js";
 // builtBeamTotal resolves a beam segment's budget target against real stock — see buildTopology
 // below for how it's used.
-import { builtBeamTotal, PILLAR_BUDGET_FT } from "../ims/trussEngine.js";
+import { builtBeamTotal, PILLAR_BUDGET_FT, resolvePillarHeight, resolveBeamSegment } from "../ims/trussEngine.js";
 import { platformAvgRatePerSqft } from "../ims/platformEngine.js";
 export { resolveMandiFlower };
 
@@ -166,6 +166,73 @@ export const resolveTrussConfig = (zc) => {
 // threshold (e.g. a 33ft span flipping between 2 and 3 pillars depending on which iteration it
 // stopped on) and can land on an unsafe under-count if the iteration cap happens to be odd.
 export const pillarCountForSpan = (spanLen, maxSpan = 30) => Math.max(2, Math.ceil((spanLen + maxSpan) / (maxSpan + PILLAR_BUDGET_FT)));
+
+// Smart dim tip (owner ask, 2026-11-04 — replaces the removed "+1ft/pillar" hint, which suggested
+// the wrong direction once §23 Phase 7 landed). A typed span whose budget (span minus the team's
+// own 1ft/pillar padding) needs a JOINT to build — not just a single piece short by a bit, which the
+// engine already treats as clean — gets a tip suggesting the NEAREST typed value in each direction
+// (down and up) whose budget lands EXACTLY on an in-stock beam size, e.g. "16ft needs a joint — try
+// 14ft (12ft beam) or 17ft (15ft beam) instead."
+// Two different questions, two different tolerances, both against the SAME resolveBeamSegment
+// (trussEngine.js) the card's own cost preview builds from:
+//   - Whether to show a tip AT ALL: resolveBeamSegment's own joints === 0 — which tolerates a single
+//     piece up to 1ft short of budget as clean, not just an exact match. Requiring an exact match
+//     here flagged plenty of spans the engine was already building cleanly (e.g. a 13ft entry's 11ft
+//     budget quietly builds from one 10ft beam, no joint — confirmed by this session's own regression
+//     pass, which caught the mismatch before this shipped).
+//   - What to SUGGEST: an exact (zero-gap) stock match only — the point of nudging the typed value is
+//     landing flush on a stock size, not trading the gap it already has for a different one.
+// piecesNeeded (default 1): how many of the SAME beam size this axis actually needs — a Full Box's
+// two sides each reuse one segLens array for BOTH its front/back (or left/right) beams, so a size
+// with only 1 unit in stock is NOT actually enough there, only in u_only/half_box's single-row axis.
+// Returns null when there's nothing to suggest: no stock data, the span already needs 2+ pillar-gaps
+// (a single "clean beam" isn't the shape being built once there's a middle pillar — each gap would
+// need its own clean size, and pillar count itself could shift too, which this doesn't attempt), the
+// pillars for this height can't be assembled from stock at all (no beam choice fixes that), or the
+// typed value already builds clean (per the tolerant check above).
+export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piecesNeeded = 1 } = {}) {
+  const span = Number(typedSpan) || 0;
+  if (span <= 0 || !trussInv?.beams) return null;
+  if (resolvePillarHeight(Number(H) || 0, trussInv).shortage) return null;
+  const pillarCount = pillarCountForSpan(span, maxSpanFt);
+  if (pillarCount !== 2) return null; // 2+ gaps: see comment above
+  const budget = span - pillarCount * PILLAR_BUDGET_FT;
+  const toSpan = (b) => b + pillarCount * PILLAR_BUDGET_FT;
+  const stockOf = (size) => Number(trussInv.beams[String(size)]?.stock) || 0;
+
+  // Already builds from one clean piece, so there's nothing to suggest — resolveBeamSegment's own
+  // joints === 0 (the SAME resolver buildTopology/the card's own cost preview actually build from,
+  // which tolerates a single piece up to 1ft short of budget as clean, not just an exact match), AND
+  // genuinely enough real stock for every copy this axis needs (a Full Box's front+back / left+right
+  // beams reuse the same segment length, so 1 unit isn't enough there — see piecesNeeded). joints,
+  // not pieces.length === 1 — two pieces of the SAME size still collapse into one pieces[] entry
+  // (grouped by size) but are a real joint, so joints is the only reliable "exactly one physical
+  // piece" check.
+  const r = resolveBeamSegment(budget, trussInv);
+  if (!r.shortage && r.joints === 0 && stockOf(r.pieces[0]?.size) >= piecesNeeded * (r.pieces[0]?.qty || 1)) return null;
+
+  // Suggestions DO require an EXACT (zero-gap) stock match, with real stock for every copy this axis
+  // needs — the point of nudging the typed value is landing flush on a stock size, not trading the
+  // gap it already has for a different one.
+  const MAX_SEARCH_FT = 6; // a bigger nudge stops being a "quick tip"
+  let down = null;
+  for (let k = 1; k <= MAX_SEARCH_FT; k++) {
+    const b = budget - k;
+    if (b <= 0) break;
+    if (stockOf(b) >= piecesNeeded) { down = { span: toSpan(b), budget: b }; break; }
+  }
+  let up = null;
+  for (let k = 1; k <= MAX_SEARCH_FT; k++) {
+    const b = budget + k;
+    const upSpan = toSpan(b);
+    // Stop once a larger budget would itself need a middle pillar — this tip only ever compares
+    // single-beam options at the SAME pillar count it started from.
+    if (pillarCountForSpan(upSpan, maxSpanFt) !== pillarCount) break;
+    if (stockOf(b) >= piecesNeeded) { up = { span: upSpan, budget: b }; break; }
+  }
+  if (!down && !up) return null;
+  return { pillarCount, down, up };
+}
 
 // §23 Phase 7 (2026-11-04, owner-confirmed worked examples) — three steps per axis: (1) budget =
 // span − (pillarCount × PILLAR_BUDGET_FT, the team's own 1ft/pillar mental padding, subtracted back
