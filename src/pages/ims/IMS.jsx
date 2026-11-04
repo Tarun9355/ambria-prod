@@ -283,6 +283,16 @@ export default function IMS() {
   const [platformAlloc, setPlatformAllocState] = useState({});
   const [battaAlloc, setBattaAllocState] = useState({});
   const [trussInv, setTrussInvState] = useState(INIT_TRUSS_INV);
+  // True once the real truss_inventory row has actually landed (a successful fetch, even one that
+  // genuinely found zero rows — a fresh install) OR a realtime update has delivered it. Guards
+  // setTrussInv below from ever upserting the INIT_TRUSS_INV placeholder over real data: confirmed
+  // live (owner report 2026-11-04) — `fetchAll("truss_inventory").catch(() => [])` silently
+  // swallows a transient fetch failure into an empty array, `trussRow?.data` is then falsy so the
+  // real row never replaces the placeholder, yet `loading` still flips to false (every OTHER table
+  // loaded fine) with no visible error — so the WHOLE IMS UI looked normal while trussInv quietly
+  // sat at empty defaults, and the very next Fabric Stock/Truss Config edit upserted that empty
+  // placeholder straight over the real 9/24/14-row data.
+  const trussInvLoadedRef = useRef(false);
   const [categories, setCats] = useState([]);
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
   // True once the real settings row(s) have loaded at least once — guards the LMS auto-category
@@ -987,7 +997,7 @@ export default function IMS() {
     let active = true;
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, platformAllocRows, battaAllocRows, rcRows, trussRows, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
+        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, platformAllocRows, battaAllocRows, rcRows, trussFetch, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
           fetchAll("inventory"),
           fetchAll("functions").catch(() => []),
           fetchAll("projects").catch(() => []),
@@ -1002,7 +1012,11 @@ export default function IMS() {
           fetchAll("platform_allocations").catch(() => []),
           fetchAll("batta_allocations").catch(() => []),
           fetchAll("rate_card").catch(() => []),
-          fetchAll("truss_inventory").catch(() => []),
+          // {rows, ok} not a bare array — a real fetch failure (ok:false) must stay distinguishable
+          // from a real, successful fetch that just found zero rows (a fresh install), so the code
+          // below can refuse to treat a failure as "this venue genuinely has no truss_inventory yet"
+          // (see trussInvLoadedRef's own comment for the incident this closes).
+          fetchAll("truss_inventory").then((rows) => ({ rows, ok: true })).catch((e) => { console.warn("[IMS] truss_inventory fetch failed, leaving trussInv untouched:", e?.message); return { rows: [], ok: false }; }),
           fetchAll("categories").catch(() => []),
           fetchAll("settings").catch(() => []),
           fetchAll("blocks").catch(() => []),
@@ -1041,8 +1055,17 @@ export default function IMS() {
         setTrussAllocState(Object.fromEntries(allocRows.map((r) => [r.date, rowToAlloc(r)])));
         setPlatformAllocState(Object.fromEntries(platformAllocRows.map((r) => [r.date, rowToAlloc(r)])));
         setBattaAllocState(Object.fromEntries(battaAllocRows.map((r) => [r.date, rowToAlloc(r)])));
-        const trussRow = trussRows.find((r) => r.key === "main") || trussRows[0];
-        if (trussRow?.data) setTrussInvState(trussRow.data);
+        const trussRow = trussFetch.rows.find((r) => r.key === "main") || trussFetch.rows[0];
+        if (trussRow?.data) { setTrussInvState(trussRow.data); trussInvLoadedRef.current = true; }
+        else if (trussFetch.ok) {
+          // A genuinely successful fetch that found no row at all — a fresh install with no
+          // truss_inventory row yet. INIT_TRUSS_INV really is correct here, so it's safe to save.
+          trussInvLoadedRef.current = true;
+        } else {
+          // The fetch itself failed — trussInv is still sitting at the INIT_TRUSS_INV placeholder,
+          // not real data. Visible, not swallowed: see trussInvLoadedRef's own comment.
+          setError("Truss/fabric inventory failed to load — Fabric Stock and Truss & Batta Config are read-only until you reload the page (editing now would save an empty placeholder over the real data).");
+        }
         setCats(catRows.map((c) => c.name).filter(Boolean));
         // Mandi flower catalogue — the `mandi_flowers` TABLE (migration 039), not the
         // `mandiCatalogue` settings-blob key; merged into the same settings object everything else
@@ -1199,7 +1222,7 @@ export default function IMS() {
     liveTable("truss_allocations", (rows) => setTrussAllocState(Object.fromEntries(rows.map((r) => [r.date, rowToAlloc(r)]))));
     liveTable("platform_allocations", (rows) => setPlatformAllocState(Object.fromEntries(rows.map((r) => [r.date, rowToAlloc(r)]))));
     liveTable("batta_allocations", (rows) => setBattaAllocState(Object.fromEntries(rows.map((r) => [r.date, rowToAlloc(r)]))));
-    liveTable("truss_inventory", (rows) => { const tr = rows.find((r) => r.key === "main") || rows[0]; if (tr?.data) setTrussInvState(tr.data); });
+    liveTable("truss_inventory", (rows) => { const tr = rows.find((r) => r.key === "main") || rows[0]; if (tr?.data) { setTrussInvState(tr.data); trussInvLoadedRef.current = true; } });
     liveTable("categories", (rows) => setCats(rows.map((c) => c.name).filter(Boolean)));
     liveTable("supervisors", (rows) => setSupervisorsState(rows.map(rowToSupervisor)));
     liveTable("vendors", (rows) => setVendorsState(rows.map(rowToVendor)));
@@ -1984,6 +2007,13 @@ export default function IMS() {
 
   // Truss inventory is a single-row key-value (key='main', data JSONB).
   const setTrussInv = useCallback((updater) => {
+    // Refuse to save before the real row has actually landed — see trussInvLoadedRef's own comment
+    // for the incident this closes (an edit made while trussInv still held INIT_TRUSS_INV silently
+    // upserted that empty placeholder over the real 9/24/14-row fabric stock).
+    if (!trussInvLoadedRef.current) {
+      setError("Truss/fabric inventory hasn't finished loading — this change was NOT saved, to avoid overwriting real data with an empty placeholder. Reload the page and try again.");
+      return;
+    }
     setTrussInvState((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
       trackWrite(supabase.from("truss_inventory").upsert({ key: "main", data: next }, { onConflict: "key" }).then(({ error: e }) => { if (e) setError(`Save failed: ${e.message}`); }));
