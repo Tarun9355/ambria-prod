@@ -100,6 +100,7 @@ import { sheetItemLine } from "../../lib/studio/sheetRounding";
 import { sigHash } from "../../lib/sigHash";
 import { costSheetQtyEdit } from "../../lib/studio/costSheetQtyEdit";
 import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive, kitPartShortfalls, fnUnitQty } from "../../lib/studio/dealAvailability";
+import { swapKitPart } from "../../lib/studio/kitPartSwap";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing, assembleMarkedDatesFromRows } from "../../lib/inventory/helpers";
@@ -1924,6 +1925,9 @@ export default function StudioApp() {
   // above THIS gate), so the gate modal is hidden (not stacked under it) for the duration instead.
   // Restored once availModal closes — see the effect right below.
   const oosGateStashRef = useRef(null);
+  // The active function's live zoneElements for the gate's kit-part Fix (openOosPicker), read when the pick lands.
+  const oosZoneElsRef = useRef(zoneElements);
+  useLayoutEffect(() => { oosZoneElsRef.current = zoneElements; });
   // Swap modal local state — lifted to App scope to avoid hook-reset on parent re-render.
   const [dcSwapSearch, setDcSwapSearch] = useState("");
   const [dcSwapPicked, setDcSwapPicked] = useState(null);
@@ -5751,6 +5755,8 @@ export default function StudioApp() {
             // salesperson at the right function/zone and making them find it by hand.
             flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, fnDate: fnData.fnDate || "", zoneKey: zk, idx: i, invId: el.invId, name: item?.name || el.name || "Item",
               parts: partsOut.map((p) => `${p.name} (${p.short} short)`),
+              // the gate lists each short part as its own row, and its Fix opens the picker on that part, not the kit
+              itemOut: !!r.outOfStock, shortParts: partsOut.map((p) => ({ id: p.id, name: p.name })),
               // what is short, by name only - the gate modal shows just this: the item itself when it is out, and/or the kit part(s) that are
               shortNames: [...new Set([...(r.outOfStock ? [item?.name || el.name || "Item"] : []), ...partsOut.map((p) => p.name)])] });
           }
@@ -11344,23 +11350,45 @@ export default function StudioApp() {
     });
     return out;
   };
+  // A short PART of a kit (f.partId - Pearl Mala inside a Console) opens the picker on that part, and the pick swaps just that
+  // part in the element's kitOverrides (lib/studio/kitPartSwap.js) - opening it on the kit only offered other consoles, so the
+  // part that was actually short could not be fixed from here. Deal Check's copy of the kit's parts follows, as Build's own swap does.
+  const openOosPicker = useCallback((f) => {
+    if (!f.partId) { openAvailModal(f.zoneKey, f.idx, { invId: f.invId, name: f.name }, null); return; }
+    openAvailModal(null, null, { invId: f.partId, name: f.partName }, null, (picked) => {
+      if (!picked || picked.id === f.partId) return;
+      const el = (oosZoneElsRef.current?.[f.zoneKey] || [])[f.idx];
+      const kit = el?.invId === f.invId ? (imsInventory || []).find((i) => i.id === el.invId) : null;
+      const next = kit ? swapKitPart(kit, el.kitOverrides, f.partId, picked.id, imsInventory) : null;
+      if (!next) return;
+      setZoneElements((p) => {
+        const elems = [...(p[f.zoneKey] || [])];
+        if (elems[f.idx]?.invId !== f.invId) return p;
+        elems[f.idx] = { ...elems[f.idx], kitOverrides: next };
+        return { ...p, [f.zoneKey]: elems };
+      });
+      const ck = buildElCardKey(f.zoneKey, el.name || "", f.idx);
+      setDcKitEdits((prev) => ({ ...prev, [f.fnIdx]: { ...(prev?.[f.fnIdx] || {}), [ck]: next } }));
+      persistDcKitEditsNow(f.fnIdx, ck, next);
+    }, { pickHint: `Pick the item to use for ${f.partName} inside ${f.name}` });
+  }, [openAvailModal, imsInventory, setZoneElements, persistDcKitEditsNow]);
   const openOosFix = useCallback((f) => {
     oosGateStashRef.current = oosGateModal;
     setOosGateModal(null);
     if (f.fnIdx === activeFnIdx) {
-      openAvailModal(f.zoneKey, f.idx, { invId: f.invId, name: f.name }, null);
+      openOosPicker(f);
     } else {
       setOosFixPending(f);
       setActiveFnIdx(f.fnIdx);
     }
-  }, [activeFnIdx, openAvailModal, oosGateModal]);
+  }, [activeFnIdx, openOosPicker, oosGateModal]);
   useEffect(() => {
     if (oosFixPending && oosFixPending.fnIdx === activeFnIdx) {
       const f = oosFixPending;
       setOosFixPending(null);
-      openAvailModal(f.zoneKey, f.idx, { invId: f.invId, name: f.name }, null);
+      openOosPicker(f);
     }
-  }, [activeFnIdx, oosFixPending, openAvailModal]);
+  }, [activeFnIdx, oosFixPending, openOosPicker]);
   // Brings the gate list back once its own inline pick finishes (saved or cancelled either way),
   // so the salesperson can keep working through the rest of the flagged rows in one sitting.
   //

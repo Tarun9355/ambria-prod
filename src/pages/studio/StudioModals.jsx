@@ -471,22 +471,24 @@ export default function StudioModals({ ctx }) {
               <div style={{fontSize:12.5,color:textS,marginTop:6,lineHeight:1.5}}>These items are out of stock for this date and can't be made in production. Pick an alternative below for each one before this deal can be marked Sold.</div>
             </div>
             <div style={{padding:"4px 20px",overflowY:"auto",flex:1}}>
-              {oosGateModal.map((f, i) => (
-                <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 0",borderBottom:i<oosGateModal.length-1?`1px solid ${border}`:"none"}}>
+              {/* One row per thing that is short: the item itself, and each short part of a kit on its own row, whose Fix opens the
+                  picker on that part (Pearl Mala), not on the kit around it (the Console). */}
+              {(() => { const rows = oosGateModal.flatMap((f) => { const parts = Array.isArray(f.shortParts) ? f.shortParts : []; const out = [...(f.itemOut || !parts.length ? [f] : []), ...parts.map((p) => ({ ...f, partId: p.id, partName: p.name }))]; return out; }); return rows.map((f, i) => (
+                <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 0",borderBottom:i<rows.length-1?`1px solid ${border}`:"none"}}>
                   {/* What is short, by name (owner ask): the item itself, or for a kit the part(s) inside it that are short - with
                       a small line saying which function and date it is short on, so a real shortage (another event that day) is told
                       apart at a glance. Fix still opens the right element. */}
                   <div style={{minWidth:0}}>
                     <div style={{fontSize:13,fontWeight:600,color:textP,whiteSpace:"normal"}}>
-                      {Array.isArray(f.shortNames) && f.shortNames.length ? f.shortNames.join(", ") : f.name}
+                      {f.partId ? f.partName : f.name}
                     </div>
                     <div style={{fontSize:11,color:textS,marginTop:2}}>
-                      {[f.fnLabel, f.fnDate ? new Date(f.fnDate + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""].filter(Boolean).join(" · ")}
+                      {[f.partId ? `in ${f.name}` : "", f.fnLabel, f.fnDate ? new Date(f.fnDate + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""].filter(Boolean).join(" · ")}
                     </div>
                   </div>
-                  <button onClick={() => openOosFix(f)} title="Pick an alternative item" style={{padding:"6px 12px",borderRadius:7,border:"none",background:"#EF4444",color:"#fff",fontSize:11.5,fontWeight:700,cursor:"pointer",flexShrink:0,display:"inline-flex",alignItems:"center",gap:5}}><IconBox size={12}/> Fix</button>
+                  <button onClick={() => openOosFix(f)} title={f.partId ? `Pick an alternative for ${f.partName} inside ${f.name}` : "Pick an alternative item"} style={{padding:"6px 12px",borderRadius:7,border:"none",background:"#EF4444",color:"#fff",fontSize:11.5,fontWeight:700,cursor:"pointer",flexShrink:0,display:"inline-flex",alignItems:"center",gap:5}}><IconBox size={12}/> Fix</button>
                 </div>
-              ))}
+              )); })()}
             </div>
             <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,textAlign:"right"}}>
               <button onClick={() => setOosGateModal(null)} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Close</button>
