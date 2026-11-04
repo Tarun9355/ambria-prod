@@ -4061,10 +4061,52 @@ export default function StudioApp() {
     // to do with a pricing regenerate — so the dept head's edits looked like they silently reverted.
     // A function is matched by its fnIdx; an older order whose functions were written without one is matched by position
     // (its list is in function order) - those were silently never refreshed, so notes and layout edits never reached IMS.
-    const withLayout = (fns) => Array.isArray(fns) && layout.size ? fns.map((f, i) => { const k = f?.fnIdx ?? i; return (f && layout.has(k)) ? { ...f, ...layout.get(k) } : f; }) : fns;
-    // The order's own date follows its first function's (what IMS falls back to when it needs one date).
-    const firstDate = [...layout.values()].map(l => l.date).filter(Boolean).sort()[0];
-    const applySnap = (base) => ({ ...base, ...(firstDate ? { date: firstDate } : {}), functionsDetail: withLayout(base.functionsDetail), deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION, floralDetail: snap.floralDetail || base.floralDetail || null, dealValue: snap.dealValue || base.dealValue || null, transportPlan: snap.transportPlan ?? null });
+    const withLayout = (fns) => {
+      if (!Array.isArray(fns) || !layout.size) return fns;
+      return fns.map((f, i) => {
+        const k = f?.fnIdx ?? i;
+        if (!(f && layout.has(k))) return f;
+        const patch = { ...layout.get(k) };
+        // ── REFUSE TO STAMP A DIFFERENT FUNCTION'S IDENTITY ONTO THIS ONE ──
+        // Confirmed live (Sangeeta, 2026-11-02/03): function 1's type flipped between its real name
+        // and two OTHER functions' names 14 times in a day — including 3 changes in 21 seconds, far
+        // faster than anyone retypes a function's own name. This is more than one tab, each with a
+        // different belief about which function index is which, periodically re-asserting its own
+        // (wrong, for at least some of them) answer over the others'. A type-only match isn't
+        // specific enough to flag alone — two functions CAN legitimately share a type — but type AND
+        // date BOTH matching a DIFFERENT function already on this order is: that's not "the type
+        // changed", that's "this tab thinks index k is actually a different, already-existing
+        // function", so its type/date/venue for this index is untrustworthy this cycle. Everything
+        // else in patch (zones/elements/etc — already guarded above, for a different reason) still
+        // applies normally.
+        // ALSO gated on this actually being a CHANGE from what the server already has for THIS slot
+        // (f.type/f.date, read before the patch) — a real, deliberately-named pair of same-type
+        // same-date functions settles into matching once and then never proposes a different value
+        // again, so it stops tripping this the moment it's already stable. Only a genuinely NEW
+        // incoming value that happens to collide gets refused, not an established legitimate one.
+        if (patch.type && patch.date && (f.type !== patch.type || f.date !== patch.date)) {
+          const belongsToAnother = fns.some((other, j) => {
+            const otherK = other?.fnIdx ?? j;
+            return otherK !== k && other?.type === patch.type && other?.date === patch.date;
+          });
+          if (belongsToAnother) {
+            console.warn(`[persistDeptSnapshot] Function ${k + 1}'s type/date ("${patch.type}", ${patch.date}) matches a DIFFERENT function already on this order — refusing to overwrite its identity this cycle.`);
+            showMsg?.(`Function ${k + 1}'s name/date looked like it matched a different function — IMS wasn't updated this time. Check it in Event Info.`, "red");
+            delete patch.type; delete patch.date; delete patch.venue;
+          }
+        }
+        return { ...f, ...patch };
+      });
+    };
+    const applySnap = (base) => {
+      const nextFunctionsDetail = withLayout(base.functionsDetail);
+      // The order's own date follows its first function's (what IMS falls back to when it needs
+      // one date) — derived from the POST-GUARD functionsDetail, not the raw local layout, so a
+      // function whose type/date got refused above (because it actually belonged to a different
+      // function) can't still leak its wrong date in here.
+      const firstDate = Array.isArray(nextFunctionsDetail) ? nextFunctionsDetail.map(f => f?.date).filter(Boolean).sort()[0] : null;
+      return { ...base, ...(firstDate ? { date: firstDate } : {}), functionsDetail: nextFunctionsDetail, deptIncome: snap.income || {}, deptInventory: snap.inventory || {}, floralPlan: snap.floralPlan || base.floralPlan || null, fabricPlan: snap.fabricPlan || base.fabricPlan || null, manpowerPlan: snap.manpowerPlan || [], manpowerDetail: snap.manpowerDetail || {}, mpPhases: snap.mpPhases || null, deptSeason: snap.season || null, deptIncomeSig: sig, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION, floralDetail: snap.floralDetail || base.floralDetail || null, dealValue: snap.dealValue || base.dealValue || null, transportPlan: snap.transportPlan ?? null };
+    };
     try {
       // Read the FRESHEST row so we never clobber IMS-owned fields with Studio's stale local copy.
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
@@ -8856,6 +8898,37 @@ export default function StudioApp() {
       } else {
         console.warn(`[pushEventOrderPlan] Function ${i + 1}'s decor content exactly matches another function's and there is no prior booked version to fall back to — booking it anyway (omitting it would be worse), but this needs a human look.`);
         showMsg?.(`Function ${i + 1} looks like it duplicated another function's build — booked anyway, but check it in IMS.`, "red");
+      }
+    });
+    // ── REFUSE TO BOOK A DIFFERENT FUNCTION'S IDENTITY ONTO THIS ONE ──
+    // Confirmed live (Sangeeta, 2026-11-02/03): function 1's type/date flipped between its real
+    // identity and two OTHER functions' 14 times in a day, including 3 changes in 21 seconds — far
+    // faster than a human retypes a function's own name, so this is more than one tab disagreeing
+    // about which function index is which. Same reasoning as the content guard just above, but for
+    // type/date/venue instead of decor: a type-only match isn't specific enough to flag alone (two
+    // functions CAN legitimately share a type), but type AND date BOTH matching a DIFFERENT
+    // function — either another entry in THIS SAME booking, or the existing booked order's — means
+    // this tab's own local index is carrying a different function's identity, not this one's.
+    fnEOs.forEach((f, idx) => {
+      if (!f.type || !f.date) return;
+      const prior = existingActive?.functionsDetail?.find((other) => other?.fnIdx === f.fnIdx);
+      // Only a genuinely NEW proposed identity for this exact function gets scrutinised — a
+      // function whose type/date hasn't changed since the last successful booking is left alone
+      // even if it happens to collide with a sibling, the same "already stable, not a new problem"
+      // escape hatch persistDeptSnapshot's own copy of this guard uses, so two legitimately
+      // identical same-type same-date functions can't get stuck refusing their own re-push forever.
+      const isActualChange = !prior || prior.type !== f.type || prior.date !== f.date;
+      if (!isActualChange) return;
+      const matchesSiblingInThisBooking = fnEOs.some((other, j) => j !== idx && other.type === f.type && other.date === f.date);
+      const matchesOtherInExisting = (existingActive?.functionsDetail || []).some((other) => other?.fnIdx !== f.fnIdx && other?.type === f.type && other?.date === f.date);
+      if (!matchesSiblingInThisBooking && !matchesOtherInExisting) return;
+      if (prior?.type && prior?.date) {
+        console.warn(`[pushEventOrderPlan] Function ${idx + 1}'s type/date ("${f.type}", ${f.date}) matches a DIFFERENT function — booking the existing, already-booked identity instead.`);
+        showMsg?.(`Function ${idx + 1}'s name/date looked like it matched a different function — kept its previous name/date instead. Check it in Event Info.`, "red");
+        fnEOs[idx] = { ...f, type: prior.type, date: prior.date, venue: prior.venue ?? f.venue };
+      } else {
+        console.warn(`[pushEventOrderPlan] Function ${idx + 1}'s type/date ("${f.type}", ${f.date}) matches a DIFFERENT function and there is no prior booked identity to fall back to — booking it anyway, but this needs a human look.`);
+        showMsg?.(`Function ${idx + 1} looks like it has another function's name/date — booked anyway, but check it in IMS.`, "red");
       }
     });
     // Computed AFTER the substitution loop above, not before — these have to reflect whatever
