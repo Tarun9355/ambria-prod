@@ -18,7 +18,9 @@ export function swapKitPart(kitItem, overrides, partId, newId, allInventory, _se
   let hit = false;
   const next = kitComps(kitItem, overrides).map((c) => {
     if (c.patternId) return c;
-    if (c.itemId === partId) { hit = true; const { subOverrides: _drop, ...rest } = c; return { ...rest, itemId: newId }; }
+    // A different item: its old nested edits and its named designs (prefs, the old item's alternatives) do not carry over -
+    // the pid stays, as applyPartChoicePicks keeps it for a single pick.
+    if (c.itemId === partId) { hit = true; const { subOverrides: _drop, prefs: _prefs, ...rest } = c; return { ...rest, itemId: newId }; }
     const sub = (allInventory || []).find((i) => i.id === c.itemId);
     if (!(Array.isArray(sub?.subItems) && sub.subItems.length)) return c;
     const subNext = swapKitPart(sub, Array.isArray(c.subOverrides) ? c.subOverrides : undefined, partId, newId, allInventory, seen);

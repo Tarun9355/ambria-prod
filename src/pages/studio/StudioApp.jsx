@@ -11400,13 +11400,14 @@ export default function StudioApp() {
   // re-scan means every flagged row is now resolved — close the gate outright instead of showing an
   // empty dialog, so "Sold" is one more click away rather than a dead end.
   useEffect(() => {
-    if (!availModal && oosGateStashRef.current) {
+    // Not while a Fix is still switching to its own function (oosFixPending): the picker has not opened yet, so the gate came back over it.
+    if (!availModal && !oosFixPending && oosGateStashRef.current) {
       oosGateStashRef.current = null;
       const fresh = scanOutOfStockElements();
       if (fresh.length > 0) setOosGateModal(fresh);
       else showMsg?.("✅ All out-of-stock items fixed — click Mark Sold again to confirm.", "green");
     }
-  }, [availModal, scanOutOfStockElements, showMsg]);
+  }, [availModal, oosFixPending, scanOutOfStockElements, showMsg]);
   const saveAvailPick = useCallback(() => {
     if (!availModal) return;
     const { zoneKey, idx, selectedId, items, onPick } = availModal;

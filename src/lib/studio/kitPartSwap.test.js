@@ -23,6 +23,10 @@ describe("swapKitPart", () => {
     expect(next[1].itemId).toBe("console");
     expect(next[1].subOverrides.find((c) => c.itemId === "pearl2").qty).toBe(4);
   });
+  it("drops the old item's named designs but keeps its pid", () => {
+    const ov = [{ itemId: "pearl", qty: 2, pid: "p1", prefs: [{ id: "pearl" }, { id: "x" }] }];
+    expect(swapKitPart(get("console"), ov, "pearl", "pearl2", inv)).toEqual([{ itemId: "pearl2", qty: 2, pid: "p1" }]);
+  });
   it("returns null when the part is not in the kit", () => {
     expect(swapKitPart(get("console"), undefined, "sofa", "pearl2", inv)).toBeNull();
   });
