@@ -344,11 +344,11 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 }).filter(Boolean);
                 if (!tips.length) return null;
                 return (
-                  <div style={{marginBottom:6,fontSize:11,color:textS,lineHeight:1.5}}>
+                  <div style={{marginBottom:6,fontSize:11,color:"#EF4444",fontWeight:600,lineHeight:1.5}}>
                     {tips.map((t) => {
                       const opts = [];
-                      if (t.down) opts.push(<span key="down">try <b style={{color:textP}}>{t.down.span}ft</b> ({t.down.budget}ft beam)</span>);
-                      if (t.up) opts.push(<span key="up">try <b style={{color:textP}}>{t.up.span}ft</b> ({t.up.budget}ft beam)</span>);
+                      if (t.down) opts.push(<span key="down">try <b>{t.down.span}ft</b> ({t.down.budget}ft beam)</span>);
+                      if (t.up) opts.push(<span key="up">try <b>{t.up.span}ft</b> ({t.up.budget}ft beam)</span>);
                       return (
                         <div key={t.d}>
                           💡 {t.label} {t.val}ft needs a joint to build — {opts[0]}{opts[1] ? <> or {opts[1]}</> : null} for a clean single beam.
