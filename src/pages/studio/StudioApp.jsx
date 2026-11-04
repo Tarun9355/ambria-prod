@@ -2465,6 +2465,11 @@ export default function StudioApp() {
   // ═══ AUTH- derived helpers (verbatim) ═══
   const [teamData, setTeamData] = useState(DEFAULT_TEAM);
   const [saveError, setSaveError] = useState(null);
+  // Event Info's "Load →" was blocked because someone (this user's own other device, or someone
+  // else) already has this deal open — same "important, must be read, not a toast" class as the
+  // stale-save conflict dialog above it, not a quick confirmation, so it gets the same centred,
+  // dimmed-backdrop modal treatment rather than the auto-dismissing toast. { message } or null.
+  const [dealOpenConflict, setDealOpenConflict] = useState(null);
 
   // MEMOIZED, and it has to be. As a plain function this got a new identity on every render, and
   // that identity is load-bearing: saveClientLedger is useCallback(..., [showMsg]), so it churned
@@ -9175,19 +9180,22 @@ export default function StudioApp() {
     if (others.length) {
       try { supabase.removeChannel(channel); } catch { /* ignore */ }
       const who = others.map(o => o?.userName || "Someone").join(", ");
-      showMsg?.(`${who} ${others.length > 1 ? "are" : "is"} already editing this deal right now — wait for them to finish before opening it.`, "red");
+      // A modal, not a toast (setDealOpenConflict, not showMsg) — this has to actually be read and
+      // dismissed, the same reasoning the stale-save-conflict dialog above already follows, not
+      // flash past in 2 seconds while someone's looking at the client list.
+      setDealOpenConflict({ message: `${who} ${others.length > 1 ? "are" : "is"} already editing this deal right now — wait for them to finish before opening it.` });
       return;
     }
     // One device at a time PER PERSON too, not just "no two different people" — this user's own
     // other tab/device already has it open.
     if (selfElsewhere) {
       try { supabase.removeChannel(channel); } catch { /* ignore */ }
-      showMsg?.("You already have this deal open on another device or tab — close that one before opening it here.", "red");
+      setDealOpenConflict({ message: "You already have this deal open on another device or tab — close that one before opening it here." });
       return;
     }
     dealPresenceRef.current = { channel, clientId: client.id };
     loadClientSession(client, session, landingStep, opts);
-  }, [authUser, loadClientSession, showMsg]);
+  }, [authUser, loadClientSession]);
 
   // ── Close the open deal: back to a blank builder ──
   // Lived inline in StudioSummary, where "Start New" and the Summary's own delete link both used it.
@@ -13052,6 +13060,28 @@ export default function StudioApp() {
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
               <button onClick={() => setSaveError(null)} style={{ background: "transparent", color: isDark ? "#CFCBBE" : "#6B6B80", border: "1px solid rgba(201,169,110,0.5)", padding: "9px 14px", borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Keep working (not saved)</button>
               <button onClick={() => window.location.reload()} style={{ background: "#C9A96E", color: "#1A1A2E", border: "none", padding: "9px 16px", borderRadius: 9, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Reload latest</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DEAL-OPEN CONFLICT — Event Info's "Load →" was blocked (claimDealPresence,
+          loadClientSessionGuarded). Same "centred, dimmed backdrop, must be read" treatment as the
+          stale-save-conflict dialog above — a toast that auto-dismisses in a couple seconds isn't
+          enough for something that has to change what the salesperson does next (owner ask,
+          2026-11-04). Dismiss is the only action here — there is nothing to redo or reload. */}
+      {dealOpenConflict && (
+        <div role="alertdialog" aria-modal="true" aria-label="This deal is already open"
+          style={{ position: "fixed", inset: 0, zIndex: 100000, background: "rgba(15,15,26,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={() => setDealOpenConflict(null)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 440, background: isDark ? "#1B1B2B" : "#FFFBF2", color: isDark ? "#F3F1EA" : "#1A1A2E", borderRadius: 16, border: "1px solid #C9A96E", borderTop: "4px solid #C9A96E", boxShadow: "0 18px 50px rgba(0,0,0,0.45)", padding: "20px 22px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <span style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(201,169,110,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🔒</span>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>This deal is already open</div>
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.55, marginBottom: 16 }}>{dealOpenConflict.message}</div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button onClick={() => setDealOpenConflict(null)} style={{ background: "#C9A96E", color: "#1A1A2E", border: "none", padding: "9px 16px", borderRadius: 9, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Got it</button>
             </div>
           </div>
         </div>
