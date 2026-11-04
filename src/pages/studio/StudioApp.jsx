@@ -12101,14 +12101,17 @@ export default function StudioApp() {
         }
         return proj;
       };
-      // Keyed by DATE, not re-derived per function — two functions of this SAME event sharing a
-      // date (Haldi + Sangeet, one day) used to each find `row` undefined off the one-time fnRows
-      // fetch above (neither had a row yet) and each mint its OWN backfill `functions` row for the
-      // same date, because the loop never recorded what the FIRST one just created before the
-      // second one looked. Confirmed live, 2026-11-02 (Sangeeta): one date, two `functions` rows,
-      // same projectId. Seeding this map from fnRows and writing into it the instant a row is
-      // created (not waiting for its insert to land) makes the second function see it.
-      const rowByDate = new Map((fnRows || []).map((r) => [(r.date || r.data?.date), r]));
+      // Keyed by (DATE, TYPE), not date alone — two functions of this SAME event sharing a date
+      // (Haldi + Sangeet, one day) are two DIFFERENT functions.ROWS, and a date-only key collapses
+      // them onto one Map slot: whichever function is processed SECOND in the loop below looks up
+      // "the row for this date", gets the FIRST function's row back instead of its own, and
+      // overwrites it with its own venue/shift/pax. Confirmed live, 2026-11-04 (Sangeeta): Haldi's
+      // row ended up with Sangeet's shift ("Night") and pax (100) this exact way. (A related, already-
+      // fixed bug lived here too — 2026-11-02, "two functions sharing a date used to each find `row`
+      // undefined and each mint its own backfill row" — fixed by seeding/updating this map as rows
+      // are found/created; that fix is still correct, it just needed the richer key below as well.)
+      const fnRowKey = (date, type) => `${date}||${type || ""}`;
+      const rowByDate = new Map((fnRows || []).map((r) => [fnRowKey(r.date || r.data?.date, r.data?.type || r.name), r]));
       // Every new fnId actually created this run, collected locally and written to the project's
       // own functions array ONCE after the whole loop — not per function. The old code updated
       // projects.data.functions separately for each function needing a backfill row, each update
@@ -12122,7 +12125,7 @@ export default function StudioApp() {
         const req = requiredByFn[fnIdx] || {};
         const date = fn.fnDate || "";
         if (!date) continue;
-        const row = rowByDate.get(date);
+        const row = rowByDate.get(fnRowKey(date, fn.fnType));
         const nextItems = ids.reduce((acc, id) => {
           const qty = req[id] || 0;
           if (qty <= 0) return acc;
@@ -12145,19 +12148,32 @@ export default function StudioApp() {
           // preserve; a row with no venue object yet defaults to "outdoor" (matching the backfill
           // branch below, and every other place in this app an untyped venue defaults the same way).
           const prevVenueObj = (row.data?.venue && typeof row.data.venue === "object") ? row.data.venue : { type: "outdoor", fullAddress: "" };
+          // Defensive, on top of the key fix above — refuse the venue/shift/pax resync (items still
+          // sync normally, those are already keyed per-fnIdx via requiredByFn) if this row's own
+          // established type disagrees with the function we think we're syncing. A row with no type
+          // yet (pre-dates this field) is trusted as before; this only fires on an actual mismatch.
+          const identityOk = !row.data?.type || !fn.fnType || row.data.type === fn.fnType;
+          if (!identityOk) {
+            console.warn(`[reconcile] functions row ${row.id} is "${row.data.type}" but this sync is for "${fn.fnType}" (date ${date}) — leaving its venue/shift/pax untouched this run.`);
+            supabase.from("functions").update({ data: { ...row.data, items: [...kept, ...nextItems] } }).eq("id", row.id)
+              .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); });
+            continue;
+          }
           supabase.from("functions").update({ data: { ...row.data, items: [...kept, ...nextItems], venue: { ...prevVenueObj, name: fn.fnVenue || "" }, shift: fn.fnShift || row.data?.shift || "", pax: fn.fnPax || row.data?.pax || "" } }).eq("id", row.id)
             .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); else console.info("[reconcile] synced functions.items for fn", row.id, "date", date); });
           continue;
         }
         const p = await ensureProject();
         if (!p) { console.warn("[reconcile] no functions row AND no projects row for event", eo.id, "date", date, "— this deal never went through the real markSold confirm at all. IMS's date-filtered Inventory view has nothing to show regardless of the blocks write below."); continue; }
-        // Deterministic, not random — a pure function of (event, date), so two reconcile calls
-        // racing to backfill the SAME missing (event, date) combo always compute the SAME id and
-        // collide on ONE row via the upsert below, instead of each minting its own random id and
-        // both landing as separate rows. Confirmed live, 2026-11-02 (Anuja Berry): two calls 229ms
-        // apart each found no row for the date and each inserted its own — this makes a second row
-        // for the same (event, date) structurally impossible, not just less likely.
-        const fnId = `fn_bck_${eo.id}_${date}`;
+        // Deterministic, not random — a pure function of (event, date, type), so two reconcile
+        // calls racing to backfill the SAME missing (event, date, type) combo always compute the
+        // SAME id and collide on ONE row via the upsert below, instead of each minting its own
+        // random id and both landing as separate rows. Confirmed live, 2026-11-02 (Anuja Berry): two
+        // calls 229ms apart each found no row for the date and each inserted its own — this makes a
+        // second row for the same (event, date, type) structurally impossible, not just less likely.
+        // Type is part of the id too (not just date) for the same reason rowByDate's own key just
+        // above needed it — two functions sharing a date must never compute the same backfill id.
+        const fnId = `fn_bck_${eo.id}_${date}_${(fn.fnType || "fn").toLowerCase().replace(/[^a-z0-9]+/g, "")}`;
         const fnData = {
           id: fnId, projectId: p.id, name: fn.fnType || "Function", type: fn.fnType || "Function", date,
           budget: 0, venue: { type: "outdoor", name: fn.fnVenue || "", fullAddress: "" }, items: nextItems, flowerOrders: [],
@@ -12168,8 +12184,8 @@ export default function StudioApp() {
         };
         // Recorded before the upsert resolves — a second function of THIS deal on the same date,
         // later in this same loop, must see this row already exists rather than racing to create
-        // its own (see rowByDate's own comment above).
-        rowByDate.set(date, { id: fnId, date, data: fnData });
+        // its own (see rowByDate's own comment above). Same (date, type) key as the lookup above.
+        rowByDate.set(fnRowKey(date, fn.fnType), { id: fnId, date, data: fnData });
         if (!newFnIds) newFnIds = new Set(p.data?.functions || []);
         newFnIds.add(fnId);
         // Plain upsert, not insert — the deterministic id means a concurrent call backfilling the
