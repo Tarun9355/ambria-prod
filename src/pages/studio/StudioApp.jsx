@@ -2314,6 +2314,16 @@ export default function StudioApp() {
   // starting from the same stale point.
   const activeFnIdxRef = useRef(0);
   const fnBuildsRef = useRef({});
+  // Same reason as activeFnIdxRef/fnBuildsRef: saveSession stamps each function's OWN type/date/
+  // venue from these four (fn/clientDate/venue = function 1's own fields, extraFunctions = every
+  // other function's), and a timer-fired autosave can land in the same gap between a Event-Info
+  // edit's setState and the re-render that refreshes saveSession's closure — filing function 1's
+  // (or another function's) OLD type/date/venue onto a snapshot whose index/content were already
+  // reading fresh from activeFnIdxRef/fnBuildsRef. Confirmed live (Sahiba & Vineet, 2026-11-04):
+  // Haldi's (fn_idx 0) own studio_sessions row got stamped fn_label "Wedding"/event_date 2026-11-24
+  // while its zoneElements kept evolving as ordinary, distinct Haldi edits — the metadata went stale
+  // the exact way the content used to before activeFnIdxRef/fnBuildsRef existed.
+  const fnMetaRef = useRef({ fn: "", clientDate: "", venue: "", extraFunctions: [], clientShift: "", clientPax: "", clientPalette: "Custom", clientFlowerPalette: "", clientBrideGroom: "" });
   const snapshotFnRef = useRef(null);
   const switchingRef = useRef(false);
   // Switching functions replaces zoneElements/zoneConfig/etc with the target function's own
@@ -2345,6 +2355,12 @@ export default function StudioApp() {
   const buildConflictWarnedAtRef = useRef(0);
   useEffect(() => { activeFnIdxRef.current = activeFnIdx; switchingRef.current = false; }, [activeFnIdx]);
   useEffect(() => { fnBuildsRef.current = fnBuilds; }, [fnBuilds]);
+  // useLayoutEffect, not useEffect, and no deps array — runs on EVERY commit, matching saveSessionRef's
+  // own stronger guarantee (a plain useEffect is a passive effect; React can run it in a later task
+  // than the commit, leaving a window where a timer could fire between this commit and that effect —
+  // confirmed real by the stricter regression pass on this fix: a Deal Check/client-switch edit inside
+  // that window could file a NEWLY-active client's own metadata under the PREVIOUS client's state).
+  useLayoutEffect(() => { fnMetaRef.current = { fn, clientDate, venue, extraFunctions, clientShift, clientPax, clientPalette, clientFlowerPalette, clientBrideGroom }; });
   // Layout for the same reason as saveSessionRef below — switchActiveFn calls this one
   // SYNCHRONOUSLY on the click and files the result as the function's build, so it should be
   // reading the latest commit rather than whatever was current before the last paint.
@@ -8018,7 +8034,9 @@ export default function StudioApp() {
   // ── Save session — VERBATIM ──
   const saveSession = useCallback((opts = {}) => {
     if (!clientName.trim()) return;
-    const totalFns = 1 + (extraFunctions || []).length;
+    // liveMeta read here too (not the extraFunctions closure) — a stale count would under/over-iterate
+    // the loop below against liveBuilds' real functions.
+    const totalFns = 1 + (fnMetaRef.current.extraFunctions || []).length;
     const fnSnapshots = {};
     // Refs, not the closure: the periodic/visibility autosaves fire from timers, which can land
     // between a function switch's setState and the re-render that would refresh this callback.
@@ -8026,6 +8044,7 @@ export default function StudioApp() {
     // wrong function — the same class of bug switchActiveFn had.
     const liveIdx = activeFnIdxRef.current;
     const liveBuilds = fnBuildsRef.current;
+    const liveMeta = fnMetaRef.current;
     // The most recent save of THIS deal, read the same way the write below reads it. Only needed so
     // each function's own price can be carried forward — see fnTotals in the snapshot.
     const prevSnapForTotals = (((clientLedgerRef.current || clientLedger)
@@ -8101,7 +8120,10 @@ export default function StudioApp() {
         // event_date 2026-11-04 — Haldi/Sangeet's date, whichever of the two was the active tab —
         // because all three functions were saved in the same batch. That wrong date then pooled
         // Wedding's own stock needs into Haldi/Sangeet's same-day availability check.
-        snap = { ...snap, fnType: (i === 0 ? fn : extraFunctions[i - 1]?.type) || "", fnDate: (i === 0 ? clientDate : extraFunctions[i - 1]?.date) || "", fnVenue: (i === 0 ? venue : extraFunctions[i - 1]?.venue) || "" };
+        // Read liveMeta (fnMetaRef), not the fn/clientDate/venue/extraFunctions closures — see
+        // fnMetaRef's own comment (next to activeFnIdxRef above): this is the exact same stale-timer
+        // race, just for the metadata stamp instead of the index/content.
+        snap = { ...snap, fnType: (i === 0 ? liveMeta.fn : liveMeta.extraFunctions[i - 1]?.type) || "", fnDate: (i === 0 ? liveMeta.clientDate : liveMeta.extraFunctions[i - 1]?.date) || "", fnVenue: (i === 0 ? liveMeta.venue : liveMeta.extraFunctions[i - 1]?.venue) || "" };
         fnSnapshots[i] = snap;
       }
     }
@@ -8133,8 +8155,9 @@ export default function StudioApp() {
       id: "SES_" + Date.now().toString(36),
       savedAt: Date.now(),
       savedBy: authUser?.name || "—",
-      eventDate: clientDate,
-      venue, fn,
+      // liveMeta (fnMetaRef), not the closures — same reason as the per-function stamp above.
+      eventDate: liveMeta.clientDate,
+      venue: liveMeta.venue, fn: liveMeta.fn,
       // Owner decision: a real edit (an added Production item, a zone change, anything) must never
       // be dropped just because the rate tables haven't finished loading yet — that's a data-loss
       // risk, worse than the stale-price-on-boot problem pricingReady exists for. So the save itself
@@ -8273,15 +8296,17 @@ export default function StudioApp() {
       client.phone = clientPhone.trim();
     }
     client.lastContactAt = Date.now();
-    client.eventDate = clientDate || client.eventDate || "";
-    client.venue = venue || client.venue || "";
-    client.fn = fn || client.fn || "";
-    client.shift = clientShift || client.shift || "";
-    client.pax = clientPax || client.pax || "";
-    client.brideGroom = clientBrideGroom || client.brideGroom || "";
+    // liveMeta (fnMetaRef), not the closures — same stale-timer race as the per-function studio_sessions
+    // stamp above, just writing to the client_ledger row's own fn/eventDate/venue/functions instead.
+    client.eventDate = liveMeta.clientDate || client.eventDate || "";
+    client.venue = liveMeta.venue || client.venue || "";
+    client.fn = liveMeta.fn || client.fn || "";
+    client.shift = liveMeta.clientShift || client.shift || "";
+    client.pax = liveMeta.clientPax || client.pax || "";
+    client.brideGroom = liveMeta.clientBrideGroom || client.brideGroom || "";
     client.functions = [
-      { type: fn, date: clientDate, venue: venue, shift: clientShift, pax: clientPax, palette: clientPalette || "Custom", flowerPalette: clientFlowerPalette || "" },
-      ...extraFunctions
+      { type: liveMeta.fn, date: liveMeta.clientDate, venue: liveMeta.venue, shift: liveMeta.clientShift, pax: liveMeta.clientPax, palette: liveMeta.clientPalette || "Custom", flowerPalette: liveMeta.clientFlowerPalette || "" },
+      ...liveMeta.extraFunctions
     ];
     if (!client.createdBy) client.createdBy = authUser?.name || "—";
     if (!client.status) client.status = "ongoing";
@@ -9157,9 +9182,18 @@ export default function StudioApp() {
       restoreBuildState(landingFnIdx === 0 ? fn0Snap : restoredBuilds[landingFnIdx]);
       setFnBuilds(restoredBuilds);
       setActiveFnIdx(landingFnIdx);
-      if (session.eventDate) setClientDate(session.eventDate);
-      if (session.venue) setVenue(session.venue);
-      if (session.fn) setFn(session.fn);
+      // client.fn/eventDate/venue (set a few lines above, from the client_ledger row) are already
+      // function 1's own, correct identity — do NOT re-stamp them from session.fn/eventDate/venue,
+      // which is rowsToSessions' `active` row: whichever function was ACTIVE when this session was
+      // last saved, not necessarily fn_idx 0. Confirmed live (Sahiba & Vineet, 2026-11-04): a save
+      // while Wedding was the active/on-screen function, followed by a Load landing on Haldi (fn_idx
+      // 0), stamped Haldi's own type/date/venue with Wedding's via exactly this override. Only fall
+      // back to fn0Snap's own fnType/fnDate/fnVenue (function 1's own stamped identity, never
+      // "whichever was active") when the client row itself has nothing yet — a pre-existing record
+      // saved before these client-level fields existed.
+      if (!client.fn && fn0Snap?.fnType) setFn(fn0Snap.fnType);
+      if (!client.eventDate && fn0Snap?.fnDate) setClientDate(fn0Snap.fnDate);
+      if (!client.venue && fn0Snap?.fnVenue) setVenue(fn0Snap.fnVenue);
       // Missing here left dcCustomItems holding whatever the PREVIOUS client/session had (state
       // never resets on its own) — so switching clients without a refresh could leak one client's
       // Deal Check custom items into another's snapshot, and the very next auto-save after a Load
