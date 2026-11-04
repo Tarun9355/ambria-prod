@@ -10820,9 +10820,9 @@ export default function StudioApp() {
         _trussRows.forEach((row, ri) => {
           if (row.trussQty === 0) return; // dims-only placeholder — no structure billed (trussRowCost agrees)
           const _tShape = row.trT === "box" ? "box" : "singleU";
-          // Owner ask (2026-10-22): trussRowCost (called above for _trussRaw/share, and for zl.truss
-          // itself via calcStructCost) now bills the minimum-joints CLEAN SPAN internally — snap here
-          // too so the displayed Size/Qty describe the SAME structure, not the raw typed dims.
+          // snapRowDimsForProduction is a no-op as of 2026-11-04 (owner decision: bill/display the
+          // raw typed dims, no auto-shrink-to-minimum-joints) — kept as a passthrough so this still
+          // describes the SAME structure trussRowCost/calcStructCost bill, in case snapping returns.
           const snappedRow = structRates?.trussInv ? snapRowDimsForProduction(row, structRates.trussInv) : row;
           // The two dims a truss is actually charged on (trussBaseArea — same authority calcStructCost's
           // trussRowCost uses), not the raw L×W×H: a Box charges its two LARGEST dims, a Single U

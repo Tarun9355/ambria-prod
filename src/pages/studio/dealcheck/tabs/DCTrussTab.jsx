@@ -107,13 +107,10 @@ export default function DCTrussTab({ ctx }) {
                       const rows = [zCfg, ...(zCfg.extraTrussRows || [])];
                       const isRepeat = repeatCatFor(zCfg, "truss") || !!(crossFnPrevFn?.enabledEls?.[zk] && crossFnPrevFn?.zoneConfig?.[zk]);
                       return rows.map((row, rowIdx) => {
-                        // Owner ask (2026-10-22): the minimum-joints CLEAN SPAN is no longer just a
-                        // reference figure here — calcZoneTrussPreview/trussRowCost now snap to it
-                        // internally for billing and production everywhere (Build, Summary, exports,
-                        // Deal Check all price the SAME real structure). `snappedRow` below is kept
-                        // only to show what changed (the "L 50→47ft" note) and to resolve the real
-                        // joint count — `row` itself is passed to every pricing call now; they snap
-                        // on their own.
+                        // snapRowDimsForProduction is a no-op now (owner decision, 2026-11-04) — the
+                        // team's own entered dims are trusted completely, never auto-resized.
+                        // `snappedRow` is always === `row`; kept only because the real-stock joint
+                        // resolution just below still needs a row to read dims off of.
                         const snappedRow = snapRowDimsForProduction(row, trussInv);
                         const pv = calcZoneTrussPreview(row, trussInv);
                         if (pv && pv.costs) {
@@ -512,11 +509,10 @@ export default function DCTrussTab({ ctx }) {
                                     {topo && <div style={{fontSize:12,lineHeight:1.5,color:INK_2,marginTop:5}}>
                                       Method {topo.method} · {topo.pillarCount} pillar{topo.pillarCount===1?"":"s"} · {topo.beamCount} beam segment{topo.beamCount===1?"":"s"} · <span title="Real, stock-aware count — every beam segment's own piece-combination joints plus every non-standard pillar height's own spacer joint, resolved against the current IMS beam/pillar stock">{realJoints} joint{realJoints===1?"":"s"} expected</span>
                                       {realJointsShortage && <span title="At least one beam segment or pillar height has no combination of current stock within the usual 1ft gap tolerance — it'll need a visible gap or an undersized piece on site" style={{color:"#B91C1C",fontWeight:600}}> · ⚠️ stock gap</span>}
-                                      {/* snapRowDimsForProduction only ever shrinks, and only within a small
-                                          window — see pricing.js. Owner ask (2026-10-22): billing/production
-                                          now both use this smaller size too (trussRowCost/calcZoneTrussPreview
-                                          snap internally) — Build's input field still shows what was typed,
-                                          but this IS the real sqft/fabric/pillar/beam figure everywhere else. */}
+                                      {/* snapRowDimsForProduction is a no-op now (owner decision, 2026-11-04)
+                                          — snapNote can never be truthy, so this branch is permanently inert.
+                                          Left in place rather than torn out; see pricing.js for how to
+                                          re-enable the snap itself if that ever changes. */}
                                       {snapNote && <span title="Build's input still shows what was typed — billing, fabric and production all use this smaller, fewer-joints size instead">
                                         {" · "}<span style={{color:"#B45309",fontWeight:600}}>⚡ shrunk for fewer joints</span>
                                         {" "}({[
@@ -612,7 +608,7 @@ export default function DCTrussTab({ ctx }) {
                                             <div style={{...NUM,color:INK,fontWeight:600,lineHeight:1.5}}>
                                               {realCount > 0 ? <>
                                                 {fmtSizeCounts(realBeamSizeCounts)} = {Math.round(realRft * 100) / 100} RFT
-                                                {Math.abs(realRft - billedRft) >= 0.01 && <span title="Billed at the clean span you asked for; real stock resolves slightly under it (never over)" style={{color:INK_3,fontWeight:500}}> · billed {billedRft} RFT</span>}
+                                                {Math.abs(realRft - billedRft) >= 0.01 && <span title="Billed at the budget target for the span you entered; real stock resolves slightly under it (never over)" style={{color:INK_3,fontWeight:500}}> · billed {billedRft} RFT</span>}
                                               </> : <>{groupByLen(topo.beams, b => b.lengthFt)} = {billedRft} RFT</>}
                                             </div>
                                           </div>

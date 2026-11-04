@@ -9,9 +9,9 @@ import { CARPET_OFF, trussRateFor, maskingRateFor, trussBaseArea } from "./taxon
 // trussRowCost prices a custom ceiling / masking panel off a real IMS inventory item, so it needs
 // the same valuation the rest of the app uses rather than a second opinion on what an item costs.
 import { priceForInvItem } from "../ims/helpers.js";
-// The real beam-stock-aware joint solver, reused by snapRowDimsForProduction below instead of a
-// second hand-rolled "clean span" table — see that function's own comment.
-import { resolveBeamSegment } from "../ims/trussEngine.js";
+// builtBeamTotal resolves a beam segment's budget target against real stock — see buildTopology
+// below for how it's used.
+import { builtBeamTotal, PILLAR_BUDGET_FT } from "../ims/trussEngine.js";
 import { platformAvgRatePerSqft } from "../ims/platformEngine.js";
 export { resolveMandiFlower };
 
@@ -157,20 +157,28 @@ export const resolveTrussConfig = (zc) => {
 // for any material whose maxSpanFt/pillarWidthFt isn't the Iron default).
 export const pillarCountForSpan = (spanLen, maxSpan = 30) => 2 + Math.max(0, Math.ceil(spanLen / maxSpan) - 1);
 
-export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) => {
+// §23 Phase 7 (2026-11-04, owner-confirmed worked examples) — three steps per axis: (1) budget =
+// span − (pillarCount × PILLAR_BUDGET_FT, the team's own 1ft/pillar mental padding, subtracted back
+// out); (2) split that budget evenly across the pillar-gaps and resolve it against real beam stock
+// (builtBeamTotal) to get what actually gets built — may differ slightly from the budget, since
+// only certain piece combinations are physically available; (3) physical footprint = that built
+// total + (pillarCount × pillarWidth), EVERY pillar's real 9-inch width including middle ones.
+// maskingL/W add a further 2×pillarWidth on top of the physical footprint (owner decision,
+// 2026-11-04) — fabric is presumed to wrap past the two outer corner faces regardless of how many
+// middle pillars exist. Confirmed against worked examples: 14ft entry → 13.5ft footprint; 20ft →
+// 19.5ft; 48ft → 46.25ft/46'3" (real stock rounds the 45ft budget target down to 44ft built from
+// 2×22ft pieces). Supersedes §23 Phase 6 (2026-11-03), which used the entered span as the beam
+// total directly with no deduction at all — wrong: the team's padding and the engine's own
+// subtraction both need to exist, just using two different numbers (1ft for the mental math, 0.75ft
+// for the real footprint). `trussInv` (optional, 8th arg) is the real beam stock to resolve
+// against; omitted, physical falls back to the theoretical budget target.
+export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, trussInv) => {
   if (!config || !H || H <= 0) return null;
   const eng = engSettings || {};
   const maxSpan = eng.maxSpanFt || 30;
-  const pillarWidth = eng.pillarWidthFt || 0.75;        // physical width (for maskingL etc. only — not beam math, see below)
+  const pillarWidth = eng.pillarWidthFt || 0.75;        // physical width — the real footprint/masking math, not the budget above
   const depth = backDepth || eng.defaultBackDepthFt || 4;
 
-  // §23 Phase 6 (2026-11-03, owner convention) — the entered span IS the beam total, no pillar
-  // deduction. Supersedes §23 Phase 5's own pillar-budget subtraction (28 May 2026) — the sales
-  // team is now instructed to pad the entered width/depth themselves, by the pillar count, BEFORE
-  // typing it (see StudioBuild.jsx's pillar-padding tip, "enter span + 1ft per pillar"), so a span
-  // of 32 already has room for its own pillars built in. The engine subtracting its own pillar
-  // budget on top of that double-counted it — the beams ordered came out shorter than the width the
-  // team actually meant.
   const pillarCountForThisSpan = (spanLen) => pillarCountForSpan(spanLen, maxSpan);
   // Split total beam length into per-segment lengths (one per pillar-gap)
   const splitBeamSegments = (totalBeamLen, segments) => {
@@ -178,36 +186,44 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
     const segLen = totalBeamLen / segments;
     return Array.from({ length: segments }, () => segLen);
   };
+  // One axis, start to finish: budget → segment lengths (what beams[].lengthFt reports, same
+  // number every re-resolving consumer already calls resolveBeamSegment on) → stock-resolved
+  // built total → physical footprint.
+  const axisOf = (span, pillarCount) => {
+    const budget = Math.max(0, span - pillarCount * PILLAR_BUDGET_FT);
+    const segLens = splitBeamSegments(budget, pillarCount - 1);
+    const { total: built, resolved } = builtBeamTotal(segLens, trussInv);
+    const physical = built + pillarCount * pillarWidth;
+    return { segLens, physical, resolved };
+  };
 
   if (config === "u_only") {
-    // Method A: inside-out — beam length total = spanFt − totalPillars (each 1ft budget).
+    // Method A: inside-out.
     const method = "A";
     const totalPillars = pillarCountForThisSpan(spanFt);
-    const beamTotalLen = spanFt;
-    const segLengths = splitBeamSegments(beamTotalLen, totalPillars - 1);
+    const axis = axisOf(spanFt, totalPillars);
     const pillars = Array.from({ length: totalPillars }, (_, i) => {
       const id = i === 0 ? "P-left" : i === totalPillars - 1 ? "P-right" : `P-mid${i}`;
       return { id, H };
     });
-    const beams = segLengths.map((len, i) => ({ side: segLengths.length === 1 ? "top" : `top-${i+1}`, lengthFt: len }));
+    const beams = axis.segLens.map((len, i) => ({ side: axis.segLens.length === 1 ? "top" : `top-${i+1}`, lengthFt: len }));
     return {
       config, method, pillars, beams,
-      physicalL: spanFt,                                  // Method A: external matches demand (cost-side)
+      physicalL: axis.physical,
       physicalW: 0,                                       // 1-D: no depth
-      // §23 Phase 2.9e — masking outer (always span + 2×pillarWidth regardless of Method A/B)
-      maskingL: spanFt + 2 * pillarWidth,
+      maskingL: axis.physical + 2 * pillarWidth,
       maskingW: 0,
       pillarCount: pillars.length,
       beamCount: beams.length,
+      stockResolved: axis.resolved,
     };
   }
 
   if (config === "half_box") {
-    // Method A: inside-out — front beam total follows spanFt − totalFrontPillars; sides are full depth.
+    // Method A: inside-out — front beam follows the axis pipeline above; sides are full depth.
     const method = "A";
     const totalFrontPillars = pillarCountForThisSpan(spanFt);
-    const beamTotalLen = spanFt;
-    const segLengths = splitBeamSegments(beamTotalLen, totalFrontPillars - 1);
+    const axis = axisOf(spanFt, totalFrontPillars);
     // Front pillars: 2 corners + middle. Back pillars: 2 corners only (depth too small for mid).
     const frontPillars = Array.from({ length: totalFrontPillars }, (_, i) => {
       const id = i === 0 ? "P-frontL" : i === totalFrontPillars - 1 ? "P-frontR" : `P-frontMid${i}`;
@@ -215,7 +231,7 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
     });
     const backPillars = [{ id: "P-backL", H }, { id: "P-backR", H }];
     const pillars = [...frontPillars, ...backPillars];
-    const frontBeams = segLengths.map((len, i) => ({ side: segLengths.length === 1 ? "front" : `front-${i+1}`, lengthFt: len }));
+    const frontBeams = axis.segLens.map((len, i) => ({ side: axis.segLens.length === 1 ? "front" : `front-${i+1}`, lengthFt: len }));
     const beams = [
       ...frontBeams,
       { side: "left",  lengthFt: depth },
@@ -224,30 +240,30 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
     ];
     return {
       config, method, pillars, beams,
-      physicalL: spanFt,
+      physicalL: axis.physical,
+      // Depth (the side axis) is an engineering setting (trussBackDepth, 3-5ft), not something sales
+      // pads — unchanged by §23 Phase 7, same as it's always been.
       physicalW: depth + 2 * pillarWidth,
-      // §23 Phase 2.9e — masking outer: L adds +1.5 (Method A interior beam), W already includes it
-      maskingL: spanFt + 2 * pillarWidth,
+      maskingL: axis.physical + 2 * pillarWidth,
       maskingW: depth + 2 * pillarWidth,
       pillarCount: pillars.length,
       frontPillarCount: frontPillars.length, // curtains only on front pillars
       beamCount: beams.length,
+      stockResolved: axis.resolved,
     };
   }
 
   if (config === "full_box") {
-    // Method B: outside-out — both L and W axes get mid-pillars. Corners are shared.
-    // §23 Phase 6: each axis's beam total is that axis's own entered span, no subtraction — same
-    // rule as u_only/half_box above.
+    // Method B: outside-out — both L and W axes get mid-pillars, each running the budget → built →
+    // physical pipeline independently (a full box's two sides are rarely the same length, and the
+    // team pads each one by its own pillar count, not the other's). Corners are shared.
     const method = "B";
     const lAxisPillars = pillarCountForThisSpan(L);
     const wAxisPillars = pillarCountForThisSpan(W);
     const lMidCount = lAxisPillars - 2;
     const wMidCount = wAxisPillars - 2;
-    const lBeamTotal = L;
-    const wBeamTotal = W;
-    const lSegLens = splitBeamSegments(lBeamTotal, lAxisPillars - 1);
-    const wSegLens = splitBeamSegments(wBeamTotal, wAxisPillars - 1);
+    const lAxis = axisOf(L, lAxisPillars);
+    const wAxis = axisOf(W, wAxisPillars);
     const pillars = [
       { id: "P-NW", H }, { id: "P-NE", H },
       { id: "P-SW", H }, { id: "P-SE", H },
@@ -257,29 +273,20 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
       ...Array.from({ length: wMidCount }, (_, i) => ({ id: `P-E-mid${i+1}`, H })),
     ];
     const beams = [
-      ...lSegLens.map((len, i) => ({ side: lSegLens.length === 1 ? "front" : `front-${i+1}`, lengthFt: len })),
-      ...lSegLens.map((len, i) => ({ side: lSegLens.length === 1 ? "back" : `back-${i+1}`, lengthFt: len })),
-      ...wSegLens.map((len, i) => ({ side: wSegLens.length === 1 ? "left" : `left-${i+1}`, lengthFt: len })),
-      ...wSegLens.map((len, i) => ({ side: wSegLens.length === 1 ? "right" : `right-${i+1}`, lengthFt: len })),
+      ...lAxis.segLens.map((len, i) => ({ side: lAxis.segLens.length === 1 ? "front" : `front-${i+1}`, lengthFt: len })),
+      ...lAxis.segLens.map((len, i) => ({ side: lAxis.segLens.length === 1 ? "back" : `back-${i+1}`, lengthFt: len })),
+      ...wAxis.segLens.map((len, i) => ({ side: wAxis.segLens.length === 1 ? "left" : `left-${i+1}`, lengthFt: len })),
+      ...wAxis.segLens.map((len, i) => ({ side: wAxis.segLens.length === 1 ? "right" : `right-${i+1}`, lengthFt: len })),
     ];
     return {
       config, method, pillars, beams,
-      // physicalL/W: Method-A-interior, same rule as u_only/half_box above (see this file's own
-      // calcZoneFabric comment: "Different from physicalL/W which is Method-A-interior for cost
-      // calc... regardless of Method A/B"). L/W already IS the final footprint (the entered span,
-      // §23 Phase 6 — see this function's own header), so adding pillarWidth again here would
-      // double-count it. Confirmed live (2026-11-01): a 43×43 full-box entry showed 44.5×44.5
-      // "Physical Footprint" instead of matching the 43×43 customer demand, and silently over-fed
-      // the Full Box ceiling-drape Liza calc (area = physicalL×physicalW below) for every full-box
-      // truss ever quoted.
-      physicalL: L,
-      physicalW: W,
-      // masking outer DOES get +2×pillarWidth — fabric wraps fully around the two outer corner
-      // pillars, which is a real addition beyond the structural footprint, unlike physicalL/W above.
-      maskingL: L + 2 * pillarWidth,
-      maskingW: W + 2 * pillarWidth,
+      physicalL: lAxis.physical,
+      physicalW: wAxis.physical,
+      maskingL: lAxis.physical + 2 * pillarWidth,
+      maskingW: wAxis.physical + 2 * pillarWidth,
       pillarCount: pillars.length,
       beamCount: beams.length,
+      stockResolved: lAxis.resolved && wAxis.resolved,
     };
   }
 
@@ -327,11 +334,9 @@ export const trussInvForMaterial = (trussInv, material) => {
 };
 
 export const calcZoneTrussPreview = (zc, trussInv) => {
-  // Same minimum-joints clean-span snap trussRowCost applies for Build/Summary/export billing
-  // (owner ask, 2026-10-22) — this function is the OTHER pricing model (Deal Check's dcCostRollup,
-  // manpower/batta RFT counting, the Fixed-Venue standing discount, calcZoneFabric's Liza/curtain
-  // qty all read it), so it has to price the same real, snapped structure or the two models would
-  // disagree about what's actually being built.
+  // snapRowDimsForProduction is a no-op now (owner decision, 2026-11-04 — see its own comment);
+  // this reassignment is a harmless passthrough, kept for the same one-line-re-enable reason
+  // trussRowCost's own copy of this line is.
   zc = trussInv ? (snapRowDimsForProduction(zc, trussInv) || zc) : zc;
   trussInv = trussInvForMaterial(trussInv, zc?.trussMaterial); // material-aware pillars/beams/rates
   const layer0 = resolveTrussConfig(zc);
@@ -350,7 +355,7 @@ export const calcZoneTrussPreview = (zc, trussInv) => {
   const H = parseFloat(zc.dims?.H) || 0;
   const spanFt = layer0.spanFt || (layer0.source === "auto-3dim" ? Math.max(L, W) : 0);
   const backDepth = zc.trussBackDepth || eng.defaultBackDepthFt || 4;
-  const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng);
+  const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng, trussInv);
   if (!topology) { out.warnings.push("Topology failed — check dimensions"); return out; }
   out.topology = topology;
 
@@ -450,73 +455,20 @@ export const calcZoneTrussPreview = (zc, trussInv) => {
   return out;
 };
 
-// ─── Deal Check Truss tab — "use minimum joints" dimension snap (owner ask, 2026-10-20) ───────
-// Salespeople type round numbers (50x50) that don't divide cleanly into standard beam stock once
-// pillar width is subtracted, forcing more joints/cuts than the span actually needs. Build already
-// shows a passive "try 47ft" tip next to the input, but almost nobody acts on it.
-//
-// This picks the best span AT OR BELOW whatever was entered — NEVER larger, since growing the
-// footprint risks not fitting the venue — within a small shrink window, by reusing the real
-// beam-stock-aware joint solver (resolveBeamSegment, lib/ims/trussEngine.js — the same one IMS's
-// own stock allocation already uses) rather than a second hand-rolled "clean span" table, so this
-// always matches whatever beam sizes / pillar width / max span IMS has actually configured instead
-// of assuming a fixed set that silently goes stale if those ever change.
-//
-// Owner ask (2026-10-22): no longer a narrow Deal-Check-only reference. trussRowCost and
-// calcZoneTrussPreview — the TWO pricing models every truss consumer reads (Build/Summary/exports
-// via the first, Deal Check's dcCostRollup/manpower/standing-discount/fabric via the second) — both
-// snap internally now, so the billed sqft, the Liza/curtain fabric qty, the pillar/beam/joint count,
-// and what IMS actually assembles all agree on the SAME real structure. Build's own input field, and
-// the zone's saved dims, are untouched — only what every pricing/production call computes FROM them
-// is snapped, at the point each of those functions reads row.dims, not by mutating the zone.
-// Independent of Build's own pillar-padding tip (StudioBuild.jsx) — that one tells a salesperson
-// what to TYPE before the fact; this one SNAPS what gets billed/produced, after the fact, within the
-// same ballpark window, for a span nobody got around to padding.
-const CLEAN_SPAN_MAX_SHRINK_FT = 5;
-function pickCleanSpan(span, trussInvForMat, engSettings) {
-  if (!(span > 0)) return span;
-  const eng = engSettings || {};
-  const maxSpan = eng.maxSpanFt || 30;
-  // A "shortage" result (resolveBeamSegment couldn't find any combo within its own 1ft-gap
-  // tolerance) falls back to a single undersized piece with a misleadingly low joint count — that
-  // is a BAD placement, not a genuinely clean one, so it's scored as Infinity rather than trusted
-  // at face value. Otherwise a span that's already unresolvable at its own entered size would look
-  // artificially "perfect" (0 joints) and block every real improvement a smaller span could offer.
-  // §23 Phase 6 (2026-11-03) — segLen = s / segments, no pillar-width deduction, matching
-  // buildTopology's own beam math (lib/ims/trussEngine.js, lib/studio/pricing.js above): the
-  // entered span already has room for its own pillars built in (sales pads it before typing), so
-  // this has to assume the SAME beam length buildTopology will actually produce for that span, or
-  // its "fewest joints" recommendation would be snapping to a span that builds differently than it
-  // scored.
-  const totalJointsFor = (s) => {
-    const pillars = pillarCountForSpan(s, maxSpan);
-    const segments = Math.max(1, pillars - 1);
-    const segLen = s / segments;
-    const r = resolveBeamSegment(segLen, trussInvForMat);
-    return { joints: r.shortage ? Infinity : (r.joints || 0) * segments, shortage: !!r.shortage };
-  };
-  let best = { span, ...totalJointsFor(span) };
-  // Only ever test SMALLER spans (descending from the original) — the first candidate found with
-  // fewer joints than the current best wins, so ties naturally resolve to the smallest shrink.
-  for (let s = span - 0.5; s >= Math.max(0.5, span - CLEAN_SPAN_MAX_SHRINK_FT); s -= 0.5) {
-    const cand = totalJointsFor(s);
-    if (cand.joints < best.joints) best = { span: s, ...cand };
-  }
-  return best.span;
-}
-// A per-row clone with L/W snapped to their own cleanest-joint span — H, trussQty, material,
-// masking and everything else untouched. See the block comment above for exactly where this may
-// (and must not) be used.
-export function snapRowDimsForProduction(row, trussInv) {
-  if (!row?.dims) return row;
-  const mat = trussInvForMaterial(trussInv, row.trussMaterial);
-  const eng = mat?.settings || {};
-  const d = row.dims;
-  const L = parseFloat(d.L) || 0, W = parseFloat(d.W) || 0;
-  const snappedL = L > 0 ? pickCleanSpan(L, mat, eng) : L;
-  const snappedW = W > 0 ? pickCleanSpan(W, mat, eng) : W;
-  if (snappedL === L && snappedW === W) return row;
-  return { ...row, dims: { ...d, L: snappedL, W: snappedW } };
+// ─── Deal Check Truss tab — "use minimum joints" dimension snap — DISABLED (owner decision,
+// 2026-11-04) ─────────────────────────────────────────────────────────────────────────────────
+// Used to auto-shrink an entered span by up to 5ft to whichever nearby size needed fewer beam
+// joints, from the 2026-10-20/22 owner asks. Turned off now that the sales team pads every entered
+// width/depth themselves (§23 Phase 7, buildTopology above) — trusting their own number completely
+// means it must never get silently resized out from under them before pricing/production read it.
+// Kept as an exported passthrough rather than removed, since every one of its many call sites
+// (DCTrussTab.jsx, StudioApp.jsx, StudioBuild.jsx, calcZoneTrussPreview/trussRowCost below) expects
+// a function that takes a row and (possibly) returns an adjusted clone — if this ever needs
+// re-enabling, the actual snapping logic (pickCleanSpan, reusing resolveBeamSegment the same way
+// IMS's own stock allocation does) is in git history on this line up to and including commit
+// 6081798a, the last one before it was disabled.
+export function snapRowDimsForProduction(row) {
+  return row;
 }
 
 // Fixed-venue standing discount for ONE zone's truss — bridges two genuinely different pricing
@@ -601,9 +553,10 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
   }
   const topo = preview.topology;
   const mkWalls = zc.mkWalls || {};
-  // Wall masking RFT — uses MASKING outer dims (always span/L + 2×pillarWidth regardless of Method A/B).
-  // Different from physicalL/W which is Method-A-interior for cost calc. Masking wraps the
-  // outside of the truss so the pillars are inside the masking envelope.
+  // Wall masking RFT — uses MASKING outer dims: the true physical footprint (built beams + every
+  // pillar's own width, §23 Phase 7) plus a further 2×pillarWidth on top (owner decision,
+  // 2026-11-04 — fabric is presumed to wrap past the two outer corner faces). Different from
+  // physicalL/W, which is the footprint alone with no extra wrap added.
   const maskL = topo.maskingL ?? topo.physicalL ?? 0;
   const maskW = topo.maskingW ?? topo.physicalW ?? 0;
   // Wall Masking FABRIC pieces only for a wall that is masked (masking switched on) in fabric - its own material (Build's
@@ -1185,12 +1138,9 @@ export function trussRowCost(row, rates) {
     const ceiling = customCeilingCharge(row, rates);
     return { truss: ceiling, masking: 0, ceiling };
   }
-  // Owner ask (2026-10-22): billing/build now uses the minimum-joints CLEAN SPAN, not necessarily
-  // what was typed — see snapRowDimsForProduction's own comment, which used to scope this to Deal
-  // Check's reference display only. Reassigning `row` here (not mutating the saved zone) means
-  // every consumer below — area, masking sqft, front-extension math — prices off the snapped L/W,
-  // while Build's own input field keeps showing exactly what the salesperson typed; only the
-  // structure actually priced (and therefore actually built) shrinks.
+  // snapRowDimsForProduction is now a no-op (owner decision, 2026-11-04 — see its own comment) —
+  // this reassignment is a harmless passthrough, kept so re-enabling the snap later is a one-line
+  // change in that function alone, not a second edit here.
   row = rates?.trussInv ? snapRowDimsForProduction(row, rates.trussInv) : row;
   const d = row.dims || {};
   let truss = 0, masking = 0;

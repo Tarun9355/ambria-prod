@@ -211,19 +211,60 @@ export const resolveTrussConfig = (zc) => {
   return { config: "half_box", source: "default-on-forget", spanFt, warning: true };
 };
 
+// §23 Phase 7 (2026-11-04, owner-confirmed worked examples) — a sales-friendly ROUND number,
+// 1ft per pillar, not the pillar's own physical width (0.75ft/9in — see pillarWidth below). The
+// team mentally subtracts this when padding a span before typing it; this is the matching budget
+// the engine subtracts back out to find how much beam is actually needed between pillars. Deliberately
+// a hardcoded constant, not an admin setting (avoids a stale saved pillarBudgetFt value silently
+// overriding it — nothing in Admin edits this field).
+export const PILLAR_BUDGET_FT = 1;
+// Resolves each segment's budget-target length against REAL beam stock to get what will actually
+// get built, which isn't always the theoretical target: a 22.5ft target with only 15/12/10/8ft
+// stock on hand builds as 12+10=22ft, not 22.5 (used stock purely illustrative — whatever's in
+// trussInv). Uses whatever resolveBeamSegment actually finds EVEN in its own shortage fallback (a
+// single undersized piece short of the target) — the footprint should reflect what stock can truly
+// deliver, not a falsely optimistic number stock can't back up. Only falls back to the raw target
+// itself when there's no stock to check against at all (trussInv not given) or NOTHING is
+// buildable (resolveBeamSegment returns zero pieces, e.g. no beam sizes configured) — the physical
+// footprint still needs SOME number either way.
+export const builtBeamTotal = (segLens, trussInv) => {
+  if (!segLens.length) return { total: 0, resolved: true };
+  if (!trussInv) return { total: segLens.reduce((s, l) => s + l, 0), resolved: false };
+  let total = 0;
+  let resolved = true;
+  segLens.forEach((seg) => {
+    const r = resolveBeamSegment(seg, trussInv);
+    if (!r.pieces?.length) { total += seg; resolved = false; return; }
+    total += r.pieces.reduce((s, p) => s + p.size * p.qty, 0);
+    if (r.shortage) resolved = false;
+  });
+  return { total, resolved };
+};
+
 // ─── Layer 1 — Topology Calculator (mirror of Studio's buildTopology) ────────
-// §23 Phase 6 (2026-11-03, owner convention) — the entered span IS the beam total, no pillar
-// deduction: beam_total_per_axis = span, beam_segments = pillarCount − 1 (one per pillar-gap).
-// Supersedes §23 Phase 5's own pillar-budget subtraction (28 May 2026) — the sales team is now
-// instructed to pad the entered width/depth themselves, by the pillar count, BEFORE typing it (see
-// StudioBuild.jsx's pillar-padding tip, "enter span + 1ft per pillar"), so a span of 32 already has
-// room for its own pillars built in. The engine subtracting its own pillar budget on top of that
-// double-counted it — the beams ordered came out shorter than the width the team actually meant.
-export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) => {
+// §23 Phase 7 (2026-11-04) — three steps per axis, confirmed against worked examples (a 14ft entry
+// → 13.5ft footprint; 20ft → 19.5ft; 48ft → 46.25ft/46'3", with real stock rounding the beam total
+// from a 45ft target down to 44ft built from 2×22ft pieces):
+//   1. budget = span − (pillarCount × PILLAR_BUDGET_FT) — the team's own 1ft/pillar mental padding,
+//      subtracted back out to find how much beam is actually needed between the pillars.
+//   2. that budget is split evenly across the pillar-gaps, then resolved against real stock
+//      (builtBeamTotal) to get what will ACTUALLY get built — may differ slightly from the budget,
+//      since only certain piece combinations are physically available.
+//   3. physical footprint = that built total + (pillarCount × pillarWidth) — EVERY pillar's real
+//      9-inch width, including middle ones (a middle pillar sits between two beam segments, so its
+//      own width adds to the run the same way the two end pillars' do). maskingL/W add a further
+//      2×pillarWidth on top of the physical footprint (owner decision, 2026-11-04) — fabric is
+//      presumed to wrap past the two outer corner faces regardless of how many middle pillars exist.
+// Supersedes §23 Phase 6 (2026-11-03), which used the entered span as the beam total directly with
+// no deduction at all — wrong: the team's padding and the engine's own subtraction need to both
+// exist, just using two different numbers (1ft for the mental math, 0.75ft for the real footprint).
+// `trussInv` (optional, 8th arg) is the real beam stock to resolve against; omitted, physical falls
+// back to the theoretical budget target (every existing call site keeps working unchanged).
+export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, trussInv) => {
   if (!config || !H || H <= 0) return null;
   const eng = engSettings || {};
   const maxSpan = eng.maxSpanFt || 30;
-  const pillarWidth = eng.pillarWidthFt || 0.75;        // physical width (for maskingL etc. only — not beam math, see above)
+  const pillarWidth = eng.pillarWidthFt || 0.75;        // physical width — the real footprint/masking math, not the budget above
   const depth = backDepth || eng.defaultBackDepthFt || 4;
   // pillarCountForSpan: 2 corners + N middle pillars when span > maxSpan
   const pillarCountForSpan = (spanLen) => 2 + Math.max(0, Math.ceil(spanLen / maxSpan) - 1);
@@ -233,22 +274,30 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
     const segLen = totalBeamLen / segments;
     return Array.from({ length: segments }, () => segLen);
   };
+  // One axis, start to finish: budget → segment lengths (what beams[].lengthFt reports, same
+  // number every re-resolving consumer already calls resolveBeamSegment on) → stock-resolved
+  // built total → physical footprint.
+  const axisOf = (span, pillarCount) => {
+    const budget = Math.max(0, span - pillarCount * PILLAR_BUDGET_FT);
+    const segLens = splitBeamSegments(budget, pillarCount - 1);
+    const { total: built, resolved } = builtBeamTotal(segLens, trussInv);
+    const physical = built + pillarCount * pillarWidth;
+    return { segLens, physical, resolved };
+  };
 
   if (config === "u_only") {
     const totalPillars = pillarCountForSpan(spanFt);
-    const beamTotalLen = spanFt;
-    const segLengths = splitBeamSegments(beamTotalLen, totalPillars - 1);
+    const axis = axisOf(spanFt, totalPillars);
     const pillars = Array.from({ length: totalPillars }, (_, i) => {
       const id = i === 0 ? "P-left" : i === totalPillars - 1 ? "P-right" : `P-mid${i}`;
       return { id, H };
     });
-    const beams = segLengths.map((len, i) => ({ side: segLengths.length === 1 ? "top" : `top-${i+1}`, lengthFt: len }));
-    return { config, method: "A", pillars, beams, physicalL: spanFt, physicalW: 0, maskingL: spanFt + 2 * pillarWidth, maskingW: 0, pillarCount: pillars.length, beamCount: beams.length };
+    const beams = axis.segLens.map((len, i) => ({ side: axis.segLens.length === 1 ? "top" : `top-${i+1}`, lengthFt: len }));
+    return { config, method: "A", pillars, beams, physicalL: axis.physical, physicalW: 0, maskingL: axis.physical + 2 * pillarWidth, maskingW: 0, pillarCount: pillars.length, beamCount: beams.length, stockResolved: axis.resolved };
   }
   if (config === "half_box") {
     const totalFrontPillars = pillarCountForSpan(spanFt);
-    const beamTotalLen = spanFt;
-    const segLengths = splitBeamSegments(beamTotalLen, totalFrontPillars - 1);
+    const axis = axisOf(spanFt, totalFrontPillars);
     // Front pillars: 2 corners + middle. Back pillars: 2 corners only (depth is small, no mid).
     const frontPillars = Array.from({ length: totalFrontPillars }, (_, i) => {
       const id = i === 0 ? "P-frontL" : i === totalFrontPillars - 1 ? "P-frontR" : `P-frontMid${i}`;
@@ -256,24 +305,26 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
     });
     const backPillars = [{ id: "P-backL", H }, { id: "P-backR", H }];
     const pillars = [...frontPillars, ...backPillars];
-    const frontBeams = segLengths.map((len, i) => ({ side: segLengths.length === 1 ? "front" : `front-${i+1}`, lengthFt: len }));
+    const frontBeams = axis.segLens.map((len, i) => ({ side: axis.segLens.length === 1 ? "front" : `front-${i+1}`, lengthFt: len }));
     const beams = [
       ...frontBeams,
       { side: "left",  lengthFt: depth },
       { side: "right", lengthFt: depth },
     ];
-    return { config, method: "A", pillars, beams, physicalL: spanFt, physicalW: depth + 2 * pillarWidth, maskingL: spanFt + 2 * pillarWidth, maskingW: depth + 2 * pillarWidth, pillarCount: pillars.length, beamCount: beams.length };
+    // Depth (the side axis) is an engineering setting (trussBackDepth, 3-5ft), not something sales
+    // pads — unchanged by §23 Phase 7, same as it's always been.
+    return { config, method: "A", pillars, beams, physicalL: axis.physical, physicalW: depth + 2 * pillarWidth, maskingL: axis.physical + 2 * pillarWidth, maskingW: depth + 2 * pillarWidth, pillarCount: pillars.length, beamCount: beams.length, stockResolved: axis.resolved };
   }
   if (config === "full_box") {
-    // Both L and W axes can have mid-pillars. Corners are shared.
+    // Both L and W axes can have mid-pillars. Corners are shared. Each axis runs the full
+    // budget → built → physical pipeline independently — a full box's two sides are rarely the
+    // same length, and the team pads each one by its own pillar count, not the other's.
     const lAxisPillars = pillarCountForSpan(L); // pillars in an L-direction row (N-side or S-side)
     const wAxisPillars = pillarCountForSpan(W); // pillars in a W-direction column (W-side or E-side)
     const lMidCount = lAxisPillars - 2;
     const wMidCount = wAxisPillars - 2;
-    const lBeamTotal = L;
-    const wBeamTotal = W;
-    const lSegLens = splitBeamSegments(lBeamTotal, lAxisPillars - 1);
-    const wSegLens = splitBeamSegments(wBeamTotal, wAxisPillars - 1);
+    const lAxis = axisOf(L, lAxisPillars);
+    const wAxis = axisOf(W, wAxisPillars);
     const pillars = [
       { id: "P-NW", H }, { id: "P-NE", H }, { id: "P-SW", H }, { id: "P-SE", H },
       ...Array.from({ length: lMidCount }, (_, i) => ({ id: `P-N-mid${i+1}`, H })),
@@ -283,19 +334,12 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings) =
     ];
     // 4 sides × N segments per side
     const beams = [
-      ...lSegLens.map((len, i) => ({ side: lSegLens.length === 1 ? "front" : `front-${i+1}`, lengthFt: len })),
-      ...lSegLens.map((len, i) => ({ side: lSegLens.length === 1 ? "back" : `back-${i+1}`, lengthFt: len })),
-      ...wSegLens.map((len, i) => ({ side: wSegLens.length === 1 ? "left" : `left-${i+1}`, lengthFt: len })),
-      ...wSegLens.map((len, i) => ({ side: wSegLens.length === 1 ? "right" : `right-${i+1}`, lengthFt: len })),
+      ...lAxis.segLens.map((len, i) => ({ side: lAxis.segLens.length === 1 ? "front" : `front-${i+1}`, lengthFt: len })),
+      ...lAxis.segLens.map((len, i) => ({ side: lAxis.segLens.length === 1 ? "back" : `back-${i+1}`, lengthFt: len })),
+      ...wAxis.segLens.map((len, i) => ({ side: wAxis.segLens.length === 1 ? "left" : `left-${i+1}`, lengthFt: len })),
+      ...wAxis.segLens.map((len, i) => ({ side: wAxis.segLens.length === 1 ? "right" : `right-${i+1}`, lengthFt: len })),
     ];
-    // physicalL/W: Method-A-interior, same rule as u_only/half_box above — L/W already IS the final
-    // footprint (the entered span, §23 Phase 6 — see this function's own header), so adding
-    // pillarWidth again here double-counts it. Confirmed live (2026-11-01): a 43×43 full-box entry
-    // showed a 44.5×44.5 "Physical Footprint"
-    // instead of matching the 43×43 customer demand, and silently over-fed the Full Box ceiling-drape
-    // Liza calc (area = physicalL×physicalW in pricing.js) for every full-box truss. maskingL/W keep
-    // the +2×pillarWidth — that one's real (fabric wraps fully around the two outer corner pillars).
-    return { config, method: "B", pillars, beams, physicalL: L, physicalW: W, maskingL: L + 2 * pillarWidth, maskingW: W + 2 * pillarWidth, pillarCount: pillars.length, beamCount: beams.length };
+    return { config, method: "B", pillars, beams, physicalL: lAxis.physical, physicalW: wAxis.physical, maskingL: lAxis.physical + 2 * pillarWidth, maskingW: wAxis.physical + 2 * pillarWidth, pillarCount: pillars.length, beamCount: beams.length, stockResolved: lAxis.resolved && wAxis.resolved };
   }
   return null;
 };
@@ -366,12 +410,15 @@ export const resolvePillarHeight = (H, trussInv) => {
 //   4. Tie-break: smaller gap (closer to target)
 //   5. Tie-break: prefer larger inventory pieces (better stock utilization)
 //
-// This enables the salesperson-friendly padding rule (enter span + pillarCount) — §23 Phase 6
-// (2026-11-03): buildTopology no longer deducts a pillar budget from the entered span itself, so
-// the beam total handed to this resolver IS the span the team typed (divided across pillar-gaps),
-// not a shrunk version of it. Worked, test-verified example (lib/studio/pricing.test.js): a 20ft
-// span/segment resolves as 10+10 (1 joint, 0 gap); 23ft (against 10ft-only stock) has no clean
-// combo and gets snapped down to 21ft by pickCleanSpan before it ever reaches this resolver.
+// This is what builtBeamTotal (above) calls per segment, and what every other re-resolving
+// consumer (DCTrussTab.jsx, DealCheckOverlay.jsx, DepartmentOpsTab.jsx) independently calls on
+// beams[].lengthFt — §23 Phase 7 (2026-11-04): that length is the BUDGET target per segment (the
+// entered span minus 1ft/pillar, split evenly across the pillar-gaps), not the entered span
+// itself. Worked, test-verified example (lib/studio/pricing.test.js): an 18ft segment resolves as
+// 15+3 (1 joint, 0 gap, the larger-stock tie-break over 10+8); a 22.5ft segment has no exact combo
+// and resolves to 12+10=22ft, 0.5ft under target — the auto-shrink that used to pre-adjust a span
+// before it got here (pickCleanSpan) is disabled (owner decision, 2026-11-04), so whatever the team
+// typed reaches this resolver unmodified.
 export const resolveBeamSegment = (targetLength, trussInv) => {
   if (!targetLength || targetLength <= 0) return { pieces: [], joints: 0, shortage: false, gap: 0 };
   const MAX_GAP = 1.0; // ft — no combo with a larger gap than this is considered valid
@@ -545,7 +592,7 @@ export const buildEventAllocation = (eventMeta, fnList, trussInv) => {
       const H = parseFloat(zc.dims?.H) || 0;
       const spanFt = layer0.spanFt || (layer0.source === "auto-3dim" ? Math.max(L, W) : 0);
       const backDepth = zc.trussBackDepth || eng.defaultBackDepthFt || 4;
-      const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng);
+      const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng, trussInv);
       if (!topology) return;
       const alloc = allocateTruss(`${fn.fnIdx || 0}-${zoneKey}`, topology, trussInv);
       if (!alloc) return;
