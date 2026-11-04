@@ -4180,15 +4180,22 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
           // part list (kitOverrides - an edited kit - else the kit's master list) rides with the layout on every Build save,
           // so it is read here, per kit; zoneDetailPages adds whatever part the snapshot does not have yet.
           const kitInv = invU && Array.isArray(invU.subItems) && invU.subItems.length ? invU : null;
+          // A flower part of the kit (a recipe add-on, or a pot whose sub-category has a recipe that comes in sizes) says its size,
+          // as Build's kit list sets it: the part's own S / M / B, else the element's, else Big - the size Studio prices it at.
+          const kitPartSize = (pt, si) => {
+            if (!pt || !(pt.mode === "smb" || Object.keys(pt.sizes || {}).length > 1)) return "";
+            const z = String(si?.size || el?.size || "B").trim().toUpperCase()[0];
+            return SMB_LABEL[z === "S" ? "S" : z === "M" ? "M" : "B"];
+          };
           const liveKit = !kitInv ? [] : (Array.isArray(el?.kitOverrides) ? el.kitOverrides : kitInv.subItems).map(si => {
             if (si?.patternId) {
               const pt = flowerPatterns.find(fp => fp?.id === si.patternId);
-              return pt ? { name: pt.name || t("Flower recipe"), per: Number(si.qty) || 0, unit: pt.unit || "", dept: "Floral" } : null;
+              return pt ? { name: pt.name || t("Flower recipe"), per: Number(si.qty) || 0, unit: pt.unit || "", dept: "Floral", size: kitPartSize(pt, si) } : null;
             }
             const ci = invById.get(String(si?.itemId));
             if (!ci) return null;
             return { name: ci.name, per: Number(si.qty) || 0, unit: String(ci.unit || "").trim(), photo: invPhoto(ci, null),
-              dept: heldByInv.has(String(ci.id)) ? dept : catToDept(ci.category || ci.cat) };
+              dept: heldByInv.has(String(ci.id)) ? dept : catToDept(ci.category || ci.cat), size: kitPartSize(matchFlowerPattern(ci, flowerPatterns), si) };
           }).filter(x => x && x.per > 0);
           const statusTxt = arranged ? "" : itemStatusOf(fn, reuseSrc, zk, el, invU || inv);
           // a recipe with no inventory item shows the picture of its size, as Build does (photo below)
@@ -4550,7 +4557,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         ${mix ? `<div class="kb-z kb-q"><div class="kb-zk">${t("Flowers")}</div><div class="kb-zv">${esc(mix)}</div></div>` : ""}
         ${qty ? `<div class="kb-z kb-q"><div class="kb-zk">${t("Qty")}</div><div class="kb-zv">${esc(qty)}${unit ? " " + esc(hu(unit)) : ""}</div></div>` : ""}
       </div>
-      <ul class="kb-l${cols === 1 ? " one" : ""}">${parts.map(p => `<li><i class="kb-x"></i>${p.photo ? `<i class="kb-p" style="${bgCss(p.photo, 40)}" ${bgData(p.photo, 40)}></i>` : ""}<span>${esc(hn(p.name))}${p.tag ? ` <em class="kb-tg">${esc(p.tag)}</em>` : ""}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(hu(p.unit))}` : ""}</b></li>`).join("")}</ul>
+      <ul class="kb-l${cols === 1 ? " one" : ""}">${parts.map(p => `<li><i class="kb-x"></i>${p.photo ? `<i class="kb-p" style="${bgCss(p.photo, 40)}" ${bgData(p.photo, 40)}></i>` : ""}<span>${esc(hn(p.name))}${p.size ? ` <em class="kb-tg">${esc(p.size)}</em>` : ""}${p.tag ? ` <em class="kb-tg">${esc(p.tag)}</em>` : ""}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(hu(p.unit))}` : ""}</b></li>`).join("")}</ul>
     </div>`; };
     // One page (or more, if a zone's own recipes+kits don't fit one sheet) per zone, built right
     // after that zone's card pages in the loop below — never bundled with any OTHER zone's.
@@ -4625,6 +4632,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
             have.add(partKey(p.name));
             parts.push({ name: p.name, qty: Math.round(p.per * (zq || 1) * 100) / 100, unit: p.unit, photo: p.photo || "" });
           });
+          // each flower part's S / M / B, from the kit as Build has it (Deal Check's snapshot lines carry no size)
+          const sizeOf = new Map((it.liveKit || []).filter(p => p.size).map(p => [partKey(p.name), p.size]));
+          // (a copy - the snapshot's part objects are shared by every zone holding this kit)
+          parts.forEach((p, i) => { if (!p.size && sizeOf.has(partKey(p.name))) parts[i] = { ...p, size: sizeOf.get(partKey(p.name)) }; });
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : (kb?.qty || zq), "", parts) });
         }
       });
