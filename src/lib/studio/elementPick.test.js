@@ -69,6 +69,24 @@ describe("elementAfterPick — the one rule for swapping an element's item (move
   });
 });
 
+describe("elementAfterPick — kitOverrides belong to the OLD item, not the new one (owner report 2026-11-04)", () => {
+  it("swapping to a different item drops the old kit's edited component list", () => {
+    const edited = el({ kitOverrides: [{ itemId: "chair-old", qty: 4 }] });
+    const n = elementAfterPick(edited, "B", items[1], items);
+    expect("kitOverrides" in n).toBe(false);
+  });
+  it("picking the same item again keeps its kitOverrides untouched", () => {
+    const edited = el({ kitOverrides: [{ itemId: "chair-old", qty: 4 }] });
+    const n = elementAfterPick(edited, "A", items[0], items);
+    expect(n.kitOverrides).toEqual([{ itemId: "chair-old", qty: 4 }]);
+  });
+  it("clearing the pin also drops kitOverrides — there's no item left for it to describe", () => {
+    const edited = el({ kitOverrides: [{ itemId: "chair-old", qty: 4 }] });
+    const n = elementAfterPick(edited, null, null, items);
+    expect("kitOverrides" in n).toBe(false);
+  });
+});
+
 describe("elementAfterPick — a swap starts without the old item's 'asked for more'", () => {
   const items = [{ id: "A", name: "A", unit: "pc", free: 0 }, { id: "B", name: "B", unit: "pc", free: 50 }];
   it("drops wantedQty when the item changes, keeps it when the same item is picked again", () => {

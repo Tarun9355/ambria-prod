@@ -11586,13 +11586,22 @@ export default function StudioApp() {
         const newUnit = pick?.unit || original.unit;
         const unitChanged = newUnit !== original.unit;
         const lineQty = unitChanged ? 1 : qty;
-        // The lines of a split are separate elements; the original's ranked choices (overlays / cushion covers) and their id stay behind.
-        const { prefs: _choices, pid: _choicePid, ...originalRest } = original;
+        // The lines of a split are separate elements; the original's ranked choices (overlays / cushion
+        // covers), their id, and its kitOverrides all stay behind — kitOverrides is a per-instance edit
+        // of the ORIGINAL item's own kit recipe (lib/studio/elementPick.js's elementAfterPick drops it
+        // on an ordinary swap for the same reason: it has no meaning once a split line points at a
+        // different inventory id, and every reader trusts it once that id happens to be a kit too).
+        const { prefs: _choices, pid: _choicePid, kitOverrides: _oldKitOverrides, ...originalRest } = original;
+        // ...unless this particular split line is still the ORIGINAL item itself (e.g. 9 of the
+        // original design + 9 of another) — same rule elementAfterPick uses for "the same item picked
+        // again": its own kitOverrides still describes it correctly, so it comes back here.
+        const sameItem = String(id) === String(original.invId);
         return {
           ...originalRest,
           invId: id, imsId: id, unit: newUnit,
           name: pick?.name || original.name, imsName: pick?.name || "", imsPhoto: pick?.photo || "",
           qty: lineQty, baseQty: unitChanged ? 1 : (scale > 1 ? qty / scale : qty),
+          ...(sameItem && Array.isArray(_oldKitOverrides) ? { kitOverrides: _oldKitOverrides } : null),
         };
       });
       elems.splice(idx, 1, ...splitEls);

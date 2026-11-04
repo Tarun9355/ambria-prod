@@ -23,6 +23,16 @@ export function elementAfterPick(el, selectedId, pick, items) {
   // changes, qty/baseQty reset to 1.
   const newUnit = pick?.unit || el.unit;
   const unitChanged = selectedId && pick && newUnit !== el.unit;
+  // A genuine item-identity change (including clearing the pin, or picking back to the original)
+  // invalidates kitOverrides: it's a per-instance edit of THIS element's OLD item's own kit recipe
+  // (Build's "Kit — includes" editor), meaningless once the element points at a different inventory
+  // id. Left uncleared, it silently fed the old kit's component list into the new item's reservation/
+  // pricing/truck math the moment the new item happened to be a kit too — every reader (walkKitUnits,
+  // the floral-cost effectiveSubItems branch, etc.) trusts el.kitOverrides once the CURRENT item has
+  // any subItems of its own, with no check that the overrides were ever edited for it (owner report
+  // 2026-11-04: a kit flagged out-of-stock in the pre-Sold Fix picker, swapped to a different kit,
+  // kept resolving the old kit's components instead of the new kit's own).
+  const itemChanged = !selectedId || String(selectedId) !== String(el.invId);
   const next = (selectedId && pick)
     ? {
         ...el, invId: selectedId, name: pick.name || el.name, imsId: selectedId, imsName: pick.name || "", imsPhoto: pick.photo || "",
@@ -35,6 +45,7 @@ export function elementAfterPick(el, selectedId, pick, items) {
     : (() => { const e = { ...el }; delete e.imsId; delete e.imsName; delete e.imsPhoto; delete e.swappedFrom; delete e.baseInvId; return e; })();
   if (!next.swappedFrom) delete next.swappedFrom;
   if (!next.baseInvId) delete next.baseInvId;
+  if (itemChanged) delete next.kitOverrides;
   // Choices (overlays / cushion covers, lib/studio/elementPrefs.js) belong to the item they started from: swapping the element to another item
   // is a fresh decision, and the old list must not come back to life if the first item is picked again later.
   if (Array.isArray(next.prefs) && String(next.prefs[0]?.id) !== String(next.invId)) delete next.prefs;
