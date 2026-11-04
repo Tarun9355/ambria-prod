@@ -266,8 +266,17 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, t
   const maxSpan = eng.maxSpanFt || 30;
   const pillarWidth = eng.pillarWidthFt || 0.75;        // physical width — the real footprint/masking math, not the budget above
   const depth = backDepth || eng.defaultBackDepthFt || 4;
-  // pillarCountForSpan: 2 corners + N middle pillars when span > maxSpan
-  const pillarCountForSpan = (spanLen) => 2 + Math.max(0, Math.ceil(spanLen / maxSpan) - 1);
+  // Pillar count must be based on the TRUE span, not the padded span sales types in (the team's own
+  // 1ft/pillar mental-math convention) — otherwise a true ~29ft span typed as 31ft could cross
+  // maxSpan and gain an unwanted extra middle pillar it doesn't actually need (owner decision,
+  // 2026-11-04). Solved directly for the smallest pillar count N where evenly splitting the budget
+  // (span − N×PILLAR_BUDGET_FT) across its N−1 gaps still fits within maxSpan per gap:
+  //   (span − N)/(N−1) ≤ maxSpan  ⇒  N ≥ (span + maxSpan)/(maxSpan + PILLAR_BUDGET_FT)
+  // A closed form, not an iterative re-estimate — an earlier version of this guessed a count, then
+  // re-estimated the true span from that guess and re-counted, which oscillates forever right at a
+  // threshold (e.g. a 33ft span flipping between 2 and 3 pillars depending on which iteration it
+  // stopped on) and can land on an unsafe under-count if the iteration cap happens to be odd.
+  const pillarCountForSpan = (spanLen) => Math.max(2, Math.ceil((spanLen + maxSpan) / (maxSpan + PILLAR_BUDGET_FT)));
   // Split total beam length into per-segment lengths (one per pillar-gap)
   const splitBeamSegments = (totalBeamLen, segments) => {
     if (segments <= 0 || totalBeamLen <= 0) return [];

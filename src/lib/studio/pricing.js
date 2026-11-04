@@ -155,7 +155,17 @@ export const resolveTrussConfig = (zc) => {
 // it (see StudioBuild.jsx's padding hint, which used to do exactly that — a hardcoded "sweet spot"
 // list assuming a flat 1ft/pillar budget, silently wrong for Full Box's two independent axes and
 // for any material whose maxSpanFt/pillarWidthFt isn't the Iron default).
-export const pillarCountForSpan = (spanLen, maxSpan = 30) => 2 + Math.max(0, Math.ceil(spanLen / maxSpan) - 1);
+// Pillar count must be based on the TRUE span, not the padded span sales types in (the team's own
+// 1ft/pillar mental-math convention) — otherwise a true ~29ft span typed as 31ft could cross
+// maxSpan and gain an unwanted extra middle pillar it doesn't actually need (owner decision,
+// 2026-11-04). Solved directly for the smallest pillar count N where evenly splitting the budget
+// (span − N×PILLAR_BUDGET_FT) across its N−1 gaps still fits within maxSpan per gap:
+//   (span − N)/(N−1) ≤ maxSpan  ⇒  N ≥ (span + maxSpan)/(maxSpan + PILLAR_BUDGET_FT)
+// A closed form, not an iterative re-estimate — an earlier version of this guessed a count, then
+// re-estimated the true span from that guess and re-counted, which oscillates forever right at a
+// threshold (e.g. a 33ft span flipping between 2 and 3 pillars depending on which iteration it
+// stopped on) and can land on an unsafe under-count if the iteration cap happens to be odd.
+export const pillarCountForSpan = (spanLen, maxSpan = 30) => Math.max(2, Math.ceil((spanLen + maxSpan) / (maxSpan + PILLAR_BUDGET_FT)));
 
 // §23 Phase 7 (2026-11-04, owner-confirmed worked examples) — three steps per axis: (1) budget =
 // span − (pillarCount × PILLAR_BUDGET_FT, the team's own 1ft/pillar mental padding, subtracted back

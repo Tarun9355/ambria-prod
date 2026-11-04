@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology } from "./pricing";
+import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology, pillarCountForSpan } from "./pricing";
 
 // §23 Phase 7 (2026-11-04, owner-confirmed worked examples): the sales team pads a zone's entered
 // width/depth themselves by a round 1ft per pillar (easy mental math) BEFORE typing it — a true
@@ -65,6 +65,22 @@ describe("buildTopology — 1ft/pillar budget, stock-resolved beams, footprint =
   it("masking adds a further 2×pillarWidth on top of the true footprint (owner decision, 2026-11-04)", () => {
     const topo = buildTopology("u_only", 0, 48, 10, 48, 0, eng, realStock);
     expect(topo.maskingL).toBe(46.25 + 2 * 0.75);
+  });
+
+  it("31ft typed (a true ~29ft span padded by 2 pillars) does NOT gain a spurious middle pillar just for crossing maxSpanFt on the padded number (owner decision, 2026-11-04)", () => {
+    const topo = buildTopology("u_only", 0, 31, 10, 31, 0, eng, realStock);
+    expect(topo.pillarCount).toBe(2); // raw span/maxSpan math alone would wrongly say 3
+  });
+
+  it("62ft typed still gets its genuinely-needed middle pillar — the true-span estimate doesn't under-count a real long span", () => {
+    const topo = buildTopology("u_only", 0, 62, 10, 62, 0, eng, realStock);
+    expect(topo.pillarCount).toBe(3);
+  });
+
+  it("pillarCountForSpan is a closed-form, not an oscillating iteration — spans just above a threshold (33, 64, 95ft) settle deterministically, not depending on an iteration cap's parity", () => {
+    expect(pillarCountForSpan(33, 30)).toBe(3);
+    expect(pillarCountForSpan(64, 30)).toBe(4);
+    expect(pillarCountForSpan(95, 30)).toBe(5);
   });
 });
 
