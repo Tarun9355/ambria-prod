@@ -6338,7 +6338,7 @@ undefined
         if(setDcKitEdits&&buildElCardKey){const ck=buildElCardKey(k,el.name||"",idx);const fi=activeFnIdx||0;const ov=Array.isArray(next.kitOverrides)?next.kitOverrides:null;setDcKitEdits(prev=>({...prev,[fi]:{...(prev?.[fi]||{}),[ck]:ov}}));persistDcKitEditsNow?.(fi,ck,ov);}
         close();
       };
-      const partName=(c)=>{if(c.patternId)return "🌸 flowers";const it=(imsInventory||[]).find(i=>i.id===c.itemId);return it?.name||"Item";};
+      const partOf=(c)=>{if(c.patternId)return {name:"Flowers",photo:"",flower:true};const it=(imsInventory||[]).find(i=>i.id===c.itemId);return {name:it?.name||"Item",photo:it?(it.img||(Array.isArray(it.photoUrls)&&it.photoUrls[0])||""):""};};
       return createPortal((
         <div className="ui-overlay-in" onClick={close} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(10,10,20,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
           <div className="ui-pop-in" role="dialog" aria-label={`Kits of ${item?.name||"this item"}`} onClick={e=>e.stopPropagation()} onKeyDown={e=>{if(e.key==="Escape")close();}} style={{width:"min(640px,100%)",maxHeight:"82vh",background:isDark?"#15151f":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -6360,8 +6360,15 @@ undefined
                       <span style={{fontSize:13,fontWeight:700}}>{kit.name}</span>
                       {sel?<span style={{fontSize:10,fontWeight:700,color:"#4F46E5"}}>✓ In use</span>:kit.id==="default"?<span style={{fontSize:10,color:textS}}>default</span>:null}
                     </div>
-                    <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                      {parts.map((c,i)=><span key={i} style={{fontSize:11.5,color:textS,lineHeight:1.35,overflowWrap:"anywhere"}}>{partName(c)} <b style={{color:textP}}>×{Number(c.qty)||1}</b></span>)}
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {/* each part with its stock photo, so two kits are told apart at a glance */}
+                      {parts.map((c,i)=>{const pt=partOf(c);return(
+                        <span key={i} style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+                          {pt.photo
+                            ? <img src={thumbUrl(pt.photo,64)} loading="lazy" decoding="async" alt="" style={{width:32,height:32,borderRadius:6,objectFit:"cover",flexShrink:0,background:isDark?"#1a1a2e":"#eee"}}/>
+                            : <span aria-hidden="true" style={{width:32,height:32,borderRadius:6,flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>{pt.flower?"🌸":"📦"}</span>}
+                          <span style={{fontSize:11.5,color:textS,lineHeight:1.35,overflowWrap:"anywhere",minWidth:0}}>{pt.name} <b style={{color:textP}}>×{Number(c.qty)||1}</b></span>
+                        </span>);})}
                     </div>
                   </button>
                 );
