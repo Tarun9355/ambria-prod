@@ -22,7 +22,7 @@ import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
 import { trussRowCost, calcZoneFabricCost, calcZoneFabric, guestFabricMultiplier, fabricRepeatDiscount, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
-import { resolveTrussConfig } from "../../../lib/studio/pricing";
+import { resolveTrussConfig, trussInvForMaterial, nearestCleanSpans } from "../../../lib/studio/pricing";
 import { fabricColourOptions } from "../../../lib/studio/fabricColourOptions";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { crossedMiddle } from "../../../lib/studio/zoneDrop";
@@ -319,10 +319,46 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 {zc.trT&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
                   <NumField min={0} value={zc.trussFrontExtH||""} onCommit={n=>sZ({trussFrontExtH:n})} blankCommit commitOn="blur" placeholder={String(zc.dims?.H||0)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
               </div>
-              {/* Pillar-padding tip removed (owner decision, 2026-11-04) — it suggested +1ft/pillar
-                  to land the footprint near the entered value, which is now the wrong direction
-                  under §23 Phase 7's budget→built→physical formula (pricing.js's buildTopology):
-                  entering v+pillars now OVERSHOOTS the footprint rather than landing near v. */}
+              {/* Smart dim tip (owner ask, 2026-11-04) — replaces the removed "+1ft/pillar" hint with
+                  one that actually reflects §23 Phase 7's budget→built→physical formula: suggests
+                  nudging a typed span to the NEAREST value (down or up) whose beam budget resolves to
+                  one clean in-stock beam (resolveBeamSegment's own joints===0, the same resolver the
+                  card's own preview builds from) instead of needing a joint. Checked per axis (Width/
+                  Depth) since Full Box's two sides each run the budget pipeline independently —
+                  nearestCleanSpans itself decides whether a given axis is even in play (a half_box's
+                  Depth is a fixed engineering setting, not something sales types, so it naturally
+                  yields nothing here). Also folds in pillar stock for this height (nearestCleanSpans
+                  returns null outright if the pillars themselves can't be assembled from stock — no
+                  beam choice fixes that) and, for Full Box, requires 2 units of stock per size (its
+                  front+back / left+right beams reuse the same segment length, so 1 unit isn't enough). */}
+              {fabricInv && (() => {
+                const matInv = trussInvForMaterial(fabricInv, zc.trussMaterial);
+                const eng = matInv.settings || {};
+                const H = Number(zc.dims?.H) || 0;
+                const piecesNeeded = resolveTrussConfig(zc).config === "full_box" ? 2 : 1;
+                const tips = [["W", "Width"], ["L", "Depth"]].map(([d, label]) => {
+                  const val = Number(zc.dims?.[d]) || 0;
+                  if (!val) return null;
+                  const tip = nearestCleanSpans(val, H, { maxSpanFt: eng.maxSpanFt, trussInv: matInv, piecesNeeded });
+                  if (!tip || (!tip.down && !tip.up)) return null;
+                  return { d, label, val, ...tip };
+                }).filter(Boolean);
+                if (!tips.length) return null;
+                return (
+                  <div style={{marginBottom:6,fontSize:11,color:"#EF4444",fontWeight:600,lineHeight:1.5}}>
+                    {tips.map((t) => {
+                      const opts = [];
+                      if (t.down) opts.push(<span key="down">try <b>{t.down.span}ft</b> ({t.down.budget}ft beam)</span>);
+                      if (t.up) opts.push(<span key="up">try <b>{t.up.span}ft</b> ({t.up.budget}ft beam)</span>);
+                      return (
+                        <div key={t.d}>
+                          💡 {t.label} {t.val}ft needs a joint to build — {opts[0]}{opts[1] ? <> or {opts[1]}</> : null} for a clean single beam.
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
               {/* ── §23 Truss Type selector + Height-anchor validation ── */}
               {(()=>{
                 const tr = resolveTrussConfig(zc);

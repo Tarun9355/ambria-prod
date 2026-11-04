@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual, findLatestBuild, sessionToRows, suspiciousDuplicateFnIdxs } from "./sessionData";
+import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual, findLatestBuild, sessionToRows, suspiciousDuplicateFnIdxs, mergeLmsFunctions } from "./sessionData";
 
 const withVideo = { sourceVideo: { id: "vid_1", title: "Poolside Haldi" } };
 const withZones = { zoneElements: { stage: ["truss"] } };
@@ -284,5 +284,79 @@ describe("restoreTarget — a refresh brings back the real build, not an empty d
     expect(restoreTarget([blank], 2)).toEqual({ session: blank, fnIdx: 2 });
     expect(restoreTarget([], 0)).toEqual({ session: null, fnIdx: 0 });
     expect(restoreTarget(undefined, 0)).toEqual({ session: null, fnIdx: 0 });
+  });
+});
+
+describe("mergeLmsFunctions — an LMS load adds what LMS has that Studio doesn't, never reorders what's already there (owner report 2026-11-04, lead #00342 'Kamal')", () => {
+  it("the incident itself: Studio restored 2 functions, LMS now reports 3 — only the genuinely new one (Wedding) is appended", () => {
+    const restored = [{ type: "Engagement", date: "2026-11-30", shift: "Dinner" }, { type: "Haldi", date: "2026-12-01", shift: "Lunch" }];
+    const lms = [
+      { type: "Wedding", date: "2026-12-01", venue: "Sunday Resort", shift: "Dinner", pax: "250" },
+      { type: "Haldi", date: "2026-12-01", venue: "Sunday Resort", shift: "Lunch", pax: "150" },
+      { type: "Engagement", date: "2026-11-30", venue: "Sunday Resort", shift: "Dinner", pax: "100" },
+    ];
+    const r = mergeLmsFunctions(restored, lms, { landingFnIdx: 0 });
+    expect(r.blocked).toBeNull();
+    expect(r.dateConflicts).toEqual([]);
+    expect(r.toAppend).toEqual([{ type: "Wedding", date: "2026-12-01", venue: "Sunday Resort", venueOther: "", shift: "Dinner", pax: "250", palette: "Custom", flowerPalette: "" }]);
+    expect(r.unmatchedRestoredCount).toBe(0);
+  });
+  it("running the merge again on the already-merged list is a no-op", () => {
+    const restored = [{ type: "Engagement", date: "2026-11-30", shift: "Dinner" }, { type: "Haldi", date: "2026-12-01", shift: "Lunch" }, { type: "Wedding", date: "2026-12-01", shift: "Dinner" }];
+    const lms = [
+      { type: "Wedding", date: "2026-12-01", shift: "Dinner" },
+      { type: "Haldi", date: "2026-12-01", shift: "Lunch" },
+      { type: "Engagement", date: "2026-11-30", shift: "Dinner" },
+    ];
+    expect(mergeLmsFunctions(restored, lms, { landingFnIdx: 0 }).toAppend).toEqual([]);
+  });
+  it("case and whitespace differences in type still match", () => {
+    const restored = [{ type: " haldi ", date: "2026-12-01", shift: "" }];
+    const lms = [{ type: "HALDI", date: "2026-12-01" }];
+    expect(mergeLmsFunctions(restored, lms, { landingFnIdx: 0 }).toAppend).toEqual([]);
+  });
+  it("same type, different date: flagged, nothing touched on either side", () => {
+    const restored = [{ type: "Haldi", date: "2026-12-01", shift: "Lunch" }];
+    const lms = [{ type: "Haldi", date: "2026-12-02", shift: "Lunch" }];
+    const r = mergeLmsFunctions(restored, lms, { landingFnIdx: 0 });
+    expect(r.toAppend).toEqual([]);
+    expect(r.dateConflicts).toHaveLength(1);
+    expect(r.dateConflicts[0]).toMatchObject({ restoredIdx: 0 });
+  });
+  it("two LMS functions share a type+date (Wedding Lunch and Wedding Dinner): the matching shift wins the match, the other is appended", () => {
+    const restored = [{ type: "Wedding", date: "2026-12-01", shift: "Lunch" }];
+    const lms = [{ type: "Wedding", date: "2026-12-01", shift: "Dinner" }, { type: "Wedding", date: "2026-12-01", shift: "Lunch" }];
+    const r = mergeLmsFunctions(restored, lms, { landingFnIdx: 0 });
+    expect(r.toAppend).toEqual([expect.objectContaining({ type: "Wedding", date: "2026-12-01", shift: "Dinner" })]);
+  });
+  it("an empty LMS entry (no type, no date) is ignored — never matched, never appended", () => {
+    const r = mergeLmsFunctions([{ type: "Haldi", date: "2026-12-01" }], [{ type: "", date: "" }], { landingFnIdx: 0 });
+    expect(r.toAppend).toEqual([]);
+  });
+  it("an orphan build whose OWN stamped identity matches the appended function is adopted; a mismatched or stamp-less orphan is evicted", () => {
+    const restored = [{ type: "Haldi", date: "2026-12-01", shift: "" }];
+    const lms = [{ type: "Haldi", date: "2026-12-01" }, { type: "Wedding", date: "2026-12-02" }, { type: "Sangeet", date: "2026-12-03" }];
+    const r = mergeLmsFunctions(restored, lms, {
+      landingFnIdx: 0,
+      occupiedBuildIdxs: [1, 2],
+      buildStamps: { 1: { fnType: "Wedding", fnDate: "2026-12-02" }, 2: { fnType: "Something Else", fnDate: "2026-12-09" } },
+    });
+    expect(r.toAppend.map((t) => t.type)).toEqual(["Wedding", "Sangeet"]);
+    expect(r.adoptedIdxs).toEqual([1]); // index 1 = Wedding, stamp matches
+    expect(r.evictIdxs).toEqual([2]);   // index 2 = Sangeet, stamp says a different function
+  });
+  it("landing on an index beyond what's restored (viewing an orphan) blocks the merge entirely", () => {
+    const r = mergeLmsFunctions([{ type: "Haldi", date: "2026-12-01" }], [{ type: "Wedding", date: "2026-12-02" }], { landingFnIdx: 3 });
+    expect(r.blocked).toBe("landing");
+    expect(r.toAppend).toEqual([]);
+  });
+  it("several appended functions sort by date, then shift — never by LMS's own row order", () => {
+    const lms = [
+      { type: "Sangeet", date: "2026-12-03", shift: "Dinner" },
+      { type: "Haldi", date: "2026-12-01", shift: "Dinner" },
+      { type: "Haldi", date: "2026-12-01", shift: "Lunch" },
+    ];
+    const r = mergeLmsFunctions([{ type: "", date: "", shift: "" }], lms, { landingFnIdx: 0 });
+    expect(r.toAppend.map((t) => `${t.type}-${t.shift}`)).toEqual(["Haldi-Lunch", "Haldi-Dinner", "Sangeet-Dinner"]);
   });
 });
