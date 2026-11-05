@@ -3943,7 +3943,12 @@ export default function StudioApp() {
       // deal's history, so dropping the client row alone would leave that history behind in
       // studio_sessions with nothing pointing at it.
       for (const id of dels) {
-        try { await supabase.from("studio_sessions").delete().eq("client_id", id); } catch { /* the client row still goes */ }
+        try {
+          await writeWithRetry(
+            () => supabase.from("studio_sessions").delete().eq("client_id", id),
+            { target: `studio_sessions:client:${id}`, retryable: false, report: false },
+          );
+        } catch { /* the client row still goes */ }
         await deleteRow("client_ledger", id);
       }
       if (changed.length) {
@@ -4027,17 +4032,41 @@ export default function StudioApp() {
   const deleteSessionRows = useCallback(async (sessionId) => {
     if (!sessionId) return { ok: false, reason: "no session id" };
     try {
-      const { error, count } = await supabase
-        .from("studio_sessions")
-        .delete({ count: "exact" })
-        .eq("session_id", sessionId);
-      if (error) {
-        showMsg?.("Session delete failed: " + (error.message || error), "red");
-        return { ok: false, reason: error.message || String(error) };
+      // retryable:false — NOT safe to retry later, despite deletes usually being the safe case in
+      // this rollout: session_id X can be REUSED by a later save (collapseInPlace reuses
+      // prevSessions[0].id, including the case where the session being deleted IS the active,
+      // currently-loaded draft). If this delete fails, sleeps, and a same-author autosave then lands
+      // a brand-new build under this exact X before this delete's retry fires, a delayed automatic
+      // retry (reconnect, or a stray Retry click days later off a lingering banner) would wipe that
+      // genuinely new build — the same "collapse destroyed newer work" shape this file's own
+      // DELETION STILL DISABLED comment already describes, through a different door. The save path's
+      // own target (`studio_sessions:${snapshot.id}`) never knows about this delete's target
+      // (`studio_sessions:session:${sessionId}`, a different namespace), so supersession can't
+      // protect against this on its own. retryable:false alone only removes the LATER, exposed retry
+      // (reconnect/Retry-button) — writeWithRetry's own few FAST internal attempts (up to ~2.8s of
+      // backoff) still happen first, which is its own smaller version of the exact same window: a
+      // same-author autosave could reuse this sessionId mid-backoff and get wiped once the delete's
+      // own next attempt fires. attempts:1 closes that too — this delete goes back to being a single
+      // shot, same as before this rollout, gaining only supersession-safety and visible reporting.
+      // writeWithRetry only threads a factory's {data, error} through, not {count} — folded into
+      // `data` here so this function's own existing contract (returning how many rows were removed)
+      // is unaffected.
+      const res = await writeWithRetry(
+        async () => {
+          const { error, count } = await supabase.from("studio_sessions").delete({ count: "exact" }).eq("session_id", sessionId);
+          return { error, data: { count } };
+        },
+        { target: `studio_sessions:session:${sessionId}`, label: "Session delete", retryable: false, attempts: 1 },
+      );
+      if (res.superseded) return { ok: false, reason: "superseded by a newer action on this session" };
+      if (res.error) {
+        showMsg?.("Session delete failed: " + (res.error.message || res.error), "red");
+        return { ok: false, reason: res.error.message || String(res.error) };
       }
       // Zero rows is not necessarily an error — a session saved before studio_sessions existed only
       // lives in the client_ledger blob, and removing it from there is the caller's other write. So
       // report it rather than treating it as failure.
+      const count = res.data?.count;
       return { ok: true, count: typeof count === "number" ? count : null };
     } catch (e) {
       showMsg?.("Session delete failed: " + (e?.message || e), "red");
@@ -8542,13 +8571,45 @@ export default function StudioApp() {
           // exactly the one a real browser refresh/close is free to cancel mid-flight, which is how a
           // deal's amount was seen to drop after a hard refresh and only recover once a later,
           // uninterrupted save re-landed the fuller build.
-          keepaliveUpsert("studio_sessions", rowsForSnapshot);
+          // Claims this save's own generation on the SAME target the non-keepalive branch below
+          // uses (studio_sessions:${snapshot.id}) WITHOUT adding any retry of its own (attempts:1,
+          // report:false — a keepalive write already has its own reason not to retry: the page is
+          // mid-unload). Without this, a DIFFERENT, non-keepalive save under this same id that failed
+          // its first attempt moments earlier and is still sleeping before a retry would never learn
+          // a newer (this) save happened — its retry isn't superseded by anything, since only a
+          // writeWithRetry call bumps the generation — and could resend its own older snapshot right
+          // over this keepalive save once it wakes up.
+          writeWithRetry(async () => { await keepaliveUpsert("studio_sessions", rowsForSnapshot); return {}; }, {
+            target: `studio_sessions:${snapshot.id}`, attempts: 1, report: false,
+          });
         } else {
           (async () => {
             try {
-              const { error } = await supabase.from("studio_sessions")
-                .upsert(rowsForSnapshot, { onConflict: "id" });
-              if (error) throw error;
+              // ONE writeWithRetry call for the WHOLE array, not a per-row Promise.all (unlike this
+              // rollout's other batch writers) — this upsert is a single PostgREST statement, so it
+              // is genuinely all-or-nothing at the database level: every function's row in this one
+              // save either lands together or none do. Splitting it per-row the way blocks/library/
+              // rate_card were fixed would trade that atomicity for independent per-row retries,
+              // which here means a save could land PARTIALLY — one function's build persisted,
+              // another's silently still the old one — with nothing in this function's own error
+              // handling able to tell the difference. The build is the single highest-stakes write in
+              // this app; a few extra seconds of all-or-nothing retry is worth far more than finer-
+              // grained resilience that can leave a build half-saved.
+              // target: this SAVE's session id (not per-row) — a later save that reuses the same id
+              // (collapseInPlace, the same author's next rolling-draft tick) correctly supersedes a
+              // still-retrying earlier one; a save that mints a fresh id (a different author, or a
+              // deliberate new entry) is never connected to it, matching this function's own existing
+              // "never silently overwrite a DIFFERENT entry" rule a few lines above.
+              // retryable:false — rowsForSnapshot is this call's own point-in-time build snapshot, not
+              // re-read fresh; a delayed automatic retry (reconnect, possibly minutes later) resending
+              // it could overwrite someone's genuinely newer save under the same id. The few fast
+              // internal attempts below (finishing in a few seconds) carry no such risk.
+              const res = await writeWithRetry(
+                () => supabase.from("studio_sessions").upsert(rowsForSnapshot, { onConflict: "id" }),
+                { target: `studio_sessions:${snapshot.id}`, label: "Build save", retryable: false },
+              );
+              if (res.superseded) return; // a newer save under this same id already took over
+              if (res.error) throw res.error;
             } catch (e) {
               // SAID OUT LOUD, not swallowed. A silent data-layer failure is how 249 tag verifications
               // were lost in July (see the note on migration 023) — if these rows are not landing, the
