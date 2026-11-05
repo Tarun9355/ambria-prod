@@ -602,6 +602,36 @@ export default function IMS() {
       },
     });
   };
+  // The three allocation tables share blocks' exact risk shape (one row per DATE holds every
+  // event's allocation on it, not just the writer's own), so they get the identical background-
+  // recovery treatment: same 3-point overlap guard, same apply-matches-the-realtime-handler shape.
+  const makeAllocLoadReporter = (table, loadOkKey, label, setState) => {
+    const report = (err) => {
+      reportSaveProblem(`load:${table}`, {
+        label, error: err, blocked: true,
+        retry: async () => {
+          if (loadOkRef.current[loadOkKey] === true) return { ok: true };
+          try {
+            const rows = await fetchAll(table);
+            if (loadOkRef.current[loadOkKey] === true) return { ok: true };
+            setState(Object.fromEntries(rows.map((r) => [r.date, rowToAlloc(r)])));
+            markTableLoaded(loadOkKey);
+            setError((cur) => (cur?.startsWith(`${label} haven't loaded`) ? "" : cur));
+            return { ok: true };
+          } catch (e) {
+            if (loadOkRef.current[loadOkKey] === true) return { ok: true };
+            markTableFailed(loadOkKey, e);
+            report(e);
+            return { ok: false };
+          }
+        },
+      });
+    };
+    return report;
+  };
+  const reportTrussAllocLoadFailed = makeAllocLoadReporter("truss_allocations", "truss_allocations", "Truss allocations", setTrussAllocState);
+  const reportPlatformAllocLoadFailed = makeAllocLoadReporter("platform_allocations", "platform_allocations", "Platform allocations", setPlatformAllocState);
+  const reportBattaAllocLoadFailed = makeAllocLoadReporter("batta_allocations", "batta_allocations", "Batta allocations", setBattaAllocState);
   const settingsWriterRef = useRef(null);
   if (!settingsWriterRef.current) {
     settingsWriterRef.current = createSettingsWriter(
@@ -1301,6 +1331,12 @@ export default function IMS() {
         }
         if (blockFetch.ok) clearSaveProblem("load:blocks");
         else reportBlocksLoadFailed(new Error("Failed to load — editing block reservations is refused until this is retried or the page is reloaded."));
+        if (allocFetch.ok) clearSaveProblem("load:truss_allocations");
+        else reportTrussAllocLoadFailed(new Error("Failed to load — editing truss allocations is refused until this is retried or the page is reloaded."));
+        if (platformAllocFetch.ok) clearSaveProblem("load:platform_allocations");
+        else reportPlatformAllocLoadFailed(new Error("Failed to load — editing platform allocations is refused until this is retried or the page is reloaded."));
+        if (battaAllocFetch.ok) clearSaveProblem("load:batta_allocations");
+        else reportBattaAllocLoadFailed(new Error("Failed to load — editing batta allocations is refused until this is retried or the page is reloaded."));
         setLoading(false);
       } catch (e) {
         if (active) { setError(e.message || "Failed to load IMS data"); setLoading(false); }
