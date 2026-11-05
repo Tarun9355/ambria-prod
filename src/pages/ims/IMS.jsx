@@ -37,6 +37,7 @@ import { ensureCdnLibs } from "../../lib/ims/pdf";
 import { kvGet, reliableSave } from "../../lib/ims/kv";
 import { rowToRcItem, rcItemToRow } from "../../lib/rateCard";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry";
+import { reportSaveProblem, clearSaveProblem } from "../../lib/saveHealth";
 
 const LMS_STALE_MS = 30 * 60 * 1000; // re-sync in background only if cache older than 30 min
 // BLOCKS_SK / RC_SK removed 30 Jul 2026: both were unused here (declaration + comments only) and
@@ -505,11 +506,36 @@ export default function IMS() {
   // Every write goes through one ordered, coalescing queue (lib/ims/settingsWriter.js): fast typing used
   // to fire overlapping upserts that could land out of order, leave an older keystroke in the database,
   // and have its realtime echo wind the field back under the person typing.
+  // Discarding a failed settings write (SaveHealthBanner's Discard button) abandons the local edit
+  // — the writer's own discardKey() stops it being treated as dirty, but the SCREEN still shows
+  // that abandoned local value until something re-syncs it from the database. Re-running the same
+  // apply the realtime subscription uses closes that gap. applySettingsRows is referenced here
+  // before its own declaration below — safe, same as this file's many other forward references to
+  // a stable useCallback (see the existing no-use-before-define warnings on setTrussAlloc etc.):
+  // this closure only runs later, on a user's Discard click, by which point it's long since assigned.
+  const refetchSettingsAfterDiscard = () => { fetchAll("settings").then((rows) => applySettingsRows(rows)).catch(() => {}); };
   const settingsWriterRef = useRef(null);
   if (!settingsWriterRef.current) {
     settingsWriterRef.current = createSettingsWriter(
       async (k, value) => { const { error: e } = await supabase.from("settings").upsert({ key: k, value }, { onConflict: "key" }); return e || null; },
-      (k, e) => setError(`Save failed: ${e.message || e}`),
+      (k, e) => {
+        setError(`Save failed: ${e.message || e}`);
+        // Stays visible (SaveHealthBanner) until retried or discarded — unlike the setError banner
+        // above, which the next unrelated error overwrites. Safe to retry via retryKey here
+        // specifically because this onError only fires from writeOne's own failure path (an
+        // enqueue()'d write), where latest[k] always holds the real pending value, never the
+        // markWriting boolean sentinel an external (RPC-merge) write uses.
+        reportSaveProblem(`settings:${k}`, {
+          label: `Settings: ${k}`,
+          error: e,
+          retry: () => settingsWriterRef.current.retryKey(k),
+          onDiscard: () => { settingsWriterRef.current.discardKey(k); refetchSettingsAfterDiscard(); },
+        });
+      },
+      // onSaved: a LATER keystroke to the same key can succeed after an earlier one failed — without
+      // this, "a save failed" (and the beforeunload warning) stuck around until someone clicked
+      // Retry or the browser reconnected, even though the key's current value is actually saved.
+      (k) => clearSaveProblem(`settings:${k}`),
     );
   }
   const setSettings = useCallback((updater) => {
@@ -1333,10 +1359,42 @@ export default function IMS() {
     // markWriting/markSettled: see settingsWriter.js's own comment — this RPC bypasses enqueue, so
     // without these isDirty/isStaleFor can't tell a concurrent realtime echo (from ANY other settings
     // key changing) to prefer local state over a pre-commit read of this one.
-    settingsWriterRef.current.markWriting("datePricing");
-    supabase.rpc("merge_settings_json", { p_key: "datePricing", p_patch: { autoCategories } })
-      .then(({ error }) => { if (error) console.warn("[settings] autoCategories merge failed:", error.message); })
-      .finally(() => settingsWriterRef.current.markSettled("datePricing"));
+    // Its own id, distinct from mergeDatePricing's (never a single shared "settings:datePricing" for
+    // every sub-field) — otherwise an admin's still-failed lock-code/pause edit could be silently
+    // cleared from the banner by THIS unrelated merge succeeding, or a second sub-field's failure
+    // could silently replace the first one's reported problem (and its retry closure) in the store.
+    const id = "settings:datePricing:autoCategories";
+    const runMerge = () => {
+      // Re-check the pause flag at RETRY time too (manual click, or the one-shot auto-retry on
+      // reconnect) — not just the one checked above when this effect run started. Without this, an
+      // admin who pauses auto-sync WHILE a failed sync is still pending could have that pause
+      // defeated the moment connectivity returns, by a retry still carrying the pre-pause value.
+      if (settingsRef.current?.datePricing?.autoSyncPaused) { clearSaveProblem(id); return Promise.resolve({ ok: true }); }
+      settingsWriterRef.current.markWriting("datePricing");
+      return supabase.rpc("merge_settings_json", { p_key: "datePricing", p_patch: { autoCategories } })
+        .then(({ error }) => {
+          settingsWriterRef.current.markSettled("datePricing", !error);
+          if (error) {
+            console.warn("[settings] autoCategories merge failed:", error.message);
+            reportSaveProblem(id, {
+              label: "Date pricing: auto-sync", error, retry: runMerge,
+              onDiscard: () => { settingsWriterRef.current.discardKey("datePricing"); refetchSettingsAfterDiscard(); },
+            });
+            return { ok: false };
+          }
+          clearSaveProblem(id);
+          return { ok: true };
+        })
+        .catch((e) => {
+          settingsWriterRef.current.markSettled("datePricing", false);
+          reportSaveProblem(id, {
+            label: "Date pricing: auto-sync", error: e, retry: runMerge,
+            onDiscard: () => { settingsWriterRef.current.discardKey("datePricing"); refetchSettingsAfterDiscard(); },
+          });
+          return { ok: false };
+        });
+    };
+    runMerge();
   }, [studioLmsCache, settingsLoaded]);
 
   // Same reasoning as the autoCategories effect above, generalized: EVERY write to a sub-field of
@@ -1360,7 +1418,7 @@ export default function IMS() {
       // loaded. A multiplier edit, for example, rebuilds and merges the WHOLE categories sub-object
       // from that default baseline, resetting every other multiplier. Refuse instead of guessing.
       setError("Settings haven't loaded yet — reload the page before changing date pricing. Nothing was saved.");
-      return;
+      return { ok: false };
     }
     const s = settingsRef.current || {};
     const nextSettings = { ...s, datePricing: { ...s.datePricing, ...patch } };
@@ -1369,10 +1427,29 @@ export default function IMS() {
     // markWriting/markSettled: see settingsWriter.js's own comment — without this, a pause/lock-code
     // write here is invisible to isDirty/isStaleFor, so a realtime echo triggered by ANY unrelated
     // settings-table write elsewhere can silently revert it back to the pre-write value.
+    // One id PER SUB-FIELD actually touched (never a single shared "settings:datePricing" for every
+    // patch) — same reasoning as the autoCategories effect's own id above: a lock-code failure and a
+    // pause failure are two independent problems, and either one succeeding must not silently clear
+    // the other's still-unresolved banner entry.
+    const id = `settings:datePricing:${Object.keys(patch).sort().join(",")}`;
+    const onDiscard = () => { settingsWriterRef.current.discardKey("datePricing"); refetchSettingsAfterDiscard(); };
     settingsWriterRef.current.markWriting("datePricing");
-    supabase.rpc("merge_settings_json", { p_key: "datePricing", p_patch: patch })
-      .then(({ error }) => { if (error) console.warn("[settings] datePricing merge failed:", error.message); })
-      .finally(() => settingsWriterRef.current.markSettled("datePricing"));
+    return supabase.rpc("merge_settings_json", { p_key: "datePricing", p_patch: patch })
+      .then(({ error }) => {
+        settingsWriterRef.current.markSettled("datePricing", !error);
+        if (error) {
+          console.warn("[settings] datePricing merge failed:", error.message);
+          reportSaveProblem(id, { label: "Date pricing", error, retry: () => mergeDatePricing(patch), onDiscard });
+          return { ok: false };
+        }
+        clearSaveProblem(id);
+        return { ok: true };
+      })
+      .catch((e) => {
+        settingsWriterRef.current.markSettled("datePricing", false);
+        reportSaveProblem(id, { label: "Date pricing", error: e, retry: () => mergeDatePricing(patch), onDiscard });
+        return { ok: false };
+      });
   }, []);
 
   // Manual "🔄 Sync LMS": Edge Function paginates LMS server-side → DB, then re-read cache.
