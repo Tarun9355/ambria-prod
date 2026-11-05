@@ -111,6 +111,7 @@ import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "..
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc, claimDealPresence } from "../../lib/supabase";
+import { writeWithRetry } from "../../lib/writeRetry";
 import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
 import { guestRepeatLineCost, flaggedUnitRate } from "../../lib/studio/repeatPricing.js";
 import {
@@ -4020,6 +4021,30 @@ export default function StudioApp() {
     }
   }, [showMsg]);
   const saveDateTypes = useCallback(async (nd) => { setDateTypes(nd); await reliableSave(DT_SK, JSON.stringify(nd), "Date types"); }, []);
+
+  // A few fast, silent attempts (writeWithRetry) absorb a transient blip before any of these
+  // row-level writers' own showMsg/console.warn ever surfaces a failure — mirrors IMS.jsx's own
+  // retryingUpsert/retryingDelete (see its comment for the full reasoning). retryingUpsert is safe
+  // by construction for a FULL-row payload (two overlapping writes to the same id racing within one
+  // writer's own retry window correctly resolve to whichever was issued last); retryingUpdate is for
+  // a PARTIAL `.update(changes).eq(onConflict,id)` built from a point-in-time read-merge-write
+  // (event_orders.data, mostly) — always retryable:false there, same caution as kv.js/updateRow:
+  // resending a captured merge later (this never happens automatically here, only within one call's
+  // own few-second retry window, but the snapshot itself could still be stale against a concurrent
+  // writer) must never masquerade as fresh.
+  const retryingUpsert = (table, row, onConflict = "id", opts = {}) => writeWithRetry(
+    () => supabase.from(table).upsert(row, { onConflict }),
+    { target: `${table}:${row[onConflict]}`, label: `${table} row`, retryable: false, ...opts },
+  );
+  const retryingUpdate = (table, id, changes, onConflict = "id", opts = {}) => writeWithRetry(
+    () => supabase.from(table).update(changes).eq(onConflict, id),
+    { target: `${table}:${id}`, label: `${table} row`, retryable: false, ...opts },
+  );
+  const retryingDelete = (table, id, onConflict = "id") => writeWithRetry(
+    () => supabase.from(table).delete().eq(onConflict, id),
+    { target: `${table}:${id}`, label: `${table} row`, retryable: false },
+  );
+
   // Submit a last-minute amendment request to the department head. Re-reads the
   // shared list first so a concurrent IMS-side decision isn't clobbered.
   const submitAmendRequest = useCallback(async (req) => {
@@ -4027,7 +4052,7 @@ export default function StudioApp() {
     // it only writes this request, never the whole list).
     const r = { ...req, id: req.id || ("AMR" + Date.now().toString(36)) };
     setAmendRequests((prev) => [...prev.filter((x) => x.id !== r.id), r]);
-    try { const { error } = await supabase.from("amend_requests").upsert({ id: r.id, status: r.status ?? null, data: r }, { onConflict: "id" }); if (error) throw error; }
+    try { const { error } = await retryingUpsert("amend_requests", { id: r.id, status: r.status ?? null, data: r }); if (error) throw error; }
     catch (e) { showMsg?.("Amend request failed: " + (e?.message || e), "red"); }
     return r;
   }, [showMsg]);
@@ -4045,7 +4070,7 @@ export default function StudioApp() {
       for (const eo of (neo || [])) {
         const before = prevMap.get(eo.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(eo)) {
-          const { error } = await supabase.from("event_orders").upsert(eoToRow(eo), { onConflict: "id" });
+          const { error } = await retryingUpsert("event_orders", eoToRow(eo));
           if (error) throw error;
         }
       }
@@ -4198,14 +4223,17 @@ export default function StudioApp() {
           // Already in sync — leave the head's edits untouched. Only stamp the check time (at most
           // every 10 minutes), so a settings change that left this plan identical stops reading as
           // "stale" and the sweep does not pick this deal up again on every start.
-          if (Date.now() - Number(cur.deptSyncedAt) > 600000) await supabase.from("event_orders").update({ data: { ...cur, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION } }).eq("id", eo.id);
+          // report:false — this write only re-stamps a "last checked" timestamp onto data that's
+          // already in sync; a failure here is a non-event (the next sweep just re-checks it), not
+          // something worth a persistent banner and a "leave site?" prompt on every background pass.
+          if (Date.now() - Number(cur.deptSyncedAt) > 600000) await retryingUpdate("event_orders", eo.id, { data: { ...cur, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION } }, "id", { report: false });
           return;
         }
-        await supabase.from("event_orders").update({ data: applySnap(cur) }).eq("id", eo.id);
+        await retryingUpdate("event_orders", eo.id, { data: applySnap(cur) });
       } else {
         // No table row yet → create it from the local EO (first sync).
         const merged = applySnap(eo);
-        await supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: merged }, { onConflict: "id" });
+        await retryingUpsert("event_orders", { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: merged });
       }
     } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName]);
@@ -4265,7 +4293,7 @@ export default function StudioApp() {
       const cur = row.data;
       if (cur.layoutSig === laySig) return; // already in sync — no write
       const withLayout = (fns) => Array.isArray(fns) ? fns.map((f, i) => { const k = f?.fnIdx ?? i; return (f && layout.has(k)) ? { ...f, ...layout.get(k) } : f; }) : fns; // fnIdx, else position (see persistDeptSnapshot)
-      await supabase.from("event_orders").update({ data: { ...cur, functionsDetail: withLayout(cur.functionsDetail), layoutSig: laySig } }).eq("id", eo.id);
+      await retryingUpdate("event_orders", eo.id, { data: { ...cur, functionsDetail: withLayout(cur.functionsDetail), layoutSig: laySig } });
     } catch (e) { /* best-effort, same as persistDeptSnapshot/syncDealValueNow */ }
   }, [eventOrders, activeClientId, clientName]);
   // Pushes the just-applied deal value straight onto the mirrored event_orders row, immediately —
@@ -4278,7 +4306,7 @@ export default function StudioApp() {
     if (!eo) return;
     try {
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
-      if (row && row.data) await supabase.from("event_orders").update({ data: { ...row.data, dealValue } }).eq("id", eo.id);
+      if (row && row.data) await retryingUpdate("event_orders", eo.id, { data: { ...row.data, dealValue } });
     } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName]);
   const savePhotoImsMap = useCallback(async (nm) => { setPhotoImsMap(nm); await reliableSave(PIMAP_SK, JSON.stringify(nm), "Photo-IMS map"); }, []);
@@ -9083,7 +9111,7 @@ export default function StudioApp() {
     saveEventOrders(existingActive ? eventOrders.map(e => e.id === eoId ? eo : e) : [...eventOrders, eo]);
     // Bridge to IMS: SOLD orders also go into the shared `event_orders` TABLE (Studio's own list
     // is a kv blob; IMS — Events, Planning, Dept Ops — reads the table + realtime).
-    supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }, { onConflict: "id" }).then(({ error }) => { if (error) console.warn("[pushEventOrderPlan] event_orders table sync failed:", error.message); }).catch(() => {});
+    retryingUpsert("event_orders", { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }).then(({ error }) => { if (error) console.warn("[pushEventOrderPlan] event_orders table sync failed:", error.message); });
     logActivity("booking", `${activityEmoji} ${client.name} — ${activityVerb} by ${authUser?.name || "—"}`);
     // Fill IMS Dept Ops for the booking now, rather than whenever someone next opens Deal Check.
     syncDeptOpsHeadless();
