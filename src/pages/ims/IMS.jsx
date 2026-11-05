@@ -1801,15 +1801,43 @@ export default function IMS() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, eventOrders, trussInv]);
 
+  // A few fast, silent attempts (writeWithRetry) absorb a transient blip before any of these
+  // row-level writers' own setError ever surfaces a failure — each upsert/delete call below is
+  // already naturally idempotent (resending the same final row/id twice is a no-op), so retrying
+  // can't itself cause damage. retryable:false throughout, same reasoning as supabase.js's
+  // upsertRow/updateRow/deleteRow: a LATER automatic retry (on reconnect, possibly minutes later)
+  // could resend a stale snapshot over a newer change from another tab/user. Unlike updateRow's
+  // PARTIAL patches, every write below sends the row's FULL current contents, so two overlapping
+  // writes to the SAME id racing within one writer's own retry window is safe BY CONSTRUCTION FOR A
+  // SINGLE WRITE — the older one being dropped as "superseded" is correct (the newer call's payload
+  // already carries everything the older one did, from the same `next` snapshot it diffed against).
+  // That guarantee does NOT automatically extend to a writer that fires several of these calls in a
+  // SEQUENTIAL loop over multiple changed rows (persistBlocks fixed this with Promise.all — see its
+  // own comment for the exact race): a slower-to-start-but-logically-older call could still reach a
+  // LATER row in its own loop after a genuinely newer call already wrote that row, and "win" with a
+  // stale snapshot, since supersession only tracks "which call claimed this row's generation most
+  // recently," not which call is logically newer. The other sequential loops below (setFunctions,
+  // setVendors, setPurchase, setOverheads, setSupervisors, setUsers, setProdRequests, setEventOrders,
+  // setProjects) carry the same theoretical risk, narrower than blocks' (no single row here holds
+  // more than one logical entity's data) — tracked as follow-up work, not fixed in this pass.
+  const retryingUpsert = (table, row, onConflict = "id", opts = {}) => writeWithRetry(
+    () => supabase.from(table).upsert(row, { onConflict }),
+    { target: `${table}:${row[onConflict]}`, label: `${table} row`, retryable: false, ...opts },
+  );
+  const retryingDelete = (table, id, onConflict = "id", opts = {}) => writeWithRetry(
+    () => supabase.from(table).delete().eq(onConflict, id),
+    { target: `${table}:${id}`, label: `${table} row`, retryable: false, ...opts },
+  );
+
   // Persist only the rows that actually changed (CLAUDE.md rule #1 — never re-save the whole table).
   const persistInventory = useCallback(async (prev, next, deletedIds) => {
     const { upserts, deletes } = diffInventory(prev, next, deletedIds, user?.name || null);
     for (const row of upserts) {
-      const { error: e } = await supabase.from("inventory").upsert(row, { onConflict: "id" });
+      const { error: e } = await retryingUpsert("inventory", row);
       if (e) setError(`Save failed: ${e.message}`);
     }
     for (const id of deletes) {
-      const { error: e } = await supabase.from("inventory").delete().eq("id", id);
+      const { error: e } = await retryingDelete("inventory", id);
       if (e) setError(`Delete failed: ${e.message}`);
     }
   }, [user]);
@@ -1835,22 +1863,37 @@ export default function IMS() {
       for (const fn of next) {
         const before = prevMap.get(fn.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(fn)) {
-          let { error: e } = await supabase.from("functions").upsert(fnToRow(fn), { onConflict: "id" });
+          // report:false on this first attempt — a 23503 here (checked below) is the NORMAL path
+          // for a brand-new event (see comment below), not a real failure yet, so it must not flash
+          // a save-health banner that the fallback then immediately clears a beat later. Any outcome
+          // that ISN'T that expected race reports explicitly itself, right below. report:false also
+          // disables writeWithRetry's own clear-on-success, so a genuine success here is cleared by
+          // hand too — otherwise a PRIOR failed save of this same function (still listed, Discard
+          // only) would wrongly keep showing "failed" after this attempt actually lands.
+          const first = await retryingUpsert("functions", fnToRow(fn), "id", { report: false });
+          let e = first.error;
+          if (first.ok) clearSaveProblem(`write:functions:${fn.id}`);
           // functions.project_id → projects.id. A brand-new event (eventAutoConfirm) creates its
           // project and functions together, and the two saves run in parallel — the function row
           // could land first and hit the FK before its project existed ("functions_project_id_fkey").
           // So on that error: write the project (already in projectsRef, set just before) and retry.
           // If the project really is gone, save the function unlinked rather than not at all — its
-          // projectId is still in the row's data blob.
+          // projectId is still in the row's data blob. (23503 is one of defaultShouldAbort's
+          // non-retryable codes, so retryingUpsert's own attempts never delay reaching this check.)
           if (e && e.code === "23503" && fn.projectId) {
             const proj = projectsRef.current.find((p) => p.id === fn.projectId);
             if (proj) {
-              const pr = await supabase.from("projects").upsert(projectToRow(proj), { onConflict: "id" });
-              if (!pr.error) ({ error: e } = await supabase.from("functions").upsert(fnToRow(fn), { onConflict: "id" }));
+              const pr = await retryingUpsert("projects", projectToRow(proj));
+              if (!pr.error) ({ error: e } = await retryingUpsert("functions", fnToRow(fn)));
             } else {
               console.warn(`[ims] function ${fn.id}: project ${fn.projectId} not found — saving without the link`);
-              ({ error: e } = await supabase.from("functions").upsert({ ...fnToRow(fn), project_id: null }, { onConflict: "id" }));
+              ({ error: e } = await retryingUpsert("functions", { ...fnToRow(fn), project_id: null }));
             }
+          } else if (e) {
+            // The first attempt failed for a reason the fallback above never runs for (not a 23503
+            // FK race, or no projectId to retry with) — this IS a terminal failure, so report it
+            // explicitly since the first attempt's own report was suppressed.
+            reportSaveProblem(`write:functions:${fn.id}`, { label: "functions row", error: e });
           }
           if (e) setError(`Save failed: ${e.message}`);
         }
@@ -1868,7 +1911,7 @@ export default function IMS() {
       for (const v of next) {
         const before = prevMap.get(v.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(v)) {
-          const { error: e } = await supabase.from("vendors").upsert(vendorToRow(v), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("vendors", vendorToRow(v));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -1885,7 +1928,7 @@ export default function IMS() {
       for (const p of next) {
         const before = prevMap.get(p.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(p)) {
-          const { error: e } = await supabase.from("purchase_orders").upsert(purchaseToRow(p), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("purchase_orders", purchaseToRow(p));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -1902,7 +1945,7 @@ export default function IMS() {
       for (const o of next) {
         const before = prevMap.get(o.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(o)) {
-          const { error: e } = await supabase.from("overheads").upsert(overheadToRow(o), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("overheads", overheadToRow(o));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -1920,12 +1963,12 @@ export default function IMS() {
       for (const s of next) {
         const before = prevMap.get(s.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(s)) {
-          const { error: e } = await supabase.from("supervisors").upsert(supervisorToRow(s), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("supervisors", supervisorToRow(s));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
       for (const id of prevMap.keys()) {
-        if (!nextIds.has(id)) await supabase.from("supervisors").delete().eq("id", id);
+        if (!nextIds.has(id)) await retryingDelete("supervisors", id);
       }
     })());
   }, [trackWrite]);
@@ -1953,12 +1996,12 @@ export default function IMS() {
       for (const u of next) {
         const before = prevMap.get(u.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(u)) {
-          const { error: e } = await supabase.from("users").upsert(userToRow(u), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("users", userToRow(u));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
       for (const id of prevMap.keys()) {
-        if (!nextIds.has(id)) await supabase.from("users").delete().eq("id", id);
+        if (!nextIds.has(id)) await retryingDelete("users", id);
       }
     })());
   }, [trackWrite]);
@@ -1988,12 +2031,12 @@ export default function IMS() {
       for (const p of next) {
         const before = prevMap.get(p.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(p)) {
-          const { error: e } = await supabase.from("production_requests").upsert(prodToRow(p), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("production_requests", prodToRow(p));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
       for (const id of prevMap.keys()) {
-        if (!nextIds.has(id)) await supabase.from("production_requests").delete().eq("id", id);
+        if (!nextIds.has(id)) await retryingDelete("production_requests", id);
       }
     })());
   }, [trackWrite]);
@@ -2011,12 +2054,12 @@ export default function IMS() {
       for (const eo of next) {
         const before = prevMap.get(eo.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(eo)) {
-          const { error: e } = await supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }, { onConflict: "id" });
+          const { error: e } = await retryingUpsert("event_orders", { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo });
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
       for (const id of [...deletedIds, ...[...prevMap.keys()].filter((id) => !nextIds.has(id))]) {
-        await supabase.from("event_orders").delete().eq("id", id);
+        await retryingDelete("event_orders", id);
       }
     })());
   }, [trackWrite]);
@@ -2038,8 +2081,23 @@ export default function IMS() {
     }
     for (const itemId of Object.keys(prevO)) if (!(itemId in nextO)) deletes.push(itemId); // item removed
     try {
-      if (upserts.length) { const { error } = await supabase.from("blocks").upsert(upserts, { onConflict: "id" }); if (error) throw error; }
-      for (const id of deletes) { const { error } = await supabase.from("blocks").delete().eq("id", id); if (error) throw error; }
+      // One retryingUpsert call per item (not a single batched upsert of the whole array) so each
+      // item's row gets its own target/supersession scope — a blip retrying item A's row must never
+      // be keyed together with item B's in the same batch. Started together (Promise.all), NOT in a
+      // sequential loop: a sequential loop only claims item k's supersession generation once items
+      // 0..k-1 have each finished their own round trip, so a SLOWER-to-start but logically OLDER
+      // persistBlocks call (built from an earlier blocksRef snapshot) could reach item j's write
+      // AFTER a genuinely newer call already wrote it there — and "win" with its own older,
+      // narrower snapshot, since supersession only knows "which call claimed this item's generation
+      // most recently," not which call was actually logically newer. Starting every item's write in
+      // the same tick closes that window — confirmed by reproducing the race with a sequential loop
+      // and verifying Promise.all does not exhibit it.
+      const results = await Promise.all([
+        ...upserts.map((row) => retryingUpsert("blocks", row)),
+        ...deletes.map((id) => retryingDelete("blocks", id)),
+      ]);
+      const failed = results.find((r) => r.error);
+      if (failed) throw failed.error;
     } catch (e) { setError(`Save failed: ${e?.message || e}`); }
   };
   // A blocks row holds EVERY event's reservations on that one item — if the table's initial fetch
@@ -2095,11 +2153,11 @@ export default function IMS() {
         for (const req of (next || [])) {
           const before = prevMap.get(req.id);
           if (!before || JSON.stringify(before) !== JSON.stringify(req)) {
-            const { error } = await supabase.from("amend_requests").upsert({ id: req.id, status: req.status ?? null, data: req }, { onConflict: "id" });
+            const { error } = await retryingUpsert("amend_requests", { id: req.id, status: req.status ?? null, data: req });
             if (error) throw error;
           }
         }
-        for (const id of [...prevMap.keys()].filter((id) => !nextIds.has(id))) await supabase.from("amend_requests").delete().eq("id", id);
+        for (const id of [...prevMap.keys()].filter((id) => !nextIds.has(id))) await retryingDelete("amend_requests", id);
       } catch (e) { setError(`Save failed: ${e?.message || e}`); }
     })());
   }, [trackWrite]);
@@ -2115,7 +2173,7 @@ export default function IMS() {
       for (const p of next) {
         const before = prevMap.get(p.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(p)) {
-          const { error: e } = await supabase.from("projects").upsert(projectToRow(p), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("projects", projectToRow(p));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -2136,7 +2194,7 @@ export default function IMS() {
     trackWrite((async () => {
       for (const date of Object.keys(next)) {
         if (JSON.stringify(prev[date]) !== JSON.stringify(next[date])) {
-          const { error: e } = await supabase.from("truss_allocations").upsert(allocToRow(date, next[date]), { onConflict: "date" });
+          const { error: e } = await retryingUpsert("truss_allocations", allocToRow(date, next[date]), "date");
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -2157,7 +2215,7 @@ export default function IMS() {
     trackWrite((async () => {
       for (const date of Object.keys(next)) {
         if (JSON.stringify(prev[date]) !== JSON.stringify(next[date])) {
-          const { error: e } = await supabase.from("platform_allocations").upsert(allocToRow(date, next[date]), { onConflict: "date" });
+          const { error: e } = await retryingUpsert("platform_allocations", allocToRow(date, next[date]), "date");
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -2178,7 +2236,7 @@ export default function IMS() {
     trackWrite((async () => {
       for (const date of Object.keys(next)) {
         if (JSON.stringify(prev[date]) !== JSON.stringify(next[date])) {
-          const { error: e } = await supabase.from("batta_allocations").upsert(allocToRow(date, next[date]), { onConflict: "date" });
+          const { error: e } = await retryingUpsert("batta_allocations", allocToRow(date, next[date]), "date");
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -2196,7 +2254,7 @@ export default function IMS() {
     }
     setTrussInvState((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      trackWrite(supabase.from("truss_inventory").upsert({ key: "main", data: next }, { onConflict: "key" }).then(({ error: e }) => { if (e) setError(`Save failed: ${e.message}`); }));
+      trackWrite(retryingUpsert("truss_inventory", { key: "main", data: next }, "key").then(({ error: e }) => { if (e) setError(`Save failed: ${e.message}`); }));
       return next;
     });
   }, [trackWrite]);
