@@ -294,7 +294,7 @@ export function calcAutoCrew(fnObj, projObj, settings, inventory){
 }
 
 // ─── Background auto-confirm hook — call once, unconditionally, in IMS.jsx ──────────────────
-export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventory, blocks, setBlocks, saveBlocks, saveEventOrders, projects, setProjects, functions, setFunctions, purchase, setPurchase, settings, studio, trussInv, setTrussInv }){
+export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventory, blocks, setBlocks, saveBlocks, saveEventOrders, projects, setProjects, functions, setFunctions, purchase, setPurchase, settings, studio, trussInv, setTrussInv, ready = true }){
   // §23 Phase 2.9f (26 May 2026) — Per-colour fabric stock blocking on SOLD + auto-PO for shortfalls.
   // Reads zoneConfig[zoneKey].{maskingAllocation, lizaAllocation, curtainAllocation} arrays from the EO,
   // sums qty per (fabricType, colour) across all functions × zones, decrements trussInv stock,
@@ -927,6 +927,15 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
   const autoConfirmedRef = useRef(new Set());
   const [autoConfirmFailures, setAutoConfirmFailures] = useState(new Set());
   useEffect(() => {
+    // Every table this pipeline reads or writes (inventory, blocks, functions, projects, purchase
+    // orders, settings, truss_inventory) must have ACTUALLY loaded before this runs — a failed
+    // fetch silently left one of them at an empty/placeholder default, not thrown, so without this
+    // the pipeline would run anyway: aiMatchEvent would see an empty inventory/blocks and overbook,
+    // executeFabricBlocks would see every colour as short and auto-PO the whole requirement, and a
+    // placeholder `functions`/`projects` list would create a duplicate project for a returning
+    // client (owner report 2026-11-05 — the same failure class as the truss_inventory wipe, applied
+    // here to an unattended background job instead of a person's own edit).
+    if (!ready) return;
     if (!Array.isArray(eventOrders)) return;
     // Pick up: (a) pending EOs, (b) legacy "review" EOs that got stuck before the migration.
     const eligible = eventOrders.filter(eo => !eo.status || eo.status === "pending" || eo.status === "review");
@@ -983,7 +992,7 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
         });
       }
     });
-  }, [eventOrders, autoConfirmEO]);
+  }, [eventOrders, autoConfirmEO, ready]);
 
   return { autoConfirmFailures };
 }

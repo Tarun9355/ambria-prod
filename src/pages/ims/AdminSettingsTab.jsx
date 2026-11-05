@@ -110,7 +110,7 @@ function withPrevPrice(history, price) {
   return last && last.date === today ? h : [...h, { price: price || 0, date: today }];
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [], authUser }) {
+export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [], authUser, settingsLoaded = false }) {
   const canManageCategories = hasIMSPerm(authUser, "inv_categories");
   // Same live source as Build's Flower Palette picker (lib/ims/helpers.js) — a new "Artificial
   // Flower Bunch" colour added in IMS is immediately both pickable in Build AND taggable here on a
@@ -425,6 +425,13 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   // here can silently strand an item under a vanished category.
   async function deleteCategory(label) {
     if (!canManageCategories) return;
+    if (!settingsLoaded) {
+      // rcCats is sourced from the settings table (RC_SK_CATS) — if settings never genuinely
+      // loaded this session, rcCats is sitting at its RC_CATS_DEFAULT fallback, and writing `next`
+      // (filtered from that fallback) would overwrite the real category list. Refuse instead.
+      alert("Settings haven't loaded yet — reload the page before deleting a category. Nothing was saved.");
+      return;
+    }
     const cat = rcCats.find((c) => c.l === label);
     if (!cat) return; // a synthesized label (e.g. "Uncategorized") has no real row to delete
     if (!window.confirm(`Delete category "${label}"? This cannot be undone.`)) return;

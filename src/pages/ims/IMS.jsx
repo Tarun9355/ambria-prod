@@ -293,12 +293,25 @@ export default function IMS() {
   // sat at empty defaults, and the very next Fabric Stock/Truss Config edit upserted that empty
   // placeholder straight over the real 9/24/14-row data.
   const trussInvLoadedRef = useRef(false);
+  // Per-table "did the initial fetch ACTUALLY succeed" tracking, for tables whose writers could do
+  // real damage on a failed-fetch-collapsed-to-empty state: blocks/truss_allocations/
+  // platform_allocations/batta_allocations are each one row covering MANY events, so a write built
+  // from an empty `prev` doesn't just skip rows it never saw (like every other row-level table in
+  // this file already safely does) — it deletes every other event's data in that row. Also drives
+  // the auto-confirm pipeline's own `ready` gate below (owner report 2026-11-05).
+  const loadOkRef = useRef({});
+  const markTableLoaded = (t) => { loadOkRef.current[t] = true; };
+  const markTableFailed = (t, err) => { loadOkRef.current[t] = false; if (err) console.warn(`[IMS] ${t} fetch failed:`, err?.message || err); };
   const [categories, setCats] = useState([]);
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
   // True once the real settings row(s) have loaded at least once — guards the LMS auto-category
   // sync below from ever persisting on top of the SETTINGS_DEFAULTS placeholder (a race would
   // otherwise be able to wipe an admin's real datePricing.categories/markedDates back to defaults).
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  // Mirrors settingsLoaded into a ref so setSettings (a useCallback that must stay referentially
+  // stable) can read the latest value without it being a stale closure or a dep that re-creates
+  // the callback on every load.
+  const settingsLoadedRef = useRef(false);
   const [studioRcItems, setStudioRcItems] = useState([]);
   const [studioRcCats, setStudioRcCats] = useState(RC_CATS_DEFAULT); // Studio's LIVE categories (RC_SK_CATS) — falls back to defaults until loaded
   // Rate Card → IMS migration Phase 1: per-sub-category scaling factor, IMS-owned (rate_card_categories table).
@@ -500,6 +513,13 @@ export default function IMS() {
     );
   }
   const setSettings = useCallback((updater) => {
+    if (!settingsLoadedRef.current) {
+      // The real settings row(s) never genuinely loaded this session — writing now would enqueue a
+      // diff against SETTINGS_DEFAULTS and could persist that placeholder over real admin config
+      // (role-access tabs, department toolkits, date-pricing overrides, …). Refuse instead of guessing.
+      setError("Settings haven't loaded yet — reload the page before changing settings. Nothing was saved.");
+      return;
+    }
     const prev = settingsRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     settingsRef.current = next;
@@ -564,6 +584,7 @@ export default function IMS() {
     settingsObj.datePricing = { ...settingsObj.datePricing, markedDates: assembleMarkedDatesFromRows(markedDateRowsRef.current) };
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
+    settingsLoadedRef.current = true;
     setSettingsLoaded(true);
   }, []);
 
@@ -995,31 +1016,41 @@ export default function IMS() {
   // ── Initial load + Realtime subscriptions ──
   useEffect(() => {
     let active = true;
+    // {rows, ok} wrapper for any fetch whose table backs a writer that could overwrite OTHER
+    // events'/rows' data on a failed-fetch-collapsed-to-empty `prev` (see loadOkRef's own comment).
+    // Deliberately does NOT call markTableLoaded/markTableFailed itself — inventory's own fetch
+    // below has no `.catch` at all, so a failed inventory fetch rejects this whole Promise.all and
+    // none of the setters after it ever run; marking loadOkRef inline here would still flip these
+    // tables "loaded" from their own already-settled promises even on that run, leaving every
+    // writer guard reading a true that nothing downstream ever actually applied. loadOkRef is
+    // populated once, in one place, only after the Promise.all has genuinely succeeded AND every
+    // setter below has run — see the block right before setLoading(false).
+    const safeFetch = (t) => fetchAll(t).then((rows) => ({ rows, ok: true })).catch((e) => { console.warn(`[IMS] ${t} fetch failed:`, e?.message || e); return { rows: [], ok: false }; });
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, platformAllocRows, battaAllocRows, rcRows, trussFetch, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
+        const [invRows, fnFetch, projFetch, venRows, poFetch, ohRows, supRows, userRows, prodRows, eoFetch, allocFetch, platformAllocFetch, battaAllocFetch, rcRows, trussFetch, catRows, setRows, blockFetch, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
           fetchAll("inventory"),
-          fetchAll("functions").catch(() => []),
-          fetchAll("projects").catch(() => []),
+          safeFetch("functions"),
+          safeFetch("projects"),
           fetchAll("vendors").catch(() => []),
-          fetchAll("purchase_orders").catch(() => []),
+          safeFetch("purchase_orders"),
           fetchAll("overheads").catch(() => []),
           fetchAll("supervisors").catch(() => []),
           fetchAll("users").catch(() => []),
           fetchAll("production_requests").catch(() => []),
-          fetchAll("event_orders").catch(() => []),
-          fetchAll("truss_allocations").catch(() => []),
-          fetchAll("platform_allocations").catch(() => []),
-          fetchAll("batta_allocations").catch(() => []),
+          safeFetch("event_orders"),
+          safeFetch("truss_allocations"),
+          safeFetch("platform_allocations"),
+          safeFetch("batta_allocations"),
           fetchAll("rate_card").catch(() => []),
           // {rows, ok} not a bare array — a real fetch failure (ok:false) must stay distinguishable
           // from a real, successful fetch that just found zero rows (a fresh install), so the code
           // below can refuse to treat a failure as "this venue genuinely has no truss_inventory yet"
           // (see trussInvLoadedRef's own comment for the incident this closes).
-          fetchAll("truss_inventory").then((rows) => ({ rows, ok: true })).catch((e) => { console.warn("[IMS] truss_inventory fetch failed, leaving trussInv untouched:", e?.message); return { rows: [], ok: false }; }),
+          fetchAll("truss_inventory").then((rows) => ({ rows, ok: true })).catch((e) => { console.warn("[IMS] truss_inventory fetch failed:", e?.message || e); return { rows: [], ok: false }; }),
           fetchAll("categories").catch(() => []),
-          fetchAll("settings").catch(() => []),
-          fetchAll("blocks").catch(() => []),
+          safeFetch("settings"),
+          safeFetch("blocks"),
           fetchAll("rate_card_categories").catch(() => []),
           fetchAll("mandi_flowers").catch(() => []),
           fetchAll("flower_patterns").catch(() => []),
@@ -1039,22 +1070,22 @@ export default function IMS() {
           fetchAll("date_pricing_overrides").catch(() => []),
         ]);
         if (!active) return;
-        { const bm = blocksRowsToMap(blockRows); blocksRef.current = bm; setBlocksState(bm); }
+        { const bm = blocksRowsToMap(blockFetch.rows); blocksRef.current = bm; setBlocksState(bm); }
         const loadedItems = invRows.map(rowToItem);
         itemsRef.current = loadedItems; // keep the ref in lockstep from the very first paint
         setItems(loadedItems);
-        setFns(fnRows.map(rowToFn));
-        setProjectsState(projRows.map(rowToProject));
+        setFns(fnFetch.rows.map(rowToFn));
+        setProjectsState(projFetch.rows.map(rowToProject));
         setVendorsState(venRows.map(rowToVendor));
-        setPurchaseState(poRows.map(rowToPurchase));
+        setPurchaseState(poFetch.rows.map(rowToPurchase));
         setOverheadsState(ohRows.map(rowToOverhead));
         setSupervisorsState(supRows.map(rowToSupervisor));
         setUsersState(sortUsers(userRows.map(rowToUser), recentUsersRef.current));
         setProdRequestsState(prodRows.map(rowToProd));
-        setEventOrdersState(eoRows.map(rowToEO));
-        setTrussAllocState(Object.fromEntries(allocRows.map((r) => [r.date, rowToAlloc(r)])));
-        setPlatformAllocState(Object.fromEntries(platformAllocRows.map((r) => [r.date, rowToAlloc(r)])));
-        setBattaAllocState(Object.fromEntries(battaAllocRows.map((r) => [r.date, rowToAlloc(r)])));
+        setEventOrdersState(eoFetch.rows.map(rowToEO));
+        setTrussAllocState(Object.fromEntries(allocFetch.rows.map((r) => [r.date, rowToAlloc(r)])));
+        setPlatformAllocState(Object.fromEntries(platformAllocFetch.rows.map((r) => [r.date, rowToAlloc(r)])));
+        setBattaAllocState(Object.fromEntries(battaAllocFetch.rows.map((r) => [r.date, rowToAlloc(r)])));
         const trussRow = trussFetch.rows.find((r) => r.key === "main") || trussFetch.rows[0];
         if (trussRow?.data) { setTrussInvState(trussRow.data); trussInvLoadedRef.current = true; }
         else if (trussFetch.ok) {
@@ -1097,11 +1128,24 @@ export default function IMS() {
         // markedDateRowsRef BEFORE applySettingsRows runs, same reasoning as every other ref above.
         applyMarkedDateRows(markedDateRows);
         // blocks blob, Studio rate-card mirror, and the settings object — applied via the
-        // shared helper (also used by the settings Realtime subscription below).
-        applySettingsRows(setRows);
+        // shared helper (also used by the settings Realtime subscription below). Skipped on a
+        // genuine fetch failure: applySettingsRows unconditionally flips settingsLoaded true, and a
+        // write made against that lying flag can overwrite real settings keys (role-access tabs,
+        // department toolkits, date-pricing overrides, …) with SETTINGS_DEFAULTS. See setSettings'
+        // own `!settingsLoaded` guard below.
+        if (setRows.ok) applySettingsRows(setRows.rows);
+        else setError("Settings failed to load — admin config (roles, department tools, date pricing, …) is read-only until you reload the page.");
         // Rate card: read from the shared `rate_card` TABLE (migrated off the RC_SK blob).
         setStudioRcItems(rcRows.map(rowToRcItem).filter(Boolean));
         setRateCardCategories(rcCatRows);
+        // Reaching here means the WHOLE Promise.all resolved (including inventory's own uncaught
+        // fetch) and every setter above has actually applied its result — only now is it true that
+        // each of these tables either genuinely loaded or genuinely failed this session. See
+        // safeFetch's own comment for why this can't be done inline per-fetch instead.
+        markTableLoaded("inventory");
+        for (const [t, f] of [["functions", fnFetch], ["projects", projFetch], ["purchase_orders", poFetch], ["event_orders", eoFetch], ["truss_allocations", allocFetch], ["platform_allocations", platformAllocFetch], ["batta_allocations", battaAllocFetch], ["settings", setRows], ["blocks", blockFetch]]) {
+          if (f.ok) markTableLoaded(t); else markTableFailed(t);
+        }
         setLoading(false);
       } catch (e) {
         if (active) { setError(e.message || "Failed to load IMS data"); setLoading(false); }
@@ -1309,6 +1353,15 @@ export default function IMS() {
   // passed in patch — every sibling sub-field (including ones a stale tab doesn't know changed) is
   // left exactly as the database already has it, regardless of this tab's own staleness.
   const mergeDatePricing = useCallback((patch) => {
+    if (!settingsLoadedRef.current) {
+      // The server-side merge itself can only ever touch the keys named in `patch` — but callers
+      // (DatePricingPanel's multiplier/pause/lock-code editors) build `patch` FROM the local
+      // settings.datePricing snapshot, which is still SETTINGS_DEFAULTS if the real settings never
+      // loaded. A multiplier edit, for example, rebuilds and merges the WHOLE categories sub-object
+      // from that default baseline, resetting every other multiplier. Refuse instead of guessing.
+      setError("Settings haven't loaded yet — reload the page before changing date pricing. Nothing was saved.");
+      return;
+    }
     const s = settingsRef.current || {};
     const nextSettings = { ...s, datePricing: { ...s.datePricing, ...patch } };
     settingsRef.current = nextSettings;
@@ -1400,6 +1453,10 @@ export default function IMS() {
     if (trussBackfilledRef.current) return;
     if (!Array.isArray(eventOrders)) return;
     if (!trussInv || !trussInv.pillars) return;
+    // truss_allocations never genuinely loaded this session — setTrussAlloc below would silently
+    // refuse to write (see its own guard), but this effect would still persist the "done" flag
+    // right after, permanently skipping the real backfill on every future, successful load too.
+    if (loadOkRef.current.truss_allocations !== true) return;
     (async () => {
       try {
         const flag = await kvGet(TRUSS_P3_BACKFILLED_SK); // DB flag only — no localStorage
@@ -1500,6 +1557,9 @@ export default function IMS() {
     if (platformBackfilledRef.current) return;
     if (!Array.isArray(eventOrders)) return;
     if (!trussInv || !trussInv.platforms) return;
+    // See the truss backfill effect's identical guard above: without this, a refused
+    // setPlatformAlloc write would still get the "done" flag persisted right after it.
+    if (loadOkRef.current.platform_allocations !== true) return;
     (async () => {
       try {
         const flag = await kvGet(PLATFORM_BACKFILLED_SK);
@@ -1599,6 +1659,9 @@ export default function IMS() {
     if (battaBackfilledRef.current) return;
     if (!Array.isArray(eventOrders)) return;
     if (!trussInv || !trussInv.batta) return;
+    // See the truss backfill effect's identical guard above: without this, a refused
+    // setBattaAlloc write would still get the "done" flag persisted right after it.
+    if (loadOkRef.current.batta_allocations !== true) return;
     (async () => {
       try {
         const flag = await kvGet(BATTA_BACKFILLED_SK);
@@ -1887,7 +1950,16 @@ export default function IMS() {
       for (const id of deletes) { const { error } = await supabase.from("blocks").delete().eq("id", id); if (error) throw error; }
     } catch (e) { setError(`Save failed: ${e?.message || e}`); }
   };
+  // A blocks row holds EVERY event's reservations on that one item — if the table's initial fetch
+  // failed, blocksRef.current is sitting at {} (not "genuinely no reservations exist"), and writing
+  // from that empty baseline would upsert just this session's own reservation over a row that, in
+  // the database, still holds every other event's. Refuse instead of guessing, same as blocks' own
+  // table-level reasoning above.
   const setBlocks = useCallback((updater) => {
+    if (loadOkRef.current.blocks !== true) {
+      setError("Block reservations haven't loaded — reload the page before changing them. Nothing was saved.");
+      return;
+    }
     const prev = blocksRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     blocksRef.current = next;
@@ -1895,6 +1967,10 @@ export default function IMS() {
     trackWrite(persistBlocks(next, prev));
   }, [trackWrite]);
   const saveBlocks = useCallback((val) => {
+    if (loadOkRef.current.blocks !== true) {
+      setError("Block reservations haven't loaded — reload the page before changing them. Nothing was saved.");
+      return;
+    }
     const prev = blocksRef.current;
     const next = typeof val === "function" ? val(prev) : val;
     blocksRef.current = next;
@@ -1957,6 +2033,10 @@ export default function IMS() {
   // Truss allocations — object keyed by date. allocateForDate returns the whole map;
   // we persist only the dates whose entry actually changed (CLAUDE.md rule #1).
   const setTrussAlloc = useCallback((updater) => {
+    if (loadOkRef.current.truss_allocations !== true) {
+      setError("Truss allocations haven't loaded — reload the page before changing them. Nothing was saved.");
+      return;
+    }
     const prev = trussAllocRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     trussAllocRef.current = next;
@@ -1974,6 +2054,10 @@ export default function IMS() {
   // Platform allocations — same shape/persistence rule as setTrussAlloc above, targeting the
   // platform_allocations table (migration 052).
   const setPlatformAlloc = useCallback((updater) => {
+    if (loadOkRef.current.platform_allocations !== true) {
+      setError("Platform allocations haven't loaded — reload the page before changing them. Nothing was saved.");
+      return;
+    }
     const prev = platformAllocRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     platformAllocRef.current = next;
@@ -1991,6 +2075,10 @@ export default function IMS() {
   // Batta allocations — same shape/persistence rule as setTrussAlloc/setPlatformAlloc above,
   // targeting the batta_allocations table (migration 052).
   const setBattaAlloc = useCallback((updater) => {
+    if (loadOkRef.current.batta_allocations !== true) {
+      setError("Batta allocations haven't loaded — reload the page before changing them. Nothing was saved.");
+      return;
+    }
     const prev = battaAllocRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     battaAllocRef.current = next;
@@ -2030,10 +2118,26 @@ export default function IMS() {
   // src/lib/ims/eventAutoConfirm.js for what this does (matching, blocking, Project/Function
   // creation, auto-POs). Cancelling an event + releasing its held inventory now lives in the
   // Calendar tab instead of a dedicated Events screen.
+  // Every table this pipeline reads or writes (matching, blocking inventory, Project/Function
+  // creation, auto-POs) must have genuinely loaded this session — on a failed fetch the pipeline
+  // would otherwise run unattended against an empty/placeholder snapshot and could, for example,
+  // double-book inventory the real data already held reservations against.
+  const autoConfirmReady = loadOkRef.current.inventory === true
+    && loadOkRef.current.event_orders === true
+    && loadOkRef.current.blocks === true
+    && loadOkRef.current.functions === true
+    && loadOkRef.current.projects === true
+    && loadOkRef.current.purchase_orders === true
+    // settingsLoadedRef, not loadOkRef.current.settings: settingsLoadedRef is also updated by a
+    // later successful settings realtime refresh (applySettingsRows), so a one-time boot failure
+    // that self-heals doesn't leave this pipeline permanently stuck off for the rest of the session
+    // the way the table-level loadOkRef entries above (never retried this session) intentionally do.
+    && settingsLoadedRef.current === true
+    && trussInvLoadedRef.current === true;
   useEventOrderAutoConfirm({
     eventOrders, setEventOrders, inventory: items, blocks, setBlocks, saveBlocks, saveEventOrders,
     projects, setProjects, functions, setFunctions, purchase, setPurchase,
-    settings, studio, trussInv, setTrussInv,
+    settings, studio, trussInv, setTrussInv, ready: autoConfirmReady,
   });
 
   const handleLogout = async () => {
@@ -2274,7 +2378,7 @@ export default function IMS() {
             onAddSubcat={addSubcat} onRenameSubcat={renameSubcat} onUpdateSubcatCategory={updateSubcatCategory}
             onSyncSubcatsFromInventory={syncSubcatsFromInventory} onDeleteSubcat={deleteSubcat}
             onUpdateSubcatFloralMode={updateSubcatFloralMode} onUpdateSubcatTagHidden={updateSubcatTagHidden}
-            rcItems={studioRcItems} rcCats={studioRcCats} authUser={user}
+            rcItems={studioRcItems} rcCats={studioRcCats} authUser={user} settingsLoaded={settingsLoaded}
           />
         ) : activeTab === "supply" ? (
           <SupplyTab
