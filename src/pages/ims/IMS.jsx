@@ -632,6 +632,80 @@ export default function IMS() {
   const reportTrussAllocLoadFailed = makeAllocLoadReporter("truss_allocations", "truss_allocations", "Truss allocations", setTrussAllocState);
   const reportPlatformAllocLoadFailed = makeAllocLoadReporter("platform_allocations", "platform_allocations", "Platform allocations", setPlatformAllocState);
   const reportBattaAllocLoadFailed = makeAllocLoadReporter("batta_allocations", "batta_allocations", "Batta allocations", setBattaAllocState);
+  // inventory/functions/projects/purchase_orders/event_orders are plain row-level tables (Key
+  // Architecture Rule #1 — row updates, never a merged whole-table write), so unlike
+  // settings/blocks/the 3 allocation tables above they never needed a write-REFUSAL guard: a failed
+  // load just means this tab's own in-memory list is empty/incomplete, not that a write here could
+  // stomp some OTHER row's data. What they were missing is the other half — VISIBILITY and a way to
+  // recover without a full reload — so this is the same blocked-report + 3-point-overlap-guard
+  // retry shape as above, just over a plain array instead of a date-keyed object.
+  // `ref` is each table's own xRef (fnsRef/projectsRef/purchaseRef/eventOrdersRef) — these are only
+  // synced from state by a `useEffect(() => { xRef.current = x }, [x])` elsewhere in this file,
+  // which runs AFTER commit, not synchronously with setState. A writer that diffs off the ref
+  // (setFunctions/setProjects/setPurchase) or a realtime handler that merges off the ref
+  // (event_orders' own channel) could fire in that gap and either diff against a stale/empty ref
+  // (silently re-writing rows that already exist remotely) or merge a live update into a stale base
+  // and have the retry's own (now out of date) snapshot overwrite it a moment later. Setting the ref
+  // here too, synchronously with setState, closes that specific gap — same as inventory's own
+  // itemsRef, which has always done this for exactly this reason.
+  const makeListLoadReporter = (table, loadOkKey, label, setState, rowToX, ref) => {
+    const report = (err) => {
+      reportSaveProblem(`load:${table}`, {
+        label, error: err, blocked: true,
+        retry: async () => {
+          if (loadOkRef.current[loadOkKey] === true) return { ok: true };
+          try {
+            const rows = await fetchAll(table);
+            if (loadOkRef.current[loadOkKey] === true) return { ok: true };
+            const mapped = rows.map(rowToX);
+            if (ref) ref.current = mapped;
+            setState(mapped);
+            markTableLoaded(loadOkKey);
+            return { ok: true };
+          } catch (e) {
+            if (loadOkRef.current[loadOkKey] === true) return { ok: true };
+            markTableFailed(loadOkKey, e);
+            report(e);
+            return { ok: false };
+          }
+        },
+      });
+    };
+    return report;
+  };
+  const reportFunctionsLoadFailed = makeListLoadReporter("functions", "functions", "Functions", setFns, rowToFn, fnsRef);
+  const reportProjectsLoadFailed = makeListLoadReporter("projects", "projects", "Projects", setProjectsState, rowToProject, projectsRef);
+  const reportPurchaseOrdersLoadFailed = makeListLoadReporter("purchase_orders", "purchase_orders", "Purchase orders", setPurchaseState, rowToPurchase, purchaseRef);
+  const reportEventOrdersLoadFailed = makeListLoadReporter("event_orders", "event_orders", "Event orders", setEventOrdersState, rowToEO, eventOrdersRef);
+  // inventory keeps its own version (not the factory above) only because itemsRef must stay in
+  // lockstep synchronously — see the realtime inventory channel's own comment on why a plain
+  // setState alone isn't enough for this one table.
+  const reportInventoryLoadFailed = (err) => {
+    reportSaveProblem("load:inventory", {
+      label: "Inventory", error: err, blocked: true,
+      retry: async () => {
+        if (loadOkRef.current.inventory === true) return { ok: true };
+        try {
+          const rows = await fetchAll("inventory");
+          if (loadOkRef.current.inventory === true) return { ok: true };
+          const loadedItems = rows.map(rowToItem);
+          itemsRef.current = loadedItems;
+          setItems(loadedItems);
+          markTableLoaded("inventory");
+          // Recipe→rate_card sync was skipped (or ran against an empty inventory) the whole time
+          // this table was down — see syncRecipeRatesToStudio's own guard. Catch it up now instead
+          // of leaving rate_card wrong until the next unrelated recipe/mandi/markup edit.
+          syncRecipeRatesToStudio({ silent: true });
+          return { ok: true };
+        } catch (e) {
+          if (loadOkRef.current.inventory === true) return { ok: true };
+          markTableFailed("inventory", e);
+          reportInventoryLoadFailed(e);
+          return { ok: false };
+        }
+      },
+    });
+  };
   const settingsWriterRef = useRef(null);
   if (!settingsWriterRef.current) {
     settingsWriterRef.current = createSettingsWriter(
@@ -879,6 +953,16 @@ export default function IMS() {
   const syncRecipeRatesToStudio = useCallback(async ({ silent = true } = {}) => {
     const items = studioRcItemsRef.current || [];
     if (!items.length) return { updated: 0, cleared: 0 };
+    // computePatternSizeCost below prices every direct-inventory recipe ingredient off
+    // itemsRef.current — if inventory itself failed to load (itemsRef.current == []), every such
+    // ingredient prices at ₹0 and this would upsert those zeroed rates straight into the SHARED
+    // rate_card table Studio's 8 salespeople quote off of. Inventory used to be the one fetch in the
+    // mount-time Promise.all with no .catch, so its failure aborted the WHOLE load and this effect's
+    // own `loading` guard meant this function could never even be reached in that case — now that
+    // inventory fails independently (see reportInventoryLoadFailed), that protection is gone and
+    // has to be made explicit here instead. The inventory background-recovery retry re-calls this
+    // function once inventory actually loads, so a sync deferred by this guard isn't lost for good.
+    if (loadOkRef.current.inventory !== true) return { error: "Inventory hasn't loaded yet — recipe sync skipped to avoid writing ₹0 prices.", updated: 0, cleared: 0 };
     const s = settingsRef.current || {};
     const patterns = s.flowerPatterns || [];
     const recipeSubs = s.flowerRecipeSubcats || [];
@@ -1195,19 +1279,19 @@ export default function IMS() {
   useEffect(() => {
     let active = true;
     // {rows, ok} wrapper for any fetch whose table backs a writer that could overwrite OTHER
-    // events'/rows' data on a failed-fetch-collapsed-to-empty `prev` (see loadOkRef's own comment).
-    // Deliberately does NOT call markTableLoaded/markTableFailed itself — inventory's own fetch
-    // below has no `.catch` at all, so a failed inventory fetch rejects this whole Promise.all and
-    // none of the setters after it ever run; marking loadOkRef inline here would still flip these
-    // tables "loaded" from their own already-settled promises even on that run, leaving every
-    // writer guard reading a true that nothing downstream ever actually applied. loadOkRef is
-    // populated once, in one place, only after the Promise.all has genuinely succeeded AND every
-    // setter below has run — see the block right before setLoading(false).
+    // events'/rows' data on a failed-fetch-collapsed-to-empty `prev` (see loadOkRef's own comment),
+    // or whose load failure should get its own save-health banner entry instead of just a silent
+    // markTableFailed. Deliberately does NOT call markTableLoaded/markTableFailed itself here —
+    // that's deferred to a single block, once, only after the Promise.all has genuinely resolved
+    // AND every setter below has run (see the block right before setLoading(false)) — marking
+    // loadOkRef inline per-fetch instead would let an earlier, already-settled fetch's table look
+    // "loaded" even on a run where some OTHER fetch in the batch still throws and the destructuring
+    // below never runs at all, so none of these setters actually applied anything that run.
     const safeFetch = (t) => fetchAll(t).then((rows) => ({ rows, ok: true })).catch((e) => { console.warn(`[IMS] ${t} fetch failed:`, e?.message || e); return { rows: [], ok: false }; });
     (async () => {
       try {
-        const [invRows, fnFetch, projFetch, venRows, poFetch, ohRows, supRows, userRows, prodRows, eoFetch, allocFetch, platformAllocFetch, battaAllocFetch, rcRows, trussFetch, catRows, setRows, blockFetch, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
-          fetchAll("inventory"),
+        const [invFetch, fnFetch, projFetch, venRows, poFetch, ohRows, supRows, userRows, prodRows, eoFetch, allocFetch, platformAllocFetch, battaAllocFetch, rcRows, trussFetch, catRows, setRows, blockFetch, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
+          safeFetch("inventory"),
           safeFetch("functions"),
           safeFetch("projects"),
           fetchAll("vendors").catch(() => []),
@@ -1249,7 +1333,7 @@ export default function IMS() {
         ]);
         if (!active) return;
         { const bm = blocksRowsToMap(blockFetch.rows); blocksRef.current = bm; setBlocksState(bm); }
-        const loadedItems = invRows.map(rowToItem);
+        const loadedItems = invFetch.rows.map(rowToItem);
         itemsRef.current = loadedItems; // keep the ref in lockstep from the very first paint
         setItems(loadedItems);
         setFns(fnFetch.rows.map(rowToFn));
@@ -1321,14 +1405,23 @@ export default function IMS() {
         // Rate card: read from the shared `rate_card` TABLE (migrated off the RC_SK blob).
         setStudioRcItems(rcRows.map(rowToRcItem).filter(Boolean));
         setRateCardCategories(rcCatRows);
-        // Reaching here means the WHOLE Promise.all resolved (including inventory's own uncaught
-        // fetch) and every setter above has actually applied its result — only now is it true that
-        // each of these tables either genuinely loaded or genuinely failed this session. See
-        // safeFetch's own comment for why this can't be done inline per-fetch instead.
-        markTableLoaded("inventory");
-        for (const [t, f] of [["functions", fnFetch], ["projects", projFetch], ["purchase_orders", poFetch], ["event_orders", eoFetch], ["truss_allocations", allocFetch], ["platform_allocations", platformAllocFetch], ["batta_allocations", battaAllocFetch], ["settings", setRows], ["blocks", blockFetch]]) {
+        // Reaching here means the WHOLE Promise.all resolved and every setter above has actually
+        // applied its result — only now is it true that each of these tables either genuinely
+        // loaded or genuinely failed this session. See safeFetch's own comment for why this can't
+        // be done inline per-fetch instead.
+        for (const [t, f] of [["inventory", invFetch], ["functions", fnFetch], ["projects", projFetch], ["purchase_orders", poFetch], ["event_orders", eoFetch], ["truss_allocations", allocFetch], ["platform_allocations", platformAllocFetch], ["batta_allocations", battaAllocFetch], ["settings", setRows], ["blocks", blockFetch]]) {
           if (f.ok) markTableLoaded(t); else markTableFailed(t);
         }
+        if (invFetch.ok) clearSaveProblem("load:inventory");
+        else reportInventoryLoadFailed(new Error("Failed to load — the item list may be incomplete until this is retried or the page is reloaded."));
+        if (fnFetch.ok) clearSaveProblem("load:functions");
+        else reportFunctionsLoadFailed(new Error("Failed to load — the functions list may be incomplete until this is retried or the page is reloaded."));
+        if (projFetch.ok) clearSaveProblem("load:projects");
+        else reportProjectsLoadFailed(new Error("Failed to load — the projects list may be incomplete until this is retried or the page is reloaded."));
+        if (poFetch.ok) clearSaveProblem("load:purchase_orders");
+        else reportPurchaseOrdersLoadFailed(new Error("Failed to load — the purchase orders list may be incomplete until this is retried or the page is reloaded."));
+        if (eoFetch.ok) clearSaveProblem("load:event_orders");
+        else reportEventOrdersLoadFailed(new Error("Failed to load — the event orders list may be incomplete until this is retried or the page is reloaded."));
         if (blockFetch.ok) clearSaveProblem("load:blocks");
         else reportBlocksLoadFailed(new Error("Failed to load — editing block reservations is refused until this is retried or the page is reloaded."));
         if (allocFetch.ok) clearSaveProblem("load:truss_allocations");
