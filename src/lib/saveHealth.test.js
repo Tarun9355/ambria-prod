@@ -106,17 +106,24 @@ describe("saveHealth — a reported problem stays visible until cleared or a suc
     expect(getSaveProblems().find((p) => p.id === k)).toBeUndefined();
   });
 
-  it("retryAllSaveProblems retries every non-blocked problem but skips blocked ones", async () => {
+  it("retryAllSaveProblems retries every problem that HAS a retry function, blocked or not", async () => {
+    // A load failure (blocked:true) with its own in-place recovery retry (background recovery)
+    // participates in the same reconnect sweep a write failure already did — only a blocked entry
+    // with NO retry function (the common case, still needing Reload) is skipped, and that's just
+    // retrySaveProblem's own existing no-op guard, not a special case here.
     const kOk = id("all-ok");
-    const kBlocked = id("all-blocked");
+    const kBlockedWithRetry = id("all-blocked-retry");
+    const kBlockedNoRetry = id("all-blocked-no-retry");
     const retryOk = vi.fn().mockResolvedValue({ ok: true });
     const retryBlocked = vi.fn().mockResolvedValue({ ok: true });
     reportSaveProblem(kOk, { error: "x", retry: retryOk });
-    reportSaveProblem(kBlocked, { error: "x", retry: retryBlocked, blocked: true });
+    reportSaveProblem(kBlockedWithRetry, { error: "x", retry: retryBlocked, blocked: true });
+    reportSaveProblem(kBlockedNoRetry, { error: "x", blocked: true }); // no retry — still needs Reload
     retryAllSaveProblems();
     await new Promise((r) => setTimeout(r, 0)); // let the fire-and-forget retries settle
     expect(retryOk).toHaveBeenCalledTimes(1);
-    expect(retryBlocked).not.toHaveBeenCalled();
-    clearSaveProblem(kBlocked);
+    expect(retryBlocked).toHaveBeenCalledTimes(1);
+    expect(getSaveProblems().find((p) => p.id === kBlockedNoRetry)).toBeDefined(); // untouched, no-op
+    clearSaveProblem(kBlockedNoRetry);
   });
 });

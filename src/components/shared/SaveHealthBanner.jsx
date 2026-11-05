@@ -50,8 +50,13 @@ export default function SaveHealthBanner() {
           </div>
           <ul className="space-y-1 max-h-32 overflow-y-auto">
             {blocked.map((p) => (
-              <li key={p.id} className="text-xs text-amber-700 break-words">
-                <span className="font-medium">{p.label}:</span> {p.error}
+              <li key={p.id} className="flex items-start justify-between gap-2 text-xs text-amber-700">
+                <span className="min-w-0 break-words"><span className="font-medium">{p.label}:</span> {p.error}</span>
+                {/* Some load failures can retry themselves in place (background recovery) instead of
+                    needing the blanket Reload above — shown only when the report actually gave one. */}
+                {p.retry && (
+                  <button onClick={() => retrySaveProblem(p.id)} className="shrink-0 font-semibold underline">Retry</button>
+                )}
               </li>
             ))}
           </ul>

@@ -515,6 +515,93 @@ export default function IMS() {
   // a stable useCallback (see the existing no-use-before-define warnings on setTrussAlloc etc.):
   // this closure only runs later, on a user's Discard click, by which point it's long since assigned.
   const refetchSettingsAfterDiscard = () => { fetchAll("settings").then((rows) => applySettingsRows(rows)).catch(() => {}); };
+
+  // ── Phase 3: background recovery for a table that failed its INITIAL load ──
+  // Previously the only way back from "truss_inventory/settings/blocks failed to load" was a full
+  // page reload — these three are the tables a real past incident already hit, so they're worth an
+  // in-place retry path: reported via saveHealth as `blocked:true` WITH a retry function (unlike most
+  // blocked entries, which still need Reload), so the SAME manual-retry/one-shot-on-reconnect
+  // mechanism this effort already built for write failures also recovers a failed load, without
+  // throwing away whatever else on screen loaded fine. Each retry function re-reports itself on a
+  // repeat failure (fresh error, same retry closure shape) — same idiom as mergeDatePricing's/
+  // runMerge's own retry closures.
+  // Every retry below short-circuits (before the fetch, after it, and on failure) the moment its
+  // table is ALREADY marked loaded — nothing stops a manual Retry click, "Retry all", and the
+  // one-shot reconnect retry from overlapping for the same table, and with no guard: (a) a LATE
+  // failure from an older, slower attempt could run AFTER a different attempt already succeeded,
+  // flipping a genuinely-loaded table's flag back to false and refusing every write again for no
+  // reason; (b) worse, two overlapping SUCCESSFUL fetches could apply out of order — an older
+  // snapshot landing after a newer one (or after realtime deltas that arrived in between) would
+  // silently revert it, which for `blocks` (one row holds EVERY event's reservations on an item)
+  // is exactly the data-loss class this whole effort exists to prevent. Checking the flag instead of
+  // tracking request identity is sufficient here: once ANY attempt has genuinely loaded the table,
+  // every other concurrent attempt backing off to {ok:true} is correct regardless of which one
+  // "really" finished first.
+  const reportSettingsLoadFailed = (err) => {
+    reportSaveProblem("load:settings", {
+      label: "Settings", error: err, blocked: true,
+      retry: async () => {
+        if (settingsLoadedRef.current) return { ok: true };
+        const mark = settingsWriterRef.current?.mark();
+        try {
+          const rows = await fetchAll("settings");
+          if (settingsLoadedRef.current) return { ok: true };
+          applySettingsRows(rows, mark);
+          setError((cur) => (cur?.startsWith("Settings failed to load") || cur?.startsWith("Settings haven't loaded yet") ? "" : cur));
+          return { ok: true };
+        } catch (e) {
+          if (settingsLoadedRef.current) return { ok: true };
+          markTableFailed("settings", e);
+          reportSettingsLoadFailed(e);
+          return { ok: false };
+        }
+      },
+    });
+  };
+  const reportTrussInvLoadFailed = (err) => {
+    reportSaveProblem("load:truss_inventory", {
+      label: "Truss/fabric inventory", error: err, blocked: true,
+      retry: async () => {
+        if (trussInvLoadedRef.current) return { ok: true };
+        try {
+          const rows = await fetchAll("truss_inventory");
+          if (trussInvLoadedRef.current) return { ok: true };
+          const row = rows.find((r) => r.key === "main") || rows[0];
+          if (row?.data) setTrussInvState(row.data);
+          trussInvLoadedRef.current = true;
+          setError((cur) => (cur?.startsWith("Truss/fabric inventory failed to load") || cur?.startsWith("Truss/fabric inventory hasn't finished loading") ? "" : cur));
+          return { ok: true };
+        } catch (e) {
+          if (trussInvLoadedRef.current) return { ok: true };
+          console.warn("[IMS] truss_inventory retry failed:", e?.message || e);
+          reportTrussInvLoadFailed(e);
+          return { ok: false };
+        }
+      },
+    });
+  };
+  const reportBlocksLoadFailed = (err) => {
+    reportSaveProblem("load:blocks", {
+      label: "Block reservations", error: err, blocked: true,
+      retry: async () => {
+        if (loadOkRef.current.blocks === true) return { ok: true };
+        try {
+          const rows = await fetchAll("blocks");
+          if (loadOkRef.current.blocks === true) return { ok: true };
+          const bm = blocksRowsToMap(rows);
+          blocksRef.current = bm; setBlocksState(bm);
+          markTableLoaded("blocks");
+          setError((cur) => (cur?.startsWith("Block reservations haven't loaded") ? "" : cur));
+          return { ok: true };
+        } catch (e) {
+          if (loadOkRef.current.blocks === true) return { ok: true };
+          markTableFailed("blocks", e);
+          reportBlocksLoadFailed(e);
+          return { ok: false };
+        }
+      },
+    });
+  };
   const settingsWriterRef = useRef(null);
   if (!settingsWriterRef.current) {
     settingsWriterRef.current = createSettingsWriter(
@@ -1148,15 +1235,17 @@ export default function IMS() {
         setPlatformAllocState(Object.fromEntries(platformAllocFetch.rows.map((r) => [r.date, rowToAlloc(r)])));
         setBattaAllocState(Object.fromEntries(battaAllocFetch.rows.map((r) => [r.date, rowToAlloc(r)])));
         const trussRow = trussFetch.rows.find((r) => r.key === "main") || trussFetch.rows[0];
-        if (trussRow?.data) { setTrussInvState(trussRow.data); trussInvLoadedRef.current = true; }
+        if (trussRow?.data) { setTrussInvState(trussRow.data); trussInvLoadedRef.current = true; clearSaveProblem("load:truss_inventory"); }
         else if (trussFetch.ok) {
           // A genuinely successful fetch that found no row at all — a fresh install with no
           // truss_inventory row yet. INIT_TRUSS_INV really is correct here, so it's safe to save.
           trussInvLoadedRef.current = true;
+          clearSaveProblem("load:truss_inventory");
         } else {
           // The fetch itself failed — trussInv is still sitting at the INIT_TRUSS_INV placeholder,
           // not real data. Visible, not swallowed: see trussInvLoadedRef's own comment.
           setError("Truss/fabric inventory failed to load — Fabric Stock and Truss & Batta Config are read-only until you reload the page (editing now would save an empty placeholder over the real data).");
+          reportTrussInvLoadFailed(new Error("Failed to load — Fabric Stock and Truss & Batta Config are read-only until this is retried or the page is reloaded."));
         }
         setCats(catRows.map((c) => c.name).filter(Boolean));
         // Mandi flower catalogue — the `mandi_flowers` TABLE (migration 039), not the
@@ -1194,8 +1283,11 @@ export default function IMS() {
         // write made against that lying flag can overwrite real settings keys (role-access tabs,
         // department toolkits, date-pricing overrides, …) with SETTINGS_DEFAULTS. See setSettings'
         // own `!settingsLoaded` guard below.
-        if (setRows.ok) applySettingsRows(setRows.rows);
-        else setError("Settings failed to load — admin config (roles, department tools, date pricing, …) is read-only until you reload the page.");
+        if (setRows.ok) { applySettingsRows(setRows.rows); clearSaveProblem("load:settings"); }
+        else {
+          setError("Settings failed to load — admin config (roles, department tools, date pricing, …) is read-only until you reload the page.");
+          reportSettingsLoadFailed(new Error("Failed to load — admin config (roles, department tools, date pricing, …) is read-only until this is retried or the page is reloaded."));
+        }
         // Rate card: read from the shared `rate_card` TABLE (migrated off the RC_SK blob).
         setStudioRcItems(rcRows.map(rowToRcItem).filter(Boolean));
         setRateCardCategories(rcCatRows);
@@ -1207,6 +1299,8 @@ export default function IMS() {
         for (const [t, f] of [["functions", fnFetch], ["projects", projFetch], ["purchase_orders", poFetch], ["event_orders", eoFetch], ["truss_allocations", allocFetch], ["platform_allocations", platformAllocFetch], ["batta_allocations", battaAllocFetch], ["settings", setRows], ["blocks", blockFetch]]) {
           if (f.ok) markTableLoaded(t); else markTableFailed(t);
         }
+        if (blockFetch.ok) clearSaveProblem("load:blocks");
+        else reportBlocksLoadFailed(new Error("Failed to load — editing block reservations is refused until this is retried or the page is reloaded."));
         setLoading(false);
       } catch (e) {
         if (active) { setError(e.message || "Failed to load IMS data"); setLoading(false); }

@@ -79,7 +79,12 @@ export const retrySaveProblem = async (id) => {
   }
 };
 
-export const retryAllSaveProblems = () => { snapshot().filter((p) => !p.blocked).forEach((p) => retrySaveProblem(p.id)); };
+// No `!p.blocked` filter: retrySaveProblem already no-ops a problem with no `retry` function (the
+// common case for a blocked entry, which still needs a page reload), so including blocked entries
+// here is harmless for those — and lets a blocked entry that DOES carry a retry (a load failure with
+// its own in-place background-recovery attempt) also get this same one-shot-per-reconnect try,
+// instead of being silently excluded from the one mechanism this effort already built for it.
+export const retryAllSaveProblems = () => { snapshot().forEach((p) => retrySaveProblem(p.id)); };
 
 // For SaveHealthBanner.jsx (or any other consumer) to render the live list.
 export const useSaveProblems = () => {
