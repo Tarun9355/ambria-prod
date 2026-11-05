@@ -9,12 +9,36 @@
 // that contract exactly so transcribed code is unchanged.
 import { supabase } from "../supabase";
 
+// ── LOAD-FAILURE TRACKING (owner report 2026-11-05) ──────────────────────────
+// kvGet/kvTryGet collapse a genuine read FAILURE (network/Supabase error) and a genuine "this key
+// has no row yet" into the same `null`/`missing:true` shape, by design (see kvTryGet's own comment —
+// callers want one simple default-on-either case for ordinary reads). But several callers then use
+// that same silent fallback as the baseline for a LATER save of the key's whole value (taxonomy,
+// team, transport settings, palette catalogue, rate-card seeding) — if the read actually failed, the
+// save writes the hardcoded default straight over whatever was really stored, same failure class as
+// the truss_inventory incident this closes (confirmed live: a failed fetch left `trussInv` at its
+// placeholder with the page looking otherwise normal, and the next unrelated edit upserted that
+// placeholder over 24/9/14 rows of real fabric-stock data). kvLoadFailed lets a save path refuse
+// instead of guessing. "Ever read successfully THIS SESSION" counts as loaded even if a later
+// re-read (e.g. a realtime refresh) happens to fail — only a key that has NEVER once loaded
+// successfully stays blocked.
+const readOk = new Set();
+const readFailed = new Map();
+const noteReadResult = (key, ok, error) => {
+  if (ok) { readOk.add(key); readFailed.delete(key); }
+  else readFailed.set(key, error || "Read failed");
+};
+export const kvLoadFailed = (key) => readFailed.has(key) && !readOk.has(key);
+
 export const kvGet = async (key) => {
   try {
     const { data, error } = await supabase.from("settings").select("value").eq("key", key).maybeSingle();
-    if (error || !data) return null;
+    if (error) { noteReadResult(key, false, error.message); return null; }
+    noteReadResult(key, true);
+    if (!data) return null;
     return data.value ?? null;
-  } catch {
+  } catch (e) {
+    noteReadResult(key, false, e?.message || "Network error");
     return null;
   }
 };
@@ -30,14 +54,17 @@ export const kvGet = async (key) => {
 export const kvTryGet = async (key) => {
   try {
     const { data, error } = await supabase.from("settings").select("value").eq("key", key).maybeSingle();
-    if (error) return { ok: false, error: error.message || "Read failed" };
+    if (error) { noteReadResult(key, false, error.message); return { ok: false, error: error.message || "Read failed" }; }
+    noteReadResult(key, true);
     return { ok: true, missing: !data, value: data ? (data.value ?? null) : null };
   } catch (e) {
+    noteReadResult(key, false, e?.message || "Network error");
     return { ok: false, error: e?.message || "Network error" };
   }
 };
 
 export const kvSet = async (key, value) => {
+  if (kvLoadFailed(key)) return { ok: false, error: `"${key}" didn't load this session — saving now could overwrite the real data with defaults. Reload and try again.`, blocked: true };
   try {
     const { error } = await supabase.from("settings").upsert({ key, value }, { onConflict: "key" });
     if (error) return { ok: false, error: error.message };
@@ -53,6 +80,11 @@ export const reliableSave = async (key, json, label) => {
   const result = { ok: false, key, label: label || key, size: typeof json === "string" ? json.length : 0, error: null, ts: Date.now() };
   if (typeof json !== "string" || !json.length) {
     result.error = "Empty payload (refused to save)";
+    return result;
+  }
+  if (kvLoadFailed(key)) {
+    result.error = `"${result.label}" didn't load this session — saving now could overwrite the real data with defaults. Reload and try again.`;
+    result.blocked = true;
     return result;
   }
   try {

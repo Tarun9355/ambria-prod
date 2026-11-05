@@ -2955,7 +2955,12 @@ export default function StudioApp() {
         fetchAll("rate_card_categories").catch(() => null),
         fetchAll("inventory").catch(() => null),
         kvTryGet(RC_SK_CATS).catch(() => ({ ok: false, error: "exception" })),
-        kvGet(RC_SK_TR).catch(() => null),
+        // kvTryGet, not kvGet — trSettingsLoadedRef below must be able to tell a failed read apart
+        // from "confirmed no transport settings saved yet" (owner report 2026-11-05: kvGet collapsing
+        // both to null defeated this ref's own stale-closure guard on the genset migration, letting
+        // it persist the TR_DV/TR_DTC seed defaults over real data). autoPersistCustomVenue isn't
+        // gated on this ref — it's protected separately, by kv.js's own load-failure block (P0-2).
+        kvTryGet(RC_SK_TR),
       ]);
       // Events — auto-wrap to multi-function shape (functions[]).
       try {
@@ -2981,8 +2986,20 @@ export default function StudioApp() {
       try {
         const rows = rcRows;
         if (Array.isArray(rows) && rows.length) { const mapped = rows.map(rowToRcItem).filter(Boolean); loadedRcItems = mapped; if (!cancelled) setRcItems(mapped); }
-        else { // empty table → seed defaults as rows (first boot)
-          try { await supabase.from("rate_card").upsert(RC_D.map(i => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() })), { onConflict: "id" }); } catch { /* ignore */ }
+        else if (rows === null) {
+          // The read ITSELF failed (loadRcRows().catch(() => null), above) — not "the table is
+          // genuinely empty." Seeding defaults here would upsert RC_D's fixed ids (T01, T02, M01…)
+          // straight over the real rate_card rows with those same ids — confirmed live class of bug
+          // (owner report 2026-11-05, truss_inventory's equivalent: a failed fetch silently leaves a
+          // placeholder, and the next write upserts it over real data). rcItems just stays empty/stale
+          // for this mount; nothing is written.
+          if (!cancelled) setSaveError({ label: "Rate card", error: "Failed to load — reload the page before editing prices. Nothing was saved or overwritten." });
+        } else {
+          // A genuinely successful fetch that found zero rows — first boot, no rate_card rows exist
+          // yet. Seeding RC_D is correct here. ignoreDuplicates as a second line of defense: even if
+          // this branch is ever reached with real rows already present under these same ids, it
+          // cannot overwrite them.
+          try { await supabase.from("rate_card").upsert(RC_D.map(i => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() })), { onConflict: "id", ignoreDuplicates: true }); } catch { /* ignore */ }
           loadedRcItems = RC_D; if (!cancelled) setRcItems(RC_D);
         }
       } catch { /* ignore */ }
@@ -3034,12 +3051,21 @@ export default function StudioApp() {
         }
         if (!cancelled) setRcCats(cats);
       } catch {}
-      // Transport
+      // Transport. trSettingsLoadedRef only flips true on a genuine read (success, whether or not a
+      // row existed) — never on a failed read, which must leave trVenues/truckCap at their seed
+      // defaults AND keep the ref false, so the genset migration (gated on this ref) stays refused
+      // instead of persisting seed data over the real saved transport settings (owner report
+      // 2026-11-05). autoPersistCustomVenue reaches the same table but isn't gated on this ref —
+      // see kv.js's own load-failure block (P0-2) for how IT is protected.
       try {
-        const v = trVal;
-        if (v != null) { const td = parse(v); if (td && typeof td === "object" && !cancelled) { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62); } }
+        const r = trVal;
+        if (r.ok) {
+          if (r.value != null) { const td = parse(r.value); if (td && typeof td === "object" && !cancelled) { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62); } }
+          if (!cancelled) trSettingsLoadedRef.current = true;
+        } else if (!cancelled) {
+          setSaveError({ label: "Transport settings", error: "Failed to load — reload the page before editing trucks/genset settings. Nothing was saved or overwritten." });
+        }
       } catch {}
-      if (!cancelled) trSettingsLoadedRef.current = true;
       // Everything below this point (through the "Deal Check boot loaders" at the end) used to be
       // ~30 individually-awaited kvGet/fetchAll calls, one after another, IN SERIES — none of them
       // read another's result (verified: loadedZones/loadedTax below are only ever used inside their
@@ -3063,30 +3089,33 @@ export default function StudioApp() {
         // Zone photo groups — normalised on read, so a blob written before groups were per-function
         // (a bare id array per zone) loads as an any-function group instead of being ignored.
         (async () => { try { const v = await kvGet(ZONE_GROUPS_SK); if (v != null && !cancelled) { const zg = normaliseZoneGroups(parse(v)); zoneGroupsRef.current = zg; setZoneGroups(zg); } } catch {} })(),
-        // Taxonomy — backfill missing keys from DEFAULT_TAX
+        // Taxonomy — backfill missing keys from DEFAULT_TAX. kvTryGet, not kvGet: a failed read must
+        // not be treated as "nothing saved yet" — that silently seeded DEFAULT_TAX over a real,
+        // user-managed taxonomy (including taggingStandards, the AI-tagging house rules) on mount,
+        // the same class of bug as the truss_inventory incident (owner report 2026-11-05).
         (async () => {
           try {
-            const v = await kvGet(TAX_SK);
-            if (v != null) {
-              const tp = parse(v);
-              if (tp && tp.eventType) {
-                const out = { ...tp };
-                let merged = false;
-                for (const k of Object.keys(DEFAULT_TAX)) { if (!Array.isArray(out[k])) { out[k] = DEFAULT_TAX[k]; merged = true; } }
-                // One-time: introduce the "Both" venue type (Indoor + Outdoor) into the already-saved
-                // shared taxonomy. Gated on a stored flag so that if someone later deletes "Both" in
-                // Manage Settings it stays gone — we don't auto-restore it (the taxonomy is user-managed).
-                try {
-                  const bothDone = await kvGet(TAX_BOTH_MIG_SK);
-                  if (bothDone == null) {
-                    if (Array.isArray(out.venueType) && !out.venueType.includes("Both")) { out.venueType = [...out.venueType, "Both"]; merged = true; }
-                    reliableSave(TAX_BOTH_MIG_SK, "1", "Taxonomy migration").catch(() => {});
-                  }
-                } catch {}
-                if (merged) reliableSave(TAX_SK, JSON.stringify(out), "Taxonomy").catch(() => {});
-                if (!cancelled) setTaxonomy(out);
-              }
-            } else { reliableSave(TAX_SK, JSON.stringify(DEFAULT_TAX), "Taxonomy").catch(() => {}); }
+            const r = await kvTryGet(TAX_SK);
+            if (!r.ok) { if (!cancelled) setSaveError({ label: "Taxonomy", error: "Failed to load — reload the page before editing categories/tags in Manage Settings. Nothing was saved or overwritten." }); return; }
+            if (r.missing) { reliableSave(TAX_SK, JSON.stringify(DEFAULT_TAX), "Taxonomy").catch(() => {}); return; }
+            const tp = parse(r.value);
+            if (tp && tp.eventType) {
+              const out = { ...tp };
+              let merged = false;
+              for (const k of Object.keys(DEFAULT_TAX)) { if (!Array.isArray(out[k])) { out[k] = DEFAULT_TAX[k]; merged = true; } }
+              // One-time: introduce the "Both" venue type (Indoor + Outdoor) into the already-saved
+              // shared taxonomy. Gated on a stored flag so that if someone later deletes "Both" in
+              // Manage Settings it stays gone — we don't auto-restore it (the taxonomy is user-managed).
+              try {
+                const migR = await kvTryGet(TAX_BOTH_MIG_SK);
+                if (migR.ok && migR.missing) {
+                  if (Array.isArray(out.venueType) && !out.venueType.includes("Both")) { out.venueType = [...out.venueType, "Both"]; merged = true; }
+                  reliableSave(TAX_BOTH_MIG_SK, "1", "Taxonomy migration").catch(() => {});
+                }
+              } catch {}
+              if (merged) reliableSave(TAX_SK, JSON.stringify(out), "Taxonomy").catch(() => {});
+              if (!cancelled) setTaxonomy(out);
+            }
           } catch {}
         })(),
         // Areas↔Zones auto-sync removed: the bidirectional sync (ZONE_META seeds, area→zone,
@@ -3098,22 +3127,22 @@ export default function StudioApp() {
         // Correction log (contribution tracking) — table-backed now, see photoCorrections.js
         (async () => { try { const rows = await fetchPhotoCorrections(); if (!cancelled) { setCorrLog(rows); corrLogRef.current = rows; } } catch {} })(),
         (async () => { try { const v = await kvGet(TAG_KB_SK); if (v != null) { const kb = parse(v); if (kb && typeof kb === "object" && !cancelled) setTagKB(kb); } } catch {} })(),
-        // Team
+        // Team. kvTryGet, not kvGet — same reason as Taxonomy above: a failed read must not seed
+        // DEFAULT_TEAM over the real team list (owner report 2026-11-05).
         (async () => {
           try {
-            const v = await kvGet(TEAM_SK);
-            if (v != null) {
-              const tp = parse(v);
-              if (tp && typeof tp === "object" && !Array.isArray(tp) && !cancelled) {
-                // A saved list from before still carries a plain-text `pw` (readable by anyone with
-                // the public key). Drop it and save the list back without it — nothing reads it.
-                const hadPw = Object.values(tp).some(u => u && typeof u === "object" && "pw" in u);
-                const clean = hadPw ? Object.fromEntries(Object.entries(tp).map(([id, u]) => { if (!u || typeof u !== "object") return [id, u]; const { pw: _pw, ...rest } = u; return [id, rest]; })) : tp;
-                setTeamData(clean);
-                if (hadPw) reliableSave(TEAM_SK, JSON.stringify(clean), "Team").catch(() => {});
-              }
+            const r = await kvTryGet(TEAM_SK);
+            if (!r.ok) { if (!cancelled) setSaveError({ label: "Team", error: "Failed to load — reload the page before editing the team list. Nothing was saved or overwritten." }); return; }
+            if (r.missing) { reliableSave(TEAM_SK, JSON.stringify(DEFAULT_TEAM), "Team").catch(() => {}); return; }
+            const tp = parse(r.value);
+            if (tp && typeof tp === "object" && !Array.isArray(tp) && !cancelled) {
+              // A saved list from before still carries a plain-text `pw` (readable by anyone with
+              // the public key). Drop it and save the list back without it — nothing reads it.
+              const hadPw = Object.values(tp).some(u => u && typeof u === "object" && "pw" in u);
+              const clean = hadPw ? Object.fromEntries(Object.entries(tp).map(([id, u]) => { if (!u || typeof u !== "object") return [id, u]; const { pw: _pw, ...rest } = u; return [id, rest]; })) : tp;
+              setTeamData(clean);
+              if (hadPw) reliableSave(TEAM_SK, JSON.stringify(clean), "Team").catch(() => {});
             }
-            else { reliableSave(TEAM_SK, JSON.stringify(DEFAULT_TEAM), "Team").catch(() => {}); }
           } catch {}
         })(),
         // Premia config
@@ -3156,9 +3185,18 @@ export default function StudioApp() {
         // Palette catalogue (Studio-owned) + IMS settings (paint cats)
         (async () => {
           try {
-            const palv = await kvGet(PALETTE_SK);
-            if (palv != null) { const p = parse(palv); if (p && typeof p === "object" && !cancelled) { if (Array.isArray(p.colourCatalogue) && p.colourCatalogue.length) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue) && p.paletteCatalogue.length) setImsPaletteCatalogue(p.paletteCatalogue); } }
-            if (!cancelled) { paletteLoadedRef.current = true; setPaletteCatalogueLoaded(true); }
+            // kvTryGet, not kvGet — paletteLoadedRef/paletteCatalogueLoaded exist SPECIFICALLY to
+            // guard against the 2026-07-27 incident (see this ref's own comment above), but kvGet
+            // collapsing a failed read into the same `null` as "confirmed nothing saved" defeated
+            // that guard the same way it defeated trussInv's/taxonomy's/team's (owner report
+            // 2026-11-05) — only a genuine read, success or confirmed-missing, may flip it.
+            const r = await kvTryGet(PALETTE_SK);
+            if (r.ok) {
+              if (r.value != null) { const p = parse(r.value); if (p && typeof p === "object" && !cancelled) { if (Array.isArray(p.colourCatalogue) && p.colourCatalogue.length) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue) && p.paletteCatalogue.length) setImsPaletteCatalogue(p.paletteCatalogue); } }
+              if (!cancelled) { paletteLoadedRef.current = true; setPaletteCatalogueLoaded(true); }
+            } else if (!cancelled) {
+              setSaveError({ label: "Palette catalogue", error: "Failed to load — reload the page before editing colours/palettes. Nothing was saved or overwritten." });
+            }
             const sv = await kvGet(IMS_SETTINGS_SK);
             if (sv != null) { const s = parse(sv); if (s && typeof s === "object" && !cancelled) { if (Array.isArray(s.paintableCategories) && s.paintableCategories.length) setImsPaintableCategories(s.paintableCategories); if (typeof s.defaultPaintCostPerItem === "number") setImsDefaultPaintCost(s.defaultPaintCostPerItem); } }
           } catch {}
@@ -3287,7 +3325,12 @@ export default function StudioApp() {
         if (!key) return;
         try {
           if (key === RC_SK_CATS) { const a = pj(await kvGet(RC_SK_CATS)); if (Array.isArray(a)) setRcCats(a); }
-          else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62); } trSettingsLoadedRef.current = true; }
+          else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62);
+            // Only on an actual successful refetch — not unconditionally. If THIS refetch itself
+            // fails (kvGet returns null on error, same as "not found"), flipping the ref anyway would
+            // let the genset migration (gated on it) run against whatever stale/seed state is
+            // currently live, the same bug this ref exists to prevent (owner report 2026-11-05).
+            trSettingsLoadedRef.current = true; } }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
           else if (key === "fabricMultiplier") { setImsFabricMultiplier(pj(await kvGet("fabricMultiplier"))); }
           // YT_TAG_SK is deliberately NOT handled here any more. Video tags have their own row-level
