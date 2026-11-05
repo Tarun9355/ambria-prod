@@ -394,28 +394,32 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, t
 // pillar/beam skeleton falls back to Iron until that material has any pillars configured, so an
 // un-filled material never breaks pricing.
 //
-// batta/platforms (2026-11-01 owner ask — both now per-material, no longer shared with Iron like
-// liza still is) resolve INDEPENDENTLY of that pillars-configured check: a material's wrap fabric or
-// platform stock can be set up before, after, or without its own pillars/beams ever being filled in
-// (see AdminSettingsTab.jsx's Truss & Batta / Platform Config panels, which edit these the same way),
-// so gating them on `m.pillars` would silently drop a configured Pole/Aluminium batta or platform
-// list back to Iron's whenever that material's skeleton happened to still be empty.
+// batta (2026-11-01 owner ask — now per-material, no longer shared with Iron like liza still is)
+// resolves INDEPENDENTLY of that pillars-configured check: a material's wrap fabric can be set up
+// before, after, or without its own pillars/beams ever being filled in (see AdminSettingsTab.jsx's
+// Truss & Batta Config panel, which edits this the same way), so gating it on `m.pillars` would
+// silently drop a configured Pole/Aluminium batta pool back to Iron's whenever that material's
+// skeleton happened to still be empty.
+//
+// Platforms are NOT resolved per truss-material here (confirmed bug closed 2026-11-05: platforms
+// never actually populate trussInv.materials[x].platforms — every real platform row lives in the
+// one flat trussInv.platforms array, distinguished only by its OWN material field, Wood/Iron, a
+// completely different axis from truss material — see platformEngine.js's header comment). `...trussInv`
+// already carries that one array through unchanged for every material.
 export const trussInvForMaterial = (trussInv, material) => {
   if (!trussInv) return trussInv;
   const mat = String(material || "iron").toLowerCase();
   if (mat === "iron") return trussInv;
   const m = trussInv.materials && trussInv.materials[mat];
   const batta = m?.batta != null ? m.batta : trussInv.batta;
-  const platforms = Array.isArray(m?.platforms) ? m.platforms : trussInv.platforms;
-  if (!m || !m.pillars || Object.keys(m.pillars).length === 0) return { ...trussInv, batta, platforms }; // skeleton not configured yet → Iron
+  if (!m || !m.pillars || Object.keys(m.pillars).length === 0) return { ...trussInv, batta }; // skeleton not configured yet → Iron
   return {
-    ...trussInv,                                                   // shared: liza, fabricFactors, fabricFreshMarkup, lizaStock…
+    ...trussInv,                                                   // shared: liza, fabricFactors, fabricFreshMarkup, lizaStock, platforms…
     pillars: m.pillars || {},                                     // per-material skeleton
     beams: m.beams || {},
     rates: { ...(trussInv.rates || {}), ...(m.rates || {}) },     // per-material pillar/beam/batta rates
     settings: { ...(trussInv.settings || {}), ...(m.settings || {}) },
     batta,
-    platforms,
   };
 };
 
@@ -1141,10 +1145,15 @@ export function getStudioAvailable(item, blocksForDate) {
 // Platform used to be tracked as two generic inventory items (TEN-00008 Platform Fatta / TEN-00009
 // Platform Stand, a geometric fatta+stand tiling of the L×W footprint) — owner call: no longer
 // tracked via those items at all (they're being deleted); platform now costs off Platform Config's
-// own stock-weighted ₹/sqft per material (platformAvgRatePerSqft, lib/ims/platformEngine.js), same
-// one-aggregate-sqft-pool model the rest of this session's platform booking work uses (see that
-// file's own header comment for why sqft, not discrete pieces). This only computes sqft/material/
-// cost per zone row for DISPLAY — live per-zone stock availability isn't shown here any more (it was
+// own stock-weighted ₹/sqft, BLENDED across all configured rows regardless of material
+// (platformAvgRatePerSqft with no material arg, lib/ims/platformEngine.js) — a zone's TRUSS material
+// (iron/pole/aluminium) has nothing to do with which PLATFORM material (Wood/Iron) it draws from,
+// and there's no per-booking signal for the latter, so every zone bills at the same blended rate
+// (confirmed bug closed 2026-11-05: this used to key the rate off the zone's truss material, which
+// meant a Pole/Aluminium zone's platform rate wouldn't resolve to any real stock bucket at all).
+// Same one-aggregate-sqft-pool model the rest of this session's platform booking work uses (see
+// that file's own header comment for why sqft, not discrete pieces). This only computes sqft/cost
+// per zone row for DISPLAY — live per-zone stock availability isn't shown here any more (it was
 // previously computed against the two retired items' real-time blocks); the authoritative stock
 // check now happens once, date-aware and across every event sharing that date, at the moment a deal
 // is actually marked Sold (scanTrussStockShortage, StudioApp.jsx) and in IMS's own Structure
@@ -1154,6 +1163,7 @@ export function getStudioAvailable(item, blocksForDate) {
 export function buildPlatformPlan(fns, dealCheckData) {
   if (!Array.isArray(fns) || !dealCheckData) return null;
   const trussInv = dealCheckData.trussInv;
+  const rate = platformAvgRatePerSqft(trussInv); // blended across all Wood + Iron stock — see comment above
   const perZone = {};
   fns.forEach((fn, fnIdx) => {
     if (!fn || !fn.zoneConfig || !fn.enabledEls) return;
@@ -1163,8 +1173,8 @@ export function buildPlatformPlan(fns, dealCheckData) {
       if (!zc) return;
       // Each zone can carry more than one platform footprint (row 0 = the zone's own scalar
       // plH/floorDims, plus any zc.extraPlatformRows added via "+ Add Platform") — one entry per row.
-      const rows = [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty, trussMaterial: zc.trussMaterial },
-        ...(zc.extraPlatformRows || []).map(r => ({ ...r, trussMaterial: r.trussMaterial || zc.trussMaterial }))];
+      const rows = [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty },
+        ...(zc.extraPlatformRows || [])];
       rows.forEach((row, rowIdx) => {
         if (!row.plH) return;
         const fd = row.floorDims || {};
@@ -1172,13 +1182,11 @@ export function buildPlatformPlan(fns, dealCheckData) {
         if (L <= 0 || W <= 0) return;
         // How many identical footprints this row represents (Build's own Platform Qty field).
         const qty = Math.max(1, Math.round(Number(row.plQty) || 1));
-        const material = String(row.trussMaterial || "iron").toLowerCase();
         const sqft = L * W * qty;
-        const rate = platformAvgRatePerSqft(trussInv, material);
         // Row 0 keeps the original 2-segment key (every existing single-lookup consumer targets this
         // exact key); extra rows get a 3rd segment so they don't collide.
         const key = rowIdx > 0 ? `${fnIdx}|${zoneKey}|${rowIdx}` : `${fnIdx}|${zoneKey}`;
-        perZone[key] = { fnIdx, zoneKey, rowIdx, plH: row.plH, L, W, qty, material, sqft, rate, cost: Math.round(sqft * rate) };
+        perZone[key] = { fnIdx, zoneKey, rowIdx, plH: row.plH, L, W, qty, sqft, rate, cost: Math.round(sqft * rate) };
       });
     });
   });

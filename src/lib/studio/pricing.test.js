@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology, pillarCountForSpan, pillarCountForSpanRaw, nearestCleanSpans } from "./pricing";
+import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology, pillarCountForSpan, pillarCountForSpanRaw, nearestCleanSpans, buildPlatformPlan, trussInvForMaterial } from "./pricing";
 
 // §23 Phase 7 (2026-11-04, owner-confirmed worked examples): the sales team pads a zone's entered
 // width/depth themselves by a round 1ft per pillar (easy mental math) BEFORE typing it — a true
@@ -337,5 +337,67 @@ describe("calcZoneFabric — Wall Masking fabric only for walls masked in fabric
     const mixed = calcZoneFabric(zone({ mkOn: true, mkT: "fabric", mkWallMat: { back: { matKey: "acrylic" } } }), trussInv).maskingPieces;
     expect(mixed).toBeLessThan(all);
     expect(mixed).toBeGreaterThan(0);
+  });
+});
+
+describe("buildPlatformPlan — platform material (Wood/Iron) is independent of truss material (owner decision, 2026-11-05)", () => {
+  // Blended rate: (100*10 + 300*20) / 400 = 17.5 — same math platformEngine.test.js locks in directly.
+  const platformTrussInv = {
+    platforms: [
+      { lengthFt: 10, widthFt: 10, stock: 1, material: "Wood", ratePerSqft: 10 },
+      { lengthFt: 10, widthFt: 10, stock: 3, material: "Iron", ratePerSqft: 20 },
+    ],
+  };
+  const fn = (trussMaterial) => ({
+    zoneConfig: { stage: { plH: "1ft", floorDims: { L: 10, W: 2 }, plQty: 1, trussMaterial } },
+    enabledEls: { stage: true },
+  });
+
+  it("a pole-truss zone and an iron-truss zone get the IDENTICAL blended rate — truss material has no bearing on platform billing", () => {
+    const polePlan = buildPlatformPlan([fn("pole")], { trussInv: platformTrussInv });
+    const ironPlan = buildPlatformPlan([fn("iron")], { trussInv: platformTrussInv });
+    expect(polePlan.perZone["0|stage"].rate).toBeCloseTo(17.5);
+    expect(ironPlan.perZone["0|stage"].rate).toBeCloseTo(17.5);
+    expect(polePlan.perZone["0|stage"].rate).toBe(ironPlan.perZone["0|stage"].rate);
+  });
+
+  it("perZone entries no longer carry a `material` field — it was never real for platforms", () => {
+    const plan = buildPlatformPlan([fn("pole")], { trussInv: platformTrussInv });
+    expect(plan.perZone["0|stage"].material).toBeUndefined();
+  });
+
+  it("cost is sqft × the blended rate", () => {
+    const plan = buildPlatformPlan([fn("iron")], { trussInv: platformTrussInv });
+    const entry = plan.perZone["0|stage"];
+    expect(entry.sqft).toBe(20); // 10*2*1
+    expect(entry.cost).toBe(Math.round(20 * 17.5));
+  });
+
+  it("an extra platform row keys as `${fn}|${zone}|${rowIdx}`, not the row-0 key", () => {
+    const fnWithExtra = {
+      zoneConfig: { stage: { plH: "1ft", floorDims: { L: 10, W: 2 }, plQty: 1, extraPlatformRows: [{ plH: "2ft", floorDims: { L: 5, W: 5 }, plQty: 1 }] } },
+      enabledEls: { stage: true },
+    };
+    const plan = buildPlatformPlan([fnWithExtra], { trussInv: platformTrussInv });
+    expect(plan.perZone["0|stage"]).toBeDefined();
+    expect(plan.perZone["0|stage|1"]).toBeDefined();
+    expect(plan.perZone["0|stage|1"].sqft).toBe(25); // 5*5*1
+  });
+
+  it("trussInv.materials.pole.platforms, even if set, does not change the blended rate — platforms are never resolved per truss-material", () => {
+    const withBogusMaterials = { ...platformTrussInv, materials: { pole: { platforms: [{ lengthFt: 100, widthFt: 100, stock: 50, ratePerSqft: 999 }] } } };
+    const plan = buildPlatformPlan([fn("pole")], { trussInv: withBogusMaterials });
+    expect(plan.perZone["0|stage"].rate).toBeCloseTo(17.5); // unaffected by the bogus 999 rate under materials.pole
+  });
+});
+
+describe("trussInvForMaterial — no longer resolves platforms per truss-material (owner decision, 2026-11-05)", () => {
+  it("platforms pass through unchanged for every material — pole/aluminium never read trussInv.materials[x].platforms", () => {
+    const base = {
+      platforms: [{ id: "p1", material: "Wood" }],
+      materials: { pole: { pillars: { 10: { stock: 5 } }, platforms: [{ id: "bogus", material: "Iron" }] } },
+    };
+    expect(trussInvForMaterial(base, "pole").platforms).toBe(base.platforms);
+    expect(trussInvForMaterial(base, "iron").platforms).toBe(base.platforms);
   });
 });

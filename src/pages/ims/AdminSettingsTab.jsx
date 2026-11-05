@@ -21,6 +21,7 @@ import { RC_UNITS } from "../../lib/studio/constants";
 import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, DEFAULT_PLATFORM_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
 import { GUEST_FABRIC_MULTIPLIER, guestFabricMultiplier } from "../../lib/studio/pricing";
 import { paletteMatches } from "../../components/studio/filterUI.jsx";
+import { platformMaterialOf, PLATFORM_MATERIAL_LABEL } from "../../lib/ims/platformEngine";
 
 // Same canonical unit list as the Mandi Prices panel's own flower-unit dropdown (below), plus two
 // descriptive fallbacks ("pcs"/"made") that recipe ingredient rows have always defaulted their
@@ -134,6 +135,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
   const studioLoading = !!studio?.loading;
   const [subcatSearch, setSubcatSearch] = useState("");
   const [trussMatTab, setTrussMatTab] = useState("iron"); // Truss & Batta Config: active material (pole|iron|aluminium)
+  const [platformMatTab, setPlatformMatTab] = useState("iron"); // Platform Config: active platform material (wood|iron) — independent of trussMatTab, a completely different axis (owner correction, 2026-11-05)
   const [subcatFactorEdits, setSubcatFactorEdits] = useState({});
   const [subcatCostPctEdits, setSubcatCostPctEdits] = useState({});
   const [subcatLabelEdits, setSubcatLabelEdits] = useState({});
@@ -2083,49 +2085,45 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         );
       })()}
       {activePanel === "platformconfig" && trussInv && (() => {
-        // Config only, for now — not yet wired into Build/Deal Check cost, manpower, or transport
-        // (those still read a zone's own plH/floorDims, same as before this screen existed). This is
-        // step one of consolidating Platform the same way Truss already is: once this catalogue is
-        // real, the structural engine can read FROM here instead of each zone typing its own
-        // material/rate, and the literal "Platform" inventory items can be considered for removal.
+        // Deal Check cost now bills off this catalogue's stock-weighted ₹/sqft, blended across every
+        // row here regardless of material (platformAvgRatePerSqft, platformEngine.js) — a zone still
+        // just reads its own plH/floorDims for sqft, same as before this screen existed. Manpower and
+        // transport don't read this catalogue at all yet.
         //
-        // Per-material now (2026-11-01 owner ask), same trussMatTab the Truss & Batta Config panel
-        // uses — reused on purpose so switching tabs there carries over here. Iron = the top-level
-        // trussInv.platforms (back-compat). Pole/Aluminium = trussInv.materials[mat].platforms,
-        // inheriting Iron's list read-only until the first add/edit/delete here forks that material
-        // its own array (seeded from whatever was showing, not from empty).
-        const MAT_TABS = [{ k: "pole", l: "🪵 Pole" }, { k: "iron", l: "⛓️ Iron" }, { k: "aluminium", l: "⚙️ Aluminium" }];
-        const isIron = trussMatTab === "iron";
-        const TI = isIron ? trussInv : (trussInv.materials?.[trussMatTab] || {});
-        const setTI = (updater) => {
-          if (isIron) { setTrussInv(updater); return; }
-          setTrussInv((ti) => ({ ...ti, materials: { ...(ti.materials || {}), [trussMatTab]: updater(ti.materials?.[trussMatTab] || {}) } }));
-        };
-        const matLabel = (MAT_TABS.find((m) => m.k === trussMatTab)?.l || "Iron").replace(/^\S+\s/, "");
-        const platformsInherited = !isIron && !Array.isArray(TI.platforms);
-        const platforms = Array.isArray(TI.platforms) ? TI.platforms : (Array.isArray(trussInv.platforms) ? trussInv.platforms : []);
-        const updRow = (id, patch) => setTI((ti) => ({ ...ti, platforms: (Array.isArray(ti.platforms) ? ti.platforms : platforms).map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
-        const addRow = () => setTI((ti) => ({ ...ti, platforms: [...(Array.isArray(ti.platforms) ? ti.platforms : platforms), { id: "plat_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), label: "", material: "Wood", lengthFt: 8, widthFt: 4, thicknessIn: 4, stock: 0, ratePerSqft: 0 }] }));
+        // Platform material is each row's OWN `material` field (Wood/Iron) — a completely different
+        // axis from a zone's TRUSS material (iron/pole/aluminium), and unrelated to trussMatTab
+        // (confirmed bug closed 2026-11-05: this used to reuse trussMatTab/MAT_TABS and
+        // trussInv.materials[mat].platforms, a structure platforms never actually populate — every
+        // real platform row lives in the one flat trussInv.platforms array below). Tabs here are for
+        // editing convenience only: nothing is deleted or restructured, every row stays in that one
+        // array, just filtered by its own material per tab.
+        const PLATFORM_MAT_TABS = [{ k: "wood", l: "🪵 Wood" }, { k: "iron", l: "⛓️ Iron" }];
+        const matLabel = PLATFORM_MATERIAL_LABEL[platformMatTab];
+        const allPlatforms = Array.isArray(trussInv.platforms) ? trussInv.platforms : [];
+        const platforms = allPlatforms.filter((r) => platformMaterialOf(r) === platformMatTab);
+        const updRow = (id, patch) => setTrussInv((ti) => ({ ...ti, platforms: (Array.isArray(ti.platforms) ? ti.platforms : []).map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
+        const addRow = () => setTrussInv((ti) => ({ ...ti, platforms: [...(Array.isArray(ti.platforms) ? ti.platforms : []), { id: "plat_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), label: "", material: matLabel, lengthFt: 8, widthFt: 4, thicknessIn: 4, stock: 0, ratePerSqft: 0 }] }));
         const delRow = async (id, label) => {
           if (!(await confirm({ title: `Remove ${label ? `"${label}"` : "this platform"}?`, body: "It will no longer count towards platform stock." }))) return;
-          setTI((ti) => ({ ...ti, platforms: (Array.isArray(ti.platforms) ? ti.platforms : platforms).filter((r) => r.id !== id) }));
+          setTrussInv((ti) => ({ ...ti, platforms: (Array.isArray(ti.platforms) ? ti.platforms : []).filter((r) => r.id !== id) }));
         };
         const totalPieces = platforms.reduce((s, r) => s + (Number(r.stock) || 0), 0);
         const totalSqft = platforms.reduce((s, r) => s + (Number(r.lengthFt) || 0) * (Number(r.widthFt) || 0) * (Number(r.stock) || 0), 0);
+        const allSqft = allPlatforms.reduce((s, r) => s + (Number(r.lengthFt) || 0) * (Number(r.widthFt) || 0) * (Number(r.stock) || 0), 0);
         return (
           <div className="space-y-4">
-            {/* ── Material tabs — same trussMatTab as Truss & Batta Config ── */}
+            {/* ── Material tabs — the platform's OWN Wood/Iron, independent of Truss & Batta Config's pole/iron/aluminium tabs ── */}
             <div className="flex gap-2">
-              {MAT_TABS.map((m) => (
-                <button key={m.k} onClick={() => setTrussMatTab(m.k)} className={"px-5 py-2 rounded-xl text-sm font-semibold transition " + (trussMatTab === m.k ? "bg-indigo-600 text-white shadow" : "bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50")}>{m.l}</button>
+              {PLATFORM_MAT_TABS.map((m) => (
+                <button key={m.k} onClick={() => setPlatformMatTab(m.k)} className={"px-5 py-2 rounded-xl text-sm font-semibold transition " + (platformMatTab === m.k ? "bg-indigo-600 text-white shadow" : "bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50")}>{m.l}</button>
               ))}
             </div>
             <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4">
               <div className="flex items-start gap-3">
                 <span className="text-2xl">🛏️</span>
                 <div className="flex-1">
-                  <p className="font-bold text-indigo-900">{matLabel} Platform Inventory {platformsInherited && <span className="text-[10px] font-normal text-gray-400">· inherited from Iron until edited here</span>}</p>
-                  <p className="text-xs text-indigo-700 mt-0.5">Each platform module's own dimensions, material, stock, and rental rate — one catalogue instead of typing these per zone.</p>
+                  <p className="font-bold text-indigo-900">{matLabel} Platform Inventory</p>
+                  <p className="text-xs text-indigo-700 mt-0.5">Each platform module's own dimensions, stock, and rental rate — one catalogue instead of typing these per zone. Booking checks Wood + Iron as one combined pool ({allSqft.toLocaleString("en-IN")} sqft total) — see the Structure Planning dashboard.</p>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3 mt-4">
@@ -2140,7 +2138,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                 <button onClick={addRow} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Add Platform</button>
               </div>
               {platforms.length === 0 ? (
-                <div className="text-xs text-gray-500 italic border border-dashed border-indigo-200 rounded-xl p-4 text-center">No platforms configured yet — add one above.</div>
+                <div className="text-xs text-gray-500 italic border border-dashed border-indigo-200 rounded-xl p-4 text-center">No {matLabel.toLowerCase()} platforms configured yet — add one above.</div>
               ) : (
                 <div className="overflow-x-auto border border-indigo-100 rounded-xl">
                   <table className="w-full text-sm min-w-[860px]">
@@ -2164,8 +2162,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                         const rowTotalSqft = sqftPerPiece * (Number(r.stock) || 0);
                         return (
                           <tr key={r.id} className="border-t border-indigo-50">
-                            <td className="px-3 py-2"><input type="text" placeholder="e.g. 8×4 Wood Deck" value={r.label || ""} onChange={(e) => updRow(r.id, { label: e.target.value })} className="w-40 border border-indigo-200 rounded px-2 py-1 text-xs" /></td>
-                            <td className="px-3 py-2"><input type="text" placeholder="Wood, Iron…" value={r.material || ""} onChange={(e) => updRow(r.id, { material: e.target.value })} className="w-28 border border-indigo-200 rounded px-2 py-1 text-xs" /></td>
+                            <td className="px-3 py-2"><input type="text" placeholder="e.g. 8×4 Deck" value={r.label || ""} onChange={(e) => updRow(r.id, { label: e.target.value })} className="w-40 border border-indigo-200 rounded px-2 py-1 text-xs" /></td>
+                            <td className="px-3 py-2">
+                              <select value={PLATFORM_MATERIAL_LABEL[platformMaterialOf(r)]} onChange={(e) => updRow(r.id, { material: e.target.value })} className="w-24 border border-indigo-200 rounded px-2 py-1 text-xs">
+                                {PLATFORM_MAT_TABS.map((m) => <option key={m.k} value={PLATFORM_MATERIAL_LABEL[m.k]}>{PLATFORM_MATERIAL_LABEL[m.k]}</option>)}
+                              </select>
+                            </td>
                             <td className="px-3 py-2 text-center"><input type="number" min="0" step="0.5" value={r.lengthFt ?? 0} onChange={(e) => updRow(r.id, { lengthFt: parseFloat(e.target.value) || 0 })} className="w-20 border border-indigo-200 rounded px-2 py-1 text-sm text-center font-bold" /></td>
                             <td className="px-3 py-2 text-center"><input type="number" min="0" step="0.5" value={r.widthFt ?? 0} onChange={(e) => updRow(r.id, { widthFt: parseFloat(e.target.value) || 0 })} className="w-20 border border-indigo-200 rounded px-2 py-1 text-sm text-center font-bold" /></td>
                             <td className="px-3 py-2 text-center"><input type="number" min="0" step="0.5" value={r.thicknessIn ?? 0} onChange={(e) => updRow(r.id, { thicknessIn: parseFloat(e.target.value) || 0 })} className="w-20 border border-indigo-200 rounded px-2 py-1 text-sm text-center font-bold" /></td>

@@ -597,33 +597,37 @@ export const computeEventTrussTotals = (trusses) => {
 };
 
 // Mirror of pricing.js's trussInvForMaterial — duplicated, not imported, because lib/ims does not
-// depend on lib/studio (same convention as battaEngine.js's engForMaterial / platformEngine.js's
-// platformsForMaterial). Keep in sync with pricing.js if either changes.
+// depend on lib/studio (same convention as battaEngine.js's engForMaterial). Keep in sync with
+// pricing.js if either changes.
 //
 // Resolves a material-specific view of the truss inventory (pillars/beams/rates/settings per
-// material; liza + fabric factors stay SHARED at the top level = Iron). Iron reads the top-level
-// object. Pole/Aluminium read trussInv.materials[mat] — the pillar/beam skeleton falls back to Iron
-// until that material has any pillars configured, so an un-filled material never breaks allocation.
-// Confirmed bug this closes (found 2026-11-05): buildEventAllocation below used to read
-// trussInv.settings unconditionally, so a Pole/Aluminium zone's production allocation was computed
-// with Iron's maxSpanFt/pillarWidthFt and resolved against Iron's own beam/pillar stock — never
-// touching that material's own configured stock at all.
+// material; liza + fabric factors + platforms stay SHARED at the top level = Iron). Iron reads the
+// top-level object. Pole/Aluminium read trussInv.materials[mat] — the pillar/beam skeleton falls
+// back to Iron until that material has any pillars configured, so an un-filled material never
+// breaks allocation. Confirmed bug this closes (found 2026-11-05): buildEventAllocation below used
+// to read trussInv.settings unconditionally, so a Pole/Aluminium zone's production allocation was
+// computed with Iron's maxSpanFt/pillarWidthFt and resolved against Iron's own beam/pillar stock —
+// never touching that material's own configured stock at all.
+//
+// Platforms are NOT resolved per truss-material here — they never actually populate
+// trussInv.materials[x].platforms (every real platform row lives in the one flat
+// trussInv.platforms array, distinguished only by its OWN Wood/Iron material field, a completely
+// different axis from truss material — see platformEngine.js's header comment, confirmed bug
+// closed 2026-11-05). `...trussInv` already carries that one array through unchanged.
 const trussInvForMaterialIms = (trussInv, material) => {
   if (!trussInv) return trussInv;
   const mat = String(material || "iron").toLowerCase();
   if (mat === "iron") return trussInv;
   const m = trussInv.materials && trussInv.materials[mat];
   const batta = m?.batta != null ? m.batta : trussInv.batta;
-  const platforms = Array.isArray(m?.platforms) ? m.platforms : trussInv.platforms;
-  if (!m || !m.pillars || Object.keys(m.pillars).length === 0) return { ...trussInv, batta, platforms }; // skeleton not configured yet → Iron
+  if (!m || !m.pillars || Object.keys(m.pillars).length === 0) return { ...trussInv, batta }; // skeleton not configured yet → Iron
   return {
-    ...trussInv,                                                   // shared: liza, fabricFactors, fabricFreshMarkup, lizaStock…
+    ...trussInv,                                                   // shared: liza, fabricFactors, fabricFreshMarkup, lizaStock, platforms…
     pillars: m.pillars || {},                                     // per-material skeleton
     beams: m.beams || {},
     rates: { ...(trussInv.rates || {}), ...(m.rates || {}) },     // per-material pillar/beam/batta rates
     settings: { ...(trussInv.settings || {}), ...(m.settings || {}) },
     batta,
-    platforms,
   };
 };
 
