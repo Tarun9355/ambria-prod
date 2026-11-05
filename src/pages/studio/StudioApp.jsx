@@ -12552,8 +12552,25 @@ export default function StudioApp() {
       });
     });
     try {
-      const { error } = await supabase.from("blocks").upsert(ids.map((id) => ({ id, item_id: id, data: byId.get(id) || [] })), { onConflict: "id" });
-      if (error) throw error;
+      // Scoped to THIS event, not per-item: unlike IMS's own per-item blocks writer, this is
+      // already one batched multi-row upsert (not a sequential loop with its own ordering race), so
+      // retrying the whole batch together as this event's own reconcile attempt is the proportionate
+      // fix. retryable:false: byId is a merge of a point-in-time blocksRef-equivalent read, not
+      // re-read fresh, same caution as every other blocks/event_orders write in this rollout.
+      const res = await writeWithRetry(
+        () => supabase.from("blocks").upsert(ids.map((id) => ({ id, item_id: id, data: byId.get(id) || [] })), { onConflict: "id" }),
+        { target: `blocks:reconcile:${eo.id}`, label: "blocks reconcile", retryable: false },
+      );
+      if (res.superseded) {
+        // A newer reconcile of this SAME event already took over and owns the ledger
+        // save/department notifications below — falling through here (res.error is undefined on a
+        // superseded result, so `if (error) throw` alone would wrongly read as success) would log a
+        // false "wrote blocks", save requiredByFn into dcReservedInventory as if it landed when the
+        // actual write never did, and double-send the department notifications.
+        console.info("[reconcile] blocks write superseded by a newer reconcile of event", eo.id);
+        return;
+      }
+      if (res.error) throw res.error;
     } catch (e) {
       console.error("[reconcile] blocks upsert failed:", e?.message || e);
       return;
