@@ -38,6 +38,7 @@ import { kvGet, reliableSave } from "../../lib/ims/kv";
 import { rowToRcItem, rcItemToRow } from "../../lib/rateCard";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry";
 import { reportSaveProblem, clearSaveProblem } from "../../lib/saveHealth";
+import { writeWithRetry } from "../../lib/writeRetry";
 
 const LMS_STALE_MS = 30 * 60 * 1000; // re-sync in background only if cache older than 30 min
 // BLOCKS_SK / RC_SK removed 30 Jul 2026: both were unused here (declaration + comments only) and
@@ -517,7 +518,21 @@ export default function IMS() {
   const settingsWriterRef = useRef(null);
   if (!settingsWriterRef.current) {
     settingsWriterRef.current = createSettingsWriter(
-      async (k, value) => { const { error: e } = await supabase.from("settings").upsert({ key: k, value }, { onConflict: "key" }); return e || null; },
+      // writeWithRetry absorbs a transient blip (a dropped packet, a momentary disconnect) with a
+      // few fast, silent attempts BEFORE settingsWriter's own onError/dirty-tracking below ever sees
+      // a failure — most flaky-network "failures" are exactly this, self-resolving within a second
+      // or two, so without this every one of them would show a visible "Save failed" banner and
+      // need a manual click (or a reconnect event) to clear, instead of just quietly succeeding.
+      // report:false: settingsWriter's own onError already reports into saveHealth (with its own
+      // retryKey-based Retry) once a write has ALSO exhausted writeWithRetry's attempts — reporting
+      // here too would just duplicate the banner entry under a different id for the same failure.
+      async (k, value) => {
+        const res = await writeWithRetry(
+          () => supabase.from("settings").upsert({ key: k, value }, { onConflict: "key" }),
+          { target: `settings:${k}`, label: `Settings: ${k}`, report: false },
+        );
+        return res.ok ? null : res.error;
+      },
       (k, e) => {
         setError(`Save failed: ${e.message || e}`);
         // Stays visible (SaveHealthBanner) until retried or discarded — unlike the setError banner
