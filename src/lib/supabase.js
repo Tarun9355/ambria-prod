@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { makeRetryingFetch } from "./retryingFetch.js";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -7,7 +8,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY");
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// A flaky-network READ (GET against /rest/v1/) gets a few quick retries before it ever reaches a
+// caller's own `.catch(() => [])` — the transient blip behind the truss_inventory/settings/
+// platform-config data-loss incidents. Writes are untouched; see retryingFetch.js's own comment.
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  global: { fetch: makeRetryingFetch() },
+});
 
 // Mirrors the current session's access token in memory so keepaliveUpsert/keepaliveRpc (below) can
 // read it synchronously at pagehide/beforeunload time, with no await standing between the unload

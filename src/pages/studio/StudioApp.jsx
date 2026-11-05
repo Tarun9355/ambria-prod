@@ -1669,6 +1669,17 @@ export default function StudioApp() {
   const [sessionHistoryExpanded, setSessionHistoryExpanded] = useState(false);
   const [dateTypes, setDateTypes] = useState({});
   const [eventOrders, setEventOrders] = useState([]);
+  // "loading" until loadEoRows() settles, then "ok" or "failed" — never flips back. eventOrders
+  // sitting at its [] default (still loading, OR a failed load) must never be mistaken for "this
+  // client has no live booking yet": pushEventOrderPlan's own dedupe (ownEventOrderIds) would
+  // otherwise miss a real existing order and create a duplicate event_orders row (same failure
+  // class as the Sangeeta duplicate-booking incident, 2026-11-02, but via a failed/slow read
+  // instead of a stale function index). Three states, not a boolean, because Studio has no mount
+  // loading screen gating interaction (unlike IMS) — a deal reopens and shows its Sold/Apply
+  // Changes button as soon as the client ledger loads, which can easily race ahead of this
+  // specific fetch (one of several in the same mount Promise.all) on a perfectly healthy
+  // connection; that window needs "try again in a few seconds", not "reload the page".
+  const eoLoadStateRef = useRef("loading");
   const [photoImsMap, setPhotoImsMap] = useState({});
   // ── Deal Check knowledge set (learned photo→IMS visual identity) ──────────────
   // Row-per-entry table `dc_photo_knowledge`, id = `${photoUrl}::${rcNameLower}`, data =
@@ -3165,7 +3176,7 @@ export default function StudioApp() {
         // Date types
         (async () => { try { const v = await kvGet(DT_SK); if (v != null) { const dp = parse(v); if (dp && typeof dp === "object" && !cancelled) setDateTypes(dp); } } catch {} })(),
         // Event orders
-        (async () => { try { const rows = await loadEoRows(); if (Array.isArray(rows) && !cancelled) setEventOrders(rows.map(rowToEO)); } catch { /* ignore */ } })(),
+        (async () => { try { const rows = await loadEoRows(); if (Array.isArray(rows) && !cancelled) { setEventOrders(rows.map(rowToEO)); eoLoadStateRef.current = "ok"; } } catch { if (!cancelled) eoLoadStateRef.current = "failed"; } })(),
         // Photo→IMS cache
         (async () => { try { const v = await kvGet(PIMAP_SK); if (v != null) { const pm = parse(v); if (pm && typeof pm === "object" && !Array.isArray(pm) && !cancelled) setPhotoImsMap(pm); } } catch {} })(),
         // Scan history
@@ -8813,8 +8824,26 @@ export default function StudioApp() {
   // skips that prompt entirely, since applyBookedChanges always has an existing order by
   // definition and asking "update the existing booking instead of creating a second one?" on every
   // single edit would be pure noise.
+  // Shared by markSold/applyBookedChanges (checked BEFORE they write anything — see each call
+  // site's own comment for why checking only here, after the fact, left a booked client with no
+  // event_orders row) and this function's own backstop below. See eoLoadStateRef's own comment for
+  // why "still loading" and "genuinely failed" need different messages.
+  const blockIfEoNotLoaded = () => {
+    if (eoLoadStateRef.current === "ok") return false;
+    if (eoLoadStateRef.current === "loading") showMsg?.("Event orders are still loading — try again in a few seconds.", "red");
+    else showMsg?.("Event orders failed to load — reload the page before confirming or editing a booking.", "red");
+    return true;
+  };
   const pushEventOrderPlan = useCallback(async (client, opts = {}) => {
     const { skipDupeConfirm = false, activityVerb = "Booking confirmed", activityEmoji = "🎉" } = opts;
+    if (blockIfEoNotLoaded()) {
+      // event_orders never genuinely loaded (or hasn't finished loading yet) this session —
+      // eventOrders is sitting at its [] default, so the duplicate-booking check below
+      // (ownEventOrderIds) would miss this client's real existing order and create a second row
+      // instead of updating it in place. Backstop only: markSold/applyBookedChanges already check
+      // this before writing anything, so reaching here with a block is not the normal path.
+      return false;
+    }
     const allFns = collectAllFunctionData();
     const soldDateStamp = todayStr();
     const stampZoneElements = (ze) => {
@@ -9102,6 +9131,12 @@ export default function StudioApp() {
         yesLabel: "Confirm booking",
         tone: "positive",
       }))) return;
+      // Checked here, BEFORE saveClientLedger marks the client "booked" below — not just inside
+      // pushEventOrderPlan's own backstop — so a blocked push can never leave a client booked in
+      // Studio with no matching event_orders row for IMS to see. Checking after the confirm dialog
+      // (rather than at the top of this function) gives a slow-loading event_orders fetch the
+      // whole time the dialog was open to finish.
+      if (blockIfEoNotLoaded()) return;
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return; }
       const { client, ledger } = result;
@@ -9142,6 +9177,11 @@ export default function StudioApp() {
       if (oosFlagged.length > 0) { setOosGateModal(oosFlagged); return false; }
       const trussFlagged = scanTrussStockShortage();
       if (trussFlagged.length > 0) { setTrussStockGateModal(trussFlagged); return false; }
+      // Checked here, BEFORE the bookedSystemTotal rebase below — not just inside
+      // pushEventOrderPlan's own backstop — so a blocked push can never reset the "pending since
+      // booking" baseline (eventGrandTotal - bookedSystemTotal) to 0 while IMS's copy is still
+      // actually out of date. See markSold's identical check for the full reasoning.
+      if (blockIfEoNotLoaded()) return false;
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return false; }
       const { client: savedClient, ledger } = result;
