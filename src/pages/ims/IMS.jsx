@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/AuthContext";
-import { supabase, fetchAll, updateRow } from "../../lib/supabase";
+import { supabase, fetchAll, updateRow, deleteRow } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
 import { computePatternSizeCost, effectiveMarkup, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
 import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDefaultWindowsByPhaseFromRows } from "../../lib/ims/labourTypes";
@@ -825,7 +825,14 @@ export default function IMS() {
         // items whose recipe-driven price actually changed, so nothing else is touched.
         const changedItems = next.filter((it, idx) => JSON.stringify(it) !== JSON.stringify(items[idx]));
         const rows = changedItems.map((it) => ({ id: it.id, name: it.name || "", cat: it.cat ?? null, sub: it.sub ?? null, unit: it.unit ?? null, inhouse_mode: it.inhouseMode ?? "flat", inhouse_flat: Number(it.inhouseFlat) || 0, inhouse_s: Number(it.inhouseS) || 0, inhouse_m: Number(it.inhouseM) || 0, inhouse_b: Number(it.inhouseB) || 0, out_s: Number(it.outS) || 0, out_m: Number(it.outM) || 0, out_b: Number(it.outB) || 0, zones: Array.isArray(it.zones) ? it.zones : [], floral_mode: it.floralMode ?? null, default_real_pct: it.defaultRealPct ?? null, data: it, updated_at: new Date().toISOString() }));
-        if (rows.length) { const { error } = await supabase.from("rate_card").upsert(rows, { onConflict: "id" }); if (error) { if (!silent) setError(`Sync failed: ${error.message}`); return { error: error.message, updated, cleared }; } }
+        if (rows.length) {
+          // One retryingUpsert per row (Promise.all, not a sequential loop — see persistBlocks' own
+          // comment for why a sequential version of this exact shape let a stale write land after a
+          // newer one), so each item's row gets its own target/supersession scope.
+          const results = await Promise.all(rows.map((row) => retryingUpsert("rate_card", row)));
+          const failed = results.find((r) => r.error);
+          if (failed) { if (!silent) setError(`Sync failed: ${failed.error.message}`); return { error: failed.error.message, updated, cleared }; }
+        }
       }
       setTier15LastSync(Date.now());
       return { updated, cleared };
@@ -943,8 +950,7 @@ export default function IMS() {
     const prev = rateCardCategoriesRef.current;
     setRateCardCategories((p) => p.filter((r) => r.id !== id));
     try {
-      const { error } = await supabase.from("rate_card_categories").delete().eq("id", id);
-      if (error) throw error;
+      await deleteRow("rate_card_categories", id);
     } catch (e) {
       setRateCardCategories(prev);
       setError(`Failed to delete sub-category: ${e.message}`);
@@ -1002,21 +1008,21 @@ export default function IMS() {
         const nb = { ...batches };
         nb[trimmed] = nb[matchKey];
         delete nb[matchKey];
-        supabase.from("labour_types").update({ sub_cat_batches: nb }).eq("type_name", type).then(() => {}, () => {});
+        writeWithRetry(() => supabase.from("labour_types").update({ sub_cat_batches: nb }).eq("type_name", type), { target: `labour_types:${type}`, retryable: false, report: false });
       }
     });
     // heavyElementRanges[].subCat is now the primary key of the `heavy_element_ranges` TABLE
     // (migration 044) — a rename is a row-level UPDATE of that key, not a settings blob merge.
     (settings.heavyElementRanges || []).forEach((her) => {
       if (String(her.subCat || "").trim().toLowerCase() === oldId && her.subCat !== trimmed) {
-        supabase.from("heavy_element_ranges").update({ sub_cat: trimmed }).eq("sub_cat", her.subCat).then(() => {}, () => {});
+        writeWithRetry(() => supabase.from("heavy_element_ranges").update({ sub_cat: trimmed }).eq("sub_cat", her.subCat), { target: `heavy_element_ranges:${her.subCat}`, retryable: false, report: false });
       }
     });
     // Recipes (flowerPatterns) link to items by `.sub` (matchFlowerPattern). Rename it too so a
     // sub-category rename keeps the recipe↔item match intact — otherwise the recipe stops applying
     // to its items and every tagged photo using those items loses its recipe pricing. Row-level
     // (flower_patterns table, 040), not the settings blob the rest of this cascade used to share.
-    supabase.from("flower_patterns").update({ sub: trimmed }).ilike("sub", oldId).then(() => {}, () => {});
+    writeWithRetry(() => supabase.from("flower_patterns").update({ sub: trimmed }).ilike("sub", oldId), { target: `flower_patterns:${oldId}`, retryable: false, report: false });
   }, []);
 
   // Rate Card → IMS migration Phase 3: Rate Card admin authority moves from Studio to IMS. Same
@@ -1033,13 +1039,27 @@ export default function IMS() {
     try {
       if (changed.length) {
         const rows = changed.map((i) => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() }));
-        const { error } = await supabase.from("rate_card").upsert(rows, { onConflict: "id" });
-        if (error) throw error;
+        // One retryingUpsert per row (Promise.all) — same reasoning as syncRecipeRatesToStudio above.
+        const results = await Promise.all(rows.map((row) => retryingUpsert("rate_card", row)));
+        const failed = results.find((r) => r.error);
+        if (failed) throw failed.error;
       }
-      for (const id of dels) { const { error } = await supabase.from("rate_card").delete().eq("id", id); if (error) throw error; }
+      if (dels.length) {
+        const results = await Promise.all(dels.map((id) => retryingDelete("rate_card", id)));
+        const failed = results.find((r) => r.error);
+        if (failed) throw failed.error;
+      }
     } catch (e) {
       studioRcItemsRef.current = prev; setStudioRcItems(prev);
       setError(`Rate card save failed: ${e.message}`);
+      // Unlike the old single batched upsert (one PostgREST statement, genuinely all-or-nothing),
+      // each row above is its own request — some can land while another fails, so rolling back ALL
+      // local state to `prev` here can show a stale value for a row that actually DID save. Re-sync
+      // from the table so local state reflects whatever actually persisted, not a blanket rollback.
+      fetchAll("rate_card").then(
+        (r) => { const items = r.map(rowToRcItem).filter(Boolean); studioRcItemsRef.current = items; setStudioRcItems(items); },
+        () => {},
+      );
     }
   }, []);
 
