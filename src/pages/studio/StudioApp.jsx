@@ -3011,7 +3011,12 @@ export default function StudioApp() {
           // yet. Seeding RC_D is correct here. ignoreDuplicates as a second line of defense: even if
           // this branch is ever reached with real rows already present under these same ids, it
           // cannot overwrite them.
-          try { await supabase.from("rate_card").upsert(RC_D.map(i => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() })), { onConflict: "id", ignoreDuplicates: true }); } catch { /* ignore */ }
+          try {
+            await writeWithRetry(
+              () => supabase.from("rate_card").upsert(RC_D.map(i => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() })), { onConflict: "id", ignoreDuplicates: true }),
+              { target: "rate_card:seed", retryable: false, report: false },
+            );
+          } catch { /* ignore */ }
           loadedRcItems = RC_D; if (!cancelled) setRcItems(RC_D);
         }
       } catch { /* ignore */ }
@@ -3276,7 +3281,10 @@ export default function StudioApp() {
     // `functions` table's own backfill race). Shared with IMS → Settings → Venues' own outdoor-add
     // form, so the two converge on the same id for the same name too.
     const id = deterministicVenueId("od", name);
-    await supabase.from("venues").upsert({ id, kind: "outdoor", name, empanelled: !!empanelled }, { onConflict: "id", ignoreDuplicates: true });
+    await writeWithRetry(
+      () => supabase.from("venues").upsert({ id, kind: "outdoor", name, empanelled: !!empanelled }, { onConflict: "id", ignoreDuplicates: true }),
+      { target: `venues:${id}`, retryable: false, report: false },
+    );
   }, []);
   // Sub-venue → parent map (Aura → Exotica) so fixed-venue rules match across sub-venues.
   // Persisted to settings so IMS reads it too.
@@ -3774,8 +3782,16 @@ export default function StudioApp() {
     try {
       if (changed.length) {
         const rows = changed.map((it) => ({ ...libItemToRow(it), updated_at: new Date().toISOString() }));
-        const { error } = await supabase.from("library").upsert(rows, { onConflict: "id" });
-        if (error) throw error;
+        // One retryingUpsert per row (Promise.all), not a single batched upsert — each row gets its
+        // own target/supersession scope. See saveRateCardItems' identical reasoning (IMS.jsx).
+        // report:false for a MULTI-row save: a one-shot bulk import/tag flush of hundreds of rows
+        // failing during an outage would otherwise flood the save-health banner with one permanent
+        // "library row" entry per row, each needing its own Discard click — this function's own
+        // rollback + red toast already covers the failure for these. A single-item edit keeps the
+        // default (report:true) — there, one banner entry for one photo is the normal, useful case.
+        const results = await Promise.all(rows.map((row) => retryingUpsert("library", row, "id", rows.length > 1 ? { report: false } : {})));
+        const failed = results.find((r) => r.error);
+        if (failed) throw failed.error;
       }
       for (const id of dels) await deleteRow("library", id);
       return { ok: true };
@@ -3785,6 +3801,14 @@ export default function StudioApp() {
       // photo that looks verified with its new tags) even though the database never got it, and the
       // only sign anything went wrong is a red toast that the caller's own "saved!" message stomps a
       // moment later. A refresh then re-fetches the real (unsaved) row and it looks like data reverted.
+      // NOT re-synced via fetchAll here (unlike rate_card's identical rollback fix) — `library` is
+      // deliberately a lazy, partial cache of whatever's been fetched this session (see this
+      // function's own file-level comment), never the whole table, so fetchAll would both defeat
+      // that design and be needlessly expensive. A stale rolled-back entry for a row that actually
+      // DID land (now possible with per-row requests, unlike the old all-or-nothing batched upsert)
+      // self-corrects when the row is next merged from a browse-page fetch or a realtime UPDATE —
+      // NOT from ensureLibItems, which skips an id already in the cache and so would never re-fetch
+      // this one specifically.
       libItemsRef.current = prev; setLibItems(prev);
       showMsg?.("Library save failed: " + (e?.message || e), "red");
       return { ok: false, error: e };
@@ -4370,13 +4394,19 @@ export default function StudioApp() {
     const write = async () => {
       try {
         if (toUpsert.length) {
-          const { error } = await supabase.from("video_tags")
-            .upsert(toUpsert.map(([id, val]) => videoTagToRow(id, val)), { onConflict: "video_id" });
-          if (error) throw new Error(error.message);
+          // One retryingUpsert per video (Promise.all) — each gets its own target/supersession
+          // scope, same reasoning as every other per-row batch in this rollout. Still happens
+          // entirely inside this one chained write() link, so the chain's own ordering (the whole
+          // reason for ytSaveChainRef) is untouched — only this link's OWN few retry attempts, if
+          // any video in it hits a transient blip, happen before the chain advances to the next link.
+          const results = await Promise.all(toUpsert.map(([id, val]) => retryingUpsert("video_tags", videoTagToRow(id, val), "video_id")));
+          const failed = results.find((r) => r.error);
+          if (failed) throw new Error(failed.error.message);
         }
-        for (const [id] of toDelete) {
-          const { error } = await supabase.from("video_tags").delete().eq("video_id", id);
-          if (error) throw new Error(error.message);
+        if (toDelete.length) {
+          const results = await Promise.all(toDelete.map(([id]) => retryingDelete("video_tags", id, "video_id")));
+          const failed = results.find((r) => r.error);
+          if (failed) throw new Error(failed.error.message);
         }
       } catch (e) {
         applyLocal([...before.entries()].map(([id, val]) => [id, val === undefined ? null : val]));
@@ -12399,11 +12429,11 @@ export default function StudioApp() {
           const identityOk = !row.data?.type || !fn.fnType || row.data.type === fn.fnType;
           if (!identityOk) {
             console.warn(`[reconcile] functions row ${row.id} is "${row.data.type}" but this sync is for "${fn.fnType}" (date ${date}) — leaving its venue/shift/pax untouched this run.`);
-            supabase.from("functions").update({ data: { ...row.data, items: [...kept, ...nextItems] } }).eq("id", row.id)
+            retryingUpdate("functions", row.id, { data: { ...row.data, items: [...kept, ...nextItems] } }, "id", { report: false })
               .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); });
             continue;
           }
-          supabase.from("functions").update({ data: { ...row.data, items: [...kept, ...nextItems], venue: { ...prevVenueObj, name: fn.fnVenue || "" }, shift: fn.fnShift || row.data?.shift || "", pax: fn.fnPax || row.data?.pax || "" } }).eq("id", row.id)
+          retryingUpdate("functions", row.id, { data: { ...row.data, items: [...kept, ...nextItems], venue: { ...prevVenueObj, name: fn.fnVenue || "" }, shift: fn.fnShift || row.data?.shift || "", pax: fn.fnPax || row.data?.pax || "" } }, "id", { report: false })
             .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); else console.info("[reconcile] synced functions.items for fn", row.id, "date", date); });
           continue;
         }
@@ -12436,7 +12466,7 @@ export default function StudioApp() {
         // same (event, date) hits the SAME row and just overwrites it (last writer wins, same
         // self-heals-every-run posture as the rest of this function) instead of erroring on a
         // duplicate key or racing to insert first.
-        supabase.from("functions").upsert({ id: fnId, project_id: p.id, name: fnData.name, date, venue: fnData.venue, status: "Confirmed", data: fnData }, { onConflict: "id" })
+        retryingUpsert("functions", { id: fnId, project_id: p.id, name: fnData.name, date, venue: fnData.venue, status: "Confirmed", data: fnData }, "id", { report: false })
           .then(({ error }) => {
             if (error) console.error("[reconcile] functions backfill upsert failed for event", eo.id, "date", date, ":", error.message);
             else console.info("[reconcile] backfilled missing functions row for event", eo.id, "date", date, "— was created (project exists) but had never gotten a function row.");
@@ -12445,7 +12475,7 @@ export default function StudioApp() {
       if (newFnIds) {
         const p = await ensureProject();
         if (p) {
-          supabase.from("projects").update({ data: { ...p.data, functions: [...newFnIds] } }).eq("id", p.id)
+          retryingUpdate("projects", p.id, { data: { ...p.data, functions: [...newFnIds] } }, "id", { report: false })
             .then(({ error }) => { if (error) console.error("[reconcile] project.functions backfill link failed:", error.message); });
         }
       }
