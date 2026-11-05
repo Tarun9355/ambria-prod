@@ -706,6 +706,57 @@ export default function IMS() {
       },
     });
   };
+  // mandi_flowers and flower_patterns feed syncRecipeRatesToStudio the same way inventory does
+  // (mandiCatalogue/flowerPatterns, merged into settings via applyMandiRows/applyFlowerPatternRows,
+  // which already set their own ref — mandiRowsRef/patternRowsRef — synchronously, so no extra ref
+  // plumbing is needed here the way the plain-array list tables above needed). A failed fetch for
+  // either used to silently collapse to `[]` (the old `.catch(() => [])` fallback): an empty
+  // mandiCatalogue prices every mandi ingredient at ₹0, and an empty flowerPatterns makes every
+  // `_imsDriven` item look like "its recipe was removed" and get unlocked — both get written
+  // straight to the shared rate_card table. syncRecipeRatesToStudio's own guard (below) now refuses
+  // to run at all unless both of these, and inventory, have genuinely loaded.
+  const reportMandiLoadFailed = (err) => {
+    reportSaveProblem("load:mandi_flowers", {
+      label: "Mandi flower catalogue", error: err, blocked: true,
+      retry: async () => {
+        if (loadOkRef.current.mandi_flowers === true) return { ok: true };
+        try {
+          const rows = await fetchAll("mandi_flowers");
+          if (loadOkRef.current.mandi_flowers === true) return { ok: true };
+          applyMandiRows(rows);
+          markTableLoaded("mandi_flowers");
+          syncRecipeRatesToStudio({ silent: true });
+          return { ok: true };
+        } catch (e) {
+          if (loadOkRef.current.mandi_flowers === true) return { ok: true };
+          markTableFailed("mandi_flowers", e);
+          reportMandiLoadFailed(e);
+          return { ok: false };
+        }
+      },
+    });
+  };
+  const reportFlowerPatternsLoadFailed = (err) => {
+    reportSaveProblem("load:flower_patterns", {
+      label: "Flower recipe patterns", error: err, blocked: true,
+      retry: async () => {
+        if (loadOkRef.current.flower_patterns === true) return { ok: true };
+        try {
+          const rows = await fetchAll("flower_patterns");
+          if (loadOkRef.current.flower_patterns === true) return { ok: true };
+          applyFlowerPatternRows(rows);
+          markTableLoaded("flower_patterns");
+          syncRecipeRatesToStudio({ silent: true });
+          return { ok: true };
+        } catch (e) {
+          if (loadOkRef.current.flower_patterns === true) return { ok: true };
+          markTableFailed("flower_patterns", e);
+          reportFlowerPatternsLoadFailed(e);
+          return { ok: false };
+        }
+      },
+    });
+  };
   const settingsWriterRef = useRef(null);
   if (!settingsWriterRef.current) {
     settingsWriterRef.current = createSettingsWriter(
@@ -962,7 +1013,23 @@ export default function IMS() {
     // inventory fails independently (see reportInventoryLoadFailed), that protection is gone and
     // has to be made explicit here instead. The inventory background-recovery retry re-calls this
     // function once inventory actually loads, so a sync deferred by this guard isn't lost for good.
-    if (loadOkRef.current.inventory !== true) return { error: "Inventory hasn't loaded yet — recipe sync skipped to avoid writing ₹0 prices.", updated: 0, cleared: 0 };
+    // Same reasoning extends to mandi_flowers (mandiCatalogue) and flower_patterns (flowerPatterns)
+    // — a failed fetch for either used to silently collapse to `[]`, which prices mandi ingredients
+    // at ₹0 or wrongly "unlocks" every recipe-driven item, same destination (the shared rate_card
+    // table). See reportMandiLoadFailed/reportFlowerPatternsLoadFailed for the matching recovery.
+    // settingsLoadedRef, not loadOkRef.current.settings: a failed settings fetch leaves settingsRef
+    // sitting at SETTINGS_DEFAULTS (flowerRecipeSubcats/defaultStudioMarkup/the artificial-mix rates
+    // all read below), which would unlock every _imsDriven item outside the default sub-category and
+    // re-price everything at the default 3x markup — same destination (rate_card) as the other two
+    // checks. settingsLoadedRef (not markTableLoaded("settings"), which this table never calls) is
+    // the flag the settings retry/realtime path itself already keeps correct — see its own comment
+    // at autoConfirmReady below for why this ref is used instead of loadOkRef here.
+    const missingLoad = [];
+    if (loadOkRef.current.inventory !== true) missingLoad.push("inventory");
+    if (loadOkRef.current.mandi_flowers !== true) missingLoad.push("mandi flower catalogue");
+    if (loadOkRef.current.flower_patterns !== true) missingLoad.push("flower recipe patterns");
+    if (!settingsLoadedRef.current) missingLoad.push("settings");
+    if (missingLoad.length) return { error: `${missingLoad.join(", ")} hasn't loaded yet — recipe sync skipped to avoid writing wrong prices.`, updated: 0, cleared: 0 };
     const s = settingsRef.current || {};
     const patterns = s.flowerPatterns || [];
     const recipeSubs = s.flowerRecipeSubcats || [];
@@ -1290,7 +1357,7 @@ export default function IMS() {
     const safeFetch = (t) => fetchAll(t).then((rows) => ({ rows, ok: true })).catch((e) => { console.warn(`[IMS] ${t} fetch failed:`, e?.message || e); return { rows: [], ok: false }; });
     (async () => {
       try {
-        const [invFetch, fnFetch, projFetch, venRows, poFetch, ohRows, supRows, userRows, prodRows, eoFetch, allocFetch, platformAllocFetch, battaAllocFetch, rcRows, trussFetch, catRows, setRows, blockFetch, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
+        const [invFetch, fnFetch, projFetch, venRows, poFetch, ohRows, supRows, userRows, prodRows, eoFetch, allocFetch, platformAllocFetch, battaAllocFetch, rcRows, trussFetch, catRows, setRows, blockFetch, rcCatRows, mandiFetch, patternFetch, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
           safeFetch("inventory"),
           safeFetch("functions"),
           safeFetch("projects"),
@@ -1314,8 +1381,8 @@ export default function IMS() {
           safeFetch("settings"),
           safeFetch("blocks"),
           fetchAll("rate_card_categories").catch(() => []),
-          fetchAll("mandi_flowers").catch(() => []),
-          fetchAll("flower_patterns").catch(() => []),
+          safeFetch("mandi_flowers"),
+          safeFetch("flower_patterns"),
           fetchAll("labour_types").catch(() => []),
           fetchAll("venue_labour_config").catch(() => []),
           fetchAll("print_materials").catch(() => []),
@@ -1336,15 +1403,21 @@ export default function IMS() {
         const loadedItems = invFetch.rows.map(rowToItem);
         itemsRef.current = loadedItems; // keep the ref in lockstep from the very first paint
         setItems(loadedItems);
-        setFns(fnFetch.rows.map(rowToFn));
-        setProjectsState(projFetch.rows.map(rowToProject));
+        // fnsRef/projectsRef/purchaseRef/eventOrdersRef set in lockstep here too (not left to the
+        // later `useEffect(() => { xRef.current = x }, [x])` sync alone) — same reasoning as
+        // itemsRef/blocksRef above: the event_orders realtime channel (and functions/projects/
+        // purchase_orders' own writers) read straight off these refs, and each of their own
+        // subscriptions is already live by the time this async block resolves, so a change landing
+        // in the gap before that reactive effect runs would otherwise merge into a stale ref.
+        { const mapped = fnFetch.rows.map(rowToFn); fnsRef.current = mapped; setFns(mapped); }
+        { const mapped = projFetch.rows.map(rowToProject); projectsRef.current = mapped; setProjectsState(mapped); }
         setVendorsState(venRows.map(rowToVendor));
-        setPurchaseState(poFetch.rows.map(rowToPurchase));
+        { const mapped = poFetch.rows.map(rowToPurchase); purchaseRef.current = mapped; setPurchaseState(mapped); }
         setOverheadsState(ohRows.map(rowToOverhead));
         setSupervisorsState(supRows.map(rowToSupervisor));
         setUsersState(sortUsers(userRows.map(rowToUser), recentUsersRef.current));
         setProdRequestsState(prodRows.map(rowToProd));
-        setEventOrdersState(eoFetch.rows.map(rowToEO));
+        { const mapped = eoFetch.rows.map(rowToEO); eventOrdersRef.current = mapped; setEventOrdersState(mapped); }
         setTrussAllocState(Object.fromEntries(allocFetch.rows.map((r) => [r.date, rowToAlloc(r)])));
         setPlatformAllocState(Object.fromEntries(platformAllocFetch.rows.map((r) => [r.date, rowToAlloc(r)])));
         setBattaAllocState(Object.fromEntries(battaAllocFetch.rows.map((r) => [r.date, rowToAlloc(r)])));
@@ -1367,9 +1440,15 @@ export default function IMS() {
         // reads, via its own fetch + realtime (see the effect below), same reasoning fixed_venues
         // (038) already uses in StudioApp.jsx. Populates mandiRowsRef BEFORE applySettingsRows runs,
         // so that rebuild's own re-merge (below) picks up the real catalogue, not an empty one.
-        applyMandiRows(mandiRows);
-        // Flower recipe patterns — the `flower_patterns` TABLE (migration 040), same reasoning.
-        applyFlowerPatternRows(patternRows);
+        // {rows, ok}, not a bare array: syncRecipeRatesToStudio prices every mandi-ingredient recipe
+        // off mandiCatalogue, so a failed fetch collapsing silently to [] (the old `.catch(() => [])`
+        // fallback) would price those ingredients at ₹0 and write that straight to the shared
+        // rate_card table, same class of bug inventory's own guard exists for below.
+        applyMandiRows(mandiFetch.rows);
+        // Flower recipe patterns — the `flower_patterns` TABLE (migration 040), same reasoning —
+        // and the same ₹0/unlock risk: a failed fetch must not look like "this recipe has no
+        // pattern", which syncRecipeRatesToStudio would otherwise read as "unlock this item".
+        applyFlowerPatternRows(patternFetch.rows);
         // Labour type config — the `labour_types` TABLE (migration 041), same reasoning.
         applyLabourTypeRows(labourTypeRows);
         // Venue labour config — the `venue_labour_config` TABLE (migration 042), same reasoning.
@@ -1409,11 +1488,15 @@ export default function IMS() {
         // applied its result — only now is it true that each of these tables either genuinely
         // loaded or genuinely failed this session. See safeFetch's own comment for why this can't
         // be done inline per-fetch instead.
-        for (const [t, f] of [["inventory", invFetch], ["functions", fnFetch], ["projects", projFetch], ["purchase_orders", poFetch], ["event_orders", eoFetch], ["truss_allocations", allocFetch], ["platform_allocations", platformAllocFetch], ["batta_allocations", battaAllocFetch], ["settings", setRows], ["blocks", blockFetch]]) {
+        for (const [t, f] of [["inventory", invFetch], ["functions", fnFetch], ["projects", projFetch], ["purchase_orders", poFetch], ["event_orders", eoFetch], ["truss_allocations", allocFetch], ["platform_allocations", platformAllocFetch], ["batta_allocations", battaAllocFetch], ["settings", setRows], ["blocks", blockFetch], ["mandi_flowers", mandiFetch], ["flower_patterns", patternFetch]]) {
           if (f.ok) markTableLoaded(t); else markTableFailed(t);
         }
         if (invFetch.ok) clearSaveProblem("load:inventory");
         else reportInventoryLoadFailed(new Error("Failed to load — the item list may be incomplete until this is retried or the page is reloaded."));
+        if (mandiFetch.ok) clearSaveProblem("load:mandi_flowers");
+        else reportMandiLoadFailed(new Error("Failed to load — Studio recipe pricing is skipped until this is retried or the page is reloaded."));
+        if (patternFetch.ok) clearSaveProblem("load:flower_patterns");
+        else reportFlowerPatternsLoadFailed(new Error("Failed to load — Studio recipe pricing is skipped until this is retried or the page is reloaded."));
         if (fnFetch.ok) clearSaveProblem("load:functions");
         else reportFunctionsLoadFailed(new Error("Failed to load — the functions list may be incomplete until this is retried or the page is reloaded."));
         if (projFetch.ok) clearSaveProblem("load:projects");
