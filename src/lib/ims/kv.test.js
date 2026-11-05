@@ -6,11 +6,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // for small Supabase-backed modules.
 let nextSelectResult = { data: null, error: null };
 let nextUpsertResult = { error: null };
+// A queue drained before falling back to the single nextUpsertResult value — lets a retry test
+// script "fails, fails, succeeds" across writeWithRetry's several attempts for one kvSet/reliableSave call.
+let upsertResultQueue = [];
 vi.mock("../supabase", () => ({
   supabase: {
     from: () => ({
       select: () => ({ eq: () => ({ maybeSingle: async () => nextSelectResult }) }),
-      upsert: async () => nextUpsertResult,
+      upsert: async () => (upsertResultQueue.length ? upsertResultQueue.shift() : nextUpsertResult),
     }),
   },
 }));
@@ -22,6 +25,7 @@ describe("kv.js — a failed read must not let a later save overwrite real data 
   beforeEach(() => {
     nextSelectResult = { data: null, error: null };
     nextUpsertResult = { error: null };
+    upsertResultQueue = [];
   });
 
   it("a successful read, even of a missing row, never blocks a later save", async () => {
@@ -88,4 +92,33 @@ describe("kv.js — a failed read must not let a later save overwrite real data 
     expect(res.error).toMatch(/Empty payload/);
     expect(res.blocked).toBeUndefined();
   });
+
+  it("kvSet retries a flaky upsert (writeWithRetry) and succeeds once the connection recovers", async () => {
+    const key = "flakySet_" + Math.random();
+    nextSelectResult = { data: { value: "loaded" }, error: null };
+    await kvGet(key); // make the key genuinely loaded so kvSet isn't blocked
+    upsertResultQueue = [{ error: { message: "network blip" } }, { error: { message: "network blip" } }, { error: null }];
+    const res = await kvSet(key, { a: 1 });
+    expect(res.ok).toBe(true);
+    expect(upsertResultQueue).toHaveLength(0); // all 3 queued attempts were actually consumed
+  });
+
+  it("reliableSave reports a save-health problem once writeWithRetry exhausts its own attempts", async () => {
+    const key = "exhaustSave_" + Math.random();
+    nextSelectResult = { data: { value: "loaded" }, error: null };
+    await kvGet(key);
+    nextUpsertResult = { error: { message: "down for good" } };
+    const res = await reliableSave(key, JSON.stringify({ a: 1 }), "Flaky Blob");
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/down for good/);
+    const { getSaveProblems, clearSaveProblem } = await import("../saveHealth.js");
+    const problem = getSaveProblems().find((p) => p.id === `write:kv:${key}`);
+    expect(problem).toBeDefined();
+    expect(problem.label).toBe("Flaky Blob");
+    // kv.js blobs are mostly read-merge-write or default-seed writes — `value`/`json` is captured
+    // once, not re-read fresh at retry time, so resending it later (reconnect, or a stray click)
+    // could silently overwrite someone else's change to the same blob made in between. No Retry.
+    expect(problem.retry).toBeUndefined();
+    clearSaveProblem(`write:kv:${key}`);
+  }, 10000);
 });
