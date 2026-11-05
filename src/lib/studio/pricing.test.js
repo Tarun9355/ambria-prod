@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology, pillarCountForSpan, nearestCleanSpans } from "./pricing";
+import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology, pillarCountForSpan, pillarCountForSpanRaw, nearestCleanSpans } from "./pricing";
 
 // §23 Phase 7 (2026-11-04, owner-confirmed worked examples): the sales team pads a zone's entered
 // width/depth themselves by a round 1ft per pillar (easy mental math) BEFORE typing it — a true
@@ -84,6 +84,86 @@ describe("buildTopology — 1ft/pillar budget, stock-resolved beams, footprint =
   });
 });
 
+describe("buildTopology — pole uses the raw span (no 1ft/pillar padding), owner decision 2026-11-05", () => {
+  const poleEng = { maxSpanFt: 15, pillarWidthFt: 0.3 };
+
+  it("owner's worked example, no stock: 16x16x10 box splits every 16ft side into 2x8ft beams, 3 pillar positions per side, 8 distinct pillars total", () => {
+    const topo = buildTopology("full_box", 16, 16, 10, 16, 0, poleEng, undefined, "pole");
+    expect(topo.pillarCount).toBe(8);
+    expect(topo.pillars.every((p) => p.H === 10)).toBe(true);
+    expect(topo.beamCount).toBe(8);
+    expect(topo.beams.map((b) => b.lengthFt)).toEqual([8, 8, 8, 8, 8, 8, 8, 8]);
+    expect(topo.beams.map((b) => b.side)).toEqual([
+      "front-1", "front-2", "back-1", "back-2", "left-1", "left-2", "right-1", "right-2",
+    ]);
+    const pillarIds = topo.pillars.map((p) => p.id);
+    expect(pillarIds).toEqual(expect.arrayContaining(["P-N-mid1", "P-S-mid1", "P-W-mid1", "P-E-mid1"]));
+    expect(topo.physicalL).toBeCloseTo(16 + 3 * 0.3);
+    expect(topo.physicalW).toBeCloseTo(16 + 3 * 0.3);
+    expect(topo.stockResolved).toBe(false);
+  });
+
+  it("same example, with pole stock: resolves cleanly off real 8ft beams", () => {
+    const poleStock = { beams: { 8: { stock: 20 } } };
+    const topo = buildTopology("full_box", 16, 16, 10, 16, 0, poleEng, poleStock, "pole");
+    expect(topo.stockResolved).toBe(true);
+    expect(topo.physicalL).toBeCloseTo(16 + 3 * 0.3);
+  });
+
+  it("control — the SAME dims with iron or aluminium (material omitted or non-pole) keep the padded convention: 2 pillars, one 14ft beam per side", () => {
+    const ironTopo = buildTopology("full_box", 16, 16, 10, 16, 0, poleEng, undefined, "iron");
+    const alumTopo = buildTopology("full_box", 16, 16, 10, 16, 0, poleEng, undefined, "aluminium");
+    [ironTopo, alumTopo].forEach((topo) => {
+      expect(topo.pillarCount).toBe(4); // 4 corners only, no mids
+      expect(topo.beams.map((b) => b.lengthFt)).toEqual([14, 14, 14, 14]);
+    });
+  });
+
+  it("material omitted entirely behaves exactly like iron (back-compat)", () => {
+    const topo = buildTopology("full_box", 16, 16, 10, 16, 0, poleEng, undefined);
+    expect(topo.pillarCount).toBe(4);
+    expect(topo.beams.map((b) => b.lengthFt)).toEqual([14, 14, 14, 14]);
+  });
+
+  it("u_only pole, 14ft: fits in one maxSpan-15 gap, no mid pillar, beam is the raw 14ft (not 12ft)", () => {
+    const topo = buildTopology("u_only", 0, 14, 10, 14, 0, poleEng, realStock, "pole");
+    expect(topo.pillarCount).toBe(2);
+    expect(topo.beams.map((b) => b.lengthFt)).toEqual([14]);
+  });
+
+  it("pillarCountForSpanRaw: smallest N with span/(N-1) <= maxSpan, no padding term", () => {
+    expect(pillarCountForSpanRaw(16, 15)).toBe(3);
+    expect(pillarCountForSpanRaw(15, 15)).toBe(2);
+    expect(pillarCountForSpanRaw(30, 15)).toBe(3);
+    expect(pillarCountForSpanRaw(31, 15)).toBe(4);
+    expect(pillarCountForSpanRaw(0, 15)).toBe(2);
+  });
+
+  it("integration through calcZoneTrussPreview: a pole zone's live cost preview uses the unpadded topology and pole's own rates/stock", () => {
+    const zc = { dims: { L: 16, W: 16, H: 10 }, trussMaterial: "pole" };
+    const trussInv = {
+      settings: { maxSpanFt: 30, pillarWidthFt: 0.75 },
+      pillars: { 10: { stock: 50 } }, beams: { 14: { stock: 50 } },
+      rates: { pillarRftRate: 20, beamRftRate: 15, battaRftRate: 7 },
+      batta: { bufferPct: 10 },
+      materials: {
+        pole: {
+          pillars: { 10: { stock: 50 } }, beams: { 8: { stock: 50 } },
+          settings: { maxSpanFt: 15, pillarWidthFt: 0.3 },
+          rates: { pillarRftRate: 10, beamRftRate: 8 },
+        },
+      },
+    };
+    const out = calcZoneTrussPreview(zc, trussInv);
+    expect(out.topology.pillarCount).toBe(8);
+    expect(out.topology.beams.map((b) => b.lengthFt)).toEqual([8, 8, 8, 8, 8, 8, 8, 8]);
+
+    const ironOut = calcZoneTrussPreview({ ...zc, trussMaterial: "iron" }, trussInv);
+    expect(ironOut.topology.pillarCount).toBe(4);
+    expect(ironOut.topology.beams.map((b) => b.lengthFt)).toEqual([14, 14, 14, 14]);
+  });
+});
+
 describe("nearestCleanSpans — the smart dim tip (owner ask, 2026-11-04, replaces the removed +1ft/pillar hint)", () => {
   const realStockWithPillars = { ...realStock, pillars: { 10: { stock: 20 }, 12: { stock: 20 } } };
   it("16ft typed (owner's own worked example): budget 14ft isn't in stock — suggests 14ft (12ft beam) down and 17ft (15ft beam) up", () => {
@@ -132,6 +212,11 @@ describe("nearestCleanSpans — the smart dim tip (owner ask, 2026-11-04, replac
   });
   it("no beam stock at all: no tip (nothing to suggest)", () => {
     expect(nearestCleanSpans(16, 10, { ...eng, trussInv: { pillars: { 10: { stock: 5 } } } })).toBeNull();
+  });
+  it("pole (owner decision, 2026-11-05): no padding — budget IS the raw typed span, not span-2", () => {
+    const poleStock = { pillars: { 10: { stock: 5 } }, beams: { 15: { stock: 5 }, 12: { stock: 5 } } };
+    const tip = nearestCleanSpans(14, 10, { maxSpanFt: 15, trussInv: poleStock, material: "pole" });
+    expect(tip).toEqual({ pillarCount: 2, down: { span: 12, budget: 12 }, up: { span: 15, budget: 15 } });
   });
 });
 

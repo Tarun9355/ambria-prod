@@ -59,7 +59,7 @@ export const buildEventBattaAllocation = (eventMeta, fnList, trussInv) => {
       const H = parseFloat(zc.dims?.H) || 0;
       const spanFt = layer0.spanFt || (layer0.source === "auto-3dim" ? Math.max(L, W) : 0);
       const backDepth = zc.trussBackDepth || eng.defaultBackDepthFt || 4;
-      const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng);
+      const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng, undefined, mat);
       const rft = topologyRft(topology);
       if (rft <= 0) return;
       const withBuffer = rft * (1 + battaBufferPct(trussInv, mat) / 100);

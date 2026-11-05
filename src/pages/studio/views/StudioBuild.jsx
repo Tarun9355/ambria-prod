@@ -339,7 +339,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 const tips = [["W", "Width"], ["L", "Depth"]].map(([d, label]) => {
                   const val = Number(zc.dims?.[d]) || 0;
                   if (!val) return null;
-                  const tip = nearestCleanSpans(val, H, { maxSpanFt: eng.maxSpanFt, trussInv: matInv, piecesNeeded });
+                  const tip = nearestCleanSpans(val, H, { maxSpanFt: eng.maxSpanFt, trussInv: matInv, piecesNeeded, material: zc.trussMaterial });
                   if (!tip || (!tip.down && !tip.up)) return null;
                   return { d, label, val, ...tip };
                 }).filter(Boolean);

@@ -11,9 +11,9 @@ import { CARPET_OFF, trussRateFor, maskingRateFor, trussBaseArea } from "./taxon
 import { priceForInvItem } from "../ims/helpers.js";
 // builtBeamTotal resolves a beam segment's budget target against real stock — see buildTopology
 // below for how it's used.
-import { builtBeamTotal, PILLAR_BUDGET_FT, resolvePillarHeight, resolveBeamSegment } from "../ims/trussEngine.js";
+import { builtBeamTotal, PILLAR_BUDGET_FT, resolvePillarHeight, resolveBeamSegment, pillarCountForSpanRaw, materialHasSpanPadding } from "../ims/trussEngine.js";
 import { platformAvgRatePerSqft } from "../ims/platformEngine.js";
-export { resolveMandiFlower };
+export { resolveMandiFlower, pillarCountForSpanRaw };
 
 // One shared resolver for "is THIS pricing category of a zone repeat-discounted". Build's own
 // per-zone ✨Fresh/♻️Repeat toggle (zc.repeat) sets the DEFAULT for every category at once;
@@ -190,14 +190,17 @@ export const pillarCountForSpan = (spanLen, maxSpan = 30) => Math.max(2, Math.ce
 // need its own clean size, and pillar count itself could shift too, which this doesn't attempt), the
 // pillars for this height can't be assembled from stock at all (no beam choice fixes that), or the
 // typed value already builds clean (per the tolerant check above).
-export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piecesNeeded = 1 } = {}) {
+export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piecesNeeded = 1, material } = {}) {
   const span = Number(typedSpan) || 0;
   if (span <= 0 || !trussInv?.beams) return null;
   if (resolvePillarHeight(Number(H) || 0, trussInv).shortage) return null;
-  const pillarCount = pillarCountForSpan(span, maxSpanFt);
+  const padded = materialHasSpanPadding(material);
+  const pad = padded ? PILLAR_BUDGET_FT : 0;
+  const countFor = (s) => padded ? pillarCountForSpan(s, maxSpanFt) : pillarCountForSpanRaw(s, maxSpanFt);
+  const pillarCount = countFor(span);
   if (pillarCount !== 2) return null; // 2+ gaps: see comment above
-  const budget = span - pillarCount * PILLAR_BUDGET_FT;
-  const toSpan = (b) => b + pillarCount * PILLAR_BUDGET_FT;
+  const budget = span - pillarCount * pad;
+  const toSpan = (b) => b + pillarCount * pad;
   const stockOf = (size) => Number(trussInv.beams[String(size)]?.stock) || 0;
 
   // Already builds from one clean piece, so there's nothing to suggest — resolveBeamSegment's own
@@ -227,7 +230,7 @@ export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piec
     const upSpan = toSpan(b);
     // Stop once a larger budget would itself need a middle pillar — this tip only ever compares
     // single-beam options at the SAME pillar count it started from.
-    if (pillarCountForSpan(upSpan, maxSpanFt) !== pillarCount) break;
+    if (countFor(upSpan) !== pillarCount) break;
     if (stockOf(b) >= piecesNeeded) { up = { span: upSpan, budget: b }; break; }
   }
   if (!down && !up) return null;
@@ -249,14 +252,20 @@ export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piec
 // subtraction both need to exist, just using two different numbers (1ft for the mental math, 0.75ft
 // for the real footprint). `trussInv` (optional, 8th arg) is the real beam stock to resolve
 // against; omitted, physical falls back to the theoretical budget target.
-export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, trussInv) => {
+// `material` (optional, 9th arg) — Pole skips this whole padding convention (owner decision,
+// 2026-11-05): a Pole zone's entered span is already the raw, true needed width, with no team
+// mental-padding baked in. Omitted, or anything other than "pole", behaves exactly as before — see
+// materialHasSpanPadding/pillarCountForSpanRaw (trussEngine.js).
+export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, trussInv, material) => {
   if (!config || !H || H <= 0) return null;
   const eng = engSettings || {};
   const maxSpan = eng.maxSpanFt || 30;
   const pillarWidth = eng.pillarWidthFt || 0.75;        // physical width — the real footprint/masking math, not the budget above
   const depth = backDepth || eng.defaultBackDepthFt || 4;
+  const padded = materialHasSpanPadding(material);
+  const padPerPillar = padded ? PILLAR_BUDGET_FT : 0;
 
-  const pillarCountForThisSpan = (spanLen) => pillarCountForSpan(spanLen, maxSpan);
+  const pillarCountForThisSpan = (spanLen) => padded ? pillarCountForSpan(spanLen, maxSpan) : pillarCountForSpanRaw(spanLen, maxSpan);
   // Split total beam length into per-segment lengths (one per pillar-gap)
   const splitBeamSegments = (totalBeamLen, segments) => {
     if (segments <= 0 || totalBeamLen <= 0) return [];
@@ -267,7 +276,7 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, t
   // number every re-resolving consumer already calls resolveBeamSegment on) → stock-resolved
   // built total → physical footprint.
   const axisOf = (span, pillarCount) => {
-    const budget = Math.max(0, span - pillarCount * PILLAR_BUDGET_FT);
+    const budget = Math.max(0, span - pillarCount * padPerPillar);
     const segLens = splitBeamSegments(budget, pillarCount - 1);
     const { total: built, resolved } = builtBeamTotal(segLens, trussInv);
     const physical = built + pillarCount * pillarWidth;
@@ -432,7 +441,7 @@ export const calcZoneTrussPreview = (zc, trussInv) => {
   const H = parseFloat(zc.dims?.H) || 0;
   const spanFt = layer0.spanFt || (layer0.source === "auto-3dim" ? Math.max(L, W) : 0);
   const backDepth = zc.trussBackDepth || eng.defaultBackDepthFt || 4;
-  const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng, trussInv);
+  const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng, trussInv, zc?.trussMaterial);
   if (!topology) { out.warnings.push("Topology failed — check dimensions"); return out; }
   out.topology = topology;
 
@@ -461,7 +470,7 @@ export const calcZoneTrussPreview = (zc, trussInv) => {
   const uSpan = layer0.config === "u_only" ? spanFt
               : layer0.config === "half_box" ? spanFt
               : Math.max(L, W);
-  const uTopo = buildTopology("u_only", L, W, H, uSpan, backDepth, eng);
+  const uTopo = buildTopology("u_only", L, W, H, uSpan, backDepth, eng, undefined, zc?.trussMaterial);
   const uPillarRft = uTopo ? sumPillarRft(uTopo.pillars) : 0;
   const uBeamRft   = uTopo ? sumBeamRft(uTopo.beams)   : 0;
   const uEquivalent = uPillarRft * pillarRftRate + uBeamRft * beamRftRate;
@@ -470,7 +479,7 @@ export const calcZoneTrussPreview = (zc, trussInv) => {
   // For 2-dim cases, use a conservative box: span x backDepth
   const boxL = (L > 0 ? L : spanFt);
   const boxW = (W > 0 ? W : (layer0.config === "half_box" ? backDepth : backDepth));
-  const boxTopo = buildTopology("full_box", boxL, boxW, H, Math.max(boxL, boxW), backDepth, eng);
+  const boxTopo = buildTopology("full_box", boxL, boxW, H, Math.max(boxL, boxW), backDepth, eng, undefined, zc?.trussMaterial);
   const boxPillarRft = boxTopo ? sumPillarRft(boxTopo.pillars) : 0;
   const boxBeamRft   = boxTopo ? sumBeamRft(boxTopo.beams)   : 0;
   const boxEquivalent = boxPillarRft * pillarRftRate + boxBeamRft * beamRftRate;

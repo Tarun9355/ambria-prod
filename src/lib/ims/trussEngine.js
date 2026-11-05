@@ -218,6 +218,17 @@ export const resolveTrussConfig = (zc) => {
 // a hardcoded constant, not an admin setting (avoids a stale saved pillarBudgetFt value silently
 // overriding it — nothing in Admin edits this field).
 export const PILLAR_BUDGET_FT = 1;
+
+// Owner decision, 2026-11-05: Pole trusses are dimensioned differently from Iron/Aluminium — a Pole
+// zone's entered span is the RAW, TRUE needed width with no team mental-padding baked in at all
+// (unlike Iron/Aluminium, which keep the §23 Phase 7 "+1ft per pillar" convention above). So Pole
+// skips the padding-subtraction step entirely: the full entered span IS the beam budget, split
+// across however many segments keep each one within Pole's own maxSpanFt.
+export const materialHasSpanPadding = (material) => String(material || "iron").toLowerCase() !== "pole";
+// Smallest pillar count N where splitting the RAW span across N-1 gaps keeps each gap within
+// maxSpan — no padding subtracted first, unlike the padded formula (pricing.js's exported
+// pillarCountForSpan, and this file's own buildTopology-local closure of the same name below).
+export const pillarCountForSpanRaw = (spanLen, maxSpan = 30) => Math.max(2, Math.ceil(spanLen / maxSpan) + 1);
 // Resolves each segment's budget-target length against REAL beam stock to get what will actually
 // get built, which isn't always the theoretical target: a 22.5ft target with only 15/12/10/8ft
 // stock on hand builds as 12+10=22ft, not 22.5 (used stock purely illustrative — whatever's in
@@ -260,12 +271,17 @@ export const builtBeamTotal = (segLens, trussInv) => {
 // exist, just using two different numbers (1ft for the mental math, 0.75ft for the real footprint).
 // `trussInv` (optional, 8th arg) is the real beam stock to resolve against; omitted, physical falls
 // back to the theoretical budget target (every existing call site keeps working unchanged).
-export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, trussInv) => {
+// `material` (optional, 9th arg) gates the §23 Phase 7 padding convention — omitted, or anything
+// other than "pole", behaves exactly as before. Pole uses pillarCountForSpanRaw/no padding instead
+// (see materialHasSpanPadding's own comment, owner decision 2026-11-05).
+export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, trussInv, material) => {
   if (!config || !H || H <= 0) return null;
   const eng = engSettings || {};
   const maxSpan = eng.maxSpanFt || 30;
   const pillarWidth = eng.pillarWidthFt || 0.75;        // physical width — the real footprint/masking math, not the budget above
   const depth = backDepth || eng.defaultBackDepthFt || 4;
+  const padded = materialHasSpanPadding(material);
+  const padPerPillar = padded ? PILLAR_BUDGET_FT : 0;
   // Pillar count must be based on the TRUE span, not the padded span sales types in (the team's own
   // 1ft/pillar mental-math convention) — otherwise a true ~29ft span typed as 31ft could cross
   // maxSpan and gain an unwanted extra middle pillar it doesn't actually need (owner decision,
@@ -276,7 +292,11 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, t
   // re-estimated the true span from that guess and re-counted, which oscillates forever right at a
   // threshold (e.g. a 33ft span flipping between 2 and 3 pillars depending on which iteration it
   // stopped on) and can land on an unsafe under-count if the iteration cap happens to be odd.
-  const pillarCountForSpan = (spanLen) => Math.max(2, Math.ceil((spanLen + maxSpan) / (maxSpan + PILLAR_BUDGET_FT)));
+  // Pole has no such padding to account for (owner decision, 2026-11-05) — pillarCountForSpanRaw
+  // instead finds the smallest N where the RAW span splits into N-1 gaps each within maxSpan.
+  const pillarCountForSpan = (spanLen) => padded
+    ? Math.max(2, Math.ceil((spanLen + maxSpan) / (maxSpan + PILLAR_BUDGET_FT)))
+    : pillarCountForSpanRaw(spanLen, maxSpan);
   // Split total beam length into per-segment lengths (one per pillar-gap)
   const splitBeamSegments = (totalBeamLen, segments) => {
     if (segments <= 0 || totalBeamLen <= 0) return [];
@@ -287,7 +307,7 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, t
   // number every re-resolving consumer already calls resolveBeamSegment on) → stock-resolved
   // built total → physical footprint.
   const axisOf = (span, pillarCount) => {
-    const budget = Math.max(0, span - pillarCount * PILLAR_BUDGET_FT);
+    const budget = Math.max(0, span - pillarCount * padPerPillar);
     const segLens = splitBeamSegments(budget, pillarCount - 1);
     const { total: built, resolved } = builtBeamTotal(segLens, trussInv);
     const physical = built + pillarCount * pillarWidth;
@@ -576,6 +596,37 @@ export const computeEventTrussTotals = (trusses) => {
   return totals;
 };
 
+// Mirror of pricing.js's trussInvForMaterial — duplicated, not imported, because lib/ims does not
+// depend on lib/studio (same convention as battaEngine.js's engForMaterial / platformEngine.js's
+// platformsForMaterial). Keep in sync with pricing.js if either changes.
+//
+// Resolves a material-specific view of the truss inventory (pillars/beams/rates/settings per
+// material; liza + fabric factors stay SHARED at the top level = Iron). Iron reads the top-level
+// object. Pole/Aluminium read trussInv.materials[mat] — the pillar/beam skeleton falls back to Iron
+// until that material has any pillars configured, so an un-filled material never breaks allocation.
+// Confirmed bug this closes (found 2026-11-05): buildEventAllocation below used to read
+// trussInv.settings unconditionally, so a Pole/Aluminium zone's production allocation was computed
+// with Iron's maxSpanFt/pillarWidthFt and resolved against Iron's own beam/pillar stock — never
+// touching that material's own configured stock at all.
+const trussInvForMaterialIms = (trussInv, material) => {
+  if (!trussInv) return trussInv;
+  const mat = String(material || "iron").toLowerCase();
+  if (mat === "iron") return trussInv;
+  const m = trussInv.materials && trussInv.materials[mat];
+  const batta = m?.batta != null ? m.batta : trussInv.batta;
+  const platforms = Array.isArray(m?.platforms) ? m.platforms : trussInv.platforms;
+  if (!m || !m.pillars || Object.keys(m.pillars).length === 0) return { ...trussInv, batta, platforms }; // skeleton not configured yet → Iron
+  return {
+    ...trussInv,                                                   // shared: liza, fabricFactors, fabricFreshMarkup, lizaStock…
+    pillars: m.pillars || {},                                     // per-material skeleton
+    beams: m.beams || {},
+    rates: { ...(trussInv.rates || {}), ...(m.rates || {}) },     // per-material pillar/beam/batta rates
+    settings: { ...(trussInv.settings || {}), ...(m.settings || {}) },
+    batta,
+    platforms,
+  };
+};
+
 // ─── Layer 4.2 — Build event allocation from EO ────────
 // Iterates zones in the event, runs Layer 1+2+3 for each, returns event entry.
 // Caller passes the dimensions/configs source (EO.functionsDetail OR draft from Studio).
@@ -595,15 +646,17 @@ export const buildEventAllocation = (eventMeta, fnList, trussInv) => {
       if (enabledEls && Object.keys(enabledEls).length > 0 && !enabledEls[zoneKey]) return;
       const layer0 = resolveTrussConfig(zc);
       if (!layer0 || layer0.source === "none" || layer0.source === "invalid") return;
-      const eng = trussInv?.settings || {};
+      const mat = String(zc.trussMaterial || "iron").toLowerCase();
+      const matInv = trussInvForMaterialIms(trussInv, mat);
+      const eng = matInv?.settings || {};
       const L = parseFloat(zc.dims?.L) || 0;
       const W = parseFloat(zc.dims?.W) || 0;
       const H = parseFloat(zc.dims?.H) || 0;
       const spanFt = layer0.spanFt || (layer0.source === "auto-3dim" ? Math.max(L, W) : 0);
       const backDepth = zc.trussBackDepth || eng.defaultBackDepthFt || 4;
-      const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng, trussInv);
+      const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng, matInv, mat);
       if (!topology) return;
-      const alloc = allocateTruss(`${fn.fnIdx || 0}-${zoneKey}`, topology, trussInv);
+      const alloc = allocateTruss(`${fn.fnIdx || 0}-${zoneKey}`, topology, matInv);
       if (!alloc) return;
       if (alloc.shortage) {
         anyShortage = true;
@@ -613,6 +666,7 @@ export const buildEventAllocation = (eventMeta, fnList, trussInv) => {
         fnIdx: fn.fnIdx ?? 0,
         zoneKey,
         trussConfig: layer0.config,
+        trussMaterial: mat,
         allocation: alloc,
         shortage: !!alloc.shortage,
         // §2.5.1 corollary (28 May 2026) — carry the requirement forward so dept head
