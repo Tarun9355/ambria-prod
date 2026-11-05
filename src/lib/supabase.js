@@ -41,7 +41,17 @@ export const fetchAll = async (table) => {
   const rows = [];
   for (let from = 0; ; from += PAGE) {
     const { data: page, error: pageErr } = await supabase.from(table).select("*").order("id", { ascending: true }).range(from, from + PAGE - 1);
-    if (pageErr) { console.warn(`[fetchAll] paging ${table} failed, keeping the first ${data.length} rows:`, pageErr.message); return data; }
+    if (pageErr) {
+      // Used to log a warning and silently return just the first page (data.length rows) here — a
+      // table over 1000 rows whose SECOND+ page failed to load would come back looking like a
+      // completely successful fetch of an incomplete table, not a failure: every one of Phase 0's
+      // load-failure guards (safeFetch, kvTryGet, a bare .catch(() => [])) only reacts to a THROWN
+      // error, so none of them would have caught this — the caller would have happily treated 1000
+      // of (say) inventory's 1060 real rows as "the whole table, genuinely loaded," and a write built
+      // from that truncated snapshot could silently drop the other 60. Throwing routes this through
+      // the exact same failure handling a network error already gets.
+      throw new Error(`[fetchAll] paging ${table} failed after ${rows.length + data.length} of an unknown total rows: ${pageErr.message}`);
+    }
     rows.push(...(page || []));
     if (!page || page.length < PAGE) break;
   }
