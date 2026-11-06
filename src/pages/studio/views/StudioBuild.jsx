@@ -1388,9 +1388,9 @@ export default function StudioBuild({ ctx }) {
         // Short only when the live stock check says so - the same rule as the card's own "⚠ short" badge. A held "asked for more"
         // (wantedQty) on its own was counted too, so a tile kept saying short after the item was swapped for one with stock.
         let warned = false;
-        try { warned = !!getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx, crossFnReusePool: pool }, aVenue)?.warning; } catch { /* price check failed: not counted */ }
+        try { const pi = getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx, crossFnReusePool: pool }, aVenue); warned = !!pi?.warning && !pi?.madeToOrder; } catch { /* price check failed: not counted */ }
         // a kit with a part short on the date counts too (kitPartShorts, StudioApp.jsx)
-        if (!warned && kitPartShorts) { try { warned = kitPartShorts(el, { zoneKey: k, elIdx: idx }).length > 0; } catch { /* not counted */ } }
+        if (!warned && kitPartShorts) { try { warned = kitPartShorts(el, { zoneKey: k, elIdx: idx }).some((p) => !p.canMake); } catch { /* not counted */ } }
         return a + (warned ? 1 : 0);
       }, 0);
       // Overlays and cushion covers (also as parts of a kit) with no alternative designs named: said on the tile too, in red, so it shows without opening the card.
@@ -5035,7 +5035,8 @@ undefined
                   const priceInfo = getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx, crossFnReusePool: zonePool }, aVenue);
                   // Parts of this kit short on the date (a cushion cover booked out elsewhere) - the kit's own stock check above
                   // never looks inside it. Shown as a badge here and against each part in the kit's list below.
-                  const kitShort = isKit && el.invId && kitPartShorts ? kitPartShorts(el, { zoneKey: k, elIdx: idx }) : [];
+                  // a part production can make is made to order, not short - only the parts that can't be made are flagged
+                  const kitShort = isKit && el.invId && kitPartShorts ? kitPartShorts(el, { zoneKey: k, elIdx: idx }).filter(p => !p.canMake) : [];
                   const kitShortOut = kitShort.some(p => !p.canMake);
                   const rc = priceInfo.rc;
                   const hasSizes = rcIsSMB(rc);
@@ -5117,7 +5118,8 @@ undefined
                     const sk = resolveSizeKey(floralPattern.sizes, sizeClassToPatternKey(s));
                     return sk ? floralPattern.sizes[sk]?.img : null;
                   };
-                  const isUnavail = !!el.invId && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
+                  // A "Can be made" item short on the date is made to order, not short - no red name, no "⚠ short" (priceInfo.madeToOrder)
+                  const isUnavail = !!el.invId && !priceInfo.madeToOrder && typeof priceInfo.available==="number" && priceInfo.available<=0 && (el.qty||0)>0;
                   // Ceiling on this row's quantity: what stock covers on the date (priceInfo.maxQty; null for an item
                   // the studio owns none of, which is made to order). The message names the real number.
                   // A count of things (Pieces, Set, pc…) is a whole number — there is no 3.5 WARM LED. Measures (sqft, rft, kg) may be fractional.
@@ -5168,7 +5170,7 @@ undefined
                             telling the salesperson "short" against stock that's free again (confirmed on a real
                             deal: Manaktala stock freed up, the live cap moved, and this badge kept showing). */}
                         {el.invId&&(el.wantedQty||0)>(el.qty||0)&&priceInfo.warning&&<span title={`Asked for ${el.wantedQty}, only ${el.qty} available for this date — held at ${el.qty}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short · {el.wantedQty} asked</span>}
-                        {el.invId&&priceInfo.warning&&<span title={priceInfo.shortWhy?`${priceInfo.warning}\n\n${priceInfo.shortWhy}`:priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>{priceInfo.outOfStock?"⚠ out of stock":"⚠ short"}</span>}
+                        {el.invId&&priceInfo.warning&&!priceInfo.madeToOrder&&<span title={priceInfo.shortWhy?`${priceInfo.warning}\n\n${priceInfo.shortWhy}`:priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>{priceInfo.outOfStock?"⚠ out of stock":"⚠ short"}</span>}
                         {kitShort.length>0&&<span title={`Short for this date inside this kit:\n${kitShort.map(p=>`${p.name}: ${p.short} of ${p.need} short${p.canMake?" (production can make it)":" (can't be made, pick another part)"}`).join("\n")}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:kitShortOut?"rgba(239,68,68,0.15)":"rgba(245,158,11,0.15)",color:kitShortOut?"#EF4444":"#B45309",fontWeight:700}}>⚠ {kitShort.length} part{kitShort.length===1?"":"s"} short</span>}
                         {(rc||el.invId)&&<span onClick={()=>((!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))||(()=>openAvailModal(k, idx, el, rc)))()} title={(!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))?`Check what is free and name up to ${ELEMENT_PREF_MAX} ${/cover/i.test(invItem?.name||"")?"cushion cover":"overlay"} designs in order of preference - Planning decides which one is used`:_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}
                         {/* Exchange Kit - only on an item with more than one kit; names the kit the element is on */}
