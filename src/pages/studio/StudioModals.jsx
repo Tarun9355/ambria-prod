@@ -285,6 +285,23 @@ export default function StudioModals({ ctx }) {
                 {availModal.neededLabel && (
                   <div style={{fontSize:11,color:accent,marginTop:3,fontWeight:600}}>{availModal.neededLabel}</div>
                 )}
+                {/* Who else has this item on the date - the client, the salesperson who sold it and the venue - so a short item says
+                    whose event took the stock (StudioApp holdersOnDate). This deal's own reservation is never listed. */}
+                {Array.isArray(availModal.heldBy) && availModal.heldBy.length > 0 && (
+                  <div style={{marginTop:8,padding:"8px 10px",borderRadius:8,background:"rgba(239,68,68,0.07)",border:"1px solid rgba(239,68,68,0.25)",maxWidth:560}}>
+                    <div style={{fontSize:11,fontWeight:700,color:"#B91C1C",marginBottom:4}}>{availModal.elName} is booked on {availModal.date || "this date"} by:</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                      {availModal.heldBy.map((h, i) => (
+                        <div key={i} style={{fontSize:11.5,color:textP,lineHeight:1.4,overflowWrap:"anywhere"}}>
+                          <b>{h.client}</b>{h.cancelled ? <span style={{color:"#B91C1C",fontWeight:700}}> (cancelled - not released)</span> : null}
+                          {h.salesperson ? <span style={{color:textS}}> · {h.salesperson}</span> : null}
+                          {h.venue ? <span style={{color:textS}}> · {h.venue}</span> : null}
+                          <span style={{color:"#B91C1C",fontWeight:700}}> · {h.qty}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
                 {/* Paint — hands off to the element's existing paint-allocation picker (the same one

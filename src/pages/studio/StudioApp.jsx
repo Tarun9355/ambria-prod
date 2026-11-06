@@ -5188,6 +5188,32 @@ export default function StudioApp() {
   // event", the choices picker): this deal's OWN reservation netted back out, as the price check does - the raw blocks counted a
   // sold deal's own chandeliers against itself, so the search said "0 free" for stock reserved for this very event. why: who holds
   // the rest (kept at fixed venues, blocked in IMS, booked by which event), for the badge's hover.
+  // Who has an item booked on a date, other than this deal: [{ client, salesperson, venue, qty }] - for the availability picker's
+  // header, so a salesperson whose item is short sees whose event took it, sold by whom, at which venue (owner ask 2026-11-06).
+  // The venue is that order's own function on the date (functionsDetail), else the order's venue; the salesperson is who sold it,
+  // else who created the client.
+  const holdersOnDate = useCallback((itemId, date, blocksDetailForDate) => {
+    if (!itemId || !date) return [];
+    const eo = eventOrderFor(eventOrders, activeClientId, clientName);
+    const own = new Set([eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)].filter(Boolean));
+    const byEvent = new Map();
+    (blocksDetailForDate?.[itemId] || []).forEach((b) => {
+      if (!b || own.has(b.eventId) || !(Number(b.qty) > 0)) return;
+      byEvent.set(b.eventId, (byEvent.get(b.eventId) || 0) + Number(b.qty));
+    });
+    return [...byEvent.entries()].map(([eventId, qty]) => {
+      const o = (eventOrders || []).find((x) => x.id === eventId) || null;
+      const cli = o ? (clientLedger || []).find((c) => c && c.id === o.clientId) : null;
+      const fd = (Array.isArray(o?.functionsDetail) ? o.functionsDetail : []).find((f) => String(f?.fnDate || f?.date || "") === date);
+      return {
+        client: o?.clientName || cli?.name || "Unknown event",
+        cancelled: o?.status === "cancelled",
+        salesperson: o?.salesperson || cli?.bookedBy || cli?.createdBy || "",
+        venue: fd?.fnVenue || fd?.venue || o?.venue || cli?.venue || "",
+        qty,
+      };
+    }).sort((a, b) => b.qty - a.qty);
+  }, [eventOrders, activeClientId, clientName, clientLedger]);
   const freeOnActiveDate = useCallback((it) => {
     if (!it) return { free: 0, why: "" };
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
@@ -11691,6 +11717,9 @@ export default function StudioApp() {
       multi: opts?.multi ? { max: Number(opts.multi.max) || 3, need: Number(opts.multi.need) || 0, onSave: opts.multi.onSave || null, onSaveAll: opts.multi.onSaveAll || null, saveAllTitle: opts.multi.saveAllTitle || "", noun: opts.multi.noun || "", needNoun: opts.multi.needNoun || "" } : null, multiIds: Array.isArray(opts?.multi?.current) ? opts.multi.current : [], multiNote: "" });
     try {
       const { inventory, blocksForDate, blocksDetailForDate } = await loadAvailability(date);
+      // whose events hold the opened item that date - the header names them (holdersOnDate)
+      const heldBy = invItem ? holdersOnDate(invItem.id, date, blocksDetailForDate) : [];
+      setAvailModal(m => (m && m.reqId === reqId) ? { ...m, heldBy } : m);
       const target = String(subcat).toLowerCase().trim();
       const pickerVenue = activeFnMeta?.venue || venue || "";
       // Net THIS deal's own already-reserved stock out of blocksForDate, same as
@@ -11839,7 +11868,7 @@ export default function StudioApp() {
       prefetchImages(items.map(i => i.photo && thumbUrl(i.photo, AVAIL_THUMB)), { concurrency: 8 });
       setAvailModal(m => (m && m.reqId === reqId && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => (m && m.reqId === reqId) ? { ...m, loading: false } : m); }
-  }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData, collectAllFunctionData, activeFnIdx, eventOrders, activeClientId, clientName]);
+  }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData, collectAllFunctionData, activeFnIdx, eventOrders, activeClientId, clientName, holdersOnDate]);
   // Opens the availability picker straight from the pre-Sold out-of-stock gate (StudioModals.jsx's
   // oosGateModal), for a flagged row {fnIdx, zoneKey, idx, invId, name} — instead of the old "Go
   // fix" that only switched tabs and left the salesperson to find the element by hand.
