@@ -1,4 +1,5 @@
-import React, { useState, useRef, useMemo } from "react";
+import React, { useState, useRef, useMemo, useEffect } from "react";
+import { supabase, fetchAll } from "../../lib/supabase";
 import { DEFAULT_KIT_ID, normKitParts } from "../../lib/studio/kitVariants";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { Badge, TypeBadge, Modal } from "../../components/ui";
@@ -8,7 +9,7 @@ import { findAlternatives, getEffectivePricing, resolveDateCategory } from "../.
 import { DATE_PRICING_LABELS, hasIMSPerm } from "../../lib/ims/constants";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { callClaudeStreaming } from "../../lib/ai";
-import { locationBreakdown } from "../../lib/ims/fixedVenues";
+import { locationBreakdown, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
 import { studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { itemDimsText } from "../../lib/ims/helpers";
 import { catToDept, canSeeDept } from "../../lib/ims/deptClassify";
@@ -178,6 +179,21 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   // ── Edit Item state ──────────────────────────────────────────────────────
   const [editModal, setEditModal] = useState(null); // item id being edited, or null
   const [editForm, setEditForm] = useState({});
+  // The Fixed Venues - the `fixed_venues` TABLE (migration 038), loaded live, as Dept Ops does. The LOCATION column read IMS's
+  // settings.fixedVenues, the old copy nothing writes any more, so a standing-stock change made in the Fixed Venues editor never
+  // showed here (owner report 2026-11-06: locations changed the day before, the list still showed the old ones).
+  const [fvRows, setFvRows] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => { const rows = await fetchAll("fixed_venues").catch(() => null); if (!cancelled && rows) setFvRows(rows); };
+    load();
+    const ch = supabase.channel("realtime:fixed_venues:inventory")
+      .on("postgres_changes", { event: "*", schema: "public", table: "fixed_venues" }, load)
+      .subscribe();
+    return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
+  // until the table answers, the old copy (never an empty list, which would hide every 🏛 row for a moment)
+  const fvSettings = useMemo(() => (fvRows ? { ...(settings || {}), fixedVenues: assembleFixedVenuesFromRows(fvRows) } : settings), [settings, fvRows]);
   const [editPhotoUploading, setEditPhotoUploading] = useState(false);
   const editPhotoInputRef = useRef(null);
   const [bigImg, setBigImg] = useState(null); // full-size inventory photo preview
@@ -1038,7 +1054,7 @@ Rules:
                       }
                     </td>
                     <td className="px-2.5 py-2 text-amber-700" title={availDate && dateBlock?.fns[i.id] ? dateBlock.fns[i.id].map((x) => `${x.qty}× → ${x.name}`).join("\n") : ""}>{blockedOf(i)}{availDate && blockedOf(i) > 0 ? <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-sky-500 align-middle" title={"blocked on " + availDate} /> : null}</td>
-                    <td className="px-2.5 py-2 text-gray-500">{(() => { const b = locationBreakdown(settings, i); if (b.length <= 1) return b[0]?.loc || i.loc || "—"; return <div className="space-y-0.5">{b.map((x, k) => <div key={k} className="text-xs whitespace-nowrap">{x.fixed && <span title="Installed / standing at this venue">🏛️ </span>}{x.loc}: <b className="text-gray-700">{x.qty}</b></div>)}</div>; })()}</td>
+                    <td className="px-2.5 py-2 text-gray-500">{(() => { const b = locationBreakdown(fvSettings, i); if (b.length <= 1) return b[0]?.loc || i.loc || "—"; return <div className="space-y-0.5">{b.map((x, k) => <div key={k} className="text-xs whitespace-nowrap">{x.fixed && <span title="Installed / standing at this venue">🏛️ </span>}{x.loc}: <b className="text-gray-700">{x.qty}</b></div>)}</div>; })()}</td>
                     <td className="px-2 py-2 align-top">
                       {i.price ? (() => {
                         const dp = settings?.datePricing;
