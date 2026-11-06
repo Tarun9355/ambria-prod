@@ -1021,7 +1021,8 @@ Rules:
                       }
                     </td>
                     <td className="px-2.5 py-2">
-                      <p className="font-medium text-gray-900">{i.name}</p>
+                      {/* 🎨 Paint: the item's Paintable toggle is on (Edit → "This item can be painted") - Build can order it painted */}
+                      <p className="font-medium text-gray-900">{i.name}{i.paintable === true && <span title={`Paintable${i.baseColour ? ` - base colour ${i.baseColour}` : ""}`} className="ml-2 inline-flex items-center gap-0.5 align-middle px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-pink-50 text-pink-700 border border-pink-200 whitespace-nowrap">🎨 Paint</span>}</p>
                       <p className="text-xs text-gray-400">{i.code || i.id} · {i.unit}{i.size ? ` · ${i.size}` : ""}</p>
                     </td>
                     <td className="px-2.5 py-2"><TypeBadge type={i.type} /></td>
