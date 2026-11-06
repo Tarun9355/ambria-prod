@@ -31,7 +31,7 @@ import StudioSummary from "./views/StudioSummary.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, lockedAtFixedVenues, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { allocateForDate, buildEventAllocation } from "../../lib/ims/trussEngine";
 import { allocatePlatformForDate, buildEventPlatformAllocation } from "../../lib/ims/platformEngine";
@@ -5121,6 +5121,22 @@ export default function StudioApp() {
       // An item ticked "Can be made" in IMS Inventory is not capped either (owner ask 2026-11-06): production makes whatever stock
       // does not cover, so Build takes any quantity - free or not. The part past stock is still marked short and priced at cost%.
       const maxQty = Number(item.qty) > 0 && item.canBeMade !== true ? rowMaxQty + crossFnTake : null;
+      // Why it is short, for the card's "⚠ short" hover: where the stock is - kept at fixed venues, blocked in IMS, booked by
+      // another event that date, or used elsewhere in this deal - so a short with no event on the calendar explains itself.
+      const shortWhy = shortQty > 0 ? (() => {
+        const total = Number(item.qty) || 0;
+        const fixed = lockedAtFixedVenues(fvCfgForRepeat, opts?.venueName, item);
+        const fixedQ = fixed.reduce((t, f) => t + f.qty, 0);
+        const imsBlocked = Number(item.blocked) || 0;
+        const booked = Number((blocksForDate || {})[item.id]) || 0;
+        const inDeal = Math.max(0, Math.floor(otherEventsAvail) - ownedQty);
+        return [`Stock: ${total}`,
+          fixedQ > 0 ? `Kept at fixed venues: ${fixedQ} (${fixed.map((f) => `${f.name} ${f.qty}`).join(", ")})` : "",
+          imsBlocked > 0 ? `Blocked in IMS (all dates): ${imsBlocked}` : "",
+          booked > 0 ? `Booked by other events this date: ${booked}` : "",
+          inDeal > 0 ? `Used in this deal's other rows this date: ${inDeal}` : "",
+          `Free for this row: ${ownedQty} of ${qty}`].filter(Boolean).join("\n");
+      })() : "";
       const warning = shortQty > 0 ? (outOfStock ? `⚠ ${shortQty} of ${qty} out of stock for this date — pick an alternative` : `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%`) : null;
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
       // consumer (StudioBuild.jsx's isUnavail badge) only ever checks <= 0, which ownedQty matches
@@ -5133,7 +5149,7 @@ export default function StudioApp() {
       // item that ever took this availability-checked path — which is every element card in Build.
       // shortCost (raw, pre-date-multiplier) — getElPrice's own wrapper reads this to keep the
       // date-category multiplier off a true shortfall's cost-basis price (see its own comment).
-      return { rc: null, unitPrice, fullUnitPrice: ownedRate, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty, shortCost, outOfStock, maxQty };
+      return { rc: null, unitPrice, fullUnitPrice: ownedRate, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty, shortCost, outOfStock, maxQty, shortWhy };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
     return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null };

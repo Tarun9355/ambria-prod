@@ -200,6 +200,20 @@ export function rentalSplit(settings, venueName, invId, qty, inventory) {
 // becomes available stock the outdoor event can draw from. Omitted → exact old behavior (the whole
 // configured allocation stays locked), so every caller that hasn't been updated to pass it is
 // unaffected.
+// The standing stock of this item kept at every OTHER fixed venue, by venue - what availableAtVenue takes off the total. For
+// Build's "short" note, so a salesperson sees the stock went to Restro / Pushpanjali, not to another event that day.
+export function lockedAtFixedVenues(settings, venueName, item) {
+  const own = fixedVenueFor(settings, venueName);
+  const out = [];
+  (settings?.fixedVenues || []).forEach((v) => {
+    if (own && v === own) return;
+    const it = (v.items || []).find((i) => i.invId === item?.id);
+    const q = it ? totalQtyOf(it) : 0;
+    if (q > 0) out.push({ name: v.name, qty: q });
+  });
+  return out;
+}
+
 export function availableAtVenue(settings, venueName, item, reservedByVenue) {
   const total = Number(item?.qty ?? item?.qtyOwned) || 0;
   const own = fixedVenueFor(settings, venueName); // parent-aware "this venue"
