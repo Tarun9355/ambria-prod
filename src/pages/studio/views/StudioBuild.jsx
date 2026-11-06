@@ -1128,7 +1128,7 @@ export default function StudioBuild({ ctx }) {
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions, copyBuildsFromClient,
     clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette,
-    studioFloralData, sharedFloralSettings, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, openAvailModal, kitPartShorts,
+    studioFloralData, sharedFloralSettings, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, freeOnActiveDate, openAvailModal, kitPartShorts,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // Build's kit edits also land in Deal Check's own per-card copy (see the kit editor below).
     setDcKitEdits, persistDcKitEditsNow, buildElCardKey,
@@ -2048,7 +2048,7 @@ export default function StudioBuild({ ctx }) {
     // right; sharing the one derived constant is what stops the next one getting it wrong.
     const usedElsewhere = qtyUsedElsewhereInBuild(itemId, fns, imsInventory, exclude, fnDate, aVenue);
     if (usedElsewhere <= 0) return null;
-    const otherEventsAvail = getStudioAvailable(it, activeBlocksForDate);
+    const otherEventsAvail = freeOnActiveDate ? freeOnActiveDate(it).free : getStudioAvailable(it, activeBlocksForDate);
     return Math.max(0, otherEventsAvail - usedElsewhere);
   };
 
@@ -3337,7 +3337,7 @@ undefined
       const fnsNow = collectAllFunctionData ? collectAllFunctionData() : [];
       const inZoneIds = new Set((zoneElements[pk] || []).map((el) => el.invId).filter(Boolean));
       // free = what other events leave on the event date, minus what the rest of this deal already holds
-      const freeFor = (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate, aVenue));
+      const freeFor = (it) => Math.max(0, (freeOnActiveDate ? freeOnActiveDate(it).free : getStudioAvailable(it, activeBlocksForDate)) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate, aVenue));
       // What the zone's other elements are multiplied by: the guest-price level, and the event date's category (King's / Filler …).
       const dp = sharedFloralSettings?.datePricing;
       const dateMult = fnDate && dp ? (Number(getEffectivePricing(1, fnDate, { datePricing: dp }).multiplier) || 1) : 1;
@@ -3373,7 +3373,7 @@ undefined
         subcatMatch={customPicker.kind === "ceiling" ? "ceiling" : "printed wall"}
         rcFactorByKey={rcFactorByKey}
         // free on the event date = what other events leave, minus what the rest of this deal already holds (as the printed-walls picker)
-        freeFor={(() => { const fnsNow = collectAllFunctionData ? collectAllFunctionData() : []; return (it) => Math.max(0, getStudioAvailable(it, activeBlocksForDate) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate, aVenue)); })()}
+        freeFor={(() => { const fnsNow = collectAllFunctionData ? collectAllFunctionData() : []; return (it) => Math.max(0, (freeOnActiveDate ? freeOnActiveDate(it).free : getStudioAvailable(it, activeBlocksForDate)) - qtyUsedElsewhereInBuild(it.id, fnsNow, imsInventory, {}, fnDate, aVenue)); })()}
         // Ceiling only: how many panels, starting at what the row has now (else one per truss). Masking stays one per truss.
         withQty={customPicker.kind === "ceiling"}
         defaultQty={(() => { const z = zoneConfig[customPicker.k] || {}; const r = customPicker.rowIdx == null ? z : (z.extraTrussRows || [])[customPicker.rowIdx] || {}; return Number(r.customCeilingQty) || Math.max(1, Number(r.trussQty) || 1); })()}
@@ -4989,7 +4989,7 @@ undefined
                           // was free even when it was entirely locked as standing allocation at
                           // another venue, only to be capped correctly once the item was actually
                           // added (StudioApp.jsx's getElPriceFromInventory already applies this cap).
-                          const dateFree=combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getStudioAvailable(it,activeBlocksForDate), availableAtVenue({ fixedVenues: sharedFloralSettings?.fixedVenues || [], venueParents: venueParents || {} }, aVenue, it));
+                          const _fa=freeOnActiveDate?freeOnActiveDate(it):null;const dateFree=_fa?_fa.free:combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getStudioAvailable(it,activeBlocksForDate), availableAtVenue({ fixedVenues: sharedFloralSettings?.fixedVenues || [], venueParents: venueParents || {} }, aVenue, it));
                           const isDateUnavail=dateFree<=0;
                           return <div key={"inv:"+it.id}
                             onClick={()=>{
@@ -5008,7 +5008,7 @@ undefined
                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>
                                 {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>KIT</span>}
                                 {isDateUnavail
-                                  ? <span title={canMake?"0 free for this event date — will price at cost% instead of rental":"0 free for this event date and can't be made in production — will show Out of stock"} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>{canMake?"0 free — not available":"0 free — out of stock"}</span>
+                                  ? <span title={(canMake?"0 free for this event date — will price at cost% instead of rental":"0 free for this event date and can't be made in production — will show Out of stock")+(_fa?.why?"\n\n"+_fa.why:"")} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>{canMake?"0 free — not available":"0 free — out of stock"}</span>
                                   : (isFullyUsed
                                     ? <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>{canMake?"fully used — priced at cost%":"fully used — out of stock"}</span>
                                     : (remaining!=null&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>))}

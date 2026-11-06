@@ -5180,6 +5180,30 @@ export default function StudioApp() {
     return kitPartShortfalls(item, Number(el.qty) || 0, el.kitOverrides, fns, imsInventory, target, fnDate, freeFor, opts.reusePool, venueName)
       .map((p) => ({ ...p, canMake: canFulfillShortfall((imsInventory || []).find((i) => i.id === p.id), fnDate, el?.addedAt || undefined) }));
   }, [imsInventory, activeFnMeta, clientDate, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, eventOrders, activeClientId, clientName, activeFnIdx, fvCfgForRepeat]);
+  // Free stock of an item on the active function's date, for Build's pickers (+ Add element's "0 free" badge, "left for this
+  // event", the choices picker): this deal's OWN reservation netted back out, as the price check does - the raw blocks counted a
+  // sold deal's own chandeliers against itself, so the search said "0 free" for stock reserved for this very event. why: who holds
+  // the rest (kept at fixed venues, blocked in IMS, booked by which event), for the badge's hover.
+  const freeOnActiveDate = useCallback((it) => {
+    if (!it) return { free: 0, why: "" };
+    const eo = eventOrderFor(eventOrders, activeClientId, clientName);
+    const ownIds = [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)].filter(Boolean);
+    const netted = netOwnReservedBlocksLive(activeBlocksForDate, it.id, activeBlocksDetailForDate, ownIds);
+    const venueName = activeFnMeta?.venue || venue || "";
+    const total = Number(it.qty ?? it.qtyOwned) || 0;
+    const free = combineAvailability(total, getStudioAvailable(it, netted), availableAtVenue(fvCfgForRepeat, venueName, it));
+    const own = new Set(ownIds);
+    const fixed = lockedAtFixedVenues(fvCfgForRepeat, venueName, it);
+    const holders = (activeBlocksDetailForDate?.[it.id] || []).filter((b) => b && !own.has(b.eventId) && Number(b.qty) > 0)
+      .map((b) => { const o = (eventOrders || []).find((x) => x.id === b.eventId); return `${o?.clientName || "another event"} ${b.qty}`; });
+    const imsBlocked = Number(it.blocked) || 0;
+    const why = [`Stock: ${total}`,
+      fixed.length ? `Kept at fixed venues: ${fixed.map((f) => `${f.name} ${f.qty}`).join(", ")}` : "",
+      imsBlocked > 0 ? `Blocked in IMS (all dates): ${imsBlocked}` : "",
+      holders.length ? `Booked this date by: ${holders.join(", ")}` : "",
+      `Free: ${Math.max(0, Math.floor(free))}`].filter(Boolean).join(String.fromCharCode(10));
+    return { free, why };
+  }, [eventOrders, activeClientId, clientName, activeBlocksForDate, activeBlocksDetailForDate, activeFnMeta, venue, fvCfgForRepeat]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
@@ -13288,7 +13312,7 @@ export default function StudioApp() {
     imsField, fetchIMSData, searchLmsLeads, calcZoneTrussPreview, calcZoneFabricCost, calcZoneCarpet, buildPlatformPlan,
     resolveMandiFlower,
     // per-date "other events" block map for the active function's date — see getStudioAvailable
-    activeBlocksForDate,
+    activeBlocksForDate, freeOnActiveDate,
     LABOUR, LABOUR_PRESETS, SEASON_MULT, TPL_DEFAULTS, PERM_LABELS, ROLE_DEFAULTS, ROLES, TAX_LABELS,
   };
   void ctx; // consumed by view slices in later commits
