@@ -595,7 +595,9 @@ function StudioBrowse({ ctx }) {
     // 0 listed it twice — once as the card and again as the first row underneath. These are the ten
     // BEFORE it (in practice capped at 9, since SESSION_KEEP only ever retains 10 sessions total per
     // client, the current one included).
-    const bannerHistory = (activeClient?.sessions || []).slice(1, 11);
+    // From the newest one when the card above is not shown (this function has no save of its own): that is exactly when
+    // a build has gone missing, and the history was the only way back - but it lived inside the card, so it vanished too.
+    const bannerHistory = (activeClient?.sessions || []).slice(bannerSaved.length > 0 ? 1 : 0, 11);
     // Same "which pill actually has data" logic bannerSaved uses above, applied per history row
     // (which — unlike bannerSaved's entries — never got a _fnIdx computed for it) so Resume lands
     // on the function this particular past session holds, not blindly on whichever pill is active now.
@@ -1453,7 +1455,7 @@ function StudioBrowse({ ctx }) {
                 <div style={{height:26,flex:1,borderRadius:7,background:isDark?"rgba(255,255,255,0.06)":"rgba(26,26,46,0.05)"}}/>
               </div>
             </div>
-          ) : (bannerSaved.length > 0 || bannerShowCurrent) && (
+          ) : (bannerSaved.length > 0 || bannerShowCurrent || bannerHistory.length > 0) && (
             <div style={{display:"flex",flexDirection:"column",gap:10,flexShrink:0}}>
               {bannerSaved.map(s => {
                 const vid = allVideos.find(v => v.id === s.sourceVideoId);
