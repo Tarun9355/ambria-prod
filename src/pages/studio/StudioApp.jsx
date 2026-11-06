@@ -5118,7 +5118,9 @@ export default function StudioApp() {
       // A row already above it (saved earlier) keeps pricing its excess as before. Units reused from the deal's
       // preceding function count as owned, so they raise the ceiling too. An item the studio owns NONE of (IMS qty 0 —
       // made-to-order things like a customised ceiling) has no stock to hold a number to, so it is not capped.
-      const maxQty = Number(item.qty) > 0 ? rowMaxQty + crossFnTake : null;
+      // An item ticked "Can be made" in IMS Inventory is not capped either (owner ask 2026-11-06): production makes whatever stock
+      // does not cover, so Build takes any quantity - free or not. The part past stock is still marked short and priced at cost%.
+      const maxQty = Number(item.qty) > 0 && item.canBeMade !== true ? rowMaxQty + crossFnTake : null;
       const warning = shortQty > 0 ? (outOfStock ? `⚠ ${shortQty} of ${qty} out of stock for this date — pick an alternative` : `⚠ ${shortQty} of ${qty} not free in stock for this date — priced at cost%`) : null;
       // `available` here is "how much of THIS row's own qty is real stock" (= ownedQty) — the sole
       // consumer (StudioBuild.jsx's isUnavail badge) only ever checks <= 0, which ownedQty matches
