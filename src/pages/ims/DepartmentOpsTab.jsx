@@ -4843,6 +4843,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
      Inter renders correctly on this same card at every length, so the two lines that carry real
      multi-word names use it. The department title above stays in the serif: it is always a
      single word, so it cannot hit this. */
+  /* A title longer than a department name ("All departments") is set smaller: at 76px it filled the card and its descenders
+     ran into the client line below, which html2canvas draws a few px low anyway. */
+  .cv-title.long{font-size:56px;line-height:1.2}
+  .cv-title.long + .cv-for{margin-top:12px}
   .cv-for{font-family:"Inter",-apple-system,"Segoe UI",Arial,sans-serif;font-weight:600;font-size:27px;line-height:1.45;letter-spacing:-.01em;color:#8B6F42;margin-top:6px}
   /* The ornament: gold hairline, a small gold diamond, gold hairline. */
   .orn{display:flex;align-items:center;justify-content:center;gap:10px;margin:26px 0}
@@ -4872,6 +4876,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   .cv-ses .sf .k{font-size:10.5px;line-height:1.8;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:#7A7468}
   .cv-ses .sf .v{font-size:19px;line-height:1.7;font-weight:700;color:#1A1A1A;white-space:nowrap;text-transform:capitalize;padding-bottom:2px}
   .cv-sessions.many .cv-ses{flex:0 1 300px;padding:18px 20px 16px;border-radius:20px}
+  /* padding inside the 300px, so two sit side by side on the 634px card (with it outside, two came to ~708px and stacked) */
+  .cv-sessions.many:not(.dense) .cv-ses{box-sizing:border-box}
   .cv-sessions.many .cv-ses .sk{font-size:9.5px}
   .cv-sessions.many .cv-ses .st{font-size:28px}
   .cv-sessions.many .cv-ses .sl{margin:11px 6px 12px}
@@ -5142,7 +5148,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     <div class="cv-corner tl"></div><div class="cv-corner tr"></div><div class="cv-corner bl"></div><div class="cv-corner br"></div>
     ${logos.dark ? `<img class="cv-logo" src="${logos.dark}" alt="Ambria — Design &amp; Decor">` : `<div class="cv-mark">AMBRIA</div>`}
     <div class="cv-kind">${t("Setup book")}</div>
-    <div class="cv-title">${esc(bookTitle)}</div>
+    <div class="cv-title${String(bookTitle || "").length > 11 ? " long" : ""}">${esc(bookTitle)}</div>
     <div class="cv-for">${esc(hn(sel?.clientName) || t("Event"))}</div>
     ${ornament}
     <div class="cv-facts">
@@ -5150,7 +5156,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       <div><div class="k">${t("Prepared by")}</div><div class="v">${esc(hn(deptData.updatedBy || authUser?.name) || "—")}</div></div>
     </div>
     ${sessions.length ? `<div class="cv-sec">${sessions.length === 1 ? t("The event") : t("{n} sessions", { n: sessions.length })}</div>
-    <div class="cv-sessions${sessions.length > 4 || (anyPalette && sessions.length > 2) ? " many dense" : sessions.length > 2 ? " many" : ""}">${sessions.map((s, i) => `<div class="cv-ses t-${sesTone(s.type, i)}">
+    <div class="cv-sessions${sessions.length > 4 || (anyPalette && sessions.length > 2) ? " many dense" : (sessions.length > 2 || (anyPalette && sessions.length === 2)) ? " many" : ""}">${sessions.map((s, i) => `<div class="cv-ses t-${sesTone(s.type, i)}">
       <div class="sk">${t("Event type")}</div>
       <div class="st">${esc(hn(s.type))}</div>
       <div class="sl"></div>
