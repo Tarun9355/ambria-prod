@@ -621,6 +621,10 @@ function StudioBrowse({ ctx }) {
       for (const i of idxs) { if (fnSnapHasBuild(snaps[i] || snaps[String(i)] || null)) return i; }
       return null;
     };
+    // Only saves that hold a build are listed (owner ask): a run of empty autosaves filled the list with rows that had nothing
+    // to bring back, and pushed the real builds out of sight. The count of the hidden empty ones is said on the heading.
+    const histShown = bannerHistory.filter((s) => bestFnIdxForSession(s) != null);
+    const histEmpty = bannerHistory.length - histShown.length;
     // BUG-2. This fired two writes and awaited neither, then announced success unconditionally — so
     // a delete that silently failed still showed a green "Session deleted" and the session came back
     // on the next load.
@@ -1639,10 +1643,10 @@ function StudioBrowse({ ctx }) {
                         that at rest: closed points right (there's more this way), open points down
                         (revealed below), so closed rotates and open doesn't. */}
                     <span style={{display:"inline-flex",transform:bannerHistoryOpen?"none":"rotate(-90deg)",transition:"transform 0.15s ease",color:textS}}><IconChevron size={10}/></span>
-                    <span style={{fontSize:10.5,fontWeight:600,color:textS}}>{_older ? "All" : "Past"} {bannerHistory.length} session{bannerHistory.length>1?"s":""}</span>
+                    <span style={{fontSize:10.5,fontWeight:600,color:textS}}>{_older ? "All" : "Past"} {histShown.length} saved build{histShown.length===1?"":"s"}{histEmpty>0?` · ${histEmpty} empty hidden`:""}</span>
                   </button>
                   {bannerHistoryOpen && <div style={{padding:"0 8px 8px",display:"flex",flexDirection:"column",gap:3}}>
-                    {bannerHistory.map((s,i) => {
+                    {histShown.map((s,i) => {
                       // Same figure the card above resolves, against the function this row would
                       // actually resume into. It used to print s.total flat, which is why rows read
                       // "₹0 Silver" — a zero saved from a function that was empty at the time, shown
