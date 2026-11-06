@@ -1023,6 +1023,8 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     const open=openCarpetPicker;
                     const done=prefs.length>=CARPET_PREF_MAX;
                     // Nothing picked yet: no empty slots. The icon beside the Carpet label is the way in; the slots appear once a carpet is chosen.
+                    // A floor with no size (0 sqft) needs no carpet - no "Not selected" nag there, as the zone tile already reads it.
+                    if(!prefs.length&&!(floorSqft>0)) return null;
                     if(!prefs.length) return <div style={{marginTop:5}}><span onClick={()=>open()} role="button" tabIndex={0} title="No carpet named - tap to pick up to 3 in order of preference. Planning decides which one is used." style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:"#EF4444",background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.35)",borderRadius:6,padding:"2px 8px",cursor:"pointer"}}>● Not selected preference</span></div>;
                     return <div style={{marginTop:5}}>
                       <div style={{display:"flex",flexDirection:"column",gap:4}}>
