@@ -1178,7 +1178,7 @@ const SESSION_KEEP = 10;
 // client_ledger→studio_sessions backfill can build rows with the SAME function the app writes with.
 
 /** Rows back into sessions, newest first — what client.sessions holds. */
-function rowsToSessions(rows) {
+function rowsToSessions(rows, keep = SESSION_KEEP) {
   const bySession = new Map();
   for (const r of (rows || [])) {
     if (!r || !r.session_id) continue;
@@ -1236,7 +1236,7 @@ function rowsToSessions(rows) {
   out.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
   // Capped on the way in as well as on the way out. Rows written before the cap existed, or left by a
   // prune whose delete failed, would otherwise come back as a longer history than the app keeps.
-  return out.slice(0, SESSION_KEEP);
+  return out.slice(0, keep);
 }
 
 // Calls the recent_studio_sessions() DB function (migration 029) instead of scanning the whole
@@ -10092,6 +10092,21 @@ export default function StudioApp() {
   // restoreBuildState(null) — silently blanking the pill instead of loading anything. Browse passes
   // the index the session actually holds data for, so resuming from Fn2 a session saved on Fn1
   // switches to Fn1 and loads it rather than wiping Fn2.
+  // EVERY save of one client, straight from studio_sessions, newest first - not just the 10 the app loads. The table never deletes
+  // a save, so a build pushed out of those 10 by a run of empty autosaves is still there; Browse's "Load older sessions" lists
+  // these with the same Resume, so it can be brought back without anyone touching the database.
+  const loadAllClientSessions = useCallback(async (clientId) => {
+    if (!clientId) return [];
+    const all = []; const SIZE = 1000;
+    for (let from = 0; ; from += SIZE) {
+      const { data, error } = await supabase.from("studio_sessions").select("*").eq("client_id", clientId)
+        .order("saved_at", { ascending: false }).range(from, from + SIZE - 1);
+      if (error) throw error;
+      all.push(...(data || []));
+      if (!data || data.length < SIZE) break;
+    }
+    return rowsToSessions(all, Infinity);
+  }, []);
   const resumeSavedSession = useCallback((session, targetFnIdx) => {
     if (!session) return;
     // Same baseline capture loadClientSession does (~line 8035) — this is the OTHER door into a
@@ -13149,7 +13164,7 @@ export default function StudioApp() {
     // handlers
     loadClientSession, loadClientSessionGuarded, startNewDeal, loadLmsLead, autoPersistCustomVenue, pickAndLoad, pickAndLoadFromVideo,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
-    resumeSavedSession, toggleEl, selectElPhoto, handleZoneUpload, aiTagImage, findTemplate,
+    resumeSavedSession, loadAllClientSessions, toggleEl, selectElPhoto, handleZoneUpload, aiTagImage, findTemplate,
     getLibPhotosForZone, maxRepaintCostInSubcat, saveSession, markSold, applyBookedChanges, loadEvent,
     buildZonesForFn, buildCombinedCostSheetData, applyCostSheetQty, logActivity, saveTR,
     normalizePaintAllocation, paintPillLabel, isSubcatPaintable, paintFor,

@@ -86,6 +86,9 @@ function StudioBrowse({ ctx }) {
   // doesn't compete with the filters/videos for space; per-client is enough (doesn't need to
   // persist across clients), so plain local state rather than anything ctx-level.
   const [bannerHistoryOpen, setBannerHistoryOpen] = useState(false);
+  // Every save of the open client, fetched on "Load older sessions" (ctx.loadAllClientSessions): { clientId, list } | null
+  const [olderSessions, setOlderSessions] = useState(null);
+  const [olderLoading, setOlderLoading] = useState(false);
   // Favourites/recently-viewed block above the grid — open by default (the shortlist is the quickest way back
   // to a reference) and NOT reset by page/filter changes, since it's a plain top-level flag rather than anything
   // keyed to pageVideos — fold it away once and it stays folded while paging through the rest of the grid.
@@ -597,7 +600,8 @@ function StudioBrowse({ ctx }) {
     // client, the current one included).
     // From the newest one when the card above is not shown (this function has no save of its own): that is exactly when
     // a build has gone missing, and the history was the only way back - but it lived inside the card, so it vanished too.
-    const bannerHistory = (activeClient?.sessions || []).slice(bannerSaved.length > 0 ? 1 : 0, 11);
+    const _older = olderSessions && activeClient && olderSessions.clientId === activeClient.id ? olderSessions.list : null;
+    const bannerHistory = _older ? _older.slice(bannerSaved.length > 0 ? 1 : 0) : (activeClient?.sessions || []).slice(bannerSaved.length > 0 ? 1 : 0, 11);
     // Same "which pill actually has data" logic bannerSaved uses above, applied per history row
     // (which — unlike bannerSaved's entries — never got a _fnIdx computed for it) so Resume lands
     // on the function this particular past session holds, not blindly on whichever pill is active now.
@@ -1635,7 +1639,7 @@ function StudioBrowse({ ctx }) {
                         that at rest: closed points right (there's more this way), open points down
                         (revealed below), so closed rotates and open doesn't. */}
                     <span style={{display:"inline-flex",transform:bannerHistoryOpen?"none":"rotate(-90deg)",transition:"transform 0.15s ease",color:textS}}><IconChevron size={10}/></span>
-                    <span style={{fontSize:10.5,fontWeight:600,color:textS}}>Past {bannerHistory.length} session{bannerHistory.length>1?"s":""}</span>
+                    <span style={{fontSize:10.5,fontWeight:600,color:textS}}>{_older ? "All" : "Past"} {bannerHistory.length} session{bannerHistory.length>1?"s":""}</span>
                   </button>
                   {bannerHistoryOpen && <div style={{padding:"0 8px 8px",display:"flex",flexDirection:"column",gap:3}}>
                     {bannerHistory.map((s,i) => {
@@ -1686,6 +1690,19 @@ function StudioBrowse({ ctx }) {
                       </div>
                       );
                     })}
+                    {/* The app loads a client's newest 10 saves; older ones stay in the table and come back here. */}
+                    {!_older && ctx.loadAllClientSessions && activeClient && (
+                      <button type="button" disabled={olderLoading}
+                        onClick={async () => {
+                          setOlderLoading(true);
+                          try { const list = await ctx.loadAllClientSessions(activeClient.id); setOlderSessions({ clientId: activeClient.id, list }); showMsg?.(`${list.length} saved session${list.length === 1 ? "" : "s"} found`, "green"); }
+                          catch (e) { showMsg?.("Could not load older sessions: " + (e?.message || e), "red"); }
+                          finally { setOlderLoading(false); }
+                        }}
+                        style={{marginTop:4,padding:"6px 8px",borderRadius:6,border:`1px dashed ${pBorder}`,background:"transparent",color:accent,fontSize:10.5,fontWeight:700,cursor:olderLoading?"progress":"pointer"}}>
+                        {olderLoading ? "Loading…" : "Load older sessions"}
+                      </button>
+                    )}
                   </div>}
                 </div>
               )}
