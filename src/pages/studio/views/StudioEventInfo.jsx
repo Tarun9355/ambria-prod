@@ -229,21 +229,26 @@ export default function StudioEventInfo({ ctx }) {
   // re-entered, not a new one.
   // Functions are searched, not just the top-level mirror — a wedding's Sangeet lives in
   // `functions`, so a client whose Fn2 is this venue on this date is still this client.
+  // SAME NAME ON THE SAME DATE is the same deal too (Sahiba, 2026-11-06): after a reload the form came back filled with no deal
+  // loaded, the phone did not match (or was blank), so Continue minted a second "sahiba" - empty - and the build on the real
+  // one looked lost. Two different guests of the same name on the same function date is not a real case; the guard was.
   const findDuplicateClient = () => {
     const phone = digits10(phoneDigits);
-    if (phone.length !== 10) return null;   // nothing dependable to match on — let it through
     const dateKey  = String(clientDate || "").trim();
     const venueKey = String(venue || "").trim().toLowerCase();
-    if (!dateKey || !venueKey) return null;
+    const nameKey  = String(clientName || "").trim().toLowerCase().replace(/s+/g, " ");
+    if (!dateKey) return null;
     return clientLedger.find((c) => {
       if (!c || c.id === activeClientId) return false;   // the open deal is never its own duplicate
-      if (digits10(c.phone) !== phone) return false;
       // Legacy clients predate `functions`; their single function is the top-level mirror.
       const slots = (Array.isArray(c.functions) && c.functions.length)
         ? c.functions
         : [{ date: c.eventDate, venue: c.venue }];
-      return slots.some((f) => String(f?.date || "").trim() === dateKey
-        && String(f?.venue || "").trim().toLowerCase() === venueKey);
+      const sameDate = (f) => String(f?.date || "").trim() === dateKey;
+      if (nameKey && String(c.name || "").trim().toLowerCase().replace(/s+/g, " ") === nameKey && slots.some(sameDate)) return true;
+      // phone + venue + date - the original test
+      if (phone.length !== 10 || !venueKey || digits10(c.phone) !== phone) return false;
+      return slots.some((f) => sameDate(f) && String(f?.venue || "").trim().toLowerCase() === venueKey);
     }) || null;
   };
 
@@ -300,7 +305,7 @@ export default function StudioEventInfo({ ctx }) {
       // is entitled to make; minting a second copy of a deal that already exists is not.
       const dupe = findDuplicateClient();
       if (dupe) {
-        showMsg(`⚠ Duplicate — ${dupe.name || "this deal"} already has this venue on this date. Use Load →`, "red");
+        showMsg(`⚠ Duplicate — ${dupe.name || "this deal"} already has a deal on this date. Use Load → to open it`, "red");
         return false;
       }
       base = { id: "CLI_" + Date.now().toString(36), sessions: [], createdAt: Date.now(), status: "ongoing", bookedAt: null, bookedBy: null, finalSession: null };
