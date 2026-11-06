@@ -5,6 +5,7 @@ import { landingPath, userApps } from "./lib/auth";
 import { useVersionCheck } from "./lib/useVersionCheck";
 import { flushBeforeReload } from "./lib/pendingSaveRegistry";
 import { canvaHandleOAuthRedirect } from "./lib/canva";
+import SaveHealthBanner from "./components/shared/SaveHealthBanner.jsx";
 import Login from "./pages/Login.jsx";
 import { SkPage } from "./components/studio/Skeleton.jsx";
 // Studio and IMS are each a large, largely independent bundle (Studio alone pulls in
@@ -133,6 +134,7 @@ export default function App() {
       </Suspense>
       <UpdateBanner />
       <CanvaOAuthBanner />
+      <SaveHealthBanner />
     </>
   );
 }

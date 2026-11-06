@@ -5,34 +5,70 @@ import { eoToFnList, isDeptHead, expireStaleSimulations } from "./trussEngine";
 // (§23 Phase 3/4) but simplified to match how a platform is actually specified — there is no
 // picker of named physical pieces (unlike pillars/beams): a zone just types a Height band, a
 // floorDims L×W, and a quantity (StudioBuild.jsx's Platform/Carpet card), shared with Carpet.
-// So booking tracks one aggregate SQFT pool per truss material (iron/pole/aluminium) instead of a
-// per-size piece count — the same bulk-pool model trussInv.batta already uses for wrap fabric,
-// not the discrete piece-resolution model pillars/beams need. Billing is untouched: this never
-// feeds cost, same relationship Truss's own RFT billing has to its stock-feasibility dashboard.
-export const PLATFORM_MATERIALS = ["iron", "pole", "aluminium"];
+//
+// PLATFORM MATERIAL (Wood/Iron, each row's own `material` field in trussInv.platforms — Admin →
+// Settings → Platform Config) is a completely separate axis from a zone's TRUSS material
+// (iron/pole/aluminium). Confirmed bug this closes (found 2026-11-05): this used to reuse the
+// truss-material taxonomy for platforms entirely — PLATFORM_MATERIALS was
+// ["iron","pole","aluminium"], and the old platformsForMaterial read trussInv.materials[mat].platforms,
+// a structure platforms never actually populate (every real platform row lives in the one flat
+// trussInv.platforms array below, distinguished only by its own `material` text) — so every
+// material bucket silently fell back to the SAME full array, showing identical totals for all three
+// and pooling truss-material demand that was never a real, separate stock pool.
+//
+// Booking uses ONE COMBINED sqft pool (Wood + Iron summed) rather than splitting demand by
+// platform material, because no zone-level control exists for "which platform material does this
+// booking use" (owner decision, 2026-11-05) — see PLATFORM_POOL_KEY/platformEventSqft below.
+// Admin Config and the stock dashboard still show Wood vs Iron SUPPLY separately for inventory
+// purposes; only the booking/feasibility math is unified.
+//
+// Billing: platformAvgRatePerSqft (below) feeds Deal Check's rental cost/margin via
+// buildPlatformPlan (pricing.js) and the Tenting rollup (DealCheckOverlay.jsx) — both now bill the
+// stock-weighted BLENDED average across all platform stock, for the same no-per-booking-signal
+// reason.
+export const PLATFORM_MATERIALS = ["wood", "iron"];
+// The single key every booking/feasibility structure uses now — kept as an object key (not a bare
+// number) so the existing generic demand/stock/overflow machinery below, and every saved
+// platform_allocations/platform_overrides/platform_simulations row, keeps working unchanged.
+export const PLATFORM_POOL_KEY = "all";
+export const PLATFORM_MATERIAL_LABEL = { wood: "Wood", iron: "Iron" };
 
-// Resolve which material's platforms[] array backs a given material's stock — independent
-// per-material fallback to Iron, matching trussInvForMaterial's platforms resolution in pricing.js
-// (duplicated here rather than cross-imported: lib/ims intentionally doesn't depend on lib/studio,
-// same reason buildTopology itself is duplicated between trussEngine.js and pricing.js instead of
-// shared — see this project's own established pattern).
-const platformsForMaterial = (trussInv, material) => {
-  const mat = String(material || "iron").toLowerCase();
-  if (mat === "iron") return Array.isArray(trussInv?.platforms) ? trussInv.platforms : [];
-  const m = trussInv?.materials?.[mat];
-  if (Array.isArray(m?.platforms)) return m.platforms;
-  return Array.isArray(trussInv?.platforms) ? trussInv.platforms : [];
+// A platform row's own material, normalised. "iron" is the catch-all fallback for anything that
+// isn't recognisably "wood" (missing/empty/typo'd/a metal name like "Steel") — matches the
+// "iron" default every other material field in this app already uses, and production has exactly
+// one Wood row against six metal ones.
+export const platformMaterialOf = (row) => {
+  const m = String(row?.material ?? "").trim().toLowerCase();
+  return m.startsWith("wood") ? "wood" : "iron";
+};
+
+// Filters the one flat trussInv.platforms array by each row's OWN material — never reads
+// trussInv.materials[x].platforms (that structure is for truss pillars/beams/rates, not platforms,
+// and no material has ever populated it). Omit `material` for every row (used for the combined
+// pool's stock total and the blended billing rate); passing a non-platform-material string (e.g.
+// "pole") deliberately returns [] rather than silently falling back to the full array.
+export const platformsForMaterial = (trussInv, material) => {
+  const all = Array.isArray(trussInv?.platforms) ? trussInv.platforms : [];
+  if (material == null || material === "") return all;
+  const mat = String(material).trim().toLowerCase();
+  if (!PLATFORM_MATERIALS.includes(mat)) return [];
+  return all.filter((r) => platformMaterialOf(r) === mat);
 };
 
 export const platformStockSqft = (trussInv, material) => platformsForMaterial(trussInv, material)
   .reduce((s, r) => s + (Number(r.lengthFt) || 0) * (Number(r.widthFt) || 0) * (Number(r.stock) || 0), 0);
 
-// Stock-weighted average ₹/sqft across a material's configured platform rows — Ambria's own internal
-// cost rate, the same role the old Fatta/Stand inventory items' rentalCost played before Platform
-// Config replaced them (2026-11-01 owner call: platform is no longer tracked via TEN-00008/TEN-00009
-// at all — see DealCheckOverlay.jsx's Tenting rollup). A simple average because platform demand here
-// is one aggregate sqft number per material (see this file's own header comment), not tied to any one
-// named row, so there's no single row's rate to charge off directly.
+// The combined pool's total stock — Wood + Iron summed. Named separately from platformStockSqft
+// (which can also do this via a no-argument call) so call sites reading "the one pool total" say so.
+export const platformTotalStockSqft = (trussInv) => platformStockSqft(trussInv);
+
+// Stock-weighted average ₹/sqft — Ambria's own internal cost rate, the same role the old
+// Fatta/Stand inventory items' rentalCost played before Platform Config replaced them (2026-11-01
+// owner call: platform is no longer tracked via TEN-00008/TEN-00009 at all — see DealCheckOverlay.jsx's
+// Tenting rollup). Called with NO material (the billing/cost mode) this blends across every
+// configured row regardless of Wood/Iron — there's no per-booking signal for which material a given
+// zone's platform actually is, so every zone bills at the same blended rate. A specific material can
+// still be asked for (kept for tests/future display), but nothing bills off it any more.
 export const platformAvgRatePerSqft = (trussInv, material) => {
   let sqftSum = 0, costSum = 0;
   platformsForMaterial(trussInv, material).forEach((r) => {
@@ -43,28 +79,43 @@ export const platformAvgRatePerSqft = (trussInv, material) => {
   return sqftSum > 0 ? costSum / sqftSum : 0;
 };
 
-// ─── Layer 4.2-equivalent — one event's platform sqft demand, by material ───────────────────
+// ─── Layer 4.2-equivalent — one event's platform sqft demand, combined pool ──────────────────
 // Mirrors trussEngine.js's buildEventAllocation, but the "allocator" here is just arithmetic
 // (sqft = L × W × qty) instead of a pillar/beam topology resolve — there's no structural layout to
 // compute. A zone only counts if a Height band is actually picked (zc.plH): the same floorDims
 // also drives Carpet, and a zone can have Carpet with no Platform at all.
+//
+// Counts the zone's own row AND every extraPlatformRows entry ("+ Add Platform" in Build) — each
+// with its own plH/floorDims/plQty. Confirmed gap this closes (found 2026-11-05): this used to only
+// read the zone's single scalar row, while billing (pricing.js's buildPlatformPlan,
+// DealCheckOverlay.jsx's Tenting rollup) already counted extra rows — so a zone with more than one
+// platform footprint was under-counted here, silently understating real demand.
+//
+// totalPlatformSqftByMaterial keeps its name/object shape for back-compat with saved
+// platform_allocations/platform_overrides/platform_simulations rows, but only ever has ONE key now
+// (PLATFORM_POOL_KEY) — see this file's header comment for why there's no real per-material demand
+// signal. An OLD saved row with separate iron/pole/aluminium keys still sums correctly everywhere
+// via platformEventSqft below, with no data migration needed.
 export const buildEventPlatformAllocation = (eventMeta, fnList) => {
-  const bySqft = {};
+  let totalSqft = 0;
   (fnList || []).forEach((fn) => {
     const zones = fn?.zones || {};
     const enabledEls = fn?.enabledEls || {};
     Object.entries(zones).forEach(([zoneKey, zc]) => {
-      if (!zc || !zc.plH) return; // no platform picked in this zone
+      if (!zc) return;
       if (enabledEls && Object.keys(enabledEls).length > 0 && !enabledEls[zoneKey]) return;
-      const L = parseFloat(zc.floorDims?.L) || 0;
-      const W = parseFloat(zc.floorDims?.W) || 0;
-      const qty = Math.max(1, parseInt(zc.plQty, 10) || 1);
-      const sqft = L * W * qty;
-      if (sqft <= 0) return;
-      const mat = String(zc.trussMaterial || "iron").toLowerCase();
-      bySqft[mat] = Math.round(((bySqft[mat] || 0) + sqft) * 100) / 100;
+      const rows = [zc, ...(Array.isArray(zc.extraPlatformRows) ? zc.extraPlatformRows : [])];
+      rows.forEach((row) => {
+        if (!row?.plH) return; // no platform picked on this row
+        const L = parseFloat(row.floorDims?.L) || 0;
+        const W = parseFloat(row.floorDims?.W) || 0;
+        const qty = Math.max(1, parseInt(row.plQty, 10) || 1);
+        const sqft = L * W * qty;
+        if (sqft > 0) totalSqft += sqft;
+      });
     });
   });
+  const bySqft = totalSqft > 0 ? { [PLATFORM_POOL_KEY]: Math.round(totalSqft * 100) / 100 } : {};
   return {
     eoId: eventMeta.eoId,
     clientId: eventMeta.clientId,
@@ -78,22 +129,31 @@ export const buildEventPlatformAllocation = (eventMeta, fnList) => {
   };
 };
 
+// Sums every key of a (possibly OLD-shaped, pre-2026-11-05) totalPlatformSqftByMaterial object into
+// one combined-pool number — an old saved {iron, pole, aluminium} split folds into the pool exactly
+// the same as a new {all} one, with no data migration needed anywhere this is used.
+export const platformEventSqft = (ev) => Object.values(ev?.totalPlatformSqftByMaterial || {}).reduce((s, v) => s + (Number(v) || 0), 0);
+
 // ─── Layer 4.3-equivalent — pool feasibility for one date ───────────────────────────────────
 // Same soft/hard priority rule as trussEngine.js's computePoolFeasibility: hard (SOLD) events get
 // stock first; soft (draft) events fill in createdAt order; whoever can't fit bears the shortage.
+// Demand/stock/overflow stay keyed objects, with exactly one key (PLATFORM_POOL_KEY) — every event
+// collapses through platformEventSqft first, so an OLD saved event's {iron, pole, aluminium} split
+// sums into the SAME one pool rather than being checked as separate, independent stock buckets
+// (which would have let two legacy-keyed events each pass a "fits" check against the full stock
+// total instead of sharing it — a real overflow hidden by this file's OWN per-material isolation).
 export const computePlatformPoolFeasibility = (eventsForDate, trussInv) => {
+  const K = PLATFORM_POOL_KEY;
   const demand = {}, soft = {}, hard = {};
   (eventsForDate || []).forEach(ev => {
-    Object.entries(ev.totalPlatformSqftByMaterial || {}).forEach(([mat, sqft]) => {
-      demand[mat] = (demand[mat] || 0) + sqft;
-      if (ev.state === "soft") soft[mat] = (soft[mat] || 0) + sqft;
-      else hard[mat] = (hard[mat] || 0) + sqft;
-    });
+    const sqft = platformEventSqft(ev);
+    if (sqft <= 0) return;
+    demand[K] = (demand[K] || 0) + sqft;
+    if (ev.state === "soft") soft[K] = (soft[K] || 0) + sqft;
+    else hard[K] = (hard[K] || 0) + sqft;
   });
 
-  const stock = {};
-  PLATFORM_MATERIALS.forEach(mat => { stock[mat] = Math.round(platformStockSqft(trussInv, mat) * 100) / 100; });
-  Object.keys(demand).forEach(mat => { if (!(mat in stock)) stock[mat] = Math.round(platformStockSqft(trussInv, mat) * 100) / 100; });
+  const stock = { [K]: Math.round(platformTotalStockSqft(trussInv) * 100) / 100 };
 
   let feasible = true;
   const overflow = {};
@@ -113,21 +173,16 @@ export const computePlatformPoolFeasibility = (eventsForDate, trussInv) => {
 
   if (!feasible) {
     const remaining = { ...stock };
-    sorted.filter(ev => ev.state === "hard").forEach(ev => {
-      Object.entries(ev.totalPlatformSqftByMaterial || {}).forEach(([mat, sqft]) => { remaining[mat] = (remaining[mat] || 0) - sqft; });
-    });
+    sorted.filter(ev => ev.state === "hard").forEach(ev => { remaining[K] = (remaining[K] || 0) - platformEventSqft(ev); });
     sorted.filter(ev => ev.state === "soft").forEach(ev => {
-      let fits = true;
-      Object.entries(ev.totalPlatformSqftByMaterial || {}).forEach(([mat, sqft]) => { if ((remaining[mat] || 0) < sqft - EPS) fits = false; });
-      if (fits) {
-        Object.entries(ev.totalPlatformSqftByMaterial || {}).forEach(([mat, sqft]) => { remaining[mat] = (remaining[mat] || 0) - sqft; });
+      const sqft = platformEventSqft(ev);
+      if ((remaining[K] || 0) >= sqft - EPS) {
+        remaining[K] = (remaining[K] || 0) - sqft;
       } else {
         ev.shortageBorne = true;
       }
     });
-    let hardOverflow = false;
-    Object.values(remaining).forEach(v => { if (v < -EPS) hardOverflow = true; });
-    if (hardOverflow) {
+    if ((remaining[K] || 0) < -EPS) {
       const hardSorted = sorted.filter(ev => ev.state === "hard");
       if (hardSorted.length > 0) hardSorted[hardSorted.length - 1].shortageBorne = true;
     }
@@ -183,53 +238,41 @@ export const applyPlatformOverridesToEvents = (eventsForDate, overrides) => {
 };
 
 // ─── Simulator — what-if impact of a hypothetical sqft demand on a date ──────────────────────
-// Mirrors trussEngine.js's simulateImpact, but the input is directly {material, sqft} per row —
-// there's no L/W/H/config to resolve into pieces first, since platform demand already IS a plain
-// sqft number (see buildEventPlatformAllocation above). No cost estimate: platform billing is the
-// zone's own Height-band rate x sqft in Studio Build, not a flat RFT x rate like truss, so there's
-// no single rate to estimate cost from here — this stays booking-only, same as the rest of the file.
+// Mirrors trussEngine.js's simulateImpact, but the input is directly {sqft} per row — there's no
+// L/W/H/config to resolve into pieces first, since platform demand already IS a plain sqft number
+// (see buildEventPlatformAllocation above). A row's `material` (if a stale caller still sends one)
+// is ignored — there's one combined pool now, see this file's header comment. No cost estimate:
+// platform billing is the zone's own Height-band rate x sqft in Studio Build, not a flat RFT x rate
+// like truss, so there's no single rate to estimate cost from here — this stays booking-only, same
+// as the rest of the file.
 export const simulatePlatformImpact = (sim, dateAlloc, otherDrafts, trussInv) => {
   if (!sim || !trussInv) return null;
+  const K = PLATFORM_POOL_KEY;
 
-  const demand = {};
-  (sim.zones || []).forEach(z => {
-    const mat = String(z.material || "iron").toLowerCase();
-    const sqft = Number(z.sqft) || 0;
-    if (sqft > 0) demand[mat] = Math.round(((demand[mat] || 0) + sqft) * 100) / 100;
-  });
-  if (Object.keys(demand).length === 0) {
+  const demandSqft = Math.round((sim.zones || []).reduce((s, z) => s + (Number(z.sqft) || 0), 0) * 100) / 100;
+  if (demandSqft <= 0) {
     return { status: "gray", reason: "No platform sqft entered", demand: {}, overflow: {}, pressure: 0 };
   }
+  const demand = { [K]: demandSqft };
 
   const realEvents = Array.isArray(dateAlloc?.events) ? dateAlloc.events : [];
-  const used = {};
-  realEvents.forEach(ev => {
-    Object.entries(ev.totalPlatformSqftByMaterial || {}).forEach(([mat, sqft]) => { used[mat] = (used[mat] || 0) + sqft; });
-  });
+  let used = realEvents.reduce((s, ev) => s + platformEventSqft(ev), 0);
   if (sim.mode === "compound" && Array.isArray(otherDrafts)) {
     otherDrafts.forEach(draft => {
-      Object.entries(draft.computed?.demand || {}).forEach(([mat, sqft]) => { used[mat] = (used[mat] || 0) + sqft; });
+      used += Object.values(draft.computed?.demand || {}).reduce((s, v) => s + (Number(v) || 0), 0);
     });
   }
 
-  const stock = {};
-  PLATFORM_MATERIALS.forEach(mat => { stock[mat] = platformStockSqft(trussInv, mat); });
-  Object.keys(demand).forEach(mat => { if (!(mat in stock)) stock[mat] = platformStockSqft(trussInv, mat); });
-
+  const totalStock = platformTotalStockSqft(trussInv);
+  const remaining = totalStock - used;
+  const pressure = totalStock > 0 ? (used + demandSqft) / totalStock : 1;
   let shortageSqft = 0;
-  let maxPressure = 0;
   const overflow = {};
-  Object.entries(demand).forEach(([mat, sqft]) => {
-    const totalStock = stock[mat] || 0;
-    const remaining = totalStock - (used[mat] || 0);
-    const pressure = totalStock > 0 ? ((used[mat] || 0) + sqft) / totalStock : 1;
-    if (pressure > maxPressure) maxPressure = pressure;
-    if (sqft > remaining) {
-      const over = Math.round((sqft - remaining) * 100) / 100;
-      shortageSqft += over;
-      overflow[mat] = over;
-    }
-  });
+  if (demandSqft > remaining) {
+    shortageSqft = Math.round((demandSqft - remaining) * 100) / 100;
+    overflow[K] = shortageSqft;
+  }
+  const maxPressure = pressure;
 
   let status, reason;
   if (shortageSqft > 0) { status = "red"; reason = `Shortage of ${shortageSqft} sqft — rental needed`; }

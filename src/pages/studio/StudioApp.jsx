@@ -111,6 +111,7 @@ import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "..
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc, claimDealPresence } from "../../lib/supabase";
+import { writeWithRetry } from "../../lib/writeRetry";
 import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
 import { guestRepeatLineCost, flaggedUnitRate } from "../../lib/studio/repeatPricing.js";
 import {
@@ -1669,6 +1670,17 @@ export default function StudioApp() {
   const [sessionHistoryExpanded, setSessionHistoryExpanded] = useState(false);
   const [dateTypes, setDateTypes] = useState({});
   const [eventOrders, setEventOrders] = useState([]);
+  // "loading" until loadEoRows() settles, then "ok" or "failed" — never flips back. eventOrders
+  // sitting at its [] default (still loading, OR a failed load) must never be mistaken for "this
+  // client has no live booking yet": pushEventOrderPlan's own dedupe (ownEventOrderIds) would
+  // otherwise miss a real existing order and create a duplicate event_orders row (same failure
+  // class as the Sangeeta duplicate-booking incident, 2026-11-02, but via a failed/slow read
+  // instead of a stale function index). Three states, not a boolean, because Studio has no mount
+  // loading screen gating interaction (unlike IMS) — a deal reopens and shows its Sold/Apply
+  // Changes button as soon as the client ledger loads, which can easily race ahead of this
+  // specific fetch (one of several in the same mount Promise.all) on a perfectly healthy
+  // connection; that window needs "try again in a few seconds", not "reload the page".
+  const eoLoadStateRef = useRef("loading");
   const [photoImsMap, setPhotoImsMap] = useState({});
   // ── Deal Check knowledge set (learned photo→IMS visual identity) ──────────────
   // Row-per-entry table `dc_photo_knowledge`, id = `${photoUrl}::${rcNameLower}`, data =
@@ -2955,7 +2967,12 @@ export default function StudioApp() {
         fetchAll("rate_card_categories").catch(() => null),
         fetchAll("inventory").catch(() => null),
         kvTryGet(RC_SK_CATS).catch(() => ({ ok: false, error: "exception" })),
-        kvGet(RC_SK_TR).catch(() => null),
+        // kvTryGet, not kvGet — trSettingsLoadedRef below must be able to tell a failed read apart
+        // from "confirmed no transport settings saved yet" (owner report 2026-11-05: kvGet collapsing
+        // both to null defeated this ref's own stale-closure guard on the genset migration, letting
+        // it persist the TR_DV/TR_DTC seed defaults over real data). autoPersistCustomVenue isn't
+        // gated on this ref — it's protected separately, by kv.js's own load-failure block (P0-2).
+        kvTryGet(RC_SK_TR),
       ]);
       // Events — auto-wrap to multi-function shape (functions[]).
       try {
@@ -2981,8 +2998,25 @@ export default function StudioApp() {
       try {
         const rows = rcRows;
         if (Array.isArray(rows) && rows.length) { const mapped = rows.map(rowToRcItem).filter(Boolean); loadedRcItems = mapped; if (!cancelled) setRcItems(mapped); }
-        else { // empty table → seed defaults as rows (first boot)
-          try { await supabase.from("rate_card").upsert(RC_D.map(i => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() })), { onConflict: "id" }); } catch { /* ignore */ }
+        else if (rows === null) {
+          // The read ITSELF failed (loadRcRows().catch(() => null), above) — not "the table is
+          // genuinely empty." Seeding defaults here would upsert RC_D's fixed ids (T01, T02, M01…)
+          // straight over the real rate_card rows with those same ids — confirmed live class of bug
+          // (owner report 2026-11-05, truss_inventory's equivalent: a failed fetch silently leaves a
+          // placeholder, and the next write upserts it over real data). rcItems just stays empty/stale
+          // for this mount; nothing is written.
+          if (!cancelled) setSaveError({ label: "Rate card", error: "Failed to load — reload the page before editing prices. Nothing was saved or overwritten." });
+        } else {
+          // A genuinely successful fetch that found zero rows — first boot, no rate_card rows exist
+          // yet. Seeding RC_D is correct here. ignoreDuplicates as a second line of defense: even if
+          // this branch is ever reached with real rows already present under these same ids, it
+          // cannot overwrite them.
+          try {
+            await writeWithRetry(
+              () => supabase.from("rate_card").upsert(RC_D.map(i => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() })), { onConflict: "id", ignoreDuplicates: true }),
+              { target: "rate_card:seed", retryable: false, report: false },
+            );
+          } catch { /* ignore */ }
           loadedRcItems = RC_D; if (!cancelled) setRcItems(RC_D);
         }
       } catch { /* ignore */ }
@@ -3034,12 +3068,21 @@ export default function StudioApp() {
         }
         if (!cancelled) setRcCats(cats);
       } catch {}
-      // Transport
+      // Transport. trSettingsLoadedRef only flips true on a genuine read (success, whether or not a
+      // row existed) — never on a failed read, which must leave trVenues/truckCap at their seed
+      // defaults AND keep the ref false, so the genset migration (gated on this ref) stays refused
+      // instead of persisting seed data over the real saved transport settings (owner report
+      // 2026-11-05). autoPersistCustomVenue reaches the same table but isn't gated on this ref —
+      // see kv.js's own load-failure block (P0-2) for how IT is protected.
       try {
-        const v = trVal;
-        if (v != null) { const td = parse(v); if (td && typeof td === "object" && !cancelled) { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62); } }
+        const r = trVal;
+        if (r.ok) {
+          if (r.value != null) { const td = parse(r.value); if (td && typeof td === "object" && !cancelled) { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62); } }
+          if (!cancelled) trSettingsLoadedRef.current = true;
+        } else if (!cancelled) {
+          setSaveError({ label: "Transport settings", error: "Failed to load — reload the page before editing trucks/genset settings. Nothing was saved or overwritten." });
+        }
       } catch {}
-      if (!cancelled) trSettingsLoadedRef.current = true;
       // Everything below this point (through the "Deal Check boot loaders" at the end) used to be
       // ~30 individually-awaited kvGet/fetchAll calls, one after another, IN SERIES — none of them
       // read another's result (verified: loadedZones/loadedTax below are only ever used inside their
@@ -3063,30 +3106,33 @@ export default function StudioApp() {
         // Zone photo groups — normalised on read, so a blob written before groups were per-function
         // (a bare id array per zone) loads as an any-function group instead of being ignored.
         (async () => { try { const v = await kvGet(ZONE_GROUPS_SK); if (v != null && !cancelled) { const zg = normaliseZoneGroups(parse(v)); zoneGroupsRef.current = zg; setZoneGroups(zg); } } catch {} })(),
-        // Taxonomy — backfill missing keys from DEFAULT_TAX
+        // Taxonomy — backfill missing keys from DEFAULT_TAX. kvTryGet, not kvGet: a failed read must
+        // not be treated as "nothing saved yet" — that silently seeded DEFAULT_TAX over a real,
+        // user-managed taxonomy (including taggingStandards, the AI-tagging house rules) on mount,
+        // the same class of bug as the truss_inventory incident (owner report 2026-11-05).
         (async () => {
           try {
-            const v = await kvGet(TAX_SK);
-            if (v != null) {
-              const tp = parse(v);
-              if (tp && tp.eventType) {
-                const out = { ...tp };
-                let merged = false;
-                for (const k of Object.keys(DEFAULT_TAX)) { if (!Array.isArray(out[k])) { out[k] = DEFAULT_TAX[k]; merged = true; } }
-                // One-time: introduce the "Both" venue type (Indoor + Outdoor) into the already-saved
-                // shared taxonomy. Gated on a stored flag so that if someone later deletes "Both" in
-                // Manage Settings it stays gone — we don't auto-restore it (the taxonomy is user-managed).
-                try {
-                  const bothDone = await kvGet(TAX_BOTH_MIG_SK);
-                  if (bothDone == null) {
-                    if (Array.isArray(out.venueType) && !out.venueType.includes("Both")) { out.venueType = [...out.venueType, "Both"]; merged = true; }
-                    reliableSave(TAX_BOTH_MIG_SK, "1", "Taxonomy migration").catch(() => {});
-                  }
-                } catch {}
-                if (merged) reliableSave(TAX_SK, JSON.stringify(out), "Taxonomy").catch(() => {});
-                if (!cancelled) setTaxonomy(out);
-              }
-            } else { reliableSave(TAX_SK, JSON.stringify(DEFAULT_TAX), "Taxonomy").catch(() => {}); }
+            const r = await kvTryGet(TAX_SK);
+            if (!r.ok) { if (!cancelled) setSaveError({ label: "Taxonomy", error: "Failed to load — reload the page before editing categories/tags in Manage Settings. Nothing was saved or overwritten." }); return; }
+            if (r.missing) { reliableSave(TAX_SK, JSON.stringify(DEFAULT_TAX), "Taxonomy").catch(() => {}); return; }
+            const tp = parse(r.value);
+            if (tp && tp.eventType) {
+              const out = { ...tp };
+              let merged = false;
+              for (const k of Object.keys(DEFAULT_TAX)) { if (!Array.isArray(out[k])) { out[k] = DEFAULT_TAX[k]; merged = true; } }
+              // One-time: introduce the "Both" venue type (Indoor + Outdoor) into the already-saved
+              // shared taxonomy. Gated on a stored flag so that if someone later deletes "Both" in
+              // Manage Settings it stays gone — we don't auto-restore it (the taxonomy is user-managed).
+              try {
+                const migR = await kvTryGet(TAX_BOTH_MIG_SK);
+                if (migR.ok && migR.missing) {
+                  if (Array.isArray(out.venueType) && !out.venueType.includes("Both")) { out.venueType = [...out.venueType, "Both"]; merged = true; }
+                  reliableSave(TAX_BOTH_MIG_SK, "1", "Taxonomy migration").catch(() => {});
+                }
+              } catch {}
+              if (merged) reliableSave(TAX_SK, JSON.stringify(out), "Taxonomy").catch(() => {});
+              if (!cancelled) setTaxonomy(out);
+            }
           } catch {}
         })(),
         // Areas↔Zones auto-sync removed: the bidirectional sync (ZONE_META seeds, area→zone,
@@ -3098,22 +3144,22 @@ export default function StudioApp() {
         // Correction log (contribution tracking) — table-backed now, see photoCorrections.js
         (async () => { try { const rows = await fetchPhotoCorrections(); if (!cancelled) { setCorrLog(rows); corrLogRef.current = rows; } } catch {} })(),
         (async () => { try { const v = await kvGet(TAG_KB_SK); if (v != null) { const kb = parse(v); if (kb && typeof kb === "object" && !cancelled) setTagKB(kb); } } catch {} })(),
-        // Team
+        // Team. kvTryGet, not kvGet — same reason as Taxonomy above: a failed read must not seed
+        // DEFAULT_TEAM over the real team list (owner report 2026-11-05).
         (async () => {
           try {
-            const v = await kvGet(TEAM_SK);
-            if (v != null) {
-              const tp = parse(v);
-              if (tp && typeof tp === "object" && !Array.isArray(tp) && !cancelled) {
-                // A saved list from before still carries a plain-text `pw` (readable by anyone with
-                // the public key). Drop it and save the list back without it — nothing reads it.
-                const hadPw = Object.values(tp).some(u => u && typeof u === "object" && "pw" in u);
-                const clean = hadPw ? Object.fromEntries(Object.entries(tp).map(([id, u]) => { if (!u || typeof u !== "object") return [id, u]; const { pw: _pw, ...rest } = u; return [id, rest]; })) : tp;
-                setTeamData(clean);
-                if (hadPw) reliableSave(TEAM_SK, JSON.stringify(clean), "Team").catch(() => {});
-              }
+            const r = await kvTryGet(TEAM_SK);
+            if (!r.ok) { if (!cancelled) setSaveError({ label: "Team", error: "Failed to load — reload the page before editing the team list. Nothing was saved or overwritten." }); return; }
+            if (r.missing) { reliableSave(TEAM_SK, JSON.stringify(DEFAULT_TEAM), "Team").catch(() => {}); return; }
+            const tp = parse(r.value);
+            if (tp && typeof tp === "object" && !Array.isArray(tp) && !cancelled) {
+              // A saved list from before still carries a plain-text `pw` (readable by anyone with
+              // the public key). Drop it and save the list back without it — nothing reads it.
+              const hadPw = Object.values(tp).some(u => u && typeof u === "object" && "pw" in u);
+              const clean = hadPw ? Object.fromEntries(Object.entries(tp).map(([id, u]) => { if (!u || typeof u !== "object") return [id, u]; const { pw: _pw, ...rest } = u; return [id, rest]; })) : tp;
+              setTeamData(clean);
+              if (hadPw) reliableSave(TEAM_SK, JSON.stringify(clean), "Team").catch(() => {});
             }
-            else { reliableSave(TEAM_SK, JSON.stringify(DEFAULT_TEAM), "Team").catch(() => {}); }
           } catch {}
         })(),
         // Premia config
@@ -3136,7 +3182,7 @@ export default function StudioApp() {
         // Date types
         (async () => { try { const v = await kvGet(DT_SK); if (v != null) { const dp = parse(v); if (dp && typeof dp === "object" && !cancelled) setDateTypes(dp); } } catch {} })(),
         // Event orders
-        (async () => { try { const rows = await loadEoRows(); if (Array.isArray(rows) && !cancelled) setEventOrders(rows.map(rowToEO)); } catch { /* ignore */ } })(),
+        (async () => { try { const rows = await loadEoRows(); if (Array.isArray(rows) && !cancelled) { setEventOrders(rows.map(rowToEO)); eoLoadStateRef.current = "ok"; } } catch { if (!cancelled) eoLoadStateRef.current = "failed"; } })(),
         // Photo→IMS cache
         (async () => { try { const v = await kvGet(PIMAP_SK); if (v != null) { const pm = parse(v); if (pm && typeof pm === "object" && !Array.isArray(pm) && !cancelled) setPhotoImsMap(pm); } } catch {} })(),
         // Scan history
@@ -3156,9 +3202,18 @@ export default function StudioApp() {
         // Palette catalogue (Studio-owned) + IMS settings (paint cats)
         (async () => {
           try {
-            const palv = await kvGet(PALETTE_SK);
-            if (palv != null) { const p = parse(palv); if (p && typeof p === "object" && !cancelled) { if (Array.isArray(p.colourCatalogue) && p.colourCatalogue.length) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue) && p.paletteCatalogue.length) setImsPaletteCatalogue(p.paletteCatalogue); } }
-            if (!cancelled) { paletteLoadedRef.current = true; setPaletteCatalogueLoaded(true); }
+            // kvTryGet, not kvGet — paletteLoadedRef/paletteCatalogueLoaded exist SPECIFICALLY to
+            // guard against the 2026-07-27 incident (see this ref's own comment above), but kvGet
+            // collapsing a failed read into the same `null` as "confirmed nothing saved" defeated
+            // that guard the same way it defeated trussInv's/taxonomy's/team's (owner report
+            // 2026-11-05) — only a genuine read, success or confirmed-missing, may flip it.
+            const r = await kvTryGet(PALETTE_SK);
+            if (r.ok) {
+              if (r.value != null) { const p = parse(r.value); if (p && typeof p === "object" && !cancelled) { if (Array.isArray(p.colourCatalogue) && p.colourCatalogue.length) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue) && p.paletteCatalogue.length) setImsPaletteCatalogue(p.paletteCatalogue); } }
+              if (!cancelled) { paletteLoadedRef.current = true; setPaletteCatalogueLoaded(true); }
+            } else if (!cancelled) {
+              setSaveError({ label: "Palette catalogue", error: "Failed to load — reload the page before editing colours/palettes. Nothing was saved or overwritten." });
+            }
             const sv = await kvGet(IMS_SETTINGS_SK);
             if (sv != null) { const s = parse(sv); if (s && typeof s === "object" && !cancelled) { if (Array.isArray(s.paintableCategories) && s.paintableCategories.length) setImsPaintableCategories(s.paintableCategories); if (typeof s.defaultPaintCostPerItem === "number") setImsDefaultPaintCost(s.defaultPaintCostPerItem); } }
           } catch {}
@@ -3226,7 +3281,10 @@ export default function StudioApp() {
     // `functions` table's own backfill race). Shared with IMS → Settings → Venues' own outdoor-add
     // form, so the two converge on the same id for the same name too.
     const id = deterministicVenueId("od", name);
-    await supabase.from("venues").upsert({ id, kind: "outdoor", name, empanelled: !!empanelled }, { onConflict: "id", ignoreDuplicates: true });
+    await writeWithRetry(
+      () => supabase.from("venues").upsert({ id, kind: "outdoor", name, empanelled: !!empanelled }, { onConflict: "id", ignoreDuplicates: true }),
+      { target: `venues:${id}`, retryable: false, report: false },
+    );
   }, []);
   // Sub-venue → parent map (Aura → Exotica) so fixed-venue rules match across sub-venues.
   // Persisted to settings so IMS reads it too.
@@ -3287,7 +3345,12 @@ export default function StudioApp() {
         if (!key) return;
         try {
           if (key === RC_SK_CATS) { const a = pj(await kvGet(RC_SK_CATS)); if (Array.isArray(a)) setRcCats(a); }
-          else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62); } trSettingsLoadedRef.current = true; }
+          else if (key === RC_SK_TR) { const td = pj(await kvGet(RC_SK_TR)); if (td && typeof td === "object") { if (td.venues) setTrVenues(td.venues); if (td.truckCap) setTruckCap(td.truckCap); if (td.floralPerTruck) setFloralPerTruck(td.floralPerTruck); if (td.bufferTiers) setBufferTiers(td.bufferTiers); if (td.gensetRate !== undefined) setGensetRate(td.gensetRate); if (td.gensetRate62 !== undefined) setGensetRate62(td.gensetRate62); if (td.gensetCostRate !== undefined) setGensetCostRate(td.gensetCostRate); if (td.gensetCostRate62 !== undefined) setGensetCostRate62(td.gensetCostRate62);
+            // Only on an actual successful refetch — not unconditionally. If THIS refetch itself
+            // fails (kvGet returns null on error, same as "not found"), flipping the ref anyway would
+            // let the genset migration (gated on it) run against whatever stale/seed state is
+            // currently live, the same bug this ref exists to prevent (owner report 2026-11-05).
+            trSettingsLoadedRef.current = true; } }
           else if (key === PALETTE_SK) { const p = pj(await kvGet(PALETTE_SK)); if (p && typeof p === "object") { if (Array.isArray(p.colourCatalogue)) setImsColourCatalogue(p.colourCatalogue); if (Array.isArray(p.paletteCatalogue)) setImsPaletteCatalogue(p.paletteCatalogue); } }
           else if (key === "fabricMultiplier") { setImsFabricMultiplier(pj(await kvGet("fabricMultiplier"))); }
           // YT_TAG_SK is deliberately NOT handled here any more. Video tags have their own row-level
@@ -3719,8 +3782,16 @@ export default function StudioApp() {
     try {
       if (changed.length) {
         const rows = changed.map((it) => ({ ...libItemToRow(it), updated_at: new Date().toISOString() }));
-        const { error } = await supabase.from("library").upsert(rows, { onConflict: "id" });
-        if (error) throw error;
+        // One retryingUpsert per row (Promise.all), not a single batched upsert — each row gets its
+        // own target/supersession scope. See saveRateCardItems' identical reasoning (IMS.jsx).
+        // report:false for a MULTI-row save: a one-shot bulk import/tag flush of hundreds of rows
+        // failing during an outage would otherwise flood the save-health banner with one permanent
+        // "library row" entry per row, each needing its own Discard click — this function's own
+        // rollback + red toast already covers the failure for these. A single-item edit keeps the
+        // default (report:true) — there, one banner entry for one photo is the normal, useful case.
+        const results = await Promise.all(rows.map((row) => retryingUpsert("library", row, "id", rows.length > 1 ? { report: false } : {})));
+        const failed = results.find((r) => r.error);
+        if (failed) throw failed.error;
       }
       for (const id of dels) await deleteRow("library", id);
       return { ok: true };
@@ -3730,6 +3801,14 @@ export default function StudioApp() {
       // photo that looks verified with its new tags) even though the database never got it, and the
       // only sign anything went wrong is a red toast that the caller's own "saved!" message stomps a
       // moment later. A refresh then re-fetches the real (unsaved) row and it looks like data reverted.
+      // NOT re-synced via fetchAll here (unlike rate_card's identical rollback fix) — `library` is
+      // deliberately a lazy, partial cache of whatever's been fetched this session (see this
+      // function's own file-level comment), never the whole table, so fetchAll would both defeat
+      // that design and be needlessly expensive. A stale rolled-back entry for a row that actually
+      // DID land (now possible with per-row requests, unlike the old all-or-nothing batched upsert)
+      // self-corrects when the row is next merged from a browse-page fetch or a realtime UPDATE —
+      // NOT from ensureLibItems, which skips an id already in the cache and so would never re-fetch
+      // this one specifically.
       libItemsRef.current = prev; setLibItems(prev);
       showMsg?.("Library save failed: " + (e?.message || e), "red");
       return { ok: false, error: e };
@@ -3864,7 +3943,12 @@ export default function StudioApp() {
       // deal's history, so dropping the client row alone would leave that history behind in
       // studio_sessions with nothing pointing at it.
       for (const id of dels) {
-        try { await supabase.from("studio_sessions").delete().eq("client_id", id); } catch { /* the client row still goes */ }
+        try {
+          await writeWithRetry(
+            () => supabase.from("studio_sessions").delete().eq("client_id", id),
+            { target: `studio_sessions:client:${id}`, retryable: false, report: false },
+          );
+        } catch { /* the client row still goes */ }
         await deleteRow("client_ledger", id);
       }
       if (changed.length) {
@@ -3948,17 +4032,41 @@ export default function StudioApp() {
   const deleteSessionRows = useCallback(async (sessionId) => {
     if (!sessionId) return { ok: false, reason: "no session id" };
     try {
-      const { error, count } = await supabase
-        .from("studio_sessions")
-        .delete({ count: "exact" })
-        .eq("session_id", sessionId);
-      if (error) {
-        showMsg?.("Session delete failed: " + (error.message || error), "red");
-        return { ok: false, reason: error.message || String(error) };
+      // retryable:false — NOT safe to retry later, despite deletes usually being the safe case in
+      // this rollout: session_id X can be REUSED by a later save (collapseInPlace reuses
+      // prevSessions[0].id, including the case where the session being deleted IS the active,
+      // currently-loaded draft). If this delete fails, sleeps, and a same-author autosave then lands
+      // a brand-new build under this exact X before this delete's retry fires, a delayed automatic
+      // retry (reconnect, or a stray Retry click days later off a lingering banner) would wipe that
+      // genuinely new build — the same "collapse destroyed newer work" shape this file's own
+      // DELETION STILL DISABLED comment already describes, through a different door. The save path's
+      // own target (`studio_sessions:${snapshot.id}`) never knows about this delete's target
+      // (`studio_sessions:session:${sessionId}`, a different namespace), so supersession can't
+      // protect against this on its own. retryable:false alone only removes the LATER, exposed retry
+      // (reconnect/Retry-button) — writeWithRetry's own few FAST internal attempts (up to ~2.8s of
+      // backoff) still happen first, which is its own smaller version of the exact same window: a
+      // same-author autosave could reuse this sessionId mid-backoff and get wiped once the delete's
+      // own next attempt fires. attempts:1 closes that too — this delete goes back to being a single
+      // shot, same as before this rollout, gaining only supersession-safety and visible reporting.
+      // writeWithRetry only threads a factory's {data, error} through, not {count} — folded into
+      // `data` here so this function's own existing contract (returning how many rows were removed)
+      // is unaffected.
+      const res = await writeWithRetry(
+        async () => {
+          const { error, count } = await supabase.from("studio_sessions").delete({ count: "exact" }).eq("session_id", sessionId);
+          return { error, data: { count } };
+        },
+        { target: `studio_sessions:session:${sessionId}`, label: "Session delete", retryable: false, attempts: 1 },
+      );
+      if (res.superseded) return { ok: false, reason: "superseded by a newer action on this session" };
+      if (res.error) {
+        showMsg?.("Session delete failed: " + (res.error.message || res.error), "red");
+        return { ok: false, reason: res.error.message || String(res.error) };
       }
       // Zero rows is not necessarily an error — a session saved before studio_sessions existed only
       // lives in the client_ledger blob, and removing it from there is the caller's other write. So
       // report it rather than treating it as failure.
+      const count = res.data?.count;
       return { ok: true, count: typeof count === "number" ? count : null };
     } catch (e) {
       showMsg?.("Session delete failed: " + (e?.message || e), "red");
@@ -3966,6 +4074,30 @@ export default function StudioApp() {
     }
   }, [showMsg]);
   const saveDateTypes = useCallback(async (nd) => { setDateTypes(nd); await reliableSave(DT_SK, JSON.stringify(nd), "Date types"); }, []);
+
+  // A few fast, silent attempts (writeWithRetry) absorb a transient blip before any of these
+  // row-level writers' own showMsg/console.warn ever surfaces a failure — mirrors IMS.jsx's own
+  // retryingUpsert/retryingDelete (see its comment for the full reasoning). retryingUpsert is safe
+  // by construction for a FULL-row payload (two overlapping writes to the same id racing within one
+  // writer's own retry window correctly resolve to whichever was issued last); retryingUpdate is for
+  // a PARTIAL `.update(changes).eq(onConflict,id)` built from a point-in-time read-merge-write
+  // (event_orders.data, mostly) — always retryable:false there, same caution as kv.js/updateRow:
+  // resending a captured merge later (this never happens automatically here, only within one call's
+  // own few-second retry window, but the snapshot itself could still be stale against a concurrent
+  // writer) must never masquerade as fresh.
+  const retryingUpsert = (table, row, onConflict = "id", opts = {}) => writeWithRetry(
+    () => supabase.from(table).upsert(row, { onConflict }),
+    { target: `${table}:${row[onConflict]}`, label: `${table} row`, retryable: false, ...opts },
+  );
+  const retryingUpdate = (table, id, changes, onConflict = "id", opts = {}) => writeWithRetry(
+    () => supabase.from(table).update(changes).eq(onConflict, id),
+    { target: `${table}:${id}`, label: `${table} row`, retryable: false, ...opts },
+  );
+  const retryingDelete = (table, id, onConflict = "id") => writeWithRetry(
+    () => supabase.from(table).delete().eq(onConflict, id),
+    { target: `${table}:${id}`, label: `${table} row`, retryable: false },
+  );
+
   // Submit a last-minute amendment request to the department head. Re-reads the
   // shared list first so a concurrent IMS-side decision isn't clobbered.
   const submitAmendRequest = useCallback(async (req) => {
@@ -3973,7 +4105,7 @@ export default function StudioApp() {
     // it only writes this request, never the whole list).
     const r = { ...req, id: req.id || ("AMR" + Date.now().toString(36)) };
     setAmendRequests((prev) => [...prev.filter((x) => x.id !== r.id), r]);
-    try { const { error } = await supabase.from("amend_requests").upsert({ id: r.id, status: r.status ?? null, data: r }, { onConflict: "id" }); if (error) throw error; }
+    try { const { error } = await retryingUpsert("amend_requests", { id: r.id, status: r.status ?? null, data: r }); if (error) throw error; }
     catch (e) { showMsg?.("Amend request failed: " + (e?.message || e), "red"); }
     return r;
   }, [showMsg]);
@@ -3991,7 +4123,7 @@ export default function StudioApp() {
       for (const eo of (neo || [])) {
         const before = prevMap.get(eo.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(eo)) {
-          const { error } = await supabase.from("event_orders").upsert(eoToRow(eo), { onConflict: "id" });
+          const { error } = await retryingUpsert("event_orders", eoToRow(eo));
           if (error) throw error;
         }
       }
@@ -4144,14 +4276,17 @@ export default function StudioApp() {
           // Already in sync — leave the head's edits untouched. Only stamp the check time (at most
           // every 10 minutes), so a settings change that left this plan identical stops reading as
           // "stale" and the sweep does not pick this deal up again on every start.
-          if (Date.now() - Number(cur.deptSyncedAt) > 600000) await supabase.from("event_orders").update({ data: { ...cur, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION } }).eq("id", eo.id);
+          // report:false — this write only re-stamps a "last checked" timestamp onto data that's
+          // already in sync; a failure here is a non-event (the next sweep just re-checks it), not
+          // something worth a persistent banner and a "leave site?" prompt on every background pass.
+          if (Date.now() - Number(cur.deptSyncedAt) > 600000) await retryingUpdate("event_orders", eo.id, { data: { ...cur, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION } }, "id", { report: false });
           return;
         }
-        await supabase.from("event_orders").update({ data: applySnap(cur) }).eq("id", eo.id);
+        await retryingUpdate("event_orders", eo.id, { data: applySnap(cur) });
       } else {
         // No table row yet → create it from the local EO (first sync).
         const merged = applySnap(eo);
-        await supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: merged }, { onConflict: "id" });
+        await retryingUpsert("event_orders", { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: merged });
       }
     } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName]);
@@ -4211,7 +4346,7 @@ export default function StudioApp() {
       const cur = row.data;
       if (cur.layoutSig === laySig) return; // already in sync — no write
       const withLayout = (fns) => Array.isArray(fns) ? fns.map((f, i) => { const k = f?.fnIdx ?? i; return (f && layout.has(k)) ? { ...f, ...layout.get(k) } : f; }) : fns; // fnIdx, else position (see persistDeptSnapshot)
-      await supabase.from("event_orders").update({ data: { ...cur, functionsDetail: withLayout(cur.functionsDetail), layoutSig: laySig } }).eq("id", eo.id);
+      await retryingUpdate("event_orders", eo.id, { data: { ...cur, functionsDetail: withLayout(cur.functionsDetail), layoutSig: laySig } });
     } catch (e) { /* best-effort, same as persistDeptSnapshot/syncDealValueNow */ }
   }, [eventOrders, activeClientId, clientName]);
   // Pushes the just-applied deal value straight onto the mirrored event_orders row, immediately —
@@ -4224,7 +4359,7 @@ export default function StudioApp() {
     if (!eo) return;
     try {
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
-      if (row && row.data) await supabase.from("event_orders").update({ data: { ...row.data, dealValue } }).eq("id", eo.id);
+      if (row && row.data) await retryingUpdate("event_orders", eo.id, { data: { ...row.data, dealValue } });
     } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName]);
   const savePhotoImsMap = useCallback(async (nm) => { setPhotoImsMap(nm); await reliableSave(PIMAP_SK, JSON.stringify(nm), "Photo-IMS map"); }, []);
@@ -4288,13 +4423,19 @@ export default function StudioApp() {
     const write = async () => {
       try {
         if (toUpsert.length) {
-          const { error } = await supabase.from("video_tags")
-            .upsert(toUpsert.map(([id, val]) => videoTagToRow(id, val)), { onConflict: "video_id" });
-          if (error) throw new Error(error.message);
+          // One retryingUpsert per video (Promise.all) — each gets its own target/supersession
+          // scope, same reasoning as every other per-row batch in this rollout. Still happens
+          // entirely inside this one chained write() link, so the chain's own ordering (the whole
+          // reason for ytSaveChainRef) is untouched — only this link's OWN few retry attempts, if
+          // any video in it hits a transient blip, happen before the chain advances to the next link.
+          const results = await Promise.all(toUpsert.map(([id, val]) => retryingUpsert("video_tags", videoTagToRow(id, val), "video_id")));
+          const failed = results.find((r) => r.error);
+          if (failed) throw new Error(failed.error.message);
         }
-        for (const [id] of toDelete) {
-          const { error } = await supabase.from("video_tags").delete().eq("video_id", id);
-          if (error) throw new Error(error.message);
+        if (toDelete.length) {
+          const results = await Promise.all(toDelete.map(([id]) => retryingDelete("video_tags", id, "video_id")));
+          const failed = results.find((r) => r.error);
+          if (failed) throw new Error(failed.error.message);
         }
       } catch (e) {
         applyLocal([...before.entries()].map(([id, val]) => [id, val === undefined ? null : val]));
@@ -5874,7 +6015,7 @@ export default function StudioApp() {
         const result = allocatePlatformForDate({}, date, list, trussInv, "studio-presale-check");
         if (list.find((ev) => ev.eoId === SELF_CHECK_EOID)?.shortageBorne) {
           const over = result[date]?.stockSummary?.overflow || {};
-          flagged.push({ domain: "platform", emoji: "🛏️", date, detail: Object.entries(over).map(([m, sqft]) => `${sqft} sqft ${m}`).join(", ") || "stock shortfall" });
+          flagged.push({ domain: "platform", emoji: "🛏️", date, detail: Object.values(over).map((sqft) => `${sqft} sqft`).join(", ") || "stock shortfall" });
         }
       }
 
@@ -8430,13 +8571,45 @@ export default function StudioApp() {
           // exactly the one a real browser refresh/close is free to cancel mid-flight, which is how a
           // deal's amount was seen to drop after a hard refresh and only recover once a later,
           // uninterrupted save re-landed the fuller build.
-          keepaliveUpsert("studio_sessions", rowsForSnapshot);
+          // Claims this save's own generation on the SAME target the non-keepalive branch below
+          // uses (studio_sessions:${snapshot.id}) WITHOUT adding any retry of its own (attempts:1,
+          // report:false — a keepalive write already has its own reason not to retry: the page is
+          // mid-unload). Without this, a DIFFERENT, non-keepalive save under this same id that failed
+          // its first attempt moments earlier and is still sleeping before a retry would never learn
+          // a newer (this) save happened — its retry isn't superseded by anything, since only a
+          // writeWithRetry call bumps the generation — and could resend its own older snapshot right
+          // over this keepalive save once it wakes up.
+          writeWithRetry(async () => { await keepaliveUpsert("studio_sessions", rowsForSnapshot); return {}; }, {
+            target: `studio_sessions:${snapshot.id}`, attempts: 1, report: false,
+          });
         } else {
           (async () => {
             try {
-              const { error } = await supabase.from("studio_sessions")
-                .upsert(rowsForSnapshot, { onConflict: "id" });
-              if (error) throw error;
+              // ONE writeWithRetry call for the WHOLE array, not a per-row Promise.all (unlike this
+              // rollout's other batch writers) — this upsert is a single PostgREST statement, so it
+              // is genuinely all-or-nothing at the database level: every function's row in this one
+              // save either lands together or none do. Splitting it per-row the way blocks/library/
+              // rate_card were fixed would trade that atomicity for independent per-row retries,
+              // which here means a save could land PARTIALLY — one function's build persisted,
+              // another's silently still the old one — with nothing in this function's own error
+              // handling able to tell the difference. The build is the single highest-stakes write in
+              // this app; a few extra seconds of all-or-nothing retry is worth far more than finer-
+              // grained resilience that can leave a build half-saved.
+              // target: this SAVE's session id (not per-row) — a later save that reuses the same id
+              // (collapseInPlace, the same author's next rolling-draft tick) correctly supersedes a
+              // still-retrying earlier one; a save that mints a fresh id (a different author, or a
+              // deliberate new entry) is never connected to it, matching this function's own existing
+              // "never silently overwrite a DIFFERENT entry" rule a few lines above.
+              // retryable:false — rowsForSnapshot is this call's own point-in-time build snapshot, not
+              // re-read fresh; a delayed automatic retry (reconnect, possibly minutes later) resending
+              // it could overwrite someone's genuinely newer save under the same id. The few fast
+              // internal attempts below (finishing in a few seconds) carry no such risk.
+              const res = await writeWithRetry(
+                () => supabase.from("studio_sessions").upsert(rowsForSnapshot, { onConflict: "id" }),
+                { target: `studio_sessions:${snapshot.id}`, label: "Build save", retryable: false },
+              );
+              if (res.superseded) return; // a newer save under this same id already took over
+              if (res.error) throw res.error;
             } catch (e) {
               // SAID OUT LOUD, not swallowed. A silent data-layer failure is how 249 tag verifications
               // were lost in July (see the note on migration 023) — if these rows are not landing, the
@@ -8770,8 +8943,26 @@ export default function StudioApp() {
   // skips that prompt entirely, since applyBookedChanges always has an existing order by
   // definition and asking "update the existing booking instead of creating a second one?" on every
   // single edit would be pure noise.
+  // Shared by markSold/applyBookedChanges (checked BEFORE they write anything — see each call
+  // site's own comment for why checking only here, after the fact, left a booked client with no
+  // event_orders row) and this function's own backstop below. See eoLoadStateRef's own comment for
+  // why "still loading" and "genuinely failed" need different messages.
+  const blockIfEoNotLoaded = () => {
+    if (eoLoadStateRef.current === "ok") return false;
+    if (eoLoadStateRef.current === "loading") showMsg?.("Event orders are still loading — try again in a few seconds.", "red");
+    else showMsg?.("Event orders failed to load — reload the page before confirming or editing a booking.", "red");
+    return true;
+  };
   const pushEventOrderPlan = useCallback(async (client, opts = {}) => {
     const { skipDupeConfirm = false, activityVerb = "Booking confirmed", activityEmoji = "🎉" } = opts;
+    if (blockIfEoNotLoaded()) {
+      // event_orders never genuinely loaded (or hasn't finished loading yet) this session —
+      // eventOrders is sitting at its [] default, so the duplicate-booking check below
+      // (ownEventOrderIds) would miss this client's real existing order and create a second row
+      // instead of updating it in place. Backstop only: markSold/applyBookedChanges already check
+      // this before writing anything, so reaching here with a block is not the normal path.
+      return false;
+    }
     const allFns = collectAllFunctionData();
     const soldDateStamp = todayStr();
     const stampZoneElements = (ze) => {
@@ -9011,7 +9202,7 @@ export default function StudioApp() {
     saveEventOrders(existingActive ? eventOrders.map(e => e.id === eoId ? eo : e) : [...eventOrders, eo]);
     // Bridge to IMS: SOLD orders also go into the shared `event_orders` TABLE (Studio's own list
     // is a kv blob; IMS — Events, Planning, Dept Ops — reads the table + realtime).
-    supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }, { onConflict: "id" }).then(({ error }) => { if (error) console.warn("[pushEventOrderPlan] event_orders table sync failed:", error.message); }).catch(() => {});
+    retryingUpsert("event_orders", { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }).then(({ error }) => { if (error) console.warn("[pushEventOrderPlan] event_orders table sync failed:", error.message); });
     logActivity("booking", `${activityEmoji} ${client.name} — ${activityVerb} by ${authUser?.name || "—"}`);
     // Fill IMS Dept Ops for the booking now, rather than whenever someone next opens Deal Check.
     syncDeptOpsHeadless();
@@ -9059,6 +9250,12 @@ export default function StudioApp() {
         yesLabel: "Confirm booking",
         tone: "positive",
       }))) return;
+      // Checked here, BEFORE saveClientLedger marks the client "booked" below — not just inside
+      // pushEventOrderPlan's own backstop — so a blocked push can never leave a client booked in
+      // Studio with no matching event_orders row for IMS to see. Checking after the confirm dialog
+      // (rather than at the top of this function) gives a slow-loading event_orders fetch the
+      // whole time the dialog was open to finish.
+      if (blockIfEoNotLoaded()) return;
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return; }
       const { client, ledger } = result;
@@ -9099,6 +9296,11 @@ export default function StudioApp() {
       if (oosFlagged.length > 0) { setOosGateModal(oosFlagged); return false; }
       const trussFlagged = scanTrussStockShortage();
       if (trussFlagged.length > 0) { setTrussStockGateModal(trussFlagged); return false; }
+      // Checked here, BEFORE the bookedSystemTotal rebase below — not just inside
+      // pushEventOrderPlan's own backstop — so a blocked push can never reset the "pending since
+      // booking" baseline (eventGrandTotal - bookedSystemTotal) to 0 while IMS's copy is still
+      // actually out of date. See markSold's identical check for the full reasoning.
+      if (blockIfEoNotLoaded()) return false;
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return false; }
       const { client: savedClient, ledger } = result;
@@ -12288,11 +12490,11 @@ export default function StudioApp() {
           const identityOk = !row.data?.type || !fn.fnType || row.data.type === fn.fnType;
           if (!identityOk) {
             console.warn(`[reconcile] functions row ${row.id} is "${row.data.type}" but this sync is for "${fn.fnType}" (date ${date}) — leaving its venue/shift/pax untouched this run.`);
-            supabase.from("functions").update({ data: { ...row.data, items: [...kept, ...nextItems] } }).eq("id", row.id)
+            retryingUpdate("functions", row.id, { data: { ...row.data, items: [...kept, ...nextItems] } }, "id", { report: false })
               .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); });
             continue;
           }
-          supabase.from("functions").update({ data: { ...row.data, items: [...kept, ...nextItems], venue: { ...prevVenueObj, name: fn.fnVenue || "" }, shift: fn.fnShift || row.data?.shift || "", pax: fn.fnPax || row.data?.pax || "" } }).eq("id", row.id)
+          retryingUpdate("functions", row.id, { data: { ...row.data, items: [...kept, ...nextItems], venue: { ...prevVenueObj, name: fn.fnVenue || "" }, shift: fn.fnShift || row.data?.shift || "", pax: fn.fnPax || row.data?.pax || "" } }, "id", { report: false })
             .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); else console.info("[reconcile] synced functions.items for fn", row.id, "date", date); });
           continue;
         }
@@ -12325,7 +12527,7 @@ export default function StudioApp() {
         // same (event, date) hits the SAME row and just overwrites it (last writer wins, same
         // self-heals-every-run posture as the rest of this function) instead of erroring on a
         // duplicate key or racing to insert first.
-        supabase.from("functions").upsert({ id: fnId, project_id: p.id, name: fnData.name, date, venue: fnData.venue, status: "Confirmed", data: fnData }, { onConflict: "id" })
+        retryingUpsert("functions", { id: fnId, project_id: p.id, name: fnData.name, date, venue: fnData.venue, status: "Confirmed", data: fnData }, "id", { report: false })
           .then(({ error }) => {
             if (error) console.error("[reconcile] functions backfill upsert failed for event", eo.id, "date", date, ":", error.message);
             else console.info("[reconcile] backfilled missing functions row for event", eo.id, "date", date, "— was created (project exists) but had never gotten a function row.");
@@ -12334,7 +12536,7 @@ export default function StudioApp() {
       if (newFnIds) {
         const p = await ensureProject();
         if (p) {
-          supabase.from("projects").update({ data: { ...p.data, functions: [...newFnIds] } }).eq("id", p.id)
+          retryingUpdate("projects", p.id, { data: { ...p.data, functions: [...newFnIds] } }, "id", { report: false })
             .then(({ error }) => { if (error) console.error("[reconcile] project.functions backfill link failed:", error.message); });
         }
       }
@@ -12441,8 +12643,25 @@ export default function StudioApp() {
       });
     });
     try {
-      const { error } = await supabase.from("blocks").upsert(ids.map((id) => ({ id, item_id: id, data: byId.get(id) || [] })), { onConflict: "id" });
-      if (error) throw error;
+      // Scoped to THIS event, not per-item: unlike IMS's own per-item blocks writer, this is
+      // already one batched multi-row upsert (not a sequential loop with its own ordering race), so
+      // retrying the whole batch together as this event's own reconcile attempt is the proportionate
+      // fix. retryable:false: byId is a merge of a point-in-time blocksRef-equivalent read, not
+      // re-read fresh, same caution as every other blocks/event_orders write in this rollout.
+      const res = await writeWithRetry(
+        () => supabase.from("blocks").upsert(ids.map((id) => ({ id, item_id: id, data: byId.get(id) || [] })), { onConflict: "id" }),
+        { target: `blocks:reconcile:${eo.id}`, label: "blocks reconcile", retryable: false },
+      );
+      if (res.superseded) {
+        // A newer reconcile of this SAME event already took over and owns the ledger
+        // save/department notifications below — falling through here (res.error is undefined on a
+        // superseded result, so `if (error) throw` alone would wrongly read as success) would log a
+        // false "wrote blocks", save requiredByFn into dcReservedInventory as if it landed when the
+        // actual write never did, and double-send the department notifications.
+        console.info("[reconcile] blocks write superseded by a newer reconcile of event", eo.id);
+        return;
+      }
+      if (res.error) throw res.error;
     } catch (e) {
       console.error("[reconcile] blocks upsert failed:", e?.message || e);
       return;

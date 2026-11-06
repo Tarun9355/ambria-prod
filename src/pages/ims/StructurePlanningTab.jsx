@@ -2,12 +2,12 @@ import { useState, useEffect, useMemo } from "react";
 import {
   allocateForDate, applyOverridesToEvents, expireStaleSimulations, isDeptHead, simulateImpact,
 } from "../../lib/ims/trussEngine";
-import { allocatePlatformForDate, applyPlatformOverridesToEvents, platformStockSqft, PLATFORM_MATERIALS, simulatePlatformImpact } from "../../lib/ims/platformEngine";
+import { allocatePlatformForDate, applyPlatformOverridesToEvents, platformStockSqft, platformTotalStockSqft, platformEventSqft, PLATFORM_MATERIALS, simulatePlatformImpact } from "../../lib/ims/platformEngine";
 import { allocateBattaForDate, applyBattaOverridesToEvents, battaStockRft, BATTA_MATERIALS, simulateBattaImpact } from "../../lib/ims/battaEngine";
 import { fetchAll, supabase } from "../../lib/supabase";
 import { Modal } from "../../components/ui";
 
-const MAT_LABEL = { iron: "⛓️ Iron", pole: "🪵 Pole", aluminium: "⚙️ Aluminium" };
+const MAT_LABEL = { wood: "🪵 Wood", iron: "⛓️ Iron", pole: "🪵 Pole", aluminium: "⚙️ Aluminium" };
 
 // One combined Planning view for truss + platform + batta, replacing the 3 separate tabs (owner
 // ask, 2026-11-01: "group these 3 truss, platform and batta in 1" — they're always checked for the
@@ -94,15 +94,19 @@ export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platfo
     return { pillars: build("pillars"), beams: build("beams") };
   }, [trussInv, dateEntryByDomain.truss]);
 
-  const platformStockBars = useMemo(() => {
-    if (!trussInv) return [];
+  // Platform material (Wood/Iron, each row's own field) and booking/feasibility (one combined pool
+  // — no per-booking signal for which material) are two different things now (owner decision,
+  // 2026-11-05 — see platformEngine.js's header comment). `combined` is the one number booking
+  // actually checks against; `byMaterial` is supply-only, for "how much of each do I own".
+  const platformStock = useMemo(() => {
+    if (!trussInv) return { combined: null, byMaterial: [] };
     const sm = dateEntryByDomain.platform?.stockSummary;
-    return PLATFORM_MATERIALS.map((mat) => {
-      const total = Math.round(platformStockSqft(trussInv, mat) * 100) / 100;
-      const used = Math.round((sm?.demand?.[mat] || 0) * 100) / 100;
-      const pct = total > 0 ? Math.round((used / total) * 100) : 0;
-      return { mat, total, used, pct, color: pct >= 100 ? "red" : pct >= 85 ? "amber" : pct >= 50 ? "yellow" : "green" };
-    });
+    const total = Math.round(platformTotalStockSqft(trussInv) * 100) / 100;
+    const used = Math.round(Object.values(sm?.demand || {}).reduce((s, v) => s + (Number(v) || 0), 0) * 100) / 100;
+    const pct = total > 0 ? Math.round((used / total) * 100) : 0;
+    const combined = { total, used, pct, color: pct >= 100 ? "red" : pct >= 85 ? "amber" : pct >= 50 ? "yellow" : "green" };
+    const byMaterial = PLATFORM_MATERIALS.map((mat) => ({ mat, total: Math.round(platformStockSqft(trussInv, mat) * 100) / 100 }));
+    return { combined, byMaterial };
   }, [trussInv, dateEntryByDomain.platform]);
 
   const battaStockBars = useMemo(() => {
@@ -215,7 +219,16 @@ export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platfo
             </div>
             <div>
               <p className="text-xs font-semibold text-gray-600 mb-2">🛏️ PLATFORM (sqft)</p>
-              <div className="space-y-1.5">{platformStockBars.map((b) => <StockBarRow key={b.mat} label={MAT_LABEL[b.mat]} {...b} />)}</div>
+              <div className="space-y-1.5">
+                {platformStock.combined && <StockBarRow label="Total pool" {...platformStock.combined} />}
+                {platformStock.byMaterial.map((b) => (
+                  <div key={b.mat} className="flex items-center gap-2 text-xs text-gray-600 pl-1">
+                    <span className="w-20 font-medium">{MAT_LABEL[b.mat]}</span>
+                    <span>{b.total.toLocaleString("en-IN")} sqft in stock</span>
+                  </div>
+                ))}
+                <p className="text-[10px] text-gray-400">Booking checks Wood + Iron as one pool</p>
+              </div>
             </div>
             <div>
               <p className="text-xs font-semibold text-gray-600 mb-2">🧵 BATTA (RFT)</p>
@@ -267,7 +280,7 @@ export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platfo
                       {anyShortage && <span className="ml-2 text-xs px-2 py-0.5 rounded bg-red-200 text-red-900">⚠ SHORTAGE</span>}
                     </span>
                     <span className="text-xs text-gray-600">{ev.truss ? `🏗️ ${totalP}P+${totalB}B` : ""}</span>
-                    <span className="text-xs text-gray-600">{ev.platform ? `🛏️ ${PLATFORM_MATERIALS.filter((m) => ev.platform.totalPlatformSqftByMaterial?.[m] > 0).map((m) => `${ev.platform.totalPlatformSqftByMaterial[m]}sqft`).join(",")}` : ""}</span>
+                    <span className="text-xs text-gray-600">{ev.platform && platformEventSqft(ev.platform) > 0 ? `🛏️ ${platformEventSqft(ev.platform)}sqft` : ""}</span>
                     <span className="text-xs text-gray-600">{ev.batta ? `🧵 ${BATTA_MATERIALS.filter((m) => ev.batta.totalBattaRftByMaterial?.[m] > 0).map((m) => `${ev.batta.totalBattaRftByMaterial[m]}RFT`).join(",")}` : ""}</span>
                     <span className="text-xs text-gray-500">by {ev.heldBy || "—"}</span>
                   </button>
@@ -281,7 +294,7 @@ export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platfo
                       )}
                       {ev.platform && (
                         <div className="flex items-center justify-between gap-2">
-                          <div>🛏️ <strong>Platform:</strong> {PLATFORM_MATERIALS.filter((m) => ev.platform.totalPlatformSqftByMaterial?.[m] > 0).map((m) => `${ev.platform.totalPlatformSqftByMaterial[m]} sqft ${m}`).join(", ") || "—"}{ev.platform.override?.reason && <span className="italic text-purple-700"> · override: "{ev.platform.override.reason}"</span>}</div>
+                          <div>🛏️ <strong>Platform:</strong> {platformEventSqft(ev.platform) > 0 ? `${platformEventSqft(ev.platform)} sqft` : "—"}{ev.platform.override?.reason && <span className="italic text-purple-700"> · override: "{ev.platform.override.reason}"</span>}</div>
                           {ev.platform.hasOverride && canEdit && <button onClick={() => removeOverride("platform", ev.platform.eoId)} className="text-gray-500 hover:text-gray-800 underline shrink-0">Reset override</button>}
                         </div>
                       )}
@@ -383,15 +396,18 @@ export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platfo
   );
 }
 
-// ─── One simulator dialog shape per domain — platform/batta share a {material, amount} row model,
-// truss keeps its own {L,W,H,config} zone model since there's real topology to resolve there. ───
+// ─── One simulator dialog shape per domain — batta keeps its {material, amount} row model (3 real,
+// separate truss-material stock pools); platform is now a single combined pool with no per-booking
+// material signal (owner decision, 2026-11-05 — platformEngine.js's header comment), so its rows are
+// just {amount} — no material picker. Truss keeps its own {L,W,H,config} zone model since there's
+// real topology to resolve there. ───
 function SimDialog({ domain, selectedDate, trussInv, dateEntry, otherDrafts, authUser, onClose, onSave }) {
   const [label, setLabel] = useState("");
   const [mode, setMode] = useState("compound");
   const [trussZones, setTrussZones] = useState([{ name: "Stage", config: "full_box", L: "", W: "", H: "" }]);
   const [rows, setRows] = useState([{ material: "iron", amount: "" }]);
   const [previewResult, setPreviewResult] = useState(null);
-  const MATERIALS = domain === "platform" ? PLATFORM_MATERIALS : BATTA_MATERIALS;
+  const MATERIALS = BATTA_MATERIALS; // platform no longer has a material picker — one combined pool
   const unit = domain === "platform" ? "sqft" : "RFT";
 
   const handlePreview = () => {
@@ -404,7 +420,7 @@ function SimDialog({ domain, selectedDate, trussInv, dateEntry, otherDrafts, aut
     } else {
       const validRows = rows.filter((r) => Number(r.amount) > 0);
       if (validRows.length === 0) { alert(`At least one row with a ${unit} amount is required.`); return; }
-      tempSim = { date: selectedDate, label: label.trim(), createdBy: authUser?.name || "—", mode, zones: validRows.map((r) => (domain === "platform" ? { material: r.material, sqft: Number(r.amount) || 0 } : { material: r.material, rft: Number(r.amount) || 0 })) };
+      tempSim = { date: selectedDate, label: label.trim(), createdBy: authUser?.name || "—", mode, zones: validRows.map((r) => (domain === "platform" ? { sqft: Number(r.amount) || 0 } : { material: r.material, rft: Number(r.amount) || 0 })) };
     }
     const impactFn = domain === "truss" ? simulateImpact : domain === "platform" ? simulatePlatformImpact : simulateBattaImpact;
     setPreviewResult({ sim: tempSim, computed: impactFn(tempSim, dateEntry, otherDrafts, trussInv) });
@@ -447,10 +463,12 @@ function SimDialog({ domain, selectedDate, trussInv, dateEntry, otherDrafts, aut
           <div className="space-y-2">
             {rows.map((r, idx) => (
               <div key={idx} className="bg-gray-50 rounded-lg p-3 grid grid-cols-12 gap-2 items-center">
-                <select value={r.material} onChange={(e) => setRows((s) => s.map((row, i) => i === idx ? { ...row, material: e.target.value } : row))} className="col-span-5 px-2 py-1.5 border border-gray-300 rounded text-xs">
-                  {MATERIALS.map((m) => <option key={m} value={m}>{MAT_LABEL[m]}</option>)}
-                </select>
-                <input type="number" min="0" value={r.amount} onChange={(e) => setRows((s) => s.map((row, i) => i === idx ? { ...row, amount: e.target.value } : row))} placeholder={unit} className="col-span-5 px-2 py-1.5 border border-gray-300 rounded text-xs" />
+                {domain === "batta" && (
+                  <select value={r.material} onChange={(e) => setRows((s) => s.map((row, i) => i === idx ? { ...row, material: e.target.value } : row))} className="col-span-5 px-2 py-1.5 border border-gray-300 rounded text-xs">
+                    {MATERIALS.map((m) => <option key={m} value={m}>{MAT_LABEL[m]}</option>)}
+                  </select>
+                )}
+                <input type="number" min="0" value={r.amount} onChange={(e) => setRows((s) => s.map((row, i) => i === idx ? { ...row, amount: e.target.value } : row))} placeholder={domain === "platform" ? "sqft (Wood + Iron combined pool)" : unit} className={domain === "platform" ? "col-span-10 px-2 py-1.5 border border-gray-300 rounded text-xs" : "col-span-5 px-2 py-1.5 border border-gray-300 rounded text-xs"} />
                 {rows.length > 1 && <button onClick={() => setRows((s) => s.filter((_, i) => i !== idx))} className="col-span-2 text-red-600 hover:text-red-800 text-xs">×</button>}
               </div>
             ))}

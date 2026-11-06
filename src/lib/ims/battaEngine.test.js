@@ -12,13 +12,17 @@ describe("buildEventBattaAllocation", () => {
   const trussInv = { settings: { maxSpanFt: 30, pillarWidthFt: 0.75 }, batta: { stockRft: 1000, bufferPct: 10 } };
 
   it("computes pillar+beam RFT with the material's own buffer%, keyed by trussMaterial", () => {
-    // u_only, span 20ft (<=30, no mid pillar): 2 pillars x H=10 + beam ~18.5ft => rft = 20+18.5=38.5
+    // u_only, span 20ft, pole with no per-material settings configured here so it falls back to
+    // this trussInv's top-level (Iron) maxSpanFt=30 — but pole STILL skips the §23 Phase 7 padding
+    // (owner decision, 2026-11-05: buildTopology's `material` arg governs padding independently of
+    // which settings object was resolved). No mid pillar (20 <= 30): 2 pillars x H=10 = 20, beam =
+    // the raw 20ft span (no 1ft/pillar subtraction) = 20. rft = 20+20 = 40, x1.1 buffer = 44.
     const fnList = [{ fnIdx: 0, zones: {
       z1: { dims: { L: 20, H: 10 }, trussType: "u_only", trussMaterial: "pole" },
     }, enabledEls: {} }];
     const out = buildEventBattaAllocation(meta, fnList, trussInv);
     expect(Object.keys(out.totalBattaRftByMaterial)).toEqual(["pole"]);
-    expect(out.totalBattaRftByMaterial.pole).toBeGreaterThan(0);
+    expect(out.totalBattaRftByMaterial.pole).toBeCloseTo(44);
   });
 
   it("defaults to iron when trussMaterial is unset", () => {

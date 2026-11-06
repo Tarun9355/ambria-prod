@@ -1,4 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
+import { makeRetryingFetch } from "./retryingFetch.js";
+import { writeWithRetry } from "./writeRetry.js";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -7,7 +9,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error("Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY");
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// A flaky-network READ (GET against /rest/v1/) gets a few quick retries before it ever reaches a
+// caller's own `.catch(() => [])` — the transient blip behind the truss_inventory/settings/
+// platform-config data-loss incidents. Writes are untouched; see retryingFetch.js's own comment.
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  global: { fetch: makeRetryingFetch() },
+});
 
 // Mirrors the current session's access token in memory so keepaliveUpsert/keepaliveRpc (below) can
 // read it synchronously at pagehide/beforeunload time, with no await standing between the unload
@@ -34,7 +41,17 @@ export const fetchAll = async (table) => {
   const rows = [];
   for (let from = 0; ; from += PAGE) {
     const { data: page, error: pageErr } = await supabase.from(table).select("*").order("id", { ascending: true }).range(from, from + PAGE - 1);
-    if (pageErr) { console.warn(`[fetchAll] paging ${table} failed, keeping the first ${data.length} rows:`, pageErr.message); return data; }
+    if (pageErr) {
+      // Used to log a warning and silently return just the first page (data.length rows) here — a
+      // table over 1000 rows whose SECOND+ page failed to load would come back looking like a
+      // completely successful fetch of an incomplete table, not a failure: every one of Phase 0's
+      // load-failure guards (safeFetch, kvTryGet, a bare .catch(() => [])) only reacts to a THROWN
+      // error, so none of them would have caught this — the caller would have happily treated 1000
+      // of (say) inventory's 1060 real rows as "the whole table, genuinely loaded," and a write built
+      // from that truncated snapshot could silently drop the other 60. Throwing routes this through
+      // the exact same failure handling a network error already gets.
+      throw new Error(`[fetchAll] paging ${table} failed after ${rows.length + data.length} of an unknown total rows: ${pageErr.message}`);
+    }
     rows.push(...(page || []));
     if (!page || page.length < PAGE) break;
   }
@@ -48,33 +65,70 @@ export const fetchById = async (table, id) => {
   return data;
 };
 
+// upsertRow/updateRow/deleteRow all absorb a transient blip with a few fast, silent attempts
+// (writeWithRetry) before throwing — each is naturally idempotent (resending the same upsert/
+// update/delete twice lands the same final state), so a retry can't itself cause damage. Always
+// `retryable:false`: `row`/`changes` is a snapshot of whatever the caller had at CALL time, not
+// re-read fresh — callers throughout the app pass a partial patch built from local state (e.g. one
+// typed field), and automatically resending that same stale snapshot much later (a reconnect event,
+// possibly minutes afterward) could silently overwrite a DIFFERENT, newer change to the same row
+// made by someone else (a different tab, a different user) in between. Generation-based
+// supersession only protects against a race within THIS browser tab, not across tabs/users, so a
+// delayed automatic retry here needs the same caution kv.js's read-merge-write writes already use.
+//
+// `target` is scoped per ROW (table:id), not per field — two rapid edits to DIFFERENT fields of the
+// SAME row (e.g. two keystrokes in two different inline inputs within a couple of seconds) share one
+// generation, so if the first one's own internal retry is still running when the second starts, the
+// first is treated as superseded and dropped rather than retried further — it does NOT get a
+// saveHealth entry of its own (the "superseded" case below throws a clear, non-misleading message,
+// but most existing callers of these two helpers already end in `.catch(() => {})` and lose it
+// silently, same as any OTHER failure these always had, before or after this change). Scoping per
+// FIELD SET instead would be unsafe the other direction (two overlapping-but-different field sets
+// would stop superseding each other at all, letting a stale retry of the narrower set land after a
+// newer, wider one and revert part of it) — so this is accepted as a known, narrow limitation rather
+// than "fixed" with a shape that trades one race for a worse one. Scoping is genuinely safe at the
+// granularity used throughout this app: exactly one changed row, in the narrow handful of seconds a
+// transient blip's own retry window can last.
+const rowTarget = (table, id) => `${table}:${id}`;
+
+const throwWriteError = (res) => {
+  if (res.superseded) throw new Error("A more recent edit to the same item has already gone out — this save was dropped.");
+  if (res.error instanceof Error) throw res.error;
+  // Preserve PostgREST's own error shape (code/details/hint) on the thrown Error, not just its
+  // message — supabase-js resolves `error` as a plain object, not an Error instance, so without this
+  // any caller checking e.g. `e.code === "23505"` would silently stop seeing it after this change.
+  throw Object.assign(new Error(res.error?.message || String(res.error || "Write failed")), {
+    code: res.error?.code, details: res.error?.details, hint: res.error?.hint,
+  });
+};
+
 /** Upsert (insert or update) a row */
 export const upsertRow = async (table, row) => {
-  const { data, error } = await supabase
-    .from(table)
-    .upsert({ ...row, updated_at: new Date().toISOString() }, { onConflict: "id" })
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
+  const res = await writeWithRetry(
+    () => supabase.from(table).upsert({ ...row, updated_at: new Date().toISOString() }, { onConflict: "id" }).select().single(),
+    { target: rowTarget(table, row.id), label: `${table} row`, retryable: false },
+  );
+  if (!res.ok) throwWriteError(res);
+  return res.data;
 };
 
 /** Update specific fields on a row */
 export const updateRow = async (table, id, changes) => {
-  const { data, error } = await supabase
-    .from(table)
-    .update({ ...changes, updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
+  const res = await writeWithRetry(
+    () => supabase.from(table).update({ ...changes, updated_at: new Date().toISOString() }).eq("id", id).select().single(),
+    { target: rowTarget(table, id), label: `${table} row`, retryable: false },
+  );
+  if (!res.ok) throwWriteError(res);
+  return res.data;
 };
 
 /** Delete a row by ID */
 export const deleteRow = async (table, id) => {
-  const { error } = await supabase.from(table).delete().eq("id", id);
-  if (error) throw error;
+  const res = await writeWithRetry(
+    () => supabase.from(table).delete().eq("id", id),
+    { target: rowTarget(table, id), label: `${table} row`, retryable: false },
+  );
+  if (!res.ok) throwWriteError(res);
 };
 
 // Last-ditch save for the exact moment the page is unloading (pagehide/beforeunload) — a normal

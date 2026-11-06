@@ -1149,44 +1149,40 @@ export default function DealCheckOverlay({ ctx }) {
           // Platform → rental. Owner call (2026-11-01): platform is no longer tracked via the
           // TEN-00008/TEN-00009 Fatta/Stand inventory items at all (those are being deleted) —
           // every zone's platform sqft (floorDims.L × W × plQty, only when a Height band is picked)
-          // now costs off Platform Config's own stock-weighted ₹/sqft for that material
-          // (platformAvgRatePerSqft, platformEngine.js), same "Ambria's own cost" role the Fatta/
-          // Stand rental rates played before. One row per material actually used, not per zone — the
-          // new model is one aggregate sqft pool per material, not per-piece, so there's no finer
-          // per-zone split to show (see platformEngine.js's own header comment on why).
+          // now costs off Platform Config's own stock-weighted ₹/sqft, BLENDED across all configured
+          // rows regardless of material (platformAvgRatePerSqft with no material arg,
+          // platformEngine.js) — a zone's TRUSS material (iron/pole/aluminium) has nothing to do with
+          // which PLATFORM material (Wood/Iron) it draws from, and there's no per-booking signal for
+          // the latter (confirmed bug closed 2026-11-05: this used to key the rate off the zone's
+          // truss material, so a Pole/Aluminium zone's platform never resolved to any real stock
+          // bucket). One row total, not per material — there's only one blended pool now.
           try {
-            // sqft by function, then by material — the per-function split falls out of this directly
-            // (no proportional-share math needed), and summing across functions per material gives
-            // the one row per material the Tenting rollup below needs.
-            const sqftByFnMat = {};
+            const sqftByFn = {};
+            let totalSqft = 0;
             fns.forEach((fn, fnIdx) => {
               if (!fn?.zoneConfig || !fn?.enabledEls) return;
               Object.keys(fn.enabledEls).filter(k => fn.enabledEls[k]).forEach(zk => {
                 const zc = fn.zoneConfig[zk]; if (!zc) return;
-                [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty, trussMaterial: zc.trussMaterial },
-                  ...(zc.extraPlatformRows || []).map(r => ({ ...r, trussMaterial: r.trussMaterial || zc.trussMaterial }))].forEach(row => {
+                [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty },
+                  ...(zc.extraPlatformRows || [])].forEach(row => {
                   if (!row.plH) return;
                   const L = Number(row.floorDims?.L) || 0, W = Number(row.floorDims?.W) || 0;
                   if (L <= 0 || W <= 0) return;
                   const qty = Math.max(1, Math.round(Number(row.plQty) || 1));
-                  const mat = String(row.trussMaterial || "iron").toLowerCase();
-                  if (!sqftByFnMat[fnIdx]) sqftByFnMat[fnIdx] = {};
-                  sqftByFnMat[fnIdx][mat] = (sqftByFnMat[fnIdx][mat] || 0) + L * W * qty;
+                  const sqft = L * W * qty;
+                  sqftByFn[fnIdx] = (sqftByFn[fnIdx] || 0) + sqft;
+                  totalSqft += sqft;
                 });
               });
             });
-            const matSqftTotal = {};
-            Object.entries(sqftByFnMat).forEach(([fnIdx, byMat]) => {
-              Object.entries(byMat).forEach(([mat, sqft]) => {
-                matSqftTotal[mat] = (matSqftTotal[mat] || 0) + sqft;
-                const pc = Math.round(sqft * platformAvgRatePerSqft(dealCheckData?.trussInv, mat));
-                rental += pc; if (byFn[fnIdx]) byFn[fnIdx].rental += pc; addD("Tenting", "rental", pc);
-              });
+            const rate = platformAvgRatePerSqft(dealCheckData?.trussInv);
+            Object.entries(sqftByFn).forEach(([fnIdx, sqft]) => {
+              const pc = Math.round(sqft * rate);
+              rental += pc; if (byFn[fnIdx]) byFn[fnIdx].rental += pc; addD("Tenting", "rental", pc);
             });
-            Object.entries(matSqftTotal).forEach(([mat, sqft]) => {
-              const rate = platformAvgRatePerSqft(dealCheckData?.trussInv, mat);
-              if (deptInv["Tenting"]) deptInv["Tenting"].push({ name: `Platform (${mat})`, photo: "", qty: Math.round(sqft * 100) / 100, unit: Math.round(rate), total: Math.round(sqft * rate), sub: "platform structure" });
-            });
+            if (totalSqft > 0 && deptInv["Tenting"]) {
+              deptInv["Tenting"].push({ name: "Platform", photo: "", qty: Math.round(totalSqft * 100) / 100, unit: Math.round(rate), total: Math.round(totalSqft * rate), sub: "platform structure (blended Wood+Iron rate)" });
+            }
           } catch {}
           try {
             const carpetMarkup = dealCheckData?.carpetFreshMarkup ?? 40;
@@ -3119,22 +3115,20 @@ export default function DealCheckOverlay({ ctx }) {
                                     StudioApp.jsx) and in IMS's Structure Planning dashboard — not here. */}
                                 {platformEntriesForZone.map(({ k: piKey, pi, rowIdx }) => {
                                   const heightLabel = pi.plH === "4in" ? "4 inch raise" : "1ft–3ft";
-                                  const matLabel = pi.material.charAt(0).toUpperCase() + pi.material.slice(1);
                                   return (
                                     <div key={piKey} className="dc-item" style={{padding:"12px 13px",borderRadius:10,border:"1px solid rgba(255,255,255,0.85)",display:"flex",flexDirection:"column",gap:8}}>
                                       <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
                                         <span style={{fontSize:13,fontWeight:700,color:IV.ink,letterSpacing:-0.1}}>🏗️ Platform{rowIdx>0?` #${rowIdx+1}`:""} ({heightLabel})</span>
                                         <span className="dc-cap" style={{fontSize:10,padding:"2px 7px",borderRadius:999,border:"1px solid rgba(100,116,139,0.32)",color:"#64748B",letterSpacing:1.1}}>Structural</span>
-                                        <span className="dc-cap" style={{fontSize:10,padding:"2px 7px",borderRadius:999,background:"rgba(99,102,241,0.12)",color:"#4F46E5",letterSpacing:1.1}}>{matLabel}</span>
                                         <span className="dc-money" style={{fontSize:12,color:IV.ink2}}>{pi.L}×{pi.W}{pi.qty>1?`×${pi.qty}`:""} = {pi.sqft} sqft</span>
                                       </div>
                                       {pi.cost > 0 ? (
                                         <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"baseline",paddingTop:5,borderTop:"1px solid rgba(26,26,46,0.07)"}}>
-                                          <span className="dc-cap" style={{color:IV.ink2,letterSpacing:1.3}}>₹{Math.round(pi.rate).toLocaleString("en-IN")}/sqft · Platform rental</span>
+                                          <span className="dc-cap" style={{color:IV.ink2,letterSpacing:1.3}}>₹{Math.round(pi.rate).toLocaleString("en-IN")}/sqft · Platform rental (avg)</span>
                                           <span className="dc-money" style={{fontSize:14,fontWeight:800,color:IV.ink}}>₹{pi.cost.toLocaleString("en-IN")}</span>
                                         </div>
                                       ) : (
-                                        <div style={{fontSize:12,color:"#F59E0B",fontStyle:"italic"}}>⚠ Set a ₹/sqft rate for {matLabel} in IMS → Platform Config for cost to appear</div>
+                                        <div style={{fontSize:12,color:"#F59E0B",fontStyle:"italic"}}>⚠ Set ₹/sqft rates in IMS → Platform Config for cost to appear</div>
                                       )}
                                     </div>
                                   );

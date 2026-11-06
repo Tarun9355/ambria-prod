@@ -18,29 +18,58 @@
 //     a fetch of the table started BEFORE a key's newest write landed returns the value from before that
 //     write, and can arrive AFTER the key stopped being dirty. Take mark() when the fetch starts; a
 //     key is stale for that fetch if it is dirty or was written since the mark.
-export function createSettingsWriter(writeFn, onError) {
+export function createSettingsWriter(writeFn, onError, onSaved) {
   const latest = {};
   const settledAt = {};   // key → value of `clock` when its newest write last finished
   let clock = 0;
   let chain = Promise.resolve();
+
+  // One key's write attempt, using whatever is CURRENTLY in `latest[k]` at the moment it actually
+  // runs (not whatever it was when queued) — so a retry naturally picks up a newer edit for free.
+  const writeOne = async (k) => {
+    if (!(k in latest)) return { ok: true }; // nothing pending for this key any more
+    const value = latest[k];
+    const sig = JSON.stringify(value);
+    let err = null;
+    try { err = await writeFn(k, value); } catch (e) { err = e; }
+    if (err) {
+      if (onError) onError(k, err);
+      // Leave latest[k]/settledAt[k] exactly as they were — the write never actually landed, so
+      // this key MUST stay dirty until a retry succeeds. This used to unconditionally settle here
+      // even on failure, which made isDirty/isStaleFor falsely report "not dirty" for a key whose
+      // write never landed — the next realtime echo or refetch would then silently revert the
+      // screen back to the stale database value, with no trace anything failed.
+      return { ok: false, error: err };
+    }
+    // Clean only if nothing newer arrived while this write was in flight.
+    settledAt[k] = ++clock;
+    if (JSON.stringify(latest[k]) === sig) {
+      delete latest[k];
+      // Tells the caller this key is now genuinely clean, specifically so a PRIOR failure's
+      // reported save problem can be cleared once a later write of the same key succeeds — without
+      // this, a failed keystroke followed by a successful one left "a save failed" on screen
+      // (and beforeunload still warning) until someone clicked Retry or the browser reconnected.
+      if (onSaved) onSaved(k);
+    }
+    return { ok: true };
+  };
 
   const enqueue = (prev, next) => {
     const changed = Object.keys(next).filter((k) => JSON.stringify(prev[k]) !== JSON.stringify(next[k]));
     if (!changed.length) return null;
     changed.forEach((k) => { latest[k] = next[k]; });
     const task = chain.then(async () => {
-      for (const k of changed) {
-        if (!(k in latest)) continue; // a later task already wrote the newest value of this key
-        const value = latest[k];
-        const sig = JSON.stringify(value);
-        let err = null;
-        try { err = await writeFn(k, value); } catch (e) { err = e; }
-        if (err && onError) onError(k, err);
-        // Clean only if nothing newer arrived while this write was in flight.
-        settledAt[k] = ++clock;
-        if (JSON.stringify(latest[k]) === sig) delete latest[k];
-      }
+      for (const k of changed) await writeOne(k);
     });
+    chain = task.catch(() => {});
+    return task;
+  };
+
+  // Re-attempt key's write, through the SAME ordered queue (so it can never land out of order
+  // against a newer edit already queued ahead of it). Resolves {ok:true} as a no-op if the key
+  // isn't dirty any more — e.g. a later edit already wrote it, or another retry already succeeded.
+  const retryKey = (key) => {
+    const task = chain.then(() => writeOne(key));
     chain = task.catch(() => {});
     return task;
   };
@@ -61,15 +90,41 @@ export function createSettingsWriter(writeFn, onError) {
   // BOTH settle, or the first one finishing would clear it while the second is still in flight.
   const pendingExternal = {};
   const markWriting = (key) => { pendingExternal[key] = (pendingExternal[key] || 0) + 1; latest[key] = true; };
-  const markSettled = (key) => {
-    settledAt[key] = ++clock;
+  // ok=false: the external write (the RPC call between markWriting and this) failed — leave
+  // pendingExternal/latest exactly as markWriting left them, so the key stays dirty until a
+  // successful markSettled(key, true) call, same reasoning as writeOne's own failure path above.
+  // Deliberately does NOT call onError/report anything itself: unlike writeOne, there is no single
+  // generic way to retry an external write (retryKey would resend `latest[key]`'s `true` sentinel
+  // as if it were the real value) — the caller around markWriting/the RPC call owns the context
+  // needed to retry correctly, and is responsible for its own error reporting.
+  const markSettled = (key, ok = true) => {
+    // The counter must always decrement — this call is markWriting's matching close regardless of
+    // outcome. Only the settle/clear is conditional: skipping the decrement on failure left it
+    // stuck above zero forever, so a later SUCCESSFUL markSettled(key, true) could never bring it
+    // back to 0 and delete latest[key] — the key stayed permanently dirty for the rest of the
+    // session (confirmed: markWriting → markSettled(false) → markWriting → markSettled(true) left
+    // isDirty() true even after the successful retry).
     pendingExternal[key] = Math.max(0, (pendingExternal[key] || 0) - 1);
+    if (!ok) return; // latest[key] stays set — the key stays dirty until a later successful write
+    settledAt[key] = ++clock;
     if (!pendingExternal[key]) delete latest[key];
   };
+  // Gives up on a key's failed write instead of retrying it — "Discard" in the save-health banner.
+  // Without this, discarding only removed the on-screen banner entry while leaving the key dirty
+  // forever: every realtime echo/refetch of that key would keep being ignored for the rest of the
+  // session (treating stale local state as newer than the database), and the NEXT local edit to the
+  // key would upsert that same stale value over whatever anyone else had since saved. Bumping
+  // settledAt here (not just deleting latest/pendingExternal) means a refetch issued after this
+  // point is trusted again, same as a genuinely successful write would leave things.
+  const discardKey = (key) => { delete latest[key]; delete pendingExternal[key]; settledAt[key] = ++clock; };
   return {
     enqueue, isDirty,
     mark: () => clock,
     isStaleFor: (key, mark) => isDirty(key) || (settledAt[key] || 0) > mark,
     markWriting, markSettled,
+    // Only safe to call for a key whose pending value came from enqueue() (a real value in
+    // latest[key]) — never for a key currently mid-markWriting/markSettled (latest[key] === true).
+    retryKey,
+    discardKey,
   };
 }

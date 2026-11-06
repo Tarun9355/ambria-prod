@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/AuthContext";
-import { supabase, fetchAll, updateRow } from "../../lib/supabase";
+import { supabase, fetchAll, updateRow, deleteRow } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
 import { computePatternSizeCost, effectiveMarkup, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
 import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDefaultWindowsByPhaseFromRows } from "../../lib/ims/labourTypes";
@@ -37,6 +37,8 @@ import { ensureCdnLibs } from "../../lib/ims/pdf";
 import { kvGet, reliableSave } from "../../lib/ims/kv";
 import { rowToRcItem, rcItemToRow } from "../../lib/rateCard";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry";
+import { reportSaveProblem, clearSaveProblem } from "../../lib/saveHealth";
+import { writeWithRetry } from "../../lib/writeRetry";
 
 const LMS_STALE_MS = 30 * 60 * 1000; // re-sync in background only if cache older than 30 min
 // BLOCKS_SK / RC_SK removed 30 Jul 2026: both were unused here (declaration + comments only) and
@@ -293,12 +295,25 @@ export default function IMS() {
   // sat at empty defaults, and the very next Fabric Stock/Truss Config edit upserted that empty
   // placeholder straight over the real 9/24/14-row data.
   const trussInvLoadedRef = useRef(false);
+  // Per-table "did the initial fetch ACTUALLY succeed" tracking, for tables whose writers could do
+  // real damage on a failed-fetch-collapsed-to-empty state: blocks/truss_allocations/
+  // platform_allocations/batta_allocations are each one row covering MANY events, so a write built
+  // from an empty `prev` doesn't just skip rows it never saw (like every other row-level table in
+  // this file already safely does) — it deletes every other event's data in that row. Also drives
+  // the auto-confirm pipeline's own `ready` gate below (owner report 2026-11-05).
+  const loadOkRef = useRef({});
+  const markTableLoaded = (t) => { loadOkRef.current[t] = true; };
+  const markTableFailed = (t, err) => { loadOkRef.current[t] = false; if (err) console.warn(`[IMS] ${t} fetch failed:`, err?.message || err); };
   const [categories, setCats] = useState([]);
   const [settings, setSettingsState] = useState(SETTINGS_DEFAULTS);
   // True once the real settings row(s) have loaded at least once — guards the LMS auto-category
   // sync below from ever persisting on top of the SETTINGS_DEFAULTS placeholder (a race would
   // otherwise be able to wipe an admin's real datePricing.categories/markedDates back to defaults).
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  // Mirrors settingsLoaded into a ref so setSettings (a useCallback that must stay referentially
+  // stable) can read the latest value without it being a stale closure or a dep that re-creates
+  // the callback on every load.
+  const settingsLoadedRef = useRef(false);
   const [studioRcItems, setStudioRcItems] = useState([]);
   const [studioRcCats, setStudioRcCats] = useState(RC_CATS_DEFAULT); // Studio's LIVE categories (RC_SK_CATS) — falls back to defaults until loaded
   // Rate Card → IMS migration Phase 1: per-sub-category scaling factor, IMS-owned (rate_card_categories table).
@@ -492,14 +507,302 @@ export default function IMS() {
   // Every write goes through one ordered, coalescing queue (lib/ims/settingsWriter.js): fast typing used
   // to fire overlapping upserts that could land out of order, leave an older keystroke in the database,
   // and have its realtime echo wind the field back under the person typing.
+  // Discarding a failed settings write (SaveHealthBanner's Discard button) abandons the local edit
+  // — the writer's own discardKey() stops it being treated as dirty, but the SCREEN still shows
+  // that abandoned local value until something re-syncs it from the database. Re-running the same
+  // apply the realtime subscription uses closes that gap. applySettingsRows is referenced here
+  // before its own declaration below — safe, same as this file's many other forward references to
+  // a stable useCallback (see the existing no-use-before-define warnings on setTrussAlloc etc.):
+  // this closure only runs later, on a user's Discard click, by which point it's long since assigned.
+  const refetchSettingsAfterDiscard = () => { fetchAll("settings").then((rows) => applySettingsRows(rows)).catch(() => {}); };
+
+  // ── Phase 3: background recovery for a table that failed its INITIAL load ──
+  // Previously the only way back from "truss_inventory/settings/blocks failed to load" was a full
+  // page reload — these three are the tables a real past incident already hit, so they're worth an
+  // in-place retry path: reported via saveHealth as `blocked:true` WITH a retry function (unlike most
+  // blocked entries, which still need Reload), so the SAME manual-retry/one-shot-on-reconnect
+  // mechanism this effort already built for write failures also recovers a failed load, without
+  // throwing away whatever else on screen loaded fine. Each retry function re-reports itself on a
+  // repeat failure (fresh error, same retry closure shape) — same idiom as mergeDatePricing's/
+  // runMerge's own retry closures.
+  // Every retry below short-circuits (before the fetch, after it, and on failure) the moment its
+  // table is ALREADY marked loaded — nothing stops a manual Retry click, "Retry all", and the
+  // one-shot reconnect retry from overlapping for the same table, and with no guard: (a) a LATE
+  // failure from an older, slower attempt could run AFTER a different attempt already succeeded,
+  // flipping a genuinely-loaded table's flag back to false and refusing every write again for no
+  // reason; (b) worse, two overlapping SUCCESSFUL fetches could apply out of order — an older
+  // snapshot landing after a newer one (or after realtime deltas that arrived in between) would
+  // silently revert it, which for `blocks` (one row holds EVERY event's reservations on an item)
+  // is exactly the data-loss class this whole effort exists to prevent. Checking the flag instead of
+  // tracking request identity is sufficient here: once ANY attempt has genuinely loaded the table,
+  // every other concurrent attempt backing off to {ok:true} is correct regardless of which one
+  // "really" finished first.
+  const reportSettingsLoadFailed = (err) => {
+    reportSaveProblem("load:settings", {
+      label: "Settings", error: err, blocked: true,
+      retry: async () => {
+        if (settingsLoadedRef.current) return { ok: true };
+        const mark = settingsWriterRef.current?.mark();
+        try {
+          const rows = await fetchAll("settings");
+          if (settingsLoadedRef.current) return { ok: true };
+          applySettingsRows(rows, mark);
+          setError((cur) => (cur?.startsWith("Settings failed to load") || cur?.startsWith("Settings haven't loaded yet") ? "" : cur));
+          return { ok: true };
+        } catch (e) {
+          if (settingsLoadedRef.current) return { ok: true };
+          markTableFailed("settings", e);
+          reportSettingsLoadFailed(e);
+          return { ok: false };
+        }
+      },
+    });
+  };
+  const reportTrussInvLoadFailed = (err) => {
+    reportSaveProblem("load:truss_inventory", {
+      label: "Truss/fabric inventory", error: err, blocked: true,
+      retry: async () => {
+        if (trussInvLoadedRef.current) return { ok: true };
+        try {
+          const rows = await fetchAll("truss_inventory");
+          if (trussInvLoadedRef.current) return { ok: true };
+          const row = rows.find((r) => r.key === "main") || rows[0];
+          if (row?.data) setTrussInvState(row.data);
+          trussInvLoadedRef.current = true;
+          setError((cur) => (cur?.startsWith("Truss/fabric inventory failed to load") || cur?.startsWith("Truss/fabric inventory hasn't finished loading") ? "" : cur));
+          return { ok: true };
+        } catch (e) {
+          if (trussInvLoadedRef.current) return { ok: true };
+          console.warn("[IMS] truss_inventory retry failed:", e?.message || e);
+          reportTrussInvLoadFailed(e);
+          return { ok: false };
+        }
+      },
+    });
+  };
+  const reportBlocksLoadFailed = (err) => {
+    reportSaveProblem("load:blocks", {
+      label: "Block reservations", error: err, blocked: true,
+      retry: async () => {
+        if (loadOkRef.current.blocks === true) return { ok: true };
+        try {
+          const rows = await fetchAll("blocks");
+          if (loadOkRef.current.blocks === true) return { ok: true };
+          const bm = blocksRowsToMap(rows);
+          blocksRef.current = bm; setBlocksState(bm);
+          markTableLoaded("blocks");
+          setError((cur) => (cur?.startsWith("Block reservations haven't loaded") ? "" : cur));
+          return { ok: true };
+        } catch (e) {
+          if (loadOkRef.current.blocks === true) return { ok: true };
+          markTableFailed("blocks", e);
+          reportBlocksLoadFailed(e);
+          return { ok: false };
+        }
+      },
+    });
+  };
+  // The three allocation tables share blocks' exact risk shape (one row per DATE holds every
+  // event's allocation on it, not just the writer's own), so they get the identical background-
+  // recovery treatment: same 3-point overlap guard, same apply-matches-the-realtime-handler shape.
+  const makeAllocLoadReporter = (table, loadOkKey, label, setState) => {
+    const report = (err) => {
+      reportSaveProblem(`load:${table}`, {
+        label, error: err, blocked: true,
+        retry: async () => {
+          if (loadOkRef.current[loadOkKey] === true) return { ok: true };
+          try {
+            const rows = await fetchAll(table);
+            if (loadOkRef.current[loadOkKey] === true) return { ok: true };
+            setState(Object.fromEntries(rows.map((r) => [r.date, rowToAlloc(r)])));
+            markTableLoaded(loadOkKey);
+            setError((cur) => (cur?.startsWith(`${label} haven't loaded`) ? "" : cur));
+            return { ok: true };
+          } catch (e) {
+            if (loadOkRef.current[loadOkKey] === true) return { ok: true };
+            markTableFailed(loadOkKey, e);
+            report(e);
+            return { ok: false };
+          }
+        },
+      });
+    };
+    return report;
+  };
+  const reportTrussAllocLoadFailed = makeAllocLoadReporter("truss_allocations", "truss_allocations", "Truss allocations", setTrussAllocState);
+  const reportPlatformAllocLoadFailed = makeAllocLoadReporter("platform_allocations", "platform_allocations", "Platform allocations", setPlatformAllocState);
+  const reportBattaAllocLoadFailed = makeAllocLoadReporter("batta_allocations", "batta_allocations", "Batta allocations", setBattaAllocState);
+  // inventory/functions/projects/purchase_orders/event_orders are plain row-level tables (Key
+  // Architecture Rule #1 — row updates, never a merged whole-table write), so unlike
+  // settings/blocks/the 3 allocation tables above they never needed a write-REFUSAL guard: a failed
+  // load just means this tab's own in-memory list is empty/incomplete, not that a write here could
+  // stomp some OTHER row's data. What they were missing is the other half — VISIBILITY and a way to
+  // recover without a full reload — so this is the same blocked-report + 3-point-overlap-guard
+  // retry shape as above, just over a plain array instead of a date-keyed object.
+  // `ref` is each table's own xRef (fnsRef/projectsRef/purchaseRef/eventOrdersRef) — these are only
+  // synced from state by a `useEffect(() => { xRef.current = x }, [x])` elsewhere in this file,
+  // which runs AFTER commit, not synchronously with setState. A writer that diffs off the ref
+  // (setFunctions/setProjects/setPurchase) or a realtime handler that merges off the ref
+  // (event_orders' own channel) could fire in that gap and either diff against a stale/empty ref
+  // (silently re-writing rows that already exist remotely) or merge a live update into a stale base
+  // and have the retry's own (now out of date) snapshot overwrite it a moment later. Setting the ref
+  // here too, synchronously with setState, closes that specific gap — same as inventory's own
+  // itemsRef, which has always done this for exactly this reason.
+  const makeListLoadReporter = (table, loadOkKey, label, setState, rowToX, ref) => {
+    const report = (err) => {
+      reportSaveProblem(`load:${table}`, {
+        label, error: err, blocked: true,
+        retry: async () => {
+          if (loadOkRef.current[loadOkKey] === true) return { ok: true };
+          try {
+            const rows = await fetchAll(table);
+            if (loadOkRef.current[loadOkKey] === true) return { ok: true };
+            const mapped = rows.map(rowToX);
+            if (ref) ref.current = mapped;
+            setState(mapped);
+            markTableLoaded(loadOkKey);
+            return { ok: true };
+          } catch (e) {
+            if (loadOkRef.current[loadOkKey] === true) return { ok: true };
+            markTableFailed(loadOkKey, e);
+            report(e);
+            return { ok: false };
+          }
+        },
+      });
+    };
+    return report;
+  };
+  const reportFunctionsLoadFailed = makeListLoadReporter("functions", "functions", "Functions", setFns, rowToFn, fnsRef);
+  const reportProjectsLoadFailed = makeListLoadReporter("projects", "projects", "Projects", setProjectsState, rowToProject, projectsRef);
+  const reportPurchaseOrdersLoadFailed = makeListLoadReporter("purchase_orders", "purchase_orders", "Purchase orders", setPurchaseState, rowToPurchase, purchaseRef);
+  const reportEventOrdersLoadFailed = makeListLoadReporter("event_orders", "event_orders", "Event orders", setEventOrdersState, rowToEO, eventOrdersRef);
+  // inventory keeps its own version (not the factory above) only because itemsRef must stay in
+  // lockstep synchronously — see the realtime inventory channel's own comment on why a plain
+  // setState alone isn't enough for this one table.
+  const reportInventoryLoadFailed = (err) => {
+    reportSaveProblem("load:inventory", {
+      label: "Inventory", error: err, blocked: true,
+      retry: async () => {
+        if (loadOkRef.current.inventory === true) return { ok: true };
+        try {
+          const rows = await fetchAll("inventory");
+          if (loadOkRef.current.inventory === true) return { ok: true };
+          const loadedItems = rows.map(rowToItem);
+          itemsRef.current = loadedItems;
+          setItems(loadedItems);
+          markTableLoaded("inventory");
+          // Recipe→rate_card sync was skipped (or ran against an empty inventory) the whole time
+          // this table was down — see syncRecipeRatesToStudio's own guard. Catch it up now instead
+          // of leaving rate_card wrong until the next unrelated recipe/mandi/markup edit.
+          syncRecipeRatesToStudio({ silent: true });
+          return { ok: true };
+        } catch (e) {
+          if (loadOkRef.current.inventory === true) return { ok: true };
+          markTableFailed("inventory", e);
+          reportInventoryLoadFailed(e);
+          return { ok: false };
+        }
+      },
+    });
+  };
+  // mandi_flowers and flower_patterns feed syncRecipeRatesToStudio the same way inventory does
+  // (mandiCatalogue/flowerPatterns, merged into settings via applyMandiRows/applyFlowerPatternRows,
+  // which already set their own ref — mandiRowsRef/patternRowsRef — synchronously, so no extra ref
+  // plumbing is needed here the way the plain-array list tables above needed). A failed fetch for
+  // either used to silently collapse to `[]` (the old `.catch(() => [])` fallback): an empty
+  // mandiCatalogue prices every mandi ingredient at ₹0, and an empty flowerPatterns makes every
+  // `_imsDriven` item look like "its recipe was removed" and get unlocked — both get written
+  // straight to the shared rate_card table. syncRecipeRatesToStudio's own guard (below) now refuses
+  // to run at all unless both of these, and inventory, have genuinely loaded.
+  const reportMandiLoadFailed = (err) => {
+    reportSaveProblem("load:mandi_flowers", {
+      label: "Mandi flower catalogue", error: err, blocked: true,
+      retry: async () => {
+        if (loadOkRef.current.mandi_flowers === true) return { ok: true };
+        try {
+          const rows = await fetchAll("mandi_flowers");
+          if (loadOkRef.current.mandi_flowers === true) return { ok: true };
+          applyMandiRows(rows);
+          markTableLoaded("mandi_flowers");
+          syncRecipeRatesToStudio({ silent: true });
+          return { ok: true };
+        } catch (e) {
+          if (loadOkRef.current.mandi_flowers === true) return { ok: true };
+          markTableFailed("mandi_flowers", e);
+          reportMandiLoadFailed(e);
+          return { ok: false };
+        }
+      },
+    });
+  };
+  const reportFlowerPatternsLoadFailed = (err) => {
+    reportSaveProblem("load:flower_patterns", {
+      label: "Flower recipe patterns", error: err, blocked: true,
+      retry: async () => {
+        if (loadOkRef.current.flower_patterns === true) return { ok: true };
+        try {
+          const rows = await fetchAll("flower_patterns");
+          if (loadOkRef.current.flower_patterns === true) return { ok: true };
+          applyFlowerPatternRows(rows);
+          markTableLoaded("flower_patterns");
+          syncRecipeRatesToStudio({ silent: true });
+          return { ok: true };
+        } catch (e) {
+          if (loadOkRef.current.flower_patterns === true) return { ok: true };
+          markTableFailed("flower_patterns", e);
+          reportFlowerPatternsLoadFailed(e);
+          return { ok: false };
+        }
+      },
+    });
+  };
   const settingsWriterRef = useRef(null);
   if (!settingsWriterRef.current) {
     settingsWriterRef.current = createSettingsWriter(
-      async (k, value) => { const { error: e } = await supabase.from("settings").upsert({ key: k, value }, { onConflict: "key" }); return e || null; },
-      (k, e) => setError(`Save failed: ${e.message || e}`),
+      // writeWithRetry absorbs a transient blip (a dropped packet, a momentary disconnect) with a
+      // few fast, silent attempts BEFORE settingsWriter's own onError/dirty-tracking below ever sees
+      // a failure — most flaky-network "failures" are exactly this, self-resolving within a second
+      // or two, so without this every one of them would show a visible "Save failed" banner and
+      // need a manual click (or a reconnect event) to clear, instead of just quietly succeeding.
+      // report:false: settingsWriter's own onError already reports into saveHealth (with its own
+      // retryKey-based Retry) once a write has ALSO exhausted writeWithRetry's attempts — reporting
+      // here too would just duplicate the banner entry under a different id for the same failure.
+      async (k, value) => {
+        const res = await writeWithRetry(
+          () => supabase.from("settings").upsert({ key: k, value }, { onConflict: "key" }),
+          { target: `settings:${k}`, label: `Settings: ${k}`, report: false },
+        );
+        return res.ok ? null : res.error;
+      },
+      (k, e) => {
+        setError(`Save failed: ${e.message || e}`);
+        // Stays visible (SaveHealthBanner) until retried or discarded — unlike the setError banner
+        // above, which the next unrelated error overwrites. Safe to retry via retryKey here
+        // specifically because this onError only fires from writeOne's own failure path (an
+        // enqueue()'d write), where latest[k] always holds the real pending value, never the
+        // markWriting boolean sentinel an external (RPC-merge) write uses.
+        reportSaveProblem(`settings:${k}`, {
+          label: `Settings: ${k}`,
+          error: e,
+          retry: () => settingsWriterRef.current.retryKey(k),
+          onDiscard: () => { settingsWriterRef.current.discardKey(k); refetchSettingsAfterDiscard(); },
+        });
+      },
+      // onSaved: a LATER keystroke to the same key can succeed after an earlier one failed — without
+      // this, "a save failed" (and the beforeunload warning) stuck around until someone clicked
+      // Retry or the browser reconnected, even though the key's current value is actually saved.
+      (k) => clearSaveProblem(`settings:${k}`),
     );
   }
   const setSettings = useCallback((updater) => {
+    if (!settingsLoadedRef.current) {
+      // The real settings row(s) never genuinely loaded this session — writing now would enqueue a
+      // diff against SETTINGS_DEFAULTS and could persist that placeholder over real admin config
+      // (role-access tabs, department toolkits, date-pricing overrides, …). Refuse instead of guessing.
+      setError("Settings haven't loaded yet — reload the page before changing settings. Nothing was saved.");
+      return;
+    }
     const prev = settingsRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     settingsRef.current = next;
@@ -564,6 +867,7 @@ export default function IMS() {
     settingsObj.datePricing = { ...settingsObj.datePricing, markedDates: assembleMarkedDatesFromRows(markedDateRowsRef.current) };
     settingsRef.current = settingsObj;
     setSettingsState(settingsObj);
+    settingsLoadedRef.current = true;
     setSettingsLoaded(true);
   }, []);
 
@@ -700,6 +1004,32 @@ export default function IMS() {
   const syncRecipeRatesToStudio = useCallback(async ({ silent = true } = {}) => {
     const items = studioRcItemsRef.current || [];
     if (!items.length) return { updated: 0, cleared: 0 };
+    // computePatternSizeCost below prices every direct-inventory recipe ingredient off
+    // itemsRef.current — if inventory itself failed to load (itemsRef.current == []), every such
+    // ingredient prices at ₹0 and this would upsert those zeroed rates straight into the SHARED
+    // rate_card table Studio's 8 salespeople quote off of. Inventory used to be the one fetch in the
+    // mount-time Promise.all with no .catch, so its failure aborted the WHOLE load and this effect's
+    // own `loading` guard meant this function could never even be reached in that case — now that
+    // inventory fails independently (see reportInventoryLoadFailed), that protection is gone and
+    // has to be made explicit here instead. The inventory background-recovery retry re-calls this
+    // function once inventory actually loads, so a sync deferred by this guard isn't lost for good.
+    // Same reasoning extends to mandi_flowers (mandiCatalogue) and flower_patterns (flowerPatterns)
+    // — a failed fetch for either used to silently collapse to `[]`, which prices mandi ingredients
+    // at ₹0 or wrongly "unlocks" every recipe-driven item, same destination (the shared rate_card
+    // table). See reportMandiLoadFailed/reportFlowerPatternsLoadFailed for the matching recovery.
+    // settingsLoadedRef, not loadOkRef.current.settings: a failed settings fetch leaves settingsRef
+    // sitting at SETTINGS_DEFAULTS (flowerRecipeSubcats/defaultStudioMarkup/the artificial-mix rates
+    // all read below), which would unlock every _imsDriven item outside the default sub-category and
+    // re-price everything at the default 3x markup — same destination (rate_card) as the other two
+    // checks. settingsLoadedRef (not markTableLoaded("settings"), which this table never calls) is
+    // the flag the settings retry/realtime path itself already keeps correct — see its own comment
+    // at autoConfirmReady below for why this ref is used instead of loadOkRef here.
+    const missingLoad = [];
+    if (loadOkRef.current.inventory !== true) missingLoad.push("inventory");
+    if (loadOkRef.current.mandi_flowers !== true) missingLoad.push("mandi flower catalogue");
+    if (loadOkRef.current.flower_patterns !== true) missingLoad.push("flower recipe patterns");
+    if (!settingsLoadedRef.current) missingLoad.push("settings");
+    if (missingLoad.length) return { error: `${missingLoad.join(", ")} hasn't loaded yet — recipe sync skipped to avoid writing wrong prices.`, updated: 0, cleared: 0 };
     const s = settingsRef.current || {};
     const patterns = s.flowerPatterns || [];
     const recipeSubs = s.flowerRecipeSubcats || [];
@@ -763,7 +1093,14 @@ export default function IMS() {
         // items whose recipe-driven price actually changed, so nothing else is touched.
         const changedItems = next.filter((it, idx) => JSON.stringify(it) !== JSON.stringify(items[idx]));
         const rows = changedItems.map((it) => ({ id: it.id, name: it.name || "", cat: it.cat ?? null, sub: it.sub ?? null, unit: it.unit ?? null, inhouse_mode: it.inhouseMode ?? "flat", inhouse_flat: Number(it.inhouseFlat) || 0, inhouse_s: Number(it.inhouseS) || 0, inhouse_m: Number(it.inhouseM) || 0, inhouse_b: Number(it.inhouseB) || 0, out_s: Number(it.outS) || 0, out_m: Number(it.outM) || 0, out_b: Number(it.outB) || 0, zones: Array.isArray(it.zones) ? it.zones : [], floral_mode: it.floralMode ?? null, default_real_pct: it.defaultRealPct ?? null, data: it, updated_at: new Date().toISOString() }));
-        if (rows.length) { const { error } = await supabase.from("rate_card").upsert(rows, { onConflict: "id" }); if (error) { if (!silent) setError(`Sync failed: ${error.message}`); return { error: error.message, updated, cleared }; } }
+        if (rows.length) {
+          // One retryingUpsert per row (Promise.all, not a sequential loop — see persistBlocks' own
+          // comment for why a sequential version of this exact shape let a stale write land after a
+          // newer one), so each item's row gets its own target/supersession scope.
+          const results = await Promise.all(rows.map((row) => retryingUpsert("rate_card", row)));
+          const failed = results.find((r) => r.error);
+          if (failed) { if (!silent) setError(`Sync failed: ${failed.error.message}`); return { error: failed.error.message, updated, cleared }; }
+        }
       }
       setTier15LastSync(Date.now());
       return { updated, cleared };
@@ -881,8 +1218,7 @@ export default function IMS() {
     const prev = rateCardCategoriesRef.current;
     setRateCardCategories((p) => p.filter((r) => r.id !== id));
     try {
-      const { error } = await supabase.from("rate_card_categories").delete().eq("id", id);
-      if (error) throw error;
+      await deleteRow("rate_card_categories", id);
     } catch (e) {
       setRateCardCategories(prev);
       setError(`Failed to delete sub-category: ${e.message}`);
@@ -940,21 +1276,21 @@ export default function IMS() {
         const nb = { ...batches };
         nb[trimmed] = nb[matchKey];
         delete nb[matchKey];
-        supabase.from("labour_types").update({ sub_cat_batches: nb }).eq("type_name", type).then(() => {}, () => {});
+        writeWithRetry(() => supabase.from("labour_types").update({ sub_cat_batches: nb }).eq("type_name", type), { target: `labour_types:${type}`, retryable: false, report: false });
       }
     });
     // heavyElementRanges[].subCat is now the primary key of the `heavy_element_ranges` TABLE
     // (migration 044) — a rename is a row-level UPDATE of that key, not a settings blob merge.
     (settings.heavyElementRanges || []).forEach((her) => {
       if (String(her.subCat || "").trim().toLowerCase() === oldId && her.subCat !== trimmed) {
-        supabase.from("heavy_element_ranges").update({ sub_cat: trimmed }).eq("sub_cat", her.subCat).then(() => {}, () => {});
+        writeWithRetry(() => supabase.from("heavy_element_ranges").update({ sub_cat: trimmed }).eq("sub_cat", her.subCat), { target: `heavy_element_ranges:${her.subCat}`, retryable: false, report: false });
       }
     });
     // Recipes (flowerPatterns) link to items by `.sub` (matchFlowerPattern). Rename it too so a
     // sub-category rename keeps the recipe↔item match intact — otherwise the recipe stops applying
     // to its items and every tagged photo using those items loses its recipe pricing. Row-level
     // (flower_patterns table, 040), not the settings blob the rest of this cascade used to share.
-    supabase.from("flower_patterns").update({ sub: trimmed }).ilike("sub", oldId).then(() => {}, () => {});
+    writeWithRetry(() => supabase.from("flower_patterns").update({ sub: trimmed }).ilike("sub", oldId), { target: `flower_patterns:${oldId}`, retryable: false, report: false });
   }, []);
 
   // Rate Card → IMS migration Phase 3: Rate Card admin authority moves from Studio to IMS. Same
@@ -971,13 +1307,27 @@ export default function IMS() {
     try {
       if (changed.length) {
         const rows = changed.map((i) => ({ ...rcItemToRow(i), updated_at: new Date().toISOString() }));
-        const { error } = await supabase.from("rate_card").upsert(rows, { onConflict: "id" });
-        if (error) throw error;
+        // One retryingUpsert per row (Promise.all) — same reasoning as syncRecipeRatesToStudio above.
+        const results = await Promise.all(rows.map((row) => retryingUpsert("rate_card", row)));
+        const failed = results.find((r) => r.error);
+        if (failed) throw failed.error;
       }
-      for (const id of dels) { const { error } = await supabase.from("rate_card").delete().eq("id", id); if (error) throw error; }
+      if (dels.length) {
+        const results = await Promise.all(dels.map((id) => retryingDelete("rate_card", id)));
+        const failed = results.find((r) => r.error);
+        if (failed) throw failed.error;
+      }
     } catch (e) {
       studioRcItemsRef.current = prev; setStudioRcItems(prev);
       setError(`Rate card save failed: ${e.message}`);
+      // Unlike the old single batched upsert (one PostgREST statement, genuinely all-or-nothing),
+      // each row above is its own request — some can land while another fails, so rolling back ALL
+      // local state to `prev` here can show a stale value for a row that actually DID save. Re-sync
+      // from the table so local state reflects whatever actually persisted, not a blanket rollback.
+      fetchAll("rate_card").then(
+        (r) => { const items = r.map(rowToRcItem).filter(Boolean); studioRcItemsRef.current = items; setStudioRcItems(items); },
+        () => {},
+      );
     }
   }, []);
 
@@ -995,34 +1345,44 @@ export default function IMS() {
   // ── Initial load + Realtime subscriptions ──
   useEffect(() => {
     let active = true;
+    // {rows, ok} wrapper for any fetch whose table backs a writer that could overwrite OTHER
+    // events'/rows' data on a failed-fetch-collapsed-to-empty `prev` (see loadOkRef's own comment),
+    // or whose load failure should get its own save-health banner entry instead of just a silent
+    // markTableFailed. Deliberately does NOT call markTableLoaded/markTableFailed itself here —
+    // that's deferred to a single block, once, only after the Promise.all has genuinely resolved
+    // AND every setter below has run (see the block right before setLoading(false)) — marking
+    // loadOkRef inline per-fetch instead would let an earlier, already-settled fetch's table look
+    // "loaded" even on a run where some OTHER fetch in the batch still throws and the destructuring
+    // below never runs at all, so none of these setters actually applied anything that run.
+    const safeFetch = (t) => fetchAll(t).then((rows) => ({ rows, ok: true })).catch((e) => { console.warn(`[IMS] ${t} fetch failed:`, e?.message || e); return { rows: [], ok: false }; });
     (async () => {
       try {
-        const [invRows, fnRows, projRows, venRows, poRows, ohRows, supRows, userRows, prodRows, eoRows, allocRows, platformAllocRows, battaAllocRows, rcRows, trussFetch, catRows, setRows, blockRows, rcCatRows, mandiRows, patternRows, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
-          fetchAll("inventory"),
-          fetchAll("functions").catch(() => []),
-          fetchAll("projects").catch(() => []),
+        const [invFetch, fnFetch, projFetch, venRows, poFetch, ohRows, supRows, userRows, prodRows, eoFetch, allocFetch, platformAllocFetch, battaAllocFetch, rcRows, trussFetch, catRows, setRows, blockFetch, rcCatRows, mandiFetch, patternFetch, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
+          safeFetch("inventory"),
+          safeFetch("functions"),
+          safeFetch("projects"),
           fetchAll("vendors").catch(() => []),
-          fetchAll("purchase_orders").catch(() => []),
+          safeFetch("purchase_orders"),
           fetchAll("overheads").catch(() => []),
           fetchAll("supervisors").catch(() => []),
           fetchAll("users").catch(() => []),
           fetchAll("production_requests").catch(() => []),
-          fetchAll("event_orders").catch(() => []),
-          fetchAll("truss_allocations").catch(() => []),
-          fetchAll("platform_allocations").catch(() => []),
-          fetchAll("batta_allocations").catch(() => []),
+          safeFetch("event_orders"),
+          safeFetch("truss_allocations"),
+          safeFetch("platform_allocations"),
+          safeFetch("batta_allocations"),
           fetchAll("rate_card").catch(() => []),
           // {rows, ok} not a bare array — a real fetch failure (ok:false) must stay distinguishable
           // from a real, successful fetch that just found zero rows (a fresh install), so the code
           // below can refuse to treat a failure as "this venue genuinely has no truss_inventory yet"
           // (see trussInvLoadedRef's own comment for the incident this closes).
-          fetchAll("truss_inventory").then((rows) => ({ rows, ok: true })).catch((e) => { console.warn("[IMS] truss_inventory fetch failed, leaving trussInv untouched:", e?.message); return { rows: [], ok: false }; }),
+          fetchAll("truss_inventory").then((rows) => ({ rows, ok: true })).catch((e) => { console.warn("[IMS] truss_inventory fetch failed:", e?.message || e); return { rows: [], ok: false }; }),
           fetchAll("categories").catch(() => []),
-          fetchAll("settings").catch(() => []),
-          fetchAll("blocks").catch(() => []),
+          safeFetch("settings"),
+          safeFetch("blocks"),
           fetchAll("rate_card_categories").catch(() => []),
-          fetchAll("mandi_flowers").catch(() => []),
-          fetchAll("flower_patterns").catch(() => []),
+          safeFetch("mandi_flowers"),
+          safeFetch("flower_patterns"),
           fetchAll("labour_types").catch(() => []),
           fetchAll("venue_labour_config").catch(() => []),
           fetchAll("print_materials").catch(() => []),
@@ -1039,32 +1399,40 @@ export default function IMS() {
           fetchAll("date_pricing_overrides").catch(() => []),
         ]);
         if (!active) return;
-        { const bm = blocksRowsToMap(blockRows); blocksRef.current = bm; setBlocksState(bm); }
-        const loadedItems = invRows.map(rowToItem);
+        { const bm = blocksRowsToMap(blockFetch.rows); blocksRef.current = bm; setBlocksState(bm); }
+        const loadedItems = invFetch.rows.map(rowToItem);
         itemsRef.current = loadedItems; // keep the ref in lockstep from the very first paint
         setItems(loadedItems);
-        setFns(fnRows.map(rowToFn));
-        setProjectsState(projRows.map(rowToProject));
+        // fnsRef/projectsRef/purchaseRef/eventOrdersRef set in lockstep here too (not left to the
+        // later `useEffect(() => { xRef.current = x }, [x])` sync alone) — same reasoning as
+        // itemsRef/blocksRef above: the event_orders realtime channel (and functions/projects/
+        // purchase_orders' own writers) read straight off these refs, and each of their own
+        // subscriptions is already live by the time this async block resolves, so a change landing
+        // in the gap before that reactive effect runs would otherwise merge into a stale ref.
+        { const mapped = fnFetch.rows.map(rowToFn); fnsRef.current = mapped; setFns(mapped); }
+        { const mapped = projFetch.rows.map(rowToProject); projectsRef.current = mapped; setProjectsState(mapped); }
         setVendorsState(venRows.map(rowToVendor));
-        setPurchaseState(poRows.map(rowToPurchase));
+        { const mapped = poFetch.rows.map(rowToPurchase); purchaseRef.current = mapped; setPurchaseState(mapped); }
         setOverheadsState(ohRows.map(rowToOverhead));
         setSupervisorsState(supRows.map(rowToSupervisor));
         setUsersState(sortUsers(userRows.map(rowToUser), recentUsersRef.current));
         setProdRequestsState(prodRows.map(rowToProd));
-        setEventOrdersState(eoRows.map(rowToEO));
-        setTrussAllocState(Object.fromEntries(allocRows.map((r) => [r.date, rowToAlloc(r)])));
-        setPlatformAllocState(Object.fromEntries(platformAllocRows.map((r) => [r.date, rowToAlloc(r)])));
-        setBattaAllocState(Object.fromEntries(battaAllocRows.map((r) => [r.date, rowToAlloc(r)])));
+        { const mapped = eoFetch.rows.map(rowToEO); eventOrdersRef.current = mapped; setEventOrdersState(mapped); }
+        setTrussAllocState(Object.fromEntries(allocFetch.rows.map((r) => [r.date, rowToAlloc(r)])));
+        setPlatformAllocState(Object.fromEntries(platformAllocFetch.rows.map((r) => [r.date, rowToAlloc(r)])));
+        setBattaAllocState(Object.fromEntries(battaAllocFetch.rows.map((r) => [r.date, rowToAlloc(r)])));
         const trussRow = trussFetch.rows.find((r) => r.key === "main") || trussFetch.rows[0];
-        if (trussRow?.data) { setTrussInvState(trussRow.data); trussInvLoadedRef.current = true; }
+        if (trussRow?.data) { setTrussInvState(trussRow.data); trussInvLoadedRef.current = true; clearSaveProblem("load:truss_inventory"); }
         else if (trussFetch.ok) {
           // A genuinely successful fetch that found no row at all — a fresh install with no
           // truss_inventory row yet. INIT_TRUSS_INV really is correct here, so it's safe to save.
           trussInvLoadedRef.current = true;
+          clearSaveProblem("load:truss_inventory");
         } else {
           // The fetch itself failed — trussInv is still sitting at the INIT_TRUSS_INV placeholder,
           // not real data. Visible, not swallowed: see trussInvLoadedRef's own comment.
           setError("Truss/fabric inventory failed to load — Fabric Stock and Truss & Batta Config are read-only until you reload the page (editing now would save an empty placeholder over the real data).");
+          reportTrussInvLoadFailed(new Error("Failed to load — Fabric Stock and Truss & Batta Config are read-only until this is retried or the page is reloaded."));
         }
         setCats(catRows.map((c) => c.name).filter(Boolean));
         // Mandi flower catalogue — the `mandi_flowers` TABLE (migration 039), not the
@@ -1072,9 +1440,15 @@ export default function IMS() {
         // reads, via its own fetch + realtime (see the effect below), same reasoning fixed_venues
         // (038) already uses in StudioApp.jsx. Populates mandiRowsRef BEFORE applySettingsRows runs,
         // so that rebuild's own re-merge (below) picks up the real catalogue, not an empty one.
-        applyMandiRows(mandiRows);
-        // Flower recipe patterns — the `flower_patterns` TABLE (migration 040), same reasoning.
-        applyFlowerPatternRows(patternRows);
+        // {rows, ok}, not a bare array: syncRecipeRatesToStudio prices every mandi-ingredient recipe
+        // off mandiCatalogue, so a failed fetch collapsing silently to [] (the old `.catch(() => [])`
+        // fallback) would price those ingredients at ₹0 and write that straight to the shared
+        // rate_card table, same class of bug inventory's own guard exists for below.
+        applyMandiRows(mandiFetch.rows);
+        // Flower recipe patterns — the `flower_patterns` TABLE (migration 040), same reasoning —
+        // and the same ₹0/unlock risk: a failed fetch must not look like "this recipe has no
+        // pattern", which syncRecipeRatesToStudio would otherwise read as "unlock this item".
+        applyFlowerPatternRows(patternFetch.rows);
         // Labour type config — the `labour_types` TABLE (migration 041), same reasoning.
         applyLabourTypeRows(labourTypeRows);
         // Venue labour config — the `venue_labour_config` TABLE (migration 042), same reasoning.
@@ -1097,11 +1471,48 @@ export default function IMS() {
         // markedDateRowsRef BEFORE applySettingsRows runs, same reasoning as every other ref above.
         applyMarkedDateRows(markedDateRows);
         // blocks blob, Studio rate-card mirror, and the settings object — applied via the
-        // shared helper (also used by the settings Realtime subscription below).
-        applySettingsRows(setRows);
+        // shared helper (also used by the settings Realtime subscription below). Skipped on a
+        // genuine fetch failure: applySettingsRows unconditionally flips settingsLoaded true, and a
+        // write made against that lying flag can overwrite real settings keys (role-access tabs,
+        // department toolkits, date-pricing overrides, …) with SETTINGS_DEFAULTS. See setSettings'
+        // own `!settingsLoaded` guard below.
+        if (setRows.ok) { applySettingsRows(setRows.rows); clearSaveProblem("load:settings"); }
+        else {
+          setError("Settings failed to load — admin config (roles, department tools, date pricing, …) is read-only until you reload the page.");
+          reportSettingsLoadFailed(new Error("Failed to load — admin config (roles, department tools, date pricing, …) is read-only until this is retried or the page is reloaded."));
+        }
         // Rate card: read from the shared `rate_card` TABLE (migrated off the RC_SK blob).
         setStudioRcItems(rcRows.map(rowToRcItem).filter(Boolean));
         setRateCardCategories(rcCatRows);
+        // Reaching here means the WHOLE Promise.all resolved and every setter above has actually
+        // applied its result — only now is it true that each of these tables either genuinely
+        // loaded or genuinely failed this session. See safeFetch's own comment for why this can't
+        // be done inline per-fetch instead.
+        for (const [t, f] of [["inventory", invFetch], ["functions", fnFetch], ["projects", projFetch], ["purchase_orders", poFetch], ["event_orders", eoFetch], ["truss_allocations", allocFetch], ["platform_allocations", platformAllocFetch], ["batta_allocations", battaAllocFetch], ["settings", setRows], ["blocks", blockFetch], ["mandi_flowers", mandiFetch], ["flower_patterns", patternFetch]]) {
+          if (f.ok) markTableLoaded(t); else markTableFailed(t);
+        }
+        if (invFetch.ok) clearSaveProblem("load:inventory");
+        else reportInventoryLoadFailed(new Error("Failed to load — the item list may be incomplete until this is retried or the page is reloaded."));
+        if (mandiFetch.ok) clearSaveProblem("load:mandi_flowers");
+        else reportMandiLoadFailed(new Error("Failed to load — Studio recipe pricing is skipped until this is retried or the page is reloaded."));
+        if (patternFetch.ok) clearSaveProblem("load:flower_patterns");
+        else reportFlowerPatternsLoadFailed(new Error("Failed to load — Studio recipe pricing is skipped until this is retried or the page is reloaded."));
+        if (fnFetch.ok) clearSaveProblem("load:functions");
+        else reportFunctionsLoadFailed(new Error("Failed to load — the functions list may be incomplete until this is retried or the page is reloaded."));
+        if (projFetch.ok) clearSaveProblem("load:projects");
+        else reportProjectsLoadFailed(new Error("Failed to load — the projects list may be incomplete until this is retried or the page is reloaded."));
+        if (poFetch.ok) clearSaveProblem("load:purchase_orders");
+        else reportPurchaseOrdersLoadFailed(new Error("Failed to load — the purchase orders list may be incomplete until this is retried or the page is reloaded."));
+        if (eoFetch.ok) clearSaveProblem("load:event_orders");
+        else reportEventOrdersLoadFailed(new Error("Failed to load — the event orders list may be incomplete until this is retried or the page is reloaded."));
+        if (blockFetch.ok) clearSaveProblem("load:blocks");
+        else reportBlocksLoadFailed(new Error("Failed to load — editing block reservations is refused until this is retried or the page is reloaded."));
+        if (allocFetch.ok) clearSaveProblem("load:truss_allocations");
+        else reportTrussAllocLoadFailed(new Error("Failed to load — editing truss allocations is refused until this is retried or the page is reloaded."));
+        if (platformAllocFetch.ok) clearSaveProblem("load:platform_allocations");
+        else reportPlatformAllocLoadFailed(new Error("Failed to load — editing platform allocations is refused until this is retried or the page is reloaded."));
+        if (battaAllocFetch.ok) clearSaveProblem("load:batta_allocations");
+        else reportBattaAllocLoadFailed(new Error("Failed to load — editing batta allocations is refused until this is retried or the page is reloaded."));
         setLoading(false);
       } catch (e) {
         if (active) { setError(e.message || "Failed to load IMS data"); setLoading(false); }
@@ -1289,10 +1700,42 @@ export default function IMS() {
     // markWriting/markSettled: see settingsWriter.js's own comment — this RPC bypasses enqueue, so
     // without these isDirty/isStaleFor can't tell a concurrent realtime echo (from ANY other settings
     // key changing) to prefer local state over a pre-commit read of this one.
-    settingsWriterRef.current.markWriting("datePricing");
-    supabase.rpc("merge_settings_json", { p_key: "datePricing", p_patch: { autoCategories } })
-      .then(({ error }) => { if (error) console.warn("[settings] autoCategories merge failed:", error.message); })
-      .finally(() => settingsWriterRef.current.markSettled("datePricing"));
+    // Its own id, distinct from mergeDatePricing's (never a single shared "settings:datePricing" for
+    // every sub-field) — otherwise an admin's still-failed lock-code/pause edit could be silently
+    // cleared from the banner by THIS unrelated merge succeeding, or a second sub-field's failure
+    // could silently replace the first one's reported problem (and its retry closure) in the store.
+    const id = "settings:datePricing:autoCategories";
+    const runMerge = () => {
+      // Re-check the pause flag at RETRY time too (manual click, or the one-shot auto-retry on
+      // reconnect) — not just the one checked above when this effect run started. Without this, an
+      // admin who pauses auto-sync WHILE a failed sync is still pending could have that pause
+      // defeated the moment connectivity returns, by a retry still carrying the pre-pause value.
+      if (settingsRef.current?.datePricing?.autoSyncPaused) { clearSaveProblem(id); return Promise.resolve({ ok: true }); }
+      settingsWriterRef.current.markWriting("datePricing");
+      return supabase.rpc("merge_settings_json", { p_key: "datePricing", p_patch: { autoCategories } })
+        .then(({ error }) => {
+          settingsWriterRef.current.markSettled("datePricing", !error);
+          if (error) {
+            console.warn("[settings] autoCategories merge failed:", error.message);
+            reportSaveProblem(id, {
+              label: "Date pricing: auto-sync", error, retry: runMerge,
+              onDiscard: () => { settingsWriterRef.current.discardKey("datePricing"); refetchSettingsAfterDiscard(); },
+            });
+            return { ok: false };
+          }
+          clearSaveProblem(id);
+          return { ok: true };
+        })
+        .catch((e) => {
+          settingsWriterRef.current.markSettled("datePricing", false);
+          reportSaveProblem(id, {
+            label: "Date pricing: auto-sync", error: e, retry: runMerge,
+            onDiscard: () => { settingsWriterRef.current.discardKey("datePricing"); refetchSettingsAfterDiscard(); },
+          });
+          return { ok: false };
+        });
+    };
+    runMerge();
   }, [studioLmsCache, settingsLoaded]);
 
   // Same reasoning as the autoCategories effect above, generalized: EVERY write to a sub-field of
@@ -1309,6 +1752,15 @@ export default function IMS() {
   // passed in patch — every sibling sub-field (including ones a stale tab doesn't know changed) is
   // left exactly as the database already has it, regardless of this tab's own staleness.
   const mergeDatePricing = useCallback((patch) => {
+    if (!settingsLoadedRef.current) {
+      // The server-side merge itself can only ever touch the keys named in `patch` — but callers
+      // (DatePricingPanel's multiplier/pause/lock-code editors) build `patch` FROM the local
+      // settings.datePricing snapshot, which is still SETTINGS_DEFAULTS if the real settings never
+      // loaded. A multiplier edit, for example, rebuilds and merges the WHOLE categories sub-object
+      // from that default baseline, resetting every other multiplier. Refuse instead of guessing.
+      setError("Settings haven't loaded yet — reload the page before changing date pricing. Nothing was saved.");
+      return { ok: false };
+    }
     const s = settingsRef.current || {};
     const nextSettings = { ...s, datePricing: { ...s.datePricing, ...patch } };
     settingsRef.current = nextSettings;
@@ -1316,10 +1768,29 @@ export default function IMS() {
     // markWriting/markSettled: see settingsWriter.js's own comment — without this, a pause/lock-code
     // write here is invisible to isDirty/isStaleFor, so a realtime echo triggered by ANY unrelated
     // settings-table write elsewhere can silently revert it back to the pre-write value.
+    // One id PER SUB-FIELD actually touched (never a single shared "settings:datePricing" for every
+    // patch) — same reasoning as the autoCategories effect's own id above: a lock-code failure and a
+    // pause failure are two independent problems, and either one succeeding must not silently clear
+    // the other's still-unresolved banner entry.
+    const id = `settings:datePricing:${Object.keys(patch).sort().join(",")}`;
+    const onDiscard = () => { settingsWriterRef.current.discardKey("datePricing"); refetchSettingsAfterDiscard(); };
     settingsWriterRef.current.markWriting("datePricing");
-    supabase.rpc("merge_settings_json", { p_key: "datePricing", p_patch: patch })
-      .then(({ error }) => { if (error) console.warn("[settings] datePricing merge failed:", error.message); })
-      .finally(() => settingsWriterRef.current.markSettled("datePricing"));
+    return supabase.rpc("merge_settings_json", { p_key: "datePricing", p_patch: patch })
+      .then(({ error }) => {
+        settingsWriterRef.current.markSettled("datePricing", !error);
+        if (error) {
+          console.warn("[settings] datePricing merge failed:", error.message);
+          reportSaveProblem(id, { label: "Date pricing", error, retry: () => mergeDatePricing(patch), onDiscard });
+          return { ok: false };
+        }
+        clearSaveProblem(id);
+        return { ok: true };
+      })
+      .catch((e) => {
+        settingsWriterRef.current.markSettled("datePricing", false);
+        reportSaveProblem(id, { label: "Date pricing", error: e, retry: () => mergeDatePricing(patch), onDiscard });
+        return { ok: false };
+      });
   }, []);
 
   // Manual "🔄 Sync LMS": Edge Function paginates LMS server-side → DB, then re-read cache.
@@ -1400,6 +1871,10 @@ export default function IMS() {
     if (trussBackfilledRef.current) return;
     if (!Array.isArray(eventOrders)) return;
     if (!trussInv || !trussInv.pillars) return;
+    // truss_allocations never genuinely loaded this session — setTrussAlloc below would silently
+    // refuse to write (see its own guard), but this effect would still persist the "done" flag
+    // right after, permanently skipping the real backfill on every future, successful load too.
+    if (loadOkRef.current.truss_allocations !== true) return;
     (async () => {
       try {
         const flag = await kvGet(TRUSS_P3_BACKFILLED_SK); // DB flag only — no localStorage
@@ -1500,6 +1975,9 @@ export default function IMS() {
     if (platformBackfilledRef.current) return;
     if (!Array.isArray(eventOrders)) return;
     if (!trussInv || !trussInv.platforms) return;
+    // See the truss backfill effect's identical guard above: without this, a refused
+    // setPlatformAlloc write would still get the "done" flag persisted right after it.
+    if (loadOkRef.current.platform_allocations !== true) return;
     (async () => {
       try {
         const flag = await kvGet(PLATFORM_BACKFILLED_SK);
@@ -1599,6 +2077,9 @@ export default function IMS() {
     if (battaBackfilledRef.current) return;
     if (!Array.isArray(eventOrders)) return;
     if (!trussInv || !trussInv.batta) return;
+    // See the truss backfill effect's identical guard above: without this, a refused
+    // setBattaAlloc write would still get the "done" flag persisted right after it.
+    if (loadOkRef.current.batta_allocations !== true) return;
     (async () => {
       try {
         const flag = await kvGet(BATTA_BACKFILLED_SK);
@@ -1646,15 +2127,43 @@ export default function IMS() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, eventOrders, trussInv]);
 
+  // A few fast, silent attempts (writeWithRetry) absorb a transient blip before any of these
+  // row-level writers' own setError ever surfaces a failure — each upsert/delete call below is
+  // already naturally idempotent (resending the same final row/id twice is a no-op), so retrying
+  // can't itself cause damage. retryable:false throughout, same reasoning as supabase.js's
+  // upsertRow/updateRow/deleteRow: a LATER automatic retry (on reconnect, possibly minutes later)
+  // could resend a stale snapshot over a newer change from another tab/user. Unlike updateRow's
+  // PARTIAL patches, every write below sends the row's FULL current contents, so two overlapping
+  // writes to the SAME id racing within one writer's own retry window is safe BY CONSTRUCTION FOR A
+  // SINGLE WRITE — the older one being dropped as "superseded" is correct (the newer call's payload
+  // already carries everything the older one did, from the same `next` snapshot it diffed against).
+  // That guarantee does NOT automatically extend to a writer that fires several of these calls in a
+  // SEQUENTIAL loop over multiple changed rows (persistBlocks fixed this with Promise.all — see its
+  // own comment for the exact race): a slower-to-start-but-logically-older call could still reach a
+  // LATER row in its own loop after a genuinely newer call already wrote that row, and "win" with a
+  // stale snapshot, since supersession only tracks "which call claimed this row's generation most
+  // recently," not which call is logically newer. The other sequential loops below (setFunctions,
+  // setVendors, setPurchase, setOverheads, setSupervisors, setUsers, setProdRequests, setEventOrders,
+  // setProjects) carry the same theoretical risk, narrower than blocks' (no single row here holds
+  // more than one logical entity's data) — tracked as follow-up work, not fixed in this pass.
+  const retryingUpsert = (table, row, onConflict = "id", opts = {}) => writeWithRetry(
+    () => supabase.from(table).upsert(row, { onConflict }),
+    { target: `${table}:${row[onConflict]}`, label: `${table} row`, retryable: false, ...opts },
+  );
+  const retryingDelete = (table, id, onConflict = "id", opts = {}) => writeWithRetry(
+    () => supabase.from(table).delete().eq(onConflict, id),
+    { target: `${table}:${id}`, label: `${table} row`, retryable: false, ...opts },
+  );
+
   // Persist only the rows that actually changed (CLAUDE.md rule #1 — never re-save the whole table).
   const persistInventory = useCallback(async (prev, next, deletedIds) => {
     const { upserts, deletes } = diffInventory(prev, next, deletedIds, user?.name || null);
     for (const row of upserts) {
-      const { error: e } = await supabase.from("inventory").upsert(row, { onConflict: "id" });
+      const { error: e } = await retryingUpsert("inventory", row);
       if (e) setError(`Save failed: ${e.message}`);
     }
     for (const id of deletes) {
-      const { error: e } = await supabase.from("inventory").delete().eq("id", id);
+      const { error: e } = await retryingDelete("inventory", id);
       if (e) setError(`Delete failed: ${e.message}`);
     }
   }, [user]);
@@ -1680,22 +2189,37 @@ export default function IMS() {
       for (const fn of next) {
         const before = prevMap.get(fn.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(fn)) {
-          let { error: e } = await supabase.from("functions").upsert(fnToRow(fn), { onConflict: "id" });
+          // report:false on this first attempt — a 23503 here (checked below) is the NORMAL path
+          // for a brand-new event (see comment below), not a real failure yet, so it must not flash
+          // a save-health banner that the fallback then immediately clears a beat later. Any outcome
+          // that ISN'T that expected race reports explicitly itself, right below. report:false also
+          // disables writeWithRetry's own clear-on-success, so a genuine success here is cleared by
+          // hand too — otherwise a PRIOR failed save of this same function (still listed, Discard
+          // only) would wrongly keep showing "failed" after this attempt actually lands.
+          const first = await retryingUpsert("functions", fnToRow(fn), "id", { report: false });
+          let e = first.error;
+          if (first.ok) clearSaveProblem(`write:functions:${fn.id}`);
           // functions.project_id → projects.id. A brand-new event (eventAutoConfirm) creates its
           // project and functions together, and the two saves run in parallel — the function row
           // could land first and hit the FK before its project existed ("functions_project_id_fkey").
           // So on that error: write the project (already in projectsRef, set just before) and retry.
           // If the project really is gone, save the function unlinked rather than not at all — its
-          // projectId is still in the row's data blob.
+          // projectId is still in the row's data blob. (23503 is one of defaultShouldAbort's
+          // non-retryable codes, so retryingUpsert's own attempts never delay reaching this check.)
           if (e && e.code === "23503" && fn.projectId) {
             const proj = projectsRef.current.find((p) => p.id === fn.projectId);
             if (proj) {
-              const pr = await supabase.from("projects").upsert(projectToRow(proj), { onConflict: "id" });
-              if (!pr.error) ({ error: e } = await supabase.from("functions").upsert(fnToRow(fn), { onConflict: "id" }));
+              const pr = await retryingUpsert("projects", projectToRow(proj));
+              if (!pr.error) ({ error: e } = await retryingUpsert("functions", fnToRow(fn)));
             } else {
               console.warn(`[ims] function ${fn.id}: project ${fn.projectId} not found — saving without the link`);
-              ({ error: e } = await supabase.from("functions").upsert({ ...fnToRow(fn), project_id: null }, { onConflict: "id" }));
+              ({ error: e } = await retryingUpsert("functions", { ...fnToRow(fn), project_id: null }));
             }
+          } else if (e) {
+            // The first attempt failed for a reason the fallback above never runs for (not a 23503
+            // FK race, or no projectId to retry with) — this IS a terminal failure, so report it
+            // explicitly since the first attempt's own report was suppressed.
+            reportSaveProblem(`write:functions:${fn.id}`, { label: "functions row", error: e });
           }
           if (e) setError(`Save failed: ${e.message}`);
         }
@@ -1713,7 +2237,7 @@ export default function IMS() {
       for (const v of next) {
         const before = prevMap.get(v.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(v)) {
-          const { error: e } = await supabase.from("vendors").upsert(vendorToRow(v), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("vendors", vendorToRow(v));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -1730,7 +2254,7 @@ export default function IMS() {
       for (const p of next) {
         const before = prevMap.get(p.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(p)) {
-          const { error: e } = await supabase.from("purchase_orders").upsert(purchaseToRow(p), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("purchase_orders", purchaseToRow(p));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -1747,7 +2271,7 @@ export default function IMS() {
       for (const o of next) {
         const before = prevMap.get(o.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(o)) {
-          const { error: e } = await supabase.from("overheads").upsert(overheadToRow(o), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("overheads", overheadToRow(o));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -1765,12 +2289,12 @@ export default function IMS() {
       for (const s of next) {
         const before = prevMap.get(s.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(s)) {
-          const { error: e } = await supabase.from("supervisors").upsert(supervisorToRow(s), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("supervisors", supervisorToRow(s));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
       for (const id of prevMap.keys()) {
-        if (!nextIds.has(id)) await supabase.from("supervisors").delete().eq("id", id);
+        if (!nextIds.has(id)) await retryingDelete("supervisors", id);
       }
     })());
   }, [trackWrite]);
@@ -1798,12 +2322,12 @@ export default function IMS() {
       for (const u of next) {
         const before = prevMap.get(u.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(u)) {
-          const { error: e } = await supabase.from("users").upsert(userToRow(u), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("users", userToRow(u));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
       for (const id of prevMap.keys()) {
-        if (!nextIds.has(id)) await supabase.from("users").delete().eq("id", id);
+        if (!nextIds.has(id)) await retryingDelete("users", id);
       }
     })());
   }, [trackWrite]);
@@ -1833,12 +2357,12 @@ export default function IMS() {
       for (const p of next) {
         const before = prevMap.get(p.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(p)) {
-          const { error: e } = await supabase.from("production_requests").upsert(prodToRow(p), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("production_requests", prodToRow(p));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
       for (const id of prevMap.keys()) {
-        if (!nextIds.has(id)) await supabase.from("production_requests").delete().eq("id", id);
+        if (!nextIds.has(id)) await retryingDelete("production_requests", id);
       }
     })());
   }, [trackWrite]);
@@ -1856,12 +2380,12 @@ export default function IMS() {
       for (const eo of next) {
         const before = prevMap.get(eo.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(eo)) {
-          const { error: e } = await supabase.from("event_orders").upsert({ id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }, { onConflict: "id" });
+          const { error: e } = await retryingUpsert("event_orders", { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo });
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
       for (const id of [...deletedIds, ...[...prevMap.keys()].filter((id) => !nextIds.has(id))]) {
-        await supabase.from("event_orders").delete().eq("id", id);
+        await retryingDelete("event_orders", id);
       }
     })());
   }, [trackWrite]);
@@ -1883,11 +2407,35 @@ export default function IMS() {
     }
     for (const itemId of Object.keys(prevO)) if (!(itemId in nextO)) deletes.push(itemId); // item removed
     try {
-      if (upserts.length) { const { error } = await supabase.from("blocks").upsert(upserts, { onConflict: "id" }); if (error) throw error; }
-      for (const id of deletes) { const { error } = await supabase.from("blocks").delete().eq("id", id); if (error) throw error; }
+      // One retryingUpsert call per item (not a single batched upsert of the whole array) so each
+      // item's row gets its own target/supersession scope — a blip retrying item A's row must never
+      // be keyed together with item B's in the same batch. Started together (Promise.all), NOT in a
+      // sequential loop: a sequential loop only claims item k's supersession generation once items
+      // 0..k-1 have each finished their own round trip, so a SLOWER-to-start but logically OLDER
+      // persistBlocks call (built from an earlier blocksRef snapshot) could reach item j's write
+      // AFTER a genuinely newer call already wrote it there — and "win" with its own older,
+      // narrower snapshot, since supersession only knows "which call claimed this item's generation
+      // most recently," not which call was actually logically newer. Starting every item's write in
+      // the same tick closes that window — confirmed by reproducing the race with a sequential loop
+      // and verifying Promise.all does not exhibit it.
+      const results = await Promise.all([
+        ...upserts.map((row) => retryingUpsert("blocks", row)),
+        ...deletes.map((id) => retryingDelete("blocks", id)),
+      ]);
+      const failed = results.find((r) => r.error);
+      if (failed) throw failed.error;
     } catch (e) { setError(`Save failed: ${e?.message || e}`); }
   };
+  // A blocks row holds EVERY event's reservations on that one item — if the table's initial fetch
+  // failed, blocksRef.current is sitting at {} (not "genuinely no reservations exist"), and writing
+  // from that empty baseline would upsert just this session's own reservation over a row that, in
+  // the database, still holds every other event's. Refuse instead of guessing, same as blocks' own
+  // table-level reasoning above.
   const setBlocks = useCallback((updater) => {
+    if (loadOkRef.current.blocks !== true) {
+      setError("Block reservations haven't loaded — reload the page before changing them. Nothing was saved.");
+      return;
+    }
     const prev = blocksRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     blocksRef.current = next;
@@ -1895,6 +2443,10 @@ export default function IMS() {
     trackWrite(persistBlocks(next, prev));
   }, [trackWrite]);
   const saveBlocks = useCallback((val) => {
+    if (loadOkRef.current.blocks !== true) {
+      setError("Block reservations haven't loaded — reload the page before changing them. Nothing was saved.");
+      return;
+    }
     const prev = blocksRef.current;
     const next = typeof val === "function" ? val(prev) : val;
     blocksRef.current = next;
@@ -1927,11 +2479,11 @@ export default function IMS() {
         for (const req of (next || [])) {
           const before = prevMap.get(req.id);
           if (!before || JSON.stringify(before) !== JSON.stringify(req)) {
-            const { error } = await supabase.from("amend_requests").upsert({ id: req.id, status: req.status ?? null, data: req }, { onConflict: "id" });
+            const { error } = await retryingUpsert("amend_requests", { id: req.id, status: req.status ?? null, data: req });
             if (error) throw error;
           }
         }
-        for (const id of [...prevMap.keys()].filter((id) => !nextIds.has(id))) await supabase.from("amend_requests").delete().eq("id", id);
+        for (const id of [...prevMap.keys()].filter((id) => !nextIds.has(id))) await retryingDelete("amend_requests", id);
       } catch (e) { setError(`Save failed: ${e?.message || e}`); }
     })());
   }, [trackWrite]);
@@ -1947,7 +2499,7 @@ export default function IMS() {
       for (const p of next) {
         const before = prevMap.get(p.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(p)) {
-          const { error: e } = await supabase.from("projects").upsert(projectToRow(p), { onConflict: "id" });
+          const { error: e } = await retryingUpsert("projects", projectToRow(p));
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -1957,6 +2509,10 @@ export default function IMS() {
   // Truss allocations — object keyed by date. allocateForDate returns the whole map;
   // we persist only the dates whose entry actually changed (CLAUDE.md rule #1).
   const setTrussAlloc = useCallback((updater) => {
+    if (loadOkRef.current.truss_allocations !== true) {
+      setError("Truss allocations haven't loaded — reload the page before changing them. Nothing was saved.");
+      return;
+    }
     const prev = trussAllocRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     trussAllocRef.current = next;
@@ -1964,7 +2520,7 @@ export default function IMS() {
     trackWrite((async () => {
       for (const date of Object.keys(next)) {
         if (JSON.stringify(prev[date]) !== JSON.stringify(next[date])) {
-          const { error: e } = await supabase.from("truss_allocations").upsert(allocToRow(date, next[date]), { onConflict: "date" });
+          const { error: e } = await retryingUpsert("truss_allocations", allocToRow(date, next[date]), "date");
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -1974,6 +2530,10 @@ export default function IMS() {
   // Platform allocations — same shape/persistence rule as setTrussAlloc above, targeting the
   // platform_allocations table (migration 052).
   const setPlatformAlloc = useCallback((updater) => {
+    if (loadOkRef.current.platform_allocations !== true) {
+      setError("Platform allocations haven't loaded — reload the page before changing them. Nothing was saved.");
+      return;
+    }
     const prev = platformAllocRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     platformAllocRef.current = next;
@@ -1981,7 +2541,7 @@ export default function IMS() {
     trackWrite((async () => {
       for (const date of Object.keys(next)) {
         if (JSON.stringify(prev[date]) !== JSON.stringify(next[date])) {
-          const { error: e } = await supabase.from("platform_allocations").upsert(allocToRow(date, next[date]), { onConflict: "date" });
+          const { error: e } = await retryingUpsert("platform_allocations", allocToRow(date, next[date]), "date");
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -1991,6 +2551,10 @@ export default function IMS() {
   // Batta allocations — same shape/persistence rule as setTrussAlloc/setPlatformAlloc above,
   // targeting the batta_allocations table (migration 052).
   const setBattaAlloc = useCallback((updater) => {
+    if (loadOkRef.current.batta_allocations !== true) {
+      setError("Batta allocations haven't loaded — reload the page before changing them. Nothing was saved.");
+      return;
+    }
     const prev = battaAllocRef.current;
     const next = typeof updater === "function" ? updater(prev) : updater;
     battaAllocRef.current = next;
@@ -1998,7 +2562,7 @@ export default function IMS() {
     trackWrite((async () => {
       for (const date of Object.keys(next)) {
         if (JSON.stringify(prev[date]) !== JSON.stringify(next[date])) {
-          const { error: e } = await supabase.from("batta_allocations").upsert(allocToRow(date, next[date]), { onConflict: "date" });
+          const { error: e } = await retryingUpsert("batta_allocations", allocToRow(date, next[date]), "date");
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
@@ -2016,7 +2580,7 @@ export default function IMS() {
     }
     setTrussInvState((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      trackWrite(supabase.from("truss_inventory").upsert({ key: "main", data: next }, { onConflict: "key" }).then(({ error: e }) => { if (e) setError(`Save failed: ${e.message}`); }));
+      trackWrite(retryingUpsert("truss_inventory", { key: "main", data: next }, "key").then(({ error: e }) => { if (e) setError(`Save failed: ${e.message}`); }));
       return next;
     });
   }, [trackWrite]);
@@ -2030,10 +2594,26 @@ export default function IMS() {
   // src/lib/ims/eventAutoConfirm.js for what this does (matching, blocking, Project/Function
   // creation, auto-POs). Cancelling an event + releasing its held inventory now lives in the
   // Calendar tab instead of a dedicated Events screen.
+  // Every table this pipeline reads or writes (matching, blocking inventory, Project/Function
+  // creation, auto-POs) must have genuinely loaded this session — on a failed fetch the pipeline
+  // would otherwise run unattended against an empty/placeholder snapshot and could, for example,
+  // double-book inventory the real data already held reservations against.
+  const autoConfirmReady = loadOkRef.current.inventory === true
+    && loadOkRef.current.event_orders === true
+    && loadOkRef.current.blocks === true
+    && loadOkRef.current.functions === true
+    && loadOkRef.current.projects === true
+    && loadOkRef.current.purchase_orders === true
+    // settingsLoadedRef, not loadOkRef.current.settings: settingsLoadedRef is also updated by a
+    // later successful settings realtime refresh (applySettingsRows), so a one-time boot failure
+    // that self-heals doesn't leave this pipeline permanently stuck off for the rest of the session
+    // the way the table-level loadOkRef entries above (never retried this session) intentionally do.
+    && settingsLoadedRef.current === true
+    && trussInvLoadedRef.current === true;
   useEventOrderAutoConfirm({
     eventOrders, setEventOrders, inventory: items, blocks, setBlocks, saveBlocks, saveEventOrders,
     projects, setProjects, functions, setFunctions, purchase, setPurchase,
-    settings, studio, trussInv, setTrussInv,
+    settings, studio, trussInv, setTrussInv, ready: autoConfirmReady,
   });
 
   const handleLogout = async () => {
@@ -2274,7 +2854,7 @@ export default function IMS() {
             onAddSubcat={addSubcat} onRenameSubcat={renameSubcat} onUpdateSubcatCategory={updateSubcatCategory}
             onSyncSubcatsFromInventory={syncSubcatsFromInventory} onDeleteSubcat={deleteSubcat}
             onUpdateSubcatFloralMode={updateSubcatFloralMode} onUpdateSubcatTagHidden={updateSubcatTagHidden}
-            rcItems={studioRcItems} rcCats={studioRcCats} authUser={user}
+            rcItems={studioRcItems} rcCats={studioRcCats} authUser={user} settingsLoaded={settingsLoaded}
           />
         ) : activeTab === "supply" ? (
           <SupplyTab
