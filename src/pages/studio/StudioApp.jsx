@@ -13877,7 +13877,6 @@ export default function StudioApp() {
           const fns = [{ type: fn, date: clientDate, venue, shift: clientShift, pax: clientPax }, ...extraFunctions];
           if (extraFunctions.length === 0) return null;
           const fmtDate = (d) => { if (!d) return "—"; try { return new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }); } catch { return d; } };
-          const SHIFT_LETTER = { Morning: "M", Lunch: "L", Sundowner: "S", Night: "N" };
           return (
             <div className="sa-fnrow" style={{ flexBasis: "100%", display: "flex", alignItems: "center", gap: 8, paddingTop: 10, marginTop: 6, borderTop: `1px solid rgba(201,169,110,0.12)`, flexWrap: "wrap" }}>
               <div style={{ ...NAV_META, color: "rgba(255,255,255,0.45)", marginRight: 2 }}>Function</div>
@@ -13889,8 +13888,8 @@ export default function StudioApp() {
                 const isLoading = isFnSwitching && i === fnPending;
                 const f_ = f || {};
                 const typeLbl = (f_.type && String(f_.type).trim()) || `Function ${i + 1}`;
-                const slotLetter = f_.shift ? (SHIFT_LETTER[f_.shift] || String(f_.shift).charAt(0).toUpperCase()) : "";
-                const label = `${typeLbl} · ${fmtDate(f_.date)}${slotLetter ? " " + slotLetter : ""}`;
+                // the session in full (Lunch / Dinner …) - a lone "L" / "D" was not read as one
+                const label = `${typeLbl} · ${fmtDate(f_.date)}${f_.shift ? " · " + String(f_.shift).trim() : ""}`;
                 return (
                   <div key={i} onClick={() => switchActiveFn(i)} title={isLoading ? "Loading this function…" : undefined} style={{ ...NAV_CHIP_BASE, padding: "6px 14px", borderRadius: 999, cursor: isFnSwitching ? "progress" : "pointer", fontWeight: isActive ? 600 : 500, background: isActive ? accent : "transparent", color: isActive ? "#1a1a2e" : accent, border: `1px solid ${isActive ? accent : "rgba(201,169,110,0.4)"}`, display: "flex", alignItems: "center", gap: 7, opacity: isFnSwitching && !isActive ? 0.55 : 1, transition: "opacity .15s ease" }}>
                     {label}

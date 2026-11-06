@@ -3512,7 +3512,7 @@ undefined
                       No guest count: it is set on Event Info and not used anywhere in this step's
                       work, so in the panel it was a number with nothing to do. */}
                   <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap",rowGap:9}}>
-                    {row(<IconPalette size={14}/>, `${activeFnMeta.venue || venue} · ${activeFnMeta.type || fn}`)}
+                    {row(<IconPalette size={14}/>, `${activeFnMeta.venue || venue} · ${activeFnMeta.type || fn}${activeFnMeta.shift ? ` · ${activeFnMeta.shift}` : ""}`)}
                     {/* fnDate, matching the venue/type line directly above — that one already used
                         activeFnMeta and this one didn't, which is the whole bug. */}
                     {fnDate && <div style={{display:"flex",alignItems:"center",gap:9}}>

@@ -1389,7 +1389,7 @@ function StudioBrowse({ ctx }) {
               // activeFnMeta.date falls back to clientDate for Function 1, so this is right for every
               // function.
               const fnDate = activeFnMeta?.date || clientDate;
-              const where=[activeFnMeta?.venue||venue, activeFnMeta?.type].filter(Boolean).join(" · ");
+              const where=[activeFnMeta?.venue||venue, activeFnMeta?.type, activeFnMeta?.shift].filter(Boolean).join(" · "); // with the session (Lunch / Dinner …), as Event Info sets it
               if(!where && !fnDate) return null;
               return <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap",rowGap:9}}>
                 {where && row(<IconPalette size={14}/>, where)}
