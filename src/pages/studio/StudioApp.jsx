@@ -2369,6 +2369,7 @@ export default function StudioApp() {
   // DISABLED" note near saveSession's own studio_sessions write).
   const buildSaveBaselineRef = useRef(null);
   const buildConflictWarnedAtRef = useRef(0);
+  const emptySaveWarnedRef = useRef(false); // the "deal shows empty but has a saved build" warning, said once until a build is back
   useEffect(() => { activeFnIdxRef.current = activeFnIdx; switchingRef.current = false; }, [activeFnIdx]);
   useEffect(() => { fnBuildsRef.current = fnBuilds; }, [fnBuilds]);
   // useLayoutEffect, not useEffect, and no deps array — runs on EVERY commit, matching saveSessionRef's
@@ -8338,6 +8339,24 @@ export default function StudioApp() {
       showMsg?.(`Function ${i + 1} looks like it duplicated another function's build — not saved this time. Reload and check it.`, "red");
       delete fnSnapshots[i];
     });
+    // ── AN AUTOSAVE NEVER LAYS AN EMPTY DEAL OVER A BUILT ONE ──
+    // Confirmed incident (Sahiba, 2026-11-06): the deal came up blank on screen after a reload, and the autosave kept saving that
+    // blank - 8 empty saves in 15 minutes - until the real build (₹9.7L across three functions) had dropped out of the 10 saves
+    // the app loads, so it looked lost. Nothing checked that the build being saved had anything in it. When no function of this
+    // save holds a build but this deal's saves do, an AUTOSAVE keeps its session back and the salesperson is told; a deliberate
+    // save (Save Draft, Sold) still goes through, so a deal can still be emptied on purpose. Only the SESSION is held back (at the
+    // keepDraft check below), not the whole save - the deal's own details (name, date, venue, functions) still persist.
+    let emptyOverBuilt = false;
+    if (opts.auto) {
+      const nowHasBuild = Object.values(fnSnapshots).some((s) => fnSnapHasBuild(s));
+      const savedHasBuild = (((clientLedgerRef.current || clientLedger).find((c) => c.id === activeClientId)?.sessions) || [])
+        .some((s) => (Array.isArray(s?._fnRows) && s._fnRows.length ? s._fnRows.some((r) => r && r.has_data) : Object.values(s?.fnSnapshots || {}).some((x) => fnSnapHasBuild(x))));
+      if (!nowHasBuild && savedHasBuild) {
+        console.warn("[saveSession] autosave kept its session back: nothing is built on screen, but this deal has a saved build - not laying an empty save over it.");
+        if (!emptySaveWarnedRef.current) { emptySaveWarnedRef.current = true; showMsg?.("This deal shows empty but has a saved build - not auto-saving the empty one. Open Browse → Past sessions → Resume to bring the build back.", "red"); }
+        emptyOverBuilt = true;
+      } else emptySaveWarnedRef.current = false;
+    }
     // Same pricingReady gate as total/decorTotal/transportTotal below — a snapshot taken while
     // rates are still settling would freeze seed-default garbage instead of a real historical rate.
     // Skipping it here just means this save carries no priceSnapshot forward; it never blocks or
@@ -8529,7 +8548,7 @@ export default function StudioApp() {
     // boundary is pending, a save whose content still matches what was just loaded is a no-op — wait
     // for a save that actually differs before spending the boundary on a new entry.
     const loadEchoNoop = sessionBoundaryRef.current && snapshotContentEqual(snapshot, prevSessions[0] || null);
-    if (keepDraft || loadEchoNoop) {
+    if (keepDraft || loadEchoNoop || emptyOverBuilt) {
       client.sessions = prevSessions;
     } else {
       // Collapse consecutive auto-drafts into the same slot — UNLESS a Load just opened a new visit
