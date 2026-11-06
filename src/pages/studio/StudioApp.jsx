@@ -5198,14 +5198,16 @@ export default function StudioApp() {
     const own = new Set(ownIds);
     const fixed = lockedAtFixedVenues(fvCfgForRepeat, venueName, it);
     const holders = (activeBlocksDetailForDate?.[it.id] || []).filter((b) => b && !own.has(b.eventId) && Number(b.qty) > 0)
-      .map((b) => { const o = (eventOrders || []).find((x) => x.id === b.eventId); return `${o?.clientName || "another event"} ${b.qty}`; });
+      .map((b) => { const o = (eventOrders || []).find((x) => x.id === b.eventId); return `${o?.clientName || "an unknown event"}${o?.status === "cancelled" ? " (cancelled - not released)" : ""} ${b.qty}`; });
     const imsBlocked = Number(it.blocked) || 0;
     const why = [`Stock: ${total}`,
       fixed.length ? `Kept at fixed venues: ${fixed.map((f) => `${f.name} ${f.qty}`).join(", ")}` : "",
       imsBlocked > 0 ? `Blocked in IMS (all dates): ${imsBlocked}` : "",
       holders.length ? `Booked this date by: ${holders.join(", ")}` : "",
       `Free: ${Math.max(0, Math.floor(free))}`].filter(Boolean).join(String.fromCharCode(10));
-    return { free, why };
+    // reason: the short line Build prints under a 0-free item - who holds it, without hovering
+    const reason = [holders.length ? `Booked by ${holders.join(", ")}` : "", fixed.length ? `Kept at ${fixed.map((f) => `${f.name} ${f.qty}`).join(", ")}` : "", imsBlocked > 0 ? `${imsBlocked} blocked in IMS` : "", total <= 0 ? "No stock in IMS" : ""].filter(Boolean).join(" · ");
+    return { free, why, reason };
   }, [eventOrders, activeClientId, clientName, activeBlocksForDate, activeBlocksDetailForDate, activeFnMeta, venue, fvCfgForRepeat]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with

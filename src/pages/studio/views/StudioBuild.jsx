@@ -5014,6 +5014,8 @@ undefined
                                     : (remaining!=null&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>{remaining} left for this event</span>))}
                               </div>
                               <div style={{fontSize:11,color:textS,marginTop:2}}>{(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › ":""}{it.cat}{itemDimsText(it)?` · ${itemDimsText(it)}`:""}</div>
+                              {/* why it is 0 free on this date - the event holding it, a fixed venue, an IMS block - without hovering */}
+                              {isDateUnavail&&_fa?.reason&&<div style={{fontSize:10.5,color:"#EF4444",marginTop:2,overflowWrap:"anywhere"}}>{_fa.reason}</div>}
                             </div>
                           </div>;
                         })}
