@@ -2916,6 +2916,7 @@ export default function IMS() {
           <SiteSupervisorTab
             eventOrders={eventOrders} setEventOrders={setEventOrders}
             inventory={items} settings={settings}
+            blocks={blocks} trussInv={trussInv} rateCardCategories={rateCardCategories}
             authUser={user}
           />
         ) : (

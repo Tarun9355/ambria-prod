@@ -4,6 +4,7 @@ import { catToDept as sharedCatToDept } from "../../lib/ims/deptClassify";
 import { venueWithParent } from "../../lib/ims/fixedVenues";
 import SiteReceivingPanel from "./SiteReceivingPanel.jsx";
 import SiteCrewPanel from "./SiteCrewPanel.jsx";
+import SitePdfButton from "./SitePdfButton.jsx";
 
 const PICK_KEY = "ambria-ims-site-event";
 const SECTIONS = [
@@ -18,7 +19,7 @@ const fnDate = (eo) => {
 // One page for the whole event, every department together — not the per-department tabs the rest
 // of IMS uses. Built for the Site Supervisor role: a narrow login that only needs "what's arriving
 // on each truck, right now" and "who's actually on site", not the dept-head planning screens.
-export default function SiteSupervisorTab({ eventOrders, setEventOrders, inventory, settings, authUser }) {
+export default function SiteSupervisorTab({ eventOrders, setEventOrders, inventory, settings, blocks, trussInv, rateCardCategories, authUser }) {
   const [selId, setSelId] = useState(() => { try { return sessionStorage.getItem(PICK_KEY) || ""; } catch { return ""; } });
   const [mode, setMode] = useState("actual"); // "plan" | "actual"
   const [section, setSection] = useState("receiving");
@@ -52,6 +53,11 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
               className={"h-8 px-3 rounded-lg text-[12.5px] font-semibold " + (mode === "actual" ? "bg-amber-100 text-amber-700" : "text-gray-500 hover:bg-white")}>✅ Actual</button>
           </div>
           <span className="text-[11px] text-gray-400">{mode === "actual" ? "What's actually arrived & on site — editable" : "What the dept heads loaded & scheduled"}</span>
+        </div>
+
+        <div className="mt-3 pt-3 border-t border-gray-100">
+          <SitePdfButton sel={sel} settings={settings} inventory={inventory} blocks={blocks} trussInv={trussInv}
+            rateCardCategories={rateCardCategories} eventOrders={eventOrders} authUser={authUser} catToDept={catToDept} />
         </div>
       </div>
 
