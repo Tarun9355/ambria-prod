@@ -2,7 +2,7 @@ import React, { useState, useRef, useMemo, useEffect } from "react";
 import { supabase, fetchAll } from "../../lib/supabase";
 import { DEFAULT_KIT_ID, normKitParts } from "../../lib/studio/kitVariants";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
-import { Badge, TypeBadge, Modal } from "../../components/ui";
+import { Badge, TypeBadge, Modal, useConfirm } from "../../components/ui";
 import { fmt } from "../../lib/format";
 import { INV_CATS, INV_LOCATIONS, DEPTS, INV_TYPES, PRICING_CAT_STYLES, SUBCAT_OTHER } from "../../lib/inventory/constants";
 import { findAlternatives, getEffectivePricing, resolveDateCategory } from "../../lib/inventory/helpers";
@@ -134,6 +134,8 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   };
 
   const [subOtherAdd, setSubOtherAdd] = useState(false); // Add modal "Other" mode
+  // In-app confirmation instead of the browser's "localhost says" box (useConfirm in components/ui)
+  const [confirm, confirmDialog] = useConfirm();
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("All");
   const [filterSubCat, setFilterSubCat] = useState("All");
@@ -307,7 +309,7 @@ Rules:
     const subChanged = ns && ns !== String(i.subCat ?? "");
     return catChanged || subChanged;
   });
-  function normaliseCategories() {
+  async function normaliseCategories() {
     if (normaliseTargets.length === 0) { alert("✅ All categories already match the current spellings — nothing to normalise."); return; }
     // Build a short preview of the distinct mappings so the user sees exactly what will change.
     const mapSet = new Map();
@@ -318,7 +320,11 @@ Rules:
     }
     const preview = [...mapSet.values()].slice(0, 12).join("\n");
     const more = mapSet.size > 12 ? `\n…and ${mapSet.size - 12} more mapping(s)` : "";
-    if (!window.confirm(`Permanently update ${normaliseTargets.length} item(s) to the current spellings?\n\n${preview}${more}\n\nThis rewrites the database rows (reports/exports will use the new spellings). Cannot be auto-undone.`)) return;
+    if (!(await confirm({
+      title: `Update ${normaliseTargets.length} item(s) to the current spellings?`,
+      body: `${preview}${more}\n\nThis rewrites the database rows (reports/exports will use the new spellings). Cannot be auto-undone.`,
+      confirmLabel: "Update", danger: false,
+    }))) return;
     const ids = new Set(normaliseTargets.map((i) => i.id));
     setInventory((prev) => prev.map((i) => {
       if (!ids.has(i.id)) return i;
@@ -858,12 +864,12 @@ Rules:
     if (s) allSubCounts[s] = (allSubCounts[s] || 0) + 1;
   }
   const allSubOptions = Object.keys(allSubCounts).sort((a, b) => a.localeCompare(b));
-  function moveSubcatItems() {
+  async function moveSubcatItems() {
     const from = moveFromSub;
     const to = moveToSub.trim();
     if (!from || !to || from === to) return;
     const n = allSubCounts[from] || 0;
-    if (!window.confirm(`Move ${n} item(s) from "${from}" to "${to}"?`)) return;
+    if (!(await confirm({ title: `Move ${n} item(s)?`, body: `From "${from}" to "${to}".`, confirmLabel: "Move", danger: false }))) return;
     setInventory((prev) => prev.map((i) => {
       const cur = String(i.subCat ?? i.subcategory ?? "").trim();
       return cur === from ? { ...i, subCat: to, subcategory: to } : i;
@@ -874,6 +880,7 @@ Rules:
 
   return (
     <div className="space-y-4">
+      {confirmDialog}
       {/* Toolbar — smart search + chip filters */}
       <div className="space-y-2.5">
         {/* Row 1: search box + result count + Add */}
@@ -1882,7 +1889,7 @@ Rules:
                         <input id="kit-name-input" value={editKits[kitTabNow].name} onChange={(e) => renameKit(kitTabNow, e.target.value)} placeholder={`Kit ${kitTabNow + 1}`}
                           className="flex-1 min-w-0 px-2 py-1 text-xs border border-indigo-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300" />
                         {kitTabNow > 0 && (
-                          <button type="button" onClick={() => { if (window.confirm(`Remove ${editKits[kitTabNow].name || "this kit"}? Deals already using it keep their parts.`)) removeKit(kitTabNow); }}
+                          <button type="button" onClick={async () => { const t = kitTabNow; if (await confirm({ title: `Remove ${editKits[t].name || "this kit"}?`, body: "Deals already using it keep their parts.", confirmLabel: "Remove" })) removeKit(t); }}
                             className="text-xs font-semibold text-red-600 hover:text-red-700 px-2 py-1 rounded-lg hover:bg-red-50 shrink-0">Remove kit</button>
                         )}
                       </div>
