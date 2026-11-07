@@ -4001,7 +4001,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         if (!pillars.length && !beams.length && !(battaRft > 0)) return;
         const zkey = `${fi}|${zk}`;
         if (!trussTableByZone.has(zkey)) trussTableByZone.set(zkey, []);
-        trussTableByZone.get(zkey).push({ label: ri > 0 ? t("Truss #{n}", { n: ri + 1 }) : "", pillars, beams, battaRft, battaBuf: Number(bBuf) || 0 });
+        trussTableByZone.get(zkey).push({ label: ri > 0 ? t("Truss #{n}", { n: ri + 1 }) : "", pillars, beams, battaRft, battaBuf: Number(bBuf) || 0, material: row.trussMaterial || "" });
       });
     }
     fns.forEach((fn, fi) => {
@@ -4234,7 +4234,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
         // zone title, and "Single U Truss" there costs enough width to wrap the title onto a
         // second line. The truss TYPE is spelled out in the structure strip under the zone header.
         const zCfg = fn?.zones?.[zk] || {};
-        const zDimsOf = (zCfg.trT || Number(zCfg.trussQty) > 0) ? t("Truss")
+        // Owner ask (2026-11-07): the crew needs to know the truss MATERIAL at a glance here too —
+        // iron/pole/aluminium pillars and beams aren't interchangeable stock. hn() (not a new t()
+        // dictionary key) is the same way the structure strip's own "Single U pole" already names a
+        // truss's material (see z.trussMaterial a little above) — reusing it here keeps every
+        // Hindi-translated material word in exactly one place instead of a second copy to keep in sync.
+        const zTrussMat = zCfg.trussMaterial ? hn(String(zCfg.trussMaterial)) : "";
+        const zDimsOf = (zCfg.trT || Number(zCfg.trussQty) > 0) ? (zTrussMat ? `${zTrussMat} ${t("Truss")}` : t("Truss"))
           : Number(zCfg.plH) > 0 ? t("Platform")
           : t("Zone");
         // The only zone still worth skipping is one with nothing to put on the page at all: none
@@ -4436,11 +4442,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       const pieces = (groups) => groups.reduce((a, g) => a + (Number(g.n) || 0), 0);
       const sizeLines = (groups) => groups.map(g => `<div class="ztk-l${g.missing ? " ztk-miss" : ""}"><b>${esc(g.n)}</b><span>× ${esc(g.len)} ft${g.missing ? ` ⚠ ${t("not in stock")}` : ""}</span></div>`).join("");
       const tkCard = (icon, title, count, body) => `<div class="ztk-c"><div class="ztk-h"><span>${icon} ${title}</span>${count != null ? `<b>${esc(count)}</b>` : ""}</div>${body}</div>`;
+      // Owner ask (2026-11-07): Pillars/Beams are material-specific stock (iron/pole/aluminium
+      // aren't interchangeable), so the crew needs the material named on the card, not just "Pillars"/
+      // "Beams". hn() (not a new t() dictionary key) is the same material-translation path the
+      // structure strip and the zone header's own truss-dims chip (zDimsOf, above) already use, so
+      // there's exactly one place a material word's Hindi text lives, not three. Batta stays
+      // unprefixed — there's no separate iron/pole/aluminium batta pool to tell apart on this card
+      // (unlike pillars/beams, it's one RFT figure either way).
+      const tkMatOf = (tt) => (tt.material ? hn(String(tt.material)) : "");
       const trussCard = trussRows.map(tt => `<div class="ztk-w">
           ${tt.label ? `<div class="ztk-t">${esc(tt.label)}</div>` : ""}
           <div class="ztk" style="height:${trussBlockPx(tt) - (tt.label ? TK_LABEL : 0)}px">
-            ${tt.pillars.length ? tkCard("🏛️", t("Pillars"), pieces(tt.pillars), sizeLines(tt.pillars)) : ""}
-            ${tt.beams.length ? tkCard("🔗", t("Beams"), pieces(tt.beams), sizeLines(tt.beams)) : ""}
+            ${tt.pillars.length ? tkCard("🏛️", tkMatOf(tt) ? `${esc(tkMatOf(tt))} ${t("Pillars")}` : t("Pillars"), pieces(tt.pillars), sizeLines(tt.pillars)) : ""}
+            ${tt.beams.length ? tkCard("🔗", tkMatOf(tt) ? `${esc(tkMatOf(tt))} ${t("Beams")}` : t("Beams"), pieces(tt.beams), sizeLines(tt.beams)) : ""}
             ${tt.battaRft > 0 ? tkCard("🎗️", t("Batta"), null, `<div class="ztk-l ztk-big"><b>${esc(tt.battaRft)}</b><span>RFT</span></div>${tt.battaBuf > 0 ? `<div class="ztk-s">${t("incl. {pct}% buffer", { pct: esc(tt.battaBuf) })}</div>` : ""}`) : ""}
           </div>
         </div>`).join("");
