@@ -608,10 +608,11 @@ Rules:
     return base.map((k, i) => (i === t ? { ...k, subItems: f.subItems || [] } : k));
   };
   const openKitTab = (i) => setEditForm((f) => { const kits = kitsOf(f); return { ...f, kits, kitTab: i, subItems: kits[i].subItems }; });
-  // A new kit starts as a copy of the open one (the table itself is usually shared) - its parts are its own from then on.
+  // A new kit starts empty - the user builds it part by part (owner ask 2026-11-07; it used to copy the open kit). A kit left
+  // empty is dropped on save.
   const addKit = () => setEditForm((f) => {
     const kits = kitsOf(f);
-    const k = { id: "k" + Date.now().toString(36), name: `Kit ${kits.length + 1}`, subItems: (f.subItems || []).map((s) => ({ ...s })) };
+    const k = { id: "k" + Date.now().toString(36), name: `Kit ${kits.length + 1}`, subItems: [] };
     return { ...f, kits: [...kits, k], kitTab: kits.length, subItems: k.subItems };
   });
   const renameKit = (i, name) => setEditForm((f) => ({ ...f, kits: kitsOf(f).map((k, j) => (j === i ? { ...k, name } : k)) }));
@@ -1872,7 +1873,7 @@ Rules:
                           {k.name || `Kit ${i + 1}`}{i === 0 && editKits.length > 1 ? " · default" : ""}
                         </button>
                       ))}
-                      <button type="button" onClick={addKit} title="Another kit for this item - starts as a copy of the open one"
+                      <button type="button" onClick={addKit} title="Another kit for this item - starts empty, add its parts below (an empty kit is not saved)"
                         className="px-2.5 py-1 rounded-full text-xs font-semibold border border-dashed border-indigo-300 text-indigo-700 hover:bg-indigo-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">+ Add More Kit</button>
                     </div>
                     {editKits.length > 1 && (
