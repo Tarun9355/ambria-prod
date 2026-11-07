@@ -110,31 +110,38 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
                     </div>
                   )}
                   {mode === "actual" && rowOpen && daywise && r.schedule.length > 0 && (
-                    <div className="mt-2.5 bg-gray-50 ring-1 ring-gray-200 rounded-lg p-2.5 space-y-1">
+                    <div className="mt-2.5 bg-gray-50 ring-1 ring-gray-200 rounded-lg p-2.5 space-y-2.5">
                       {r.schedule.map((d, di2) => {
                         const winDefs = (crew.dihari[r.type] && Array.isArray(crew.dihari[r.type].windows)) ? crew.dihari[r.type].windows : [];
                         const ids = crew.effWinIds(r, d) || [];
                         const hasSlots = winDefs.length > 0 || ids.length > 0;
                         return (
-                          <div key={di2} className="flex items-start gap-2 flex-wrap text-[11px] py-1.5">
-                            <span className="w-24 text-gray-600 font-medium pt-1">{phaseLbl(d)}</span>
+                          <div key={di2} className={di2 > 0 ? "pt-2.5 border-t border-gray-200" : ""}>
+                            {/* Date on its own line, chips below at full width — side-by-side (a
+                                fixed-width label beside a wrapping chip row) left each chip row a
+                                different width depending on how long the label happened to be,
+                                which read as ragged rather than aligned on a narrow phone. */}
+                            <div className="text-[11px] text-gray-500 font-semibold mb-1.5">{phaseLbl(d)}</div>
                             {hasSlots ? (
-                              <div className="flex items-center gap-1.5 flex-wrap flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 {ids.map((id, si) => {
                                   const wd = winDefs.find((w) => w.id === id); const lbl = wd ? wd.label : `dihari ${si + 1}`;
                                   return (
-                                    <span key={id} className="inline-flex items-center gap-1 ring-1 ring-gray-200 rounded-lg px-1.5 py-0.5 bg-white">
-                                      <span className="text-gray-400">{lbl}</span>
+                                    <span key={id} className="inline-flex items-center gap-1.5 ring-1 ring-gray-200 rounded-lg pl-2 pr-1 py-1 bg-white">
+                                      <span className="text-[11px] text-gray-500">{lbl}</span>
                                       <input type="number" min="0" value={crew.effShift(r, d, id)} onChange={(e) => write(dept, shiftCountPatch(crew, r.type, d.date, id, e.target.value, ids))}
-                                        className="w-11 border border-gray-200 rounded px-1 py-0.5 text-center" />
-                                      {ids.length > 1 && <button onClick={() => write(dept, removeDihariPatch(crew, r.type, d.date, id, ids))} className="text-red-300 hover:text-red-500">×</button>}
+                                        className="w-10 h-7 border border-gray-200 rounded text-[13px] text-center font-semibold" />
+                                      {ids.length > 1 && (
+                                        <button onClick={() => write(dept, removeDihariPatch(crew, r.type, d.date, id, ids))} aria-label="Remove this shift"
+                                          className="w-6 h-6 -mr-0.5 rounded flex items-center justify-center text-red-300 hover:text-red-500 hover:bg-red-50 text-sm">×</button>
+                                      )}
                                     </span>
                                   );
                                 })}
-                                <button onClick={() => write(dept, addDihariPatch(crew, r, d.date, ids))} className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 border border-blue-200 rounded-full px-2 py-0.5">+ dihari</button>
+                                <button onClick={() => write(dept, addDihariPatch(crew, r, d.date, ids))} className="h-7 inline-flex items-center text-[11px] font-semibold text-blue-600 hover:text-blue-800 border border-blue-200 rounded-full px-2.5">+ dihari</button>
                               </div>
                             ) : (
-                              <span className="flex-1 text-gray-400">no shifts set</span>
+                              <span className="text-[11px] text-gray-400">no shifts set</span>
                             )}
                           </div>
                         );
