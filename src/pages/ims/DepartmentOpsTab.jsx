@@ -407,16 +407,19 @@ const DEPTS = SHARED_DEPTS;
 const PDF_LANG_KEY = "ims.deptOps.pdfLang";
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵", Paint: "🎨" };
 // Primary manpower types per department (for the editable crew plan).
-// Furniture/Fabric carry no Labours row of their own (owner ask, 2026-10-27) — the same person runs
-// Furniture+Structure and Fabric+Tenting, so that shared crew's cost/usage pools into Structure's
-// and Tenting's rows instead (see DealCheckOverlay.jsx's poolLabourDept). Furniture/Fabric keep
-// tracking their own direct income (rental, production, buying) — only the crew row moved.
+// Every department except Floral carries no Labours row of its own any more (owner ask, originally
+// 2026-10-27 for just Furniture/Fabric, widened 2026-11-07 to Tenting/Fabric/Lighting/Transport too)
+// — one shared crew pool now covers all of them, pooling into Structure's row instead (see
+// deptClassify.js's poolLabourDept/poolLabourDeptLabel). Each department still keeps tracking its
+// own direct income (rental, production, buying) and its own non-Labours crew types (Tenting's
+// Painters/Truss Labour/Fabric Bangali, Lighting's Electricians, Transport's Drivers) — only the
+// shared Labours row moved to Structure.
 const DEPT_MP = {
   Floral: ["Flowerists", "Labours"],
   Structure: ["Carpenters", "Labours"],
-  Tenting: ["Painters", "Truss Labour", "Fabric Bangali", "Labours"],
+  Tenting: ["Painters", "Truss Labour", "Fabric Bangali"],
   Fabric: [],
-  Lighting: ["Electricians", "Labours"],
+  Lighting: ["Electricians"],
   Transport: ["Drivers"],
   Furniture: [],
 };
@@ -2812,11 +2815,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (tr.kind === "labours") return [
       // Venue minimum is a flat booking-wide floor, not owned by any one department's items, so
       // every department sees it. Each heavy row IS owned by whichever department its own
-      // sub-category routes to (catToDept("Sofa") -> Furniture) — filtered to the department
-      // currently open, so Lighting/Tenting/etc. don't see Furniture's "Sofa" row (or vice
-      // versa) just because Labours is one shared crew pool for the whole event.
+      // sub-category routes to (catToDept("Sofa") -> Furniture), POOLED (poolLabourDept) the same
+      // way the Labours headcount itself is — matching the filter at ~line 2994 below. Without the
+      // pool here, a Furniture/Tenting/Fabric/Lighting/Transport row would show on no tab at all
+      // once that department stopped having its own Labours card (confirmed regression, 2026-11-07:
+      // widening the pool to everything-but-Floral left this one filter still unpooled, so Truss/
+      // Platform/Carpet/LED heavy rows vanished from every tab's "how?" breakdown even though their
+      // crew need still counts toward Structure's total).
       ...(tr.venueMin > 0 ? [{ label: "Venue minimum", value: `${tr.venueMin}` }] : []),
-      ...(tr.heavyRows || []).filter(hr => catToDept(hr.sub) === dept).map(hr => ({ label: `${hr.sub}`, value: `×${hr.count} → +${hr.extra}` })),
+      ...(tr.heavyRows || []).filter(hr => poolLabourDept(catToDept(hr.sub)) === dept).map(hr => ({ label: `${hr.sub}`, value: `×${hr.count} → +${hr.extra}` })),
       // Per-ITEM fractional usage (e.g. "Roman Fibre Pot Small" at 10 ÷ 40 = 0.25) — the items
       // behind the pooled usage floor, which heavyRows above never shows (that's an independent
       // per-sub-category floor; anything under its own perCount rounds to 0 there even though it
@@ -2844,8 +2851,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     return Math.round(rows.reduce((s, ur) => s + (Number(ur.need) || 0), 0) * 100) / 100;
   };
   const deptNeedForFn = (c) => needForFnDept(c, dept);
-  // Every OTHER canonical department (skips Furniture/Fabric standalone — pooled into Structure's/
-  // Tenting's — and skips `dept` itself) with a nonzero need for this one function.
+  // Every OTHER canonical department (skips every department poolLabourDept folds into Structure —
+  // only Structure and Floral are self-mapped now — and skips `dept` itself) with a nonzero need for
+  // this one function.
   const otherDeptNeedsForFn = (c) => DEPTS
     .filter((d2) => poolLabourDept(d2) !== dept && poolLabourDept(d2) === d2)
     .map((d2) => ({ dept: d2, need: needForFnDept(c, d2) }))
@@ -3179,11 +3187,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // apart at a glance.
     if (t.kind === "labours") {
       // Each heavy row belongs to whichever department its own sub-category routes to
-      // (catToDept("Sofa") -> Furniture) — filtered to the department currently open, so this
-      // box only ever shows items that are actually this department's own. `t.result` itself
-      // stays the whole event's shared headcount (unfiltered) — that number is genuinely shared,
-      // only the "which items drove the heavy add-on" list is department-specific.
-      const deptHeavyRows = Array.isArray(t.heavyRows) ? t.heavyRows.filter(hr => catToDept(hr.sub) === dept) : [];
+      // (catToDept("Sofa") -> Furniture), POOLED (poolLabourDept) the same way the Labours headcount
+      // itself is — see the matching filter and its own comment a little above (~line 2822). `t.result`
+      // itself stays the whole event's shared headcount (unfiltered) — that number is genuinely
+      // shared, only the "which items drove the heavy add-on" list is department-specific.
+      const deptHeavyRows = Array.isArray(t.heavyRows) ? t.heavyRows.filter(hr => poolLabourDept(catToDept(hr.sub)) === dept) : [];
       // Every ITEM (not just sub-category) behind the pooled usage floor — e.g. 10 "Roman Fibre
       // Pot Small" at 1-per-40 is 0.25 labour, which never shows up in deptHeavyRows above at all
       // (that's an independent per-sub-category floor; anything under its OWN perCount silently
@@ -3335,9 +3343,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                       every department drawing on it, nothing about percentages or fractional shares
                       (those read as confusing and nobody using this screen needed the "why", just
                       the "how many"). d.shareAbsByDept carries every department's own RAW (un-ceiled)
-                      need that day; Furniture/Fabric never appear on their own since their share is
-                      already folded into Structure's/Tenting's (poolLabourDept), so only a canonical
-                      pooled-target or standalone department shows up here.
+                      need that day; every department except Floral never appears on its own since its
+                      share is already folded into Structure's (poolLabourDept), so only Structure or
+                      Floral shows up here.
                       Each department's own number rounds UP independently (owner ask, 2026-10-30: a
                       department with real, nonzero work — even 0.43 of a labourer — needs a WHOLE
                       person on site, not zero) rather than the largest-remainder split tried first,

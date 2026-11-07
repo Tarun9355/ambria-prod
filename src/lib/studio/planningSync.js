@@ -53,8 +53,14 @@ export function planningUpcoming(eo, now = Date.now()) {
 // v14: Carpet's billed sqft (floorSqftOf) now feeds the Labours usage floor too, same as v9's Truss/
 // Platform fix — Carpet is also never a zone element, so a Heavy Element Add-ons entry for it was
 // silently contributing nothing; every deal with carpet needs its crew count recomputed.
-export const PLANNING_SNAPSHOT_VERSION = 14;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-10-31T12:39:00Z");
+// v15: poolLabourDept (deptClassify.js) widened from just Furniture->Structure/Fabric->Tenting to
+// every non-Floral department -> Structure (owner ask, 2026-11-07) — Tenting/Fabric/Lighting/
+// Transport's Labours share now pools into Structure's instead of its own, and since a shared crew's
+// fractional need is ceiled once PER POOL, merging more departments into one pool can also change the
+// total headcount/cost, not just which department's row it shows under — every manpower figure moves
+// again, same as v5.
+export const PLANNING_SNAPSHOT_VERSION = 15;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-07T05:04:21Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // Synced before, and a planning input changed after that sync (a minute of slack: the sync's own write

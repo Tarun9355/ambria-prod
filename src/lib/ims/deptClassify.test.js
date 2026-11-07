@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { catToDept, DEPTS, userDepartments, canSeeDept, canSeeProdDept } from "./deptClassify";
+import { catToDept, DEPTS, userDepartments, canSeeDept, canSeeProdDept, poolLabourDept, poolLabourDeptLabel } from "./deptClassify";
 
 // This classifier decides which department EARNS a category's income (Deal Check → Dept Income,
 // IMS → Dept Ops) as well as which heading a row files under in Deal Check → Transport. A silent
@@ -54,6 +54,34 @@ describe("catToDept", () => {
     ["Pedestals", "Truss", "Chandelier", "Sofa", "Draping", "Mystery", ""].forEach((c) => {
       expect(DEPTS).toContain(catToDept(c));
     });
+  });
+});
+
+// Owner ask, 2026-11-07: every department's shared Labours crew pools into Structure except
+// Floral's. This decides which bucket a department's crew NEED gets ceiled under (manpowerCount.js,
+// DealCheckOverlay.jsx, DepartmentOpsTab.jsx) — a silent change here moves real headcount/cost
+// between departments (fewer, bigger pools ceil less often than many small ones), so pinned.
+describe("poolLabourDept", () => {
+  it("pools every department except Floral into Structure", () => {
+    ["Structure", "Furniture", "Tenting", "Fabric", "Lighting", "Transport"].forEach((d) => {
+      expect(poolLabourDept(d)).toBe("Structure");
+    });
+  });
+  it("never pools Floral — it stays its own crew", () => {
+    expect(poolLabourDept("Floral")).toBe("Floral");
+  });
+  it("only Structure and Floral are self-mapped (the pattern DepartmentOpsTab.jsx filters DEPTS by)", () => {
+    const selfMapped = DEPTS.filter((d) => poolLabourDept(d) === d);
+    expect(selfMapped.sort()).toEqual(["Floral", "Structure"]);
+  });
+});
+
+describe("poolLabourDeptLabel", () => {
+  it("lists every pooled department under Structure", () => {
+    expect(poolLabourDeptLabel("Structure")).toBe("Structure, Furniture, Tenting, Fabric, Lighting & Transport");
+  });
+  it("leaves Floral (and anything else never passed in as the pool target) unchanged", () => {
+    expect(poolLabourDeptLabel("Floral")).toBe("Floral");
   });
 });
 

@@ -75,12 +75,40 @@ describe("computePeopleRaw — Labours (Tier 3)", () => {
   // Owner-reported live bug, 2026-10-30: pooling every department's fractional usage into one total
   // before ceiling once can round DOWN below what a real, department-by-department crew needs —
   // each department's own share still needs a WHOLE person on site, not a fraction borrowed from
-  // another department's headroom.
-  it("ceils each department's own usage separately, then sums — not the pooled fractional total ceiled once", () => {
+  // another department's headroom. The principle: ceil per real, independently-staffed crew BUCKET,
+  // then sum the buckets — never ceil one blended fraction across buckets that are genuinely
+  // different crews. Which departments count as "the same bucket" is poolLabourDept's call
+  // (deptClassify.js), not this function's — see the next test for what that grouping is today.
+  it("ceils the Floral bucket separately from the Structure pool — never merges genuinely different crews", () => {
+    const heavyElementRanges = [{ subCat: "Sofa", perCount: 10 }, { subCat: "Floral Pattern", perCount: 40 }];
+    const f = fn({ zoneElements: { stage: [
+      { name: "Sofa", invId: "sofa1", qty: 11 },      // Structure (via Furniture): 11/10 = 1.1 -> ceil 2
+      { name: "Flowers", invId: "flo1", qty: 12 },    // Floral: 12/40 = 0.3 -> ceil 1
+    ] } });
+    const ctx = {
+      ...baseCtx(),
+      dcInventoryCache: [
+        { id: "sofa1", name: "Sofa", cat: "furniture", subCat: "Sofa" },
+        { id: "flo1", name: "Flowers", cat: "floral", subCat: "Floral Pattern" },
+      ],
+      heavyElementRanges,
+    };
+    // Pooled-then-ceiled would give ceil(1.1 + 0.3) = ceil(1.4) = 2 — one short of the 2 + 1 = 3 a
+    // real Structure crew member plus a real Floral crew member actually requires. Floral is the
+    // only department poolLabourDept never folds into Structure (owner decision, 2026-11-07).
+    expect(computePeopleRaw(f, "Labours", ctx)).toBe(3);
+  });
+
+  // Owner ask, 2026-11-07: every department except Floral is now ONE shared crew pool under
+  // Structure (poolLabourDept widened from just Furniture->Structure/Fabric->Tenting to everything
+  // non-Floral -> Structure) — the same real labourers work across Structure, Furniture, Tenting,
+  // Fabric, Lighting and Transport, so their fractional needs correctly combine into ONE ceiling,
+  // unlike the genuinely separate Floral crew in the test above.
+  it("pools Structure/Furniture/Tenting/Fabric/Lighting/Transport into ONE ceiling, not summed separately", () => {
     const heavyElementRanges = [{ subCat: "Sofa", perCount: 10 }, { subCat: "LED String", perCount: 40 }];
     const f = fn({ zoneElements: { stage: [
-      { name: "Sofa", invId: "sofa1", qty: 11 },   // Structure: 11/10 = 1.1 -> ceil 2
-      { name: "Led", invId: "led1", qty: 12 },     // Lighting: 12/40 = 0.3 -> ceil 1
+      { name: "Sofa", invId: "sofa1", qty: 11 },   // Structure (via Furniture): 11/10 = 1.1
+      { name: "Led", invId: "led1", qty: 12 },     // Lighting, now pooled into Structure too: 12/40 = 0.3
     ] } });
     const ctx = {
       ...baseCtx(),
@@ -90,9 +118,9 @@ describe("computePeopleRaw — Labours (Tier 3)", () => {
       ],
       heavyElementRanges,
     };
-    // Pooled-then-ceiled would give ceil(1.1 + 0.3) = ceil(1.4) = 2 — one short of the 2 + 1 = 3 a
-    // real Structure crew member plus a real Lighting crew member actually requires.
-    expect(computePeopleRaw(f, "Labours", ctx)).toBe(3);
+    // Both fall into the one "Structure" bucket now: ceil(1.1 + 0.3) = ceil(1.4) = 2 — not 2 + 1 = 3,
+    // since Lighting no longer gets its own separate ceiling.
+    expect(computePeopleRaw(f, "Labours", ctx)).toBe(2);
   });
 
   it("the heavy-element add-on nets out standing stock already at a fixed venue", () => {
