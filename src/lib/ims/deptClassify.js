@@ -33,19 +33,23 @@ export function catToDept(cat, categoryDepartmentsCfg) {
   return "Structure"; // catch-all
 }
 
-// Owner ask (2026-10-27): Furniture+Structure and Fabric+Tenting are each run by the same person,
-// so the shared Labours crew's cost/usage share no longer splits separately per pair — it pools
-// into Structure's/Tenting's. Applied ONLY where Labours usage gets attributed to a department
-// (DealCheckOverlay.jsx's per-function usage split, DepartmentOpsTab.jsx's heavy-item filter) — an
-// item's own direct income (rental, production, buying) still uses plain catToDept, unpooled, so
-// Furniture/Fabric keep tracking their own inventory.
+// Owner ask (2026-10-27, widened 2026-11-07): every department except Floral is now run as one
+// crew pool under Structure — Furniture+Fabric+Tenting+Lighting+Transport's shared Labours crew no
+// longer splits separately per department, it pools entirely into Structure's. (Originally this
+// only paired Furniture->Structure and Fabric->Tenting, run by the same two people respectively;
+// the owner then asked to fold every remaining non-Floral department into that single Structure
+// pool too.) Applied ONLY where Labours usage gets attributed to a department
+// (DealCheckOverlay.jsx's per-function usage split, DepartmentOpsTab.jsx's heavy-item filter,
+// manpowerCount.js's per-function department split) — an item's own direct income (rental,
+// production, buying) still uses plain catToDept, unpooled, so every department keeps tracking its
+// own inventory/income; only the shared Labours CREW figure pools.
 export function poolLabourDept(d) {
-  return d === "Furniture" ? "Structure" : d === "Fabric" ? "Tenting" : d;
+  return d === "Floral" ? d : "Structure";
 }
-// Display label for a department that may be carrying a pooled partner's share too — "Structure"
-// reads as "Structure and Furniture", "Tenting" as "Tenting and Fabric", everything else unchanged.
+// Display label for a department that may be carrying every pooled partner's share too —
+// "Structure" lists every department folded into it; Floral (never pooled) is unchanged.
 export function poolLabourDeptLabel(d) {
-  return d === "Structure" ? "Structure and Furniture" : d === "Tenting" ? "Tenting and Fabric" : d;
+  return d === "Structure" ? "Structure, Furniture, Tenting, Fabric, Lighting & Transport" : d;
 }
 
 // ═══ USER → DEPARTMENT ACCESS ═══

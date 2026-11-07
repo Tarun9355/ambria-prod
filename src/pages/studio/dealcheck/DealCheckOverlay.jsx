@@ -695,10 +695,11 @@ export default function DealCheckOverlay({ ctx }) {
           // (Settings → Departments); else keyword matching. Sub-cat already implies its category.
           const catDeptCfg = dealCheckData?.categoryDepartments || {};
           const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
-          // poolLabourDept (shared, lib/ims/deptClassify.js): Furniture's/Fabric's Labours usage
-          // pools into Structure's/Tenting's — applied below, at its one call site. Furniture's/
-          // Fabric's own direct income (rental, production, buying — catToDept used elsewhere in
-          // this file) is untouched.
+          // poolLabourDept (shared, lib/ims/deptClassify.js): every department except Floral's
+          // Labours usage pools into Structure's (widened 2026-11-07 from just Furniture/Fabric,
+          // owner decision — Structure/Furniture/Tenting/Fabric/Lighting/Transport are now run as one
+          // shared crew) — applied below, at its one call site. Each department's own direct income
+          // (rental, production, buying — catToDept used elsewhere in this file) is untouched.
           // Fixed-venue "Repeat" rental — see repeatAdjustedRental above for the actual formula
           // (venue-specific standing qty + that item's own IMS discount, falling back to the
           // sub-category default at any other venue). This just says WHICH zones are Repeat.
@@ -1643,9 +1644,9 @@ export default function DealCheckOverlay({ ctx }) {
                 });
                 // Truss pillar count / Platform piece count / Carpet sqft — never a zone element,
                 // so the walkFn above can never find them (tentingZoneUsage's own comment,
-                // manpowerCount.js). Always Tenting's (poolLabourDept is a no-op for it) — added here
-                // so the department split and the engine's own usage floor (computePeopleRaw) always
-                // agree.
+                // manpowerCount.js). Classified as Tenting, then pooled (poolLabourDept) the same as
+                // everything else — added here so the department split and the engine's own usage
+                // floor (computePeopleRaw) always agree.
                 if (labourUsageMode) {
                   const tu = tentingZoneUsage(freshFnMP(fn), mpCtxFor(fn));
                   [["Truss", tu.truss], ["Platform", tu.platform], ["Carpet", tu.carpet]].forEach(([sub, count]) => {
