@@ -33,6 +33,7 @@ const IMS_TABS = [
   { id: "flowers", label: "🌺 Flowers" },
   { id: "finance", label: "💰 Finance" },
   { id: "admin", label: "⚙️ Admin" },
+  { id: "site", label: "🦺 Site" },
 ];
 // KEEP IN SYNC: every list below is a hand-maintained mirror of a real tab bar elsewhere in the
 // app (PlanningTab.jsx's allTabs, AdminSettingsTab.jsx's panels/MASTER_DATA, FlowersTab.jsx's

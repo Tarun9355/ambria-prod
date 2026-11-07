@@ -8,7 +8,8 @@ import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDef
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { assemblePrintMaterialsFromRows, assembleCarpetMaterialsFromRows, assemblePlatformRatesFromRows, assembleMaskingRatesFromRows, assembleTrussRatesFromRows } from "../../lib/studio/taxonomy";
 import { createSettingsWriter } from "../../lib/ims/settingsWriter";
-import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
+import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, DEFAULT_ROLE_TABS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
+import SiteSupervisorTab from "./SiteSupervisorTab.jsx";
 import { assembleAttendanceLocationsFromRows, assembleAttendanceTrainingByDeptFromRows } from "../../lib/ims/attendance";
 import { assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher";
 import { assembleMarkedDatesFromRows } from "../../lib/inventory/helpers";
@@ -60,6 +61,7 @@ const TABS = [
   { id: "flowers", label: "🌺 Flowers" },
   { id: "finance", label: "💰 Finance" },
   { id: "admin", label: "⚙️ Admin" },
+  { id: "site", label: "🦺 Site" },
 ];
 
 // Vertical nav rail. Shared by the lg+ sidebar and the mobile drawer so the two can never
@@ -2651,7 +2653,11 @@ export default function IMS() {
   );
 
   // Role-based tab filtering (faithful to reference).
-  const roleConfig = (settings?.roleTabs || {})[user?.role] || { tabs: TABS.map((t) => t.id) };
+  // A role with no Tab Access config saved yet (settings.roleTabs) falls back to DEFAULT_ROLE_TABS
+  // (so a narrow role like Site Supervisor lands on its own tab out of the box, not the whole app),
+  // else to every tab EXCEPT Site — a brand-new, never-configured role has no business on a
+  // single-purpose cross-department screen just because nobody has set up its Tab Access yet.
+  const roleConfig = (settings?.roleTabs || {})[user?.role] || DEFAULT_ROLE_TABS[user?.role] || { tabs: TABS.filter((t) => t.id !== "site").map((t) => t.id) };
   const isAdmin = user?.role === "Admin" || user?.id === "u_admin";
   // Dashboard is Admin-only, full stop — not something a per-role Tab Access config can grant.
   // It's a company-wide rollup (total stock, finance-adjacent numbers, every upcoming function),
@@ -2905,6 +2911,12 @@ export default function IMS() {
             amendRequests={amendRequests} saveAmendRequests={saveAmendRequests}
             authUser={user} inventory={items}
             blocks={blocks} setBlocks={setBlocksState} saveBlocks={saveBlocks}
+          />
+        ) : activeTab === "site" ? (
+          <SiteSupervisorTab
+            eventOrders={eventOrders} setEventOrders={setEventOrders}
+            inventory={items} settings={settings}
+            authUser={user}
           />
         ) : (
           <div className="text-center text-gray-400 py-20">

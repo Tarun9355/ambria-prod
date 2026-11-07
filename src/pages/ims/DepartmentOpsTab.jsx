@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
-import { withSetupSlot } from "../../lib/studio/dihariWindows.js";
+import { SHIFT_START_HOUR } from "../../lib/studio/dihariWindows.js";
 import { fmt } from "../../lib/format";
-import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits, flowerPaletteHexFor } from "../../lib/ims/helpers";
+import { mpDayWise, mpBaseDay, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits, flowerPaletteHexFor } from "../../lib/ims/helpers";
+import { buildDeptCrew, orderWinIds as orderWinIdsShared, flowerTraceForFn as flowerTraceForFnShared, setMpPatch, addMpPatch, removeMpPatch, actualCrewPatch, resetLinePatch, mpDayPatch, resetMpDayPatch, shiftCountPatch, addDihariPatch, removeDihariPatch, eventLabourInfo, eventLabourTotalDeptOps } from "../../lib/ims/deptCrew";
 import { parseFlowerPalette, parseFabricPalette } from "../../lib/studio/pricing";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel } from "../../lib/ims/deptClassify";
@@ -406,23 +407,8 @@ function VoiceRecorder({ value, onSave, compact = false, label = "voice note" })
 const DEPTS = SHARED_DEPTS;
 const PDF_LANG_KEY = "ims.deptOps.pdfLang";
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵", Paint: "🎨" };
-// Primary manpower types per department (for the editable crew plan).
-// Every department except Floral carries no Labours row of its own any more (owner ask, originally
-// 2026-10-27 for just Furniture/Fabric, widened 2026-11-07 to Tenting/Fabric/Lighting/Transport too)
-// — one shared crew pool now covers all of them, pooling into Structure's row instead (see
-// deptClassify.js's poolLabourDept/poolLabourDeptLabel). Each department still keeps tracking its
-// own direct income (rental, production, buying) and its own non-Labours crew types (Tenting's
-// Painters/Truss Labour/Fabric Bangali, Lighting's Electricians, Transport's Drivers) — only the
-// shared Labours row moved to Structure.
-const DEPT_MP = {
-  Floral: ["Flowerists", "Labours"],
-  Structure: ["Carpenters", "Labours"],
-  Tenting: ["Painters", "Truss Labour", "Fabric Bangali"],
-  Fabric: [],
-  Lighting: ["Electricians"],
-  Transport: ["Drivers"],
-  Furniture: [],
-};
+// DEPT_MP (primary manpower types per department) now lives in lib/ims/deptCrew.js, imported above
+// — the Site Supervisor page needs the exact same list per department, not a second copy of it.
 
 // Suggested essential tools per department — one-tap to add to the reusable template.
 const DEFAULT_TOOLS = {
@@ -1292,183 +1278,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const rentalIncome = blockedItemsGrouped.reduce((s, x) => s + x.total, 0);
 
   // ── Department-saved data on the event order ──
-  const deptData = (sel?.deptOps && sel.deptOps[dept]) || {};
-  const deptTypes = DEPT_MP[dept] || ["Labours"];
-  // Prefer the reconciling per-dept manpower detail from Deal Check (sums EXACTLY to the income card:
-  // mapped crew in full + this dept's share of general labour/supervisors). Each row carries the
-  // system count/rate/cost + basis (all multipliers) so the head sees how it was derived and edits it.
-  // A snapshot exists once Studio has pushed Deal Check. When it has, THIS dept's manpower is
-  // exactly manpowerDetail[dept] — even if empty (a dept with no crew share, e.g. Furniture with no
-  // income, must show 0 to match its income card, NOT the global plan). Only with no snapshot at all
-  // do we fall back to the global plan / defaults.
-  const mpFns = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
-  const SHIFT_START_HOUR = { brunch: 11, morning: 9, lunch: 12, sundowner: 16, evening: 18, dinner: 20, night: 20, latenight: 22, "late night": 22 };
-  const slotHours = (label) => {
-    const m = [...String(label || "").matchAll(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/gi)].map(x => (Number(x[1]) % 12) + (x[3].toUpperCase() === "PM" ? 12 : 0) + (Number(x[2]) || 0) / 60);
-    return m.length ? { start: m[0], end: m.length > 1 ? m[1] : null } : null;
-  };
-  // Flowerists rows for ONE function, worked out here from its own zone lists — the same walk Deal
-  // Check's traceOf("Flowerists") does (enabled zones, qty > 0, kits walked into their parts, a
-  // florals item matched to its recipe by patternId or sub-category, medium size, grouped by name +
-  // units-per-flowerist). Lets a day show every function's column even when the order was synced
-  // before Deal Check started sending trace.byFn.
+  // Row-building + write-patch logic lives in lib/ims/deptCrew.js (shared with the Site Supervisor
+  // page, which needs every department's crew on one screen instead of one at a time) — this just
+  // calls it and keeps every local name the JSX below already used, so nothing past this point changed.
   const invByIdMp = useMemo(() => new Map((inventory || []).map(i => [i.id, i])), [inventory]);
-  const flowerTraceForFn = (fn) => {
-    const agg = {};
-    const add = (rc, el, qty) => {
-      if (String(rc.cat || "").toLowerCase() !== "florals") return;
-      let pat = el.patternId ? flowerPatterns.find(p => p.id === el.patternId) : null;
-      if (!pat) pat = matchFlowerPattern({ subcategory: rc.sub, name: rc.name }, flowerPatterns);
-      if (!pat) return;
-      const c = (pat.sizes || {}).medium;
-      const upf = Number(c?.unitsPerFlowerist || 0);
-      if (upf > 0) { const k = (rc.name || "flower") + "|" + upf; if (!agg[k]) agg[k] = { sub: rc.name || "flower", batch: upf, count: 0 }; agg[k].count += qty; }
-    };
-    const en = fn?.enabledEls || {}, ze = fn?.elements || {};
-    Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk] || []).forEach(el => {
-      const qty = el?.qty || 0; if (qty <= 0) return;
-      const inv = el.invId ? invByIdMp.get(el.invId) : null;
-      if (inv) {
-        if (Array.isArray(inv.subItems) && inv.subItems.length > 0) walkKitUnits(inv, qty, inventory || [], el.kitOverrides, (node, nodeQty) => add({ name: node.name, cat: node.cat || node.category || "", sub: node.subCat || node.subcategory || "" }, el, nodeQty));
-        else add({ name: inv.name, cat: inv.cat || inv.category || "", sub: inv.subCat || inv.subcategory || "" }, el, qty);
-        return;
-      }
-      if (el.patternId) add({ name: el.name || "", cat: "florals", sub: "" }, el, qty);
-    }); });
-    const rows = Object.values(agg).map(r => ({ ...r, need: r.count / r.batch }));
-    return { fn: fn?.type || "Function", shift: fn?.shift || "", rows, result: Math.ceil(rows.reduce((s, r) => s + r.need, 0)) };
-  };
-  // ── DIHARI SLOTS IN THE ORDER THE CREW WORKS THEM ──
-  // A day's shift slots are shown starting from the slot just before that day's first function
-  // and then round the clock: a 9 AM Mata Ki Chowki puts 2 AM–8 AM first, then 9 AM–6 PM, then
-  // 6 PM–2 AM. Slots carry only a label ("9 AM – 6 PM"), so their hours are read from it; the
-  // function's start comes from its shift. Display order only — the saved ids are untouched.
-  const firstFnHour = (date) => {
-    const hrs = mpFns.filter(f => String(f?.date || "").slice(0, 10) === date)
-      .map(f => SHIFT_START_HOUR[String(f?.shift || "").trim().toLowerCase()]).filter(h => h != null);
-    return hrs.length ? Math.min(...hrs) : 9;
-  };
-  const orderWinIds = (ids, winDefs, date) => {
-    if (!Array.isArray(ids) || ids.length < 2) return ids;
-    const hrsOf = (id) => slotHours((winDefs || []).find(w => w.id === id)?.label);
-    const fnHour = firstFnHour(date);
-    // The anchor: the slot that ends latest at or before the function starts (a slot running past
-    // midnight never ends "before" a same-day start). No such slot → plain clock order from midnight.
-    let anchor = 0, best = -1;
-    ids.forEach(id => { const h = hrsOf(id); if (h && h.end != null && h.end > h.start && h.end <= fnHour && h.end > best) { best = h.end; anchor = h.start; } });
-    const key = (id) => { const h = hrsOf(id); return h ? (h.start - anchor + 24) % 24 : 99; };
-    return [...ids].sort((a, b) => key(a) - key(b));
-  };
-  // ── EACH DIHARI SLOT'S DEFAULT CREW, FROM THE FUNCTIONS IT SERVES ──
-  // On an event day the crew of every function up to lunch is summed into the early slot
-  // (2 AM – 8 AM, set up before a morning/lunch start); every function after lunch — or with no
-  // shift set — into the day slot (9 AM – 6 PM); and a night function also into the night slot
-  // (6 PM – 2 AM, the event and its strike). Slots are told apart by the hours in their labels.
-  // These fill schedule day .winCount, which the cost/dihari helpers and the shift inputs already
-  // read; a per-shift count set in Deal Check (.winCount) or by the head (mpWinCount) still wins.
-  const slotRoleIds = (ids, winDefs) => {
-    let pre = null, day = null, night = null;
-    ids.forEach(id => {
-      const h = slotHours((winDefs || []).find(w => w.id === id)?.label); if (!h) return;
-      const wraps = h.end != null && h.end <= h.start;
-      if (!wraps && h.end != null && h.start < 9 && h.end <= 9) pre = pre ?? id;
-      else if (!wraps && h.start <= 12 && (h.end == null || h.end > 12)) day = day ?? id;
-      else if (h.start >= 17) night = night ?? id;
-    });
-    return { pre, day, night };
-  };
-  const fnCrewForDay = (s, d) => {
-    const t = d?.trace;
-    if (!t || d.phase !== "event") return null;
-    const fnsToday = mpFns.filter(f => String(f?.date || "").slice(0, 10) === d.date);
-    // Labours (shared): each function's crew for THIS department is its own items' summed need,
-    // rounded up once — the same "share per function" the day's table shows — so the morning
-    // shift carries the morning function's labour and the night shift the night function's, the
-    // way every other crew type's shifts already work. Before, every shift took the day's whole
-    // share (3 / 3 / 3 when Haldi needed 1 and the Wedding 2). Supervisors (and a Labours day synced
-    // before per-function traces existed) keep the day's crew in every shift.
-    if (s.shared) {
-      if (t.kind !== "labours" || !Array.isArray(t.byFn) || !t.byFn.length) return null;
-      return t.byFn.map(c => {
-        const rows = Array.isArray(c?.trace?.usageRows) ? c.trace.usageRows.filter(ur => usageDept(ur) === dept) : [];
-        const need = Math.round(rows.reduce((acc, ur) => acc + (Number(ur.need) || 0), 0) * 100) / 100;
-        return { shift: c.shift || fnsToday.find(f => f?.type === c.fn)?.shift || "", crew: Math.ceil(need) };
-      });
-    }
-    if (Array.isArray(t.byFn) && t.byFn.length) return t.byFn.map(c => ({ shift: c.shift || fnsToday.find(f => f?.type === c.fn)?.shift || "", crew: Number(c.result) || 0 }));
-    if (t.kind === "tier2" && t.perRow && fnsToday.length) return fnsToday.map(f => ({ shift: f?.shift || "", crew: flowerTraceForFn(f).result }));
-    return null;
-  };
-  const slotDefaults = (s, d) => {
-    const fnc = fnCrewForDay(s, d); if (!fnc || !fnc.length) return null;
-    const winDefs = (dihari[s.type] && Array.isArray(dihari[s.type].windows)) ? dihari[s.type].windows : [];
-    const ov = deptData.mpWin && deptData.mpWin[s.type];
-    const ids = ov && ov[d.date] != null ? ov[d.date] : d.windowIds;
-    if (!Array.isArray(ids) || !ids.length) return null;
-    const { pre, day, night } = slotRoleIds(ids, winDefs);
-    // A slot with no hours in its label ("Full day") — or a day with just one slot — takes every
-    // function: it falls back to the first slot in working order.
-    const first = ids.length === 1 ? ids[0] : (orderWinIds(ids, winDefs, d.date) || ids)[0];
-    const out = {};
-    const addTo = (id, n) => { if (id) out[id] = (out[id] || 0) + n; };
-    fnc.forEach(({ shift, crew }) => {
-      const h = SHIFT_START_HOUR[String(shift || "").trim().toLowerCase()];
-      if (h != null && h <= 12) addTo(pre || day || first, crew); else addTo(day || pre || first, crew);
-      if (h != null && h >= 18 && night && night !== (day || pre || first)) addTo(night, crew);
-    });
-    return Object.keys(out).length ? out : null;
-  };
-  const hasMpSnapshot = !!(sel?.manpowerDetail && typeof sel.manpowerDetail === "object" && Object.keys(sel.manpowerDetail).length);
-  const mpDetailRaw = (sel?.manpowerDetail && Array.isArray(sel.manpowerDetail[dept])) ? sel.manpowerDetail[dept] : (hasMpSnapshot ? [] : null);
-  // autoSlots[type][date][slotId] — the function-driven default, kept so a head's own count can be
-  // checked against the default it was typed over (mpWinCount filtering below).
-  const autoSlots = {};
-  const mpDetail = Array.isArray(mpDetailRaw) ? mpDetailRaw.map(r => !Array.isArray(r?.schedule) ? r : ({
-    ...r, schedule: r.schedule.map(d0 => {
-      // An order synced before Deal Check added the setup shift (withSetupSlot) still carries the
-      // bare phase defaults for an event day — give it the same setup shift here. Only when the day
-      // still holds exactly those defaults, so a day Deal Check's ops set by hand is left alone.
-      let d = d0;
-      if (d0?.phase === "event" && Array.isArray(d0.windowIds)) {
-        const defs = (settings?.defaultWindowsByPhase?.[r.type] || {}).event || [];
-        const same = defs.length === d0.windowIds.length && defs.every(id => d0.windowIds.includes(id));
-        if (same) {
-          const ids = withSetupSlot(d0.windowIds, dihari[r.type]?.windows, mpFns.filter(f => String(f?.date || "").slice(0, 10) === d0.date));
-          if (ids.length !== d0.windowIds.length) d = { ...d0, windowIds: ids, windows: ids.length };
-        }
-      }
-      const def = slotDefaults(r, d); if (!def) return d;
-      (autoSlots[r.type] = autoSlots[r.type] || {})[d.date] = def;
-      return { ...d, winCount: { ...(d.winCount || {}), ...def } };
-    }),
-  })) : mpDetailRaw;
-  const sysPlan = (Array.isArray(sel?.manpowerPlan) ? sel.manpowerPlan : []).filter(p => deptTypes.includes(p.type));
-  // days = the multi-day total cost ÷ (peak crew × day rate) — so the derivation math actually adds up.
-  const dayCount = (count, rate, cost) => (count > 0 && rate > 0 && cost > 0) ? Math.max(1, Math.round(cost / (count * rate))) : 1;
-  // Head edits are stored as per-type OVERRIDES (count/rate only) + any extra crew types they added —
-  // so the SYSTEM figures (sysCount / trace / basis / schedule) are ALWAYS taken fresh from the snapshot
-  // and never freeze. Only the head's actual changes are kept.
-  const migrateOv = () => {
-    if (!Array.isArray(deptData.mp)) return {};
-    const byT = {}; (mpDetail || []).forEach(s => { byT[s.type] = s; });
-    const ov = {};
-    deptData.mp.forEach(r => { const s = byT[r.type]; if (!s) return; const o = {}; if (r.count !== "" && r.count != null && Number(r.count) !== Number(s.count ?? 0)) o.count = r.count; if (Number(r.rate) !== Number(s.rate ?? 0)) o.rate = r.rate; if (Object.keys(o).length) ov[r.type] = o; });
-    return ov;
-  };
-  const mpOverrides = (deptData.mpOverrides && typeof deptData.mpOverrides === "object") ? deptData.mpOverrides : migrateOv();
-  const snapTypes = new Set((mpDetail || []).map(s => s.type));
-  const mpExtra = Array.isArray(deptData.mpExtra) ? deptData.mpExtra : (Array.isArray(deptData.mp) ? deptData.mp.filter(r => !snapTypes.has(r.type)) : []);
-  const mpRows = hasMpSnapshot
-    ? [
-        ...(mpDetail || []).map(s => { const ov = mpOverrides[s.type] || {}; return { type: s.type, count: ov.count != null ? ov.count : (s.count ?? ""), rate: ov.rate != null ? ov.rate : (s.rate || 0), basis: s.basis || "", shared: !!s.shared, sysCount: s.count, sysRate: s.rate || 0, sysCost: s.cost || 0, days: dayCount(Number(s.count) || 0, Number(s.rate) || 0, Number(s.cost) || 0), trace: s.trace || null, splitInfo: s.splitInfo || null, schedule: s.schedule || null }; }),
-        // _extraIdx — this row's own position in deptData.mpExtra, carried through so removeMp can
-        // delete exactly this one even when two added rows share the same type (e.g. "+ Add crew
-        // type" clicked twice by accident both default to "Labours" — matching by type alone would
-        // have deleted both at once instead of just the one the head actually meant to remove).
-        ...mpExtra.map((r, ei) => ({ r, ei })).filter(({ r }) => !snapTypes.has(r.type)).map(({ r, ei }) => ({ type: r.type, count: r.count ?? "", rate: r.rate || 0, basis: "added crew", shared: false, sysCount: null, sysRate: 0, sysCost: 0, days: 1, _extra: true, _addedExtra: true, _extraIdx: ei })),
-      ]
-    : (sysPlan.length ? sysPlan.map(p => ({ type: p.type, count: p.count, rate: p.rate || Number(dihari[p.type]?.rate) || 0, basis: p.basis || "", sysCount: p.count, sysRate: p.rate || 0, sysCost: (p.count || 0) * (p.rate || 0), days: 1, _extra: true }))
-      : deptTypes.map(t => ({ type: t, count: "", rate: Number(dihari[t]?.rate) || 0, basis: "", sysCount: null, sysRate: 0, sysCost: 0, days: 1, _extra: true })));
+  const crew = buildDeptCrew({ sel, dept, settings, inventory, flowerPatterns, catToDept });
+  const {
+    deptData, mpFns, hasMpSnapshot, mpDetailRaw,
+    mpRows, mpDay, mpWin, mpWinCountRaw, mpWinCount,
+    effDay, effWinIds, effWin, effShift, lineCost, mpCost, mpPlannedCost, mpEdited,
+  } = crew;
+  const orderWinIds = (ids, winDefs, date) => orderWinIdsShared(ids, winDefs, date, mpFns);
+  const flowerTraceForFn = (fn) => flowerTraceForFnShared(fn, { inventory, invByIdMp, flowerPatterns });
   const expenses = Array.isArray(deptData.expenses) ? deptData.expenses : [];
   // Real on-site expenses logged in the separate Ambria Ops app, pulled in read-only alongside the
   // manually-typed rows above — see lib/ims/opsExpenses.js for the join (both apps independently
@@ -1499,65 +1320,32 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     }));
   };
 
-  // Day-wise crew overrides: deptData.mpDay = { [type]: { [date]: count } }. Any crew with a working
-  // schedule can be tuned per day (Day 1 = 4, Day 2 = 6); cost = Sum(dayCount x shifts x rate).
-  // SHARED crew (Labours / Supervisors) carry a GLOBAL schedule + a split share of the event total —
-  // so this dept's per-day crew defaults to globalCount × share, and is editable just like mapped crew.
-  // Day-wise editing delegates to the shared reconciliation helpers (lib/ims/helpers) so the IMS view
-  // and Studio's P&L compute identical numbers. Thin wrappers bind this component's mpDay/mpOverrides.
-  const mpDay = (deptData.mpDay && typeof deptData.mpDay === "object") ? deptData.mpDay : {};
-  // Per-day dihari-timing overrides: deptData.mpWin = { [type]: { [date]: [windowId, …] } }. The dept
-  // head can toggle which shifts each crew works on a given day; cost = crew × shifts × rate.
-  const mpWin = (deptData.mpWin && typeof deptData.mpWin === "object") ? deptData.mpWin : {};
-  // Per-shift crew counts (ops on-site): deptData.mpWinCount = { [type]: { [date]: { [windowId]: count } } }.
-  // Lets a single day hold different crew per shift (e.g. 3 in the day, 1 in the evening).
-  // The function-driven slot default always wins: a head's per-shift count only stands while the
-  // default it was typed over (mpWinBasis, saved with it) is still the current one. Once the
-  // functions change the sum — or for a count saved before mpWinBasis existed — it is ignored.
-  const mpWinCountRaw = (deptData.mpWinCount && typeof deptData.mpWinCount === "object") ? deptData.mpWinCount : {};
-  const mpWinBasis = (deptData.mpWinBasis && typeof deptData.mpWinBasis === "object") ? deptData.mpWinBasis : {};
-  const mpWinCount = Object.fromEntries(Object.entries(mpWinCountRaw).map(([type, byDate]) => [type, Object.fromEntries(Object.entries(byDate || {}).map(([date, byWin]) => {
-    const auto = autoSlots[type] && autoSlots[type][date];
-    if (!auto) return [date, byWin];
-    const basis = (mpWinBasis[type] && mpWinBasis[type][date]) || {};
-    return [date, Object.fromEntries(Object.entries(byWin || {}).filter(([id]) => auto[id] == null || basis[id] === auto[id]))];
-  }))]));
+  // mpDay/mpWin/mpWinCountRaw/mpWinBasis/mpWinCount/effDay/effWinIds/effWin/effShift/lineCost/mpCost
+  // all came from `crew` above (buildDeptCrew) — only the day-wise/shift UI helpers and the write
+  // wrappers stay local, since they're either pure display (dayWise/showDay/dayOv) or thin saveDept
+  // wrappers around deptCrew.js's patch builders.
   const dayWise = mpDayWise;
-  const effDay = (r, d) => mpEffDay(r, d, mpDay);
   const showDay = (r, d) => Math.round(effDay(r, d));
   const dayOv = (r, d) => { const ov = mpDay[r.type]; return !!(ov && ov[d.date] != null && Number(ov[d.date]) !== Math.round(mpBaseDay(r, d))); };
-  const effWinIds = (r, d) => { const ov = mpWin[r.type]; return ov && ov[d.date] != null ? ov[d.date] : (Array.isArray(d.windowIds) ? d.windowIds : []); };
-  const effWin = (r, d) => mpEffWindows(r, d, mpWin);
-  const setMpDay = (type, date, val) => { if (!canManpower) return; saveDept({ mpDay: { ...mpDay, [type]: { ...(mpDay[type] || {}), [date]: val } } }); };
+  const setMpDay = (type, date, val) => { if (!canManpower) return; saveDept(mpDayPatch(crew, type, date, val)); };
   const setMpAllDays = (type, schedule, val) => { const m = { ...(mpDay[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = val; }); saveDept({ mpDay: { ...mpDay, [type]: m } }); };
   const toggleWin = (type, date, winId, curIds) => { const next = curIds.includes(winId) ? curIds.filter(x => x !== winId) : [...curIds, winId]; saveDept({ mpWin: { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: next } } }); };
   // ↺ on a day: drop every hand edit for that crew type on that date — chosen shifts, per-shift
   // counts (and the defaults they were typed over), and the day's crew — so the day goes back to the
   // system plan (Deal Check's schedule plus the setup-shift rule).
   const dayHasEdits = (type, date) => [mpWin, mpWinCountRaw, mpDay].some(m => m[type] && m[type][date] != null);
-  const resetMpDay = (type, date) => {
-    if (!canManpower) return;
-    const drop = (m) => { if (!m[type] || m[type][date] == null) return m; const t = { ...m[type] }; delete t[date]; return { ...m, [type]: t }; };
-    saveDept({ mpWin: drop(mpWin), mpWinCount: drop(mpWinCountRaw), mpWinBasis: drop(mpWinBasis), mpDay: drop(mpDay) });
-  };
+  const resetMpDay = (type, date) => { if (!canManpower) return; saveDept(resetMpDayPatch(crew, type, date)); };
   const setWinAllDays = (type, schedule, ids) => { const m = { ...(mpWin[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = ids; }); saveDept({ mpWin: { ...mpWin, [type]: m } }); };
   // Set the crew for ONE shift on ONE day (per-shift split). Ensures that window is marked worked.
   // A cleared box (val "") drops the head's own count for that shift, so it falls back to the
   // slot's default (Deal Check's per-shift count, else the functions it serves — slotDefaults).
-  const setShiftCount = (type, date, winId, val, curIds) => { const n = Math.max(0, Number(val) || 0); const t = { ...(mpWinCount[type] || {}) }; t[date] = { ...(t[date] || {}), [winId]: n }; if (val === "") delete t[date][winId]; const auto = autoSlots[type] && autoSlots[type][date] && autoSlots[type][date][winId]; const b = { ...(mpWinBasis[type] || {}) }; b[date] = { ...(b[date] || {}) }; if (auto != null && val !== "") b[date][winId] = auto; else delete b[date][winId]; const patch = { mpWinCount: { ...mpWinCount, [type]: t }, mpWinBasis: { ...mpWinBasis, [type]: b } }; if (Array.isArray(curIds) && !curIds.includes(winId)) patch.mpWin = { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: [...curIds, winId] } }; saveDept(patch); };
-  const effShift = (r, d, winId) => { const wc = mpWinCount[r.type] && mpWinCount[r.type][d.date]; if (wc && wc[winId] != null) return Number(wc[winId]); const sc = d && d.winCount; if (sc && sc[winId] != null) return Number(sc[winId]); return Math.round(effDay(r, d)); }; // head override → Deal Check per-shift (schedule.winCount) → day count
+  const setShiftCount = (type, date, winId, val, curIds) => saveDept(shiftCountPatch(crew, type, date, winId, val, curIds));
   // Add another dihari (shift) to a day — the next unused scheme window, else a synthetic slot — so ops
   // can split a single day into e.g. 2 crew in the day shift + 1 in the evening (each shift billed).
-  const addDihari = (r, date, curIds) => { const wins = (dihari[r.type] && Array.isArray(dihari[r.type].windows)) ? dihari[r.type].windows : []; const unused = wins.find(w => !curIds.includes(w.id)); const id = unused ? unused.id : ("x" + Date.now()); const t = { ...(mpWinCount[r.type] || {}) }; t[date] = { ...(t[date] || {}), [id]: 1 }; saveDept({ mpWin: { ...mpWin, [r.type]: { ...(mpWin[r.type] || {}), [date]: [...curIds, id] } }, mpWinCount: { ...mpWinCount, [r.type]: t } }); };
+  const addDihari = (r, date, curIds) => saveDept(addDihariPatch(crew, r, date, curIds));
   // Every delete on this page asks first (the shared confirm dialog) — a × in a row is easy to hit, on a phone most of all.
   const askDelete = async (title, body) => confirm({ title, body });
-  const removeDihari = async (type, date, slotId, curIds) => { if (!(await askDelete("Remove this crew slot?", `Removes one ${type} slot on ${date}.`))) return; const t = { ...(mpWinCount[type] || {}) }; if (t[date]) { const dd = { ...t[date] }; delete dd[slotId]; t[date] = dd; } saveDept({ mpWin: { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: curIds.filter(x => x !== slotId) } }, mpWinCount: { ...mpWinCount, [type]: t } }); };
-  // A row scoped to one function (_scoped) costs only the days it kept — the split-allocation
-  // shortcut in mpLineCost would hand back the whole booking's figure.
-  const lineCost = (r) => r._scoped
-    ? Math.round(r.schedule.reduce((s, d) => s + mpDayCost(r, d, mpDay, mpWin, mpWinCount, Number(r.rate) || 0), 0))
-    : mpLineCost(r, mpDay, mpOverrides, mpWin, mpWinCount);
-  const mpCost = mpRows.reduce((s, r) => s + lineCost(r), 0);
+  const removeDihari = async (type, date, slotId, curIds) => { if (!(await askDelete("Remove this crew slot?", `Removes one ${type} slot on ${date}.`))) return; saveDept(removeDihariPatch(crew, type, date, slotId, curIds)); };
   // ── "THE CREW PLAN CHANGED" ALERT ──
   // What Studio pushed for this department (crew, cost, each day's count/shifts/share) boiled down to
   // a signature. The head's own edits are not in it (they live in deptOps), so only a change coming
@@ -1833,7 +1621,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   ).sort((a, b) => (a.type === "Supervisors" ? 1 : 0) - (b.type === "Supervisors" ? 1 : 0));
   const mpWholeOnly = mpScoped ? mpRows.filter(r => !dayWise(r)).length : 0;
   const mpShownCost = mpScoped ? mpShown.reduce((s, r) => s + lineCost(r), 0) : mpCost;
-  const mpPlannedCost = mpRows.reduce((s, r) => s + (Number(r.sysCost) || 0), 0); // system baseline (before edits)
+  // mpPlannedCost (system baseline, before edits) comes from `crew` above.
   // ── Event-wide Labours total. Ops runs the whole event, so he sets the TOTAL labour headcount and the
   // system re-splits it across every department by their existing usage share (scale each dept's per-day
   // labour by newTotal/currentTotal). Writes each dept's mpDay → flows via the normal reconciliation. ──
@@ -1847,65 +1635,37 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // Moved to lib/ims/helpers.js (aggregateEventManpower) so Deal Check's Manpower tab can show the
   // same ops-reconciled numbers — see its own comment for why.
   const eventManpower = () => aggregateEventManpower(sel?.manpowerDetail, sel?.deptOps);
-  const labDetailFor = (d) => { const rows = sel?.manpowerDetail?.[d]; return Array.isArray(rows) ? rows.find(r => r.type === "Labours") : null; };
-  const labEffPerDay = (d, day) => { const md = sel?.deptOps?.[d]?.mpDay?.Labours || {}; if (md[day.date] != null) return Number(md[day.date]) || 0; return day.share != null ? (Number(day.count) || 0) * Number(day.share) : (Number(day.count) || 0); };
-  const labShiftsFor = (d, day) => { const mw = sel?.deptOps?.[d]?.mpWin?.Labours; const ids = mw && mw[day.date] != null ? mw[day.date] : (Array.isArray(day.windowIds) ? day.windowIds : null); return ids ? ids.length : (Number(day.windows) || 0); };
-  const labDihariFor = (d) => { const lab = labDetailFor(d); if (!lab || !Array.isArray(lab.schedule)) return 0; return lab.schedule.reduce((s, day) => s + labEffPerDay(d, day) * labShiftsFor(d, day), 0); };
-  const eventLabourDihari = Math.round(DEPTS.reduce((s, d) => s + labDihariFor(d), 0));
-  const anyLabours = DEPTS.some(d => labDetailFor(d));
+  const { eventLabourDihari, anyLabours } = eventLabourInfo(sel);
   const setEventLabourTotal = (val) => {
-    const target = Math.max(0, Number(val) || 0);
-    const cur = DEPTS.reduce((s, d) => s + labDihariFor(d), 0);
-    if (cur <= 0 || !sel) return;
-    const ratio = target / cur;
+    if (!sel) return;
+    // Recompute from the freshest row inside the updater (`e`, not the render-time `sel`) — a
+    // realtime update to any department landing between render and this click must not be
+    // silently reverted by writing a `deptOps` map built from stale data.
     setEventOrders(prev => prev.map(e => {
       if (e.id !== sel.id) return e;
-      const ops = { ...(e.deptOps || {}) };
-      DEPTS.forEach(d => {
-        const lab = labDetailFor(d); if (!lab || !Array.isArray(lab.schedule)) return;
-        const od = { ...(ops[d] || {}) }; const md = { ...(od.mpDay || {}) }; const labDay = { ...(md.Labours || {}) };
-        lab.schedule.forEach(day => { labDay[day.date] = Math.max(0, Math.round(labEffPerDay(d, day) * ratio)); });
-        md.Labours = labDay; od.mpDay = md; od.updatedAt = Date.now(); od.updatedBy = authUser?.name || "—";
-        ops[d] = od;
-      });
-      return { ...e, deptOps: ops };
+      const ops = eventLabourTotalDeptOps(e, val, authUser?.name);
+      return ops ? { ...e, deptOps: ops } : e;
     }));
   };
-  const mpEdited = Object.keys(mpOverrides).length > 0 || Object.keys(mpDay).length > 0 || Object.keys(mpWin).length > 0 || Object.keys(mpWinCount).length > 0 || (Array.isArray(mpExtra) && mpExtra.length > 0);
   // Manual rows + whatever's synced from Ops — shown as two separate lists below so a head can see
   // which is which, not silently merged into one anonymous total.
   const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0) + opsExpenseTotal;
   const realMandiNum = Number(realMandi) || 0;
 
-  const setMp = (i, key, val) => {
-    const row = mpRows[i]; if (!row) return;
-    if (row._extra) {
-      const base = Array.isArray(deptData.mpExtra) ? deptData.mpExtra : mpExtra;
-      // Added-crew rows (removeMp's own kind) are matched by their own stored index — two rows of
-      // the same type (e.g. "Labours" added twice by accident) are otherwise indistinguishable by
-      // type alone, and editing one would silently land on whichever came first in the array.
-      const idx = row._addedExtra ? row._extraIdx : base.findIndex(r => r.type === row.type);
-      const next = base.slice();
-      if (idx >= 0 && idx < next.length) next[idx] = { ...next[idx], [key]: val }; else next.push({ type: row.type, count: row.count, rate: row.rate, [key]: val });
-      saveDept({ mpExtra: next });
-    } else {
-      saveDept({ mpOverrides: { ...mpOverrides, [row.type]: { ...(mpOverrides[row.type] || {}), [key]: val } } });
-    }
-  };
-  const addMp = () => saveDept({ mpExtra: [...(Array.isArray(deptData.mpExtra) ? deptData.mpExtra : mpExtra), { type: "Labours", count: "", rate: Number(dihari["Labours"]?.rate) || 0 }] });
+  const setMp = (i, key, val) => { const patch = setMpPatch(crew, i, key, val); if (patch) saveDept(patch); };
+  const addMp = () => saveDept(addMpPatch(crew));
   // Undo a "+ Add crew type" click (e.g. an accidental double-click that left two identical rows) —
   // by the row's own index in mpExtra, not its type, so one of several same-type extras can be
   // removed without taking the others with it.
   const removeMp = async (row) => {
     if (!row._addedExtra) return;
     if (!(await askDelete(`Remove "${row.type || row.name || "this crew line"}"?`, "Removes this crew line from the manpower plan."))) return;
-    const base = Array.isArray(deptData.mpExtra) ? deptData.mpExtra : mpExtra;
-    saveDept({ mpExtra: base.filter((_, i) => i !== row._extraIdx) });
+    const patch = removeMpPatch(crew, row); if (patch) saveDept(patch);
   };
   // On-site actual crew: set the real head-count held (applies to every scheduled day for day-wise crew,
   // else a straight count override) → flows to the P&L + Studio via the same mpDay/mpOverrides fields.
-  const setActualCrew = (r, i, val) => { const n = Math.max(0, Number(val) || 0); if (mpDayWise(r) && Array.isArray(r.schedule) && r.schedule.length) { const m = { ...(mpDay[r.type] || {}) }; r.schedule.forEach(d => { m[d.date] = n; }); const wc = { ...mpWinCount }; delete wc[r.type]; saveDept({ mpDay: { ...mpDay, [r.type]: m }, mpWinCount: wc }); } else setMp(i, "count", n); };
-  const resetMpLine = (r) => { const nd = { ...mpDay }; delete nd[r.type]; const nw = { ...mpWin }; delete nw[r.type]; const no = { ...mpOverrides }; delete no[r.type]; const wc = { ...mpWinCount }; delete wc[r.type]; saveDept({ mpDay: nd, mpWin: nw, mpOverrides: no, mpWinCount: wc }); };
+  const setActualCrew = (r, i, val) => saveDept(actualCrewPatch(crew, r, i, val));
+  const resetMpLine = (r) => saveDept(resetLinePatch(crew, r));
   const addExpense = () => saveDept({ expenses: [...expenses, { label: "", amount: "" }] });
   const setExpense = (i, key, val) => { const next = expenses.map((e, j) => j === i ? { ...e, [key]: val } : e); saveDept({ expenses: next }); };
   const delExpense = async (i) => {
