@@ -9,39 +9,38 @@ import {
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 const phaseLbl = (d) => d.phase === "minusOne" ? "−1 setup" : d.phase === "dismantle" ? "+1 dismantle" : d.phase === "gap" ? "gap" : (d.date || "event");
 
-// Every department's crew for this event, grouped by labour pool (Structure's shared pool, Floral
-// on its own — see deptClassify.js's poolLabourDept) instead of behind a department tab: the whole
-// point of this page is to show every department's manpower together, not one at a time.
+// Every department's crew for this event, each in its OWN card — Lighting's Electricians,
+// Tenting's Painters/Truss Labour/Fabric Bangali, Transport's Drivers and Structure's own
+// Carpenters are each that department's own crew, not pooled with anyone else's. The only thing
+// that ever pools across departments is the shared "Labours" crew (deptClassify.js's
+// poolLabourDept) — so only a Labours row gets a note naming who it's pooled with; every other
+// row is unambiguously this card's own department.
 // Headcount/dihari only, deliberately no ₹ — this is a narrow, single-purpose login (owner ask).
-// Pools collapse to a one-line summary (one open at a time, like Receiving's trucks) — the
-// Structure pool alone can carry half a dozen crew TYPES (one per department pooled into it), and
-// showing every row of every pool open at once turned this into a long, hard-to-scan phone scroll.
+// Cards collapse to a one-line summary (one open at a time, like Receiving's trucks) — Structure
+// alone can carry several crew types, and showing every row of every card open at once turned
+// this into a long, hard-to-scan phone scroll.
 export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory, authUser, catToDept, mode }) {
-  const [openPool, setOpenPool] = useState(null); // pool name, or null = the first one
+  const [openDept, setOpenDept] = useState(null); // department name, or null = the first one
   const [openRow, setOpenRow] = useState(null); // `${dept}|${type}` with its day/shift editor open
 
   const flowerPatterns = Array.isArray(settings?.flowerPatterns) ? settings.flowerPatterns : [];
   const byDept = buildEventCrewByDept({ sel, settings, inventory, flowerPatterns, catToDept });
   if (byDept.length === 0) return <div className="bg-white rounded-xl border border-gray-100 p-8 text-center text-sm text-gray-400">No manpower plan synced for this event yet.</div>;
 
-  const poolMap = new Map();
-  byDept.forEach(({ dept, crew }) => {
-    const pool = poolLabourDept(dept);
-    if (!poolMap.has(pool)) poolMap.set(pool, []);
-    crew.mpRows.forEach((r) => poolMap.get(pool).push({ dept, r, crew }));
-  });
-
-  // Every row's figures computed once up front — the collapsed pool header needs the same totals
-  // the open rows show, not a second pass over the same math.
-  const pools = [...poolMap.entries()].map(([pool, rawRows]) => {
-    const rows = rawRows.map(({ dept, r, crew }) => {
+  // Every row's figures computed once up front — the collapsed header needs the same totals the
+  // open rows show, not a second pass over the same math.
+  const depts = byDept.map(({ dept, crew }) => {
+    const rows = crew.mpRows.map((r) => {
       const daywise = mpDayWise(r) && Array.isArray(r.schedule);
       const planDihari = daywise ? Math.round(r.schedule.reduce((s, d) => s + mpDayDihari(r, d, {}, {}, {}), 0)) : Number(r.sysCount) || 0;
       const actDihari = daywise ? Math.round(r.schedule.reduce((s, d) => s + mpDayDihari(r, d, crew.mpDay, crew.mpWin, crew.mpWinCount), 0)) : Number(r.count) || 0;
-      return { dept, r, crew, daywise, planDihari, actDihari, edited: actDihari !== planDihari };
+      // Only the shared Labours crew is ever pooled across departments — note who with, right on
+      // its own row, rather than implying the WHOLE department's crew is shared.
+      const pooledWith = (r.type === "Labours" && poolLabourDept(dept) === dept && poolLabourDeptLabel(dept) !== dept) ? poolLabourDeptLabel(dept) : null;
+      return { dept, r, crew, daywise, planDihari, actDihari, pooledWith, edited: actDihari !== planDihari };
     });
     return {
-      pool, rows,
+      dept, rows,
       planTotal: rows.reduce((s, x) => s + x.planDihari, 0),
       actTotal: rows.reduce((s, x) => s + x.actDihari, 0),
       anyEdited: rows.some((x) => x.edited),
@@ -52,14 +51,14 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
 
   return (
     <div className="space-y-3">
-      {pools.map(({ pool, rows, planTotal, actTotal, anyEdited }, pi) => {
-        const open = openPool === pool || (openPool == null && pi === 0);
+      {depts.map(({ dept, rows, planTotal, actTotal, anyEdited }, di) => {
+        const open = openDept === dept || (openDept == null && di === 0);
         return (
-          <div key={pool} className="bg-white rounded-xl border border-gray-100 shadow-[0_2px_4px_rgba(15,23,42,0.06)] overflow-hidden">
-            <button onClick={() => setOpenPool(open ? "" : pool)} className="w-full text-left px-4 py-3 bg-gray-50 flex items-center gap-3">
+          <div key={dept} className="bg-white rounded-xl border border-gray-100 shadow-[0_2px_4px_rgba(15,23,42,0.06)] overflow-hidden">
+            <button onClick={() => setOpenDept(open ? "" : dept)} className="w-full text-left px-4 py-3 bg-gray-50 flex items-center gap-3">
               <div className="min-w-0 flex-1">
-                <div className="text-[13.5px] font-bold text-gray-900 flex items-center gap-1.5">{DEPT_ICON[pool] || ""} {pool}</div>
-                <div className="text-[11px] text-gray-500 mt-0.5 truncate">{poolLabourDeptLabel(pool)} · {rows.length} crew type{rows.length === 1 ? "" : "s"}</div>
+                <div className="text-[13.5px] font-bold text-gray-900 flex items-center gap-1.5">{DEPT_ICON[dept] || ""} {dept}</div>
+                <div className="text-[11px] text-gray-500 mt-0.5 truncate">{rows.length} crew type{rows.length === 1 ? "" : "s"}</div>
               </div>
               <div className="shrink-0 text-right">
                 <div className={"text-sm font-bold tabular-nums " + (mode === "actual" && anyEdited ? "text-amber-700" : "text-gray-900")}>
@@ -69,18 +68,16 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
               </div>
               <span className="shrink-0 text-gray-300 text-sm">{open ? "▾" : "▸"}</span>
             </button>
-            {open && rows.map(({ dept, r, crew, daywise, planDihari, actDihari, edited }) => {
+            {open && rows.map(({ r, crew, daywise, planDihari, actDihari, pooledWith, edited }) => {
               const key = `${dept}|${r.type}`;
               const rowOpen = openRow === key;
               return (
                 <div key={key} className="px-4 py-3 border-t border-gray-100">
                   <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
-                      <div className="text-[13px] font-semibold text-gray-900 flex items-center gap-2 flex-wrap">
-                        {r.type}
-                        <span className="text-[9.5px] font-bold text-gray-500 bg-gray-50 rounded px-1.5 py-0.5">{DEPT_ICON[dept] || ""} {dept}</span>
-                      </div>
+                      <div className="text-[13px] font-semibold text-gray-900">{r.type}</div>
                       <div className="mt-0.5 text-[11px] text-gray-500 tabular-nums">Planned {planDihari} {daywise ? "dihari" : "people"}</div>
+                      {pooledWith && <div className="mt-1 text-[10.5px] text-blue-600">Pooled crew — shared with {pooledWith}</div>}
                     </div>
                     {mode === "actual" && daywise ? (
                       <span className={"shrink-0 h-8 inline-flex items-center gap-2 rounded-lg px-2.5 " + (edited ? "bg-amber-50 ring-1 ring-amber-200" : "bg-gray-50 ring-1 ring-gray-200")}>
@@ -114,12 +111,12 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
                   )}
                   {mode === "actual" && rowOpen && daywise && r.schedule.length > 0 && (
                     <div className="mt-2.5 bg-gray-50 ring-1 ring-gray-200 rounded-lg p-2.5 space-y-1">
-                      {r.schedule.map((d, di) => {
+                      {r.schedule.map((d, di2) => {
                         const winDefs = (crew.dihari[r.type] && Array.isArray(crew.dihari[r.type].windows)) ? crew.dihari[r.type].windows : [];
                         const ids = crew.effWinIds(r, d) || [];
                         const hasSlots = winDefs.length > 0 || ids.length > 0;
                         return (
-                          <div key={di} className="flex items-start gap-2 flex-wrap text-[11px] py-1.5">
+                          <div key={di2} className="flex items-start gap-2 flex-wrap text-[11px] py-1.5">
                             <span className="w-24 text-gray-600 font-medium pt-1">{phaseLbl(d)}</span>
                             {hasSlots ? (
                               <div className="flex items-center gap-1.5 flex-wrap flex-1">
