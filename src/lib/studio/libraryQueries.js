@@ -316,14 +316,23 @@ export async function fetchLibraryItemsByUrls(urls) {
 }
 
 /** Photos zone-tagged with any of `zoneList` (areasElements overlap) — the candidate pool
- * for getLibPhotosForZone's scoring, instead of scanning the whole in-memory library. */
+ * for getLibPhotosForZone's scoring, instead of scanning the whole in-memory library.
+ *
+ * ORDERED + capped well above any zone's current size (confirmed: "Entry & Passage" alone is
+ * already at 1106). A popular zone's tagged pool WILL eventually pass any fixed cap again, so the
+ * order matters as much as the number: newest-tagged first means a cap that's hit again drops the
+ * OLDEST photos, not an arbitrary (effectively random, Postgres-plan-dependent) slice that could
+ * just as easily exclude something tagged five minutes ago — which is exactly what silently
+ * dropped a correctly-tagged, newly-verified photo here (no ORDER BY + a tied 1000 cap on a
+ * 1106-photo pool). */
 export async function fetchZoneLibraryPhotos(zoneList) {
   const zones = (zoneList || []).filter(Boolean);
   if (!zones.length) return [];
   const { data, error } = await supabase.from("library")
     .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,ai_confidence:data->>_aiConfidence")
     .or(zones.map((z) => `tags->areasElements.cs.${pgArrayLit(z)}`).join(","))
-    .limit(1000);
+    .order("tagged_at", { ascending: false, nullsFirst: false })
+    .limit(5000);
   if (error) throw error;
   return (data || []).map(rowToLibItem);
 }
@@ -339,7 +348,8 @@ export async function fetchCustomZoneLibraryPhotos(zoneId) {
   const { data, error } = await supabase.from("library")
     .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,ai_confidence:data->>_aiConfidence")
     .or(`tags->customZoneIds.cs.${pgArrayLit(zoneId)}`)
-    .limit(1000);
+    .order("tagged_at", { ascending: false, nullsFirst: false })
+    .limit(5000);
   if (error) throw error;
   return (data || []).map(rowToLibItem);
 }
