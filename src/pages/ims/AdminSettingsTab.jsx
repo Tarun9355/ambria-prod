@@ -2413,6 +2413,18 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
       {/* ── Supervisors ── */}
       {activePanel === "supervisors" && (
         <div className="space-y-3">
+          <div className="bg-white border rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+            <div>
+              <h4 className="font-semibold text-gray-800">🔒 Actuals lock</h4>
+              <p className="text-xs text-gray-500 mt-0.5">Hours after a booking's last scheduled day before Dept Ops and the Site tab's logged actuals (expenses, mandi spend, crew held) lock for editing. An admin can always reopen one for a correction.</p>
+            </div>
+            <div className="shrink-0 flex items-center gap-1.5">
+              <input type="number" min="0" max="168" value={settings.actualsLockGraceHours ?? 12}
+                onChange={(e) => setSettings((s) => ({ ...s, actualsLockGraceHours: Math.max(0, parseFloat(e.target.value) || 0) }))}
+                className="w-20 border rounded-lg px-2 py-1.5 text-sm text-center font-semibold" />
+              <span className="text-xs text-gray-500">hours</span>
+            </div>
+          </div>
           <div className="flex justify-between items-center">
             <h4 className="font-semibold text-gray-800">Supervisor Roster</h4>
             <button onClick={addSupervisor} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm">+ Add Supervisor</button>

@@ -5,6 +5,7 @@ import {
   buildEventCrewByDept, applyDeptOpsPatch, actualCrewPatch, resetLinePatch,
   shiftCountPatch, addDihariPatch, removeDihariPatch,
 } from "../../lib/ims/deptCrew";
+import { actualsLockState, patchTouchesActuals } from "../../lib/ims/actualsLock";
 
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 const phaseLbl = (d) => d.phase === "minusOne" ? "−1 setup" : d.phase === "dismantle" ? "+1 dismantle" : d.phase === "gap" ? "gap" : (d.date || "event");
@@ -43,6 +44,9 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
   const [openRow, setOpenRow] = useState(null); // `${dept}|${type}` with its day/shift editor open
   const [activeDay, setActiveDay] = useState({}); // `${dept}|${type}` -> schedule index showing
   const today = new Date().toLocaleDateString("en-CA");
+  // Post-event actuals lock (lib/ims/actualsLock.js) — the same lock DepartmentOpsTab shows, since
+  // this panel writes the exact same deptOps crew fields that screen does.
+  const lock = actualsLockState(sel, settings);
 
   const flowerPatterns = Array.isArray(settings?.flowerPatterns) ? settings.flowerPatterns : [];
   const byDept = buildEventCrewByDept({ sel, settings, inventory, flowerPatterns, catToDept });
@@ -68,10 +72,25 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
     };
   });
 
-  const write = (dept, patch) => setEventOrders((prev) => prev.map((e) => (e.id === sel.id ? applyDeptOpsPatch(e, dept, patch, authUser?.name) : e)));
+  // Only gates WRITE controls — opening a department/row, the day pills and "By day / shift" stay
+  // usable on a locked event, same as they already are in Planned mode.
+  const canEdit = mode === "actual" && !lock.locked;
+
+  const write = (dept, patch) => setEventOrders((prev) => prev.map((e) => {
+    if (e.id !== sel.id) return e;
+    // Checked against the freshest row, not the render-time `lock` — a realtime reopen landing
+    // between render and this write must be honoured immediately.
+    if (patchTouchesActuals(patch) && actualsLockState(e, settings).locked) return e;
+    return applyDeptOpsPatch(e, dept, patch, authUser?.name);
+  }));
 
   return (
     <div className="space-y-3">
+      {lock.locked && (
+        <div className="rounded-xl bg-gray-800 text-white px-4 py-2.5 text-xs font-semibold flex items-center gap-2">
+          🔒 Actuals locked for this event — an admin can reopen it above to make changes.
+        </div>
+      )}
       {depts.map(({ dept, rows, planTotal, actTotal, anyEdited }, di) => {
         const open = openDept === dept || (openDept == null && di === 0);
         return (
@@ -105,11 +124,16 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
                         <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Dihari</span>
                         <span className={"text-sm font-bold tabular-nums " + (edited ? "text-amber-700" : "text-gray-800")}>{actDihari}</span>
                       </span>
-                    ) : mode === "actual" ? (
+                    ) : mode === "actual" && canEdit ? (
                       <label className="shrink-0 h-8 inline-flex items-center gap-2 rounded-lg px-2.5 bg-gray-50 ring-1 ring-gray-200">
                         <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">People</span>
                         <input type="number" min="0" value={Number(r.count) || 0} onChange={(e) => write(dept, actualCrewPatch(crew, r, crew.mpRows.indexOf(r), e.target.value))}
                           className={"w-12 bg-transparent text-sm text-center font-bold tabular-nums focus:outline-none " + (edited ? "text-amber-700" : "text-gray-800")} />
+                      </label>
+                    ) : mode === "actual" ? (
+                      <label className="shrink-0 h-8 inline-flex items-center gap-2 rounded-lg px-2.5 bg-gray-50 ring-1 ring-gray-200">
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">People</span>
+                        <span className={"text-sm font-bold tabular-nums " + (edited ? "text-amber-700" : "text-gray-800")}>{Number(r.count) || 0}</span>
                       </label>
                     ) : (
                       <div className="shrink-0 text-sm font-bold tabular-nums text-gray-900">{planDihari}</div>
@@ -123,7 +147,7 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
                           By day / shift
                         </button>
                       )}
-                      {edited && (
+                      {edited && canEdit && (
                         <button onClick={() => write(dept, resetLinePatch(crew, r))} className="h-8 inline-flex items-center rounded-lg px-2.5 text-[11px] font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-100">
                           ↺ Back to plan
                         </button>
@@ -159,16 +183,22 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
                               return (
                                 <span key={id} className="inline-flex items-center gap-1.5 ring-1 ring-gray-200 rounded-lg pl-2 pr-1 py-1 bg-white">
                                   <span className="text-[11px] text-gray-500">{lbl}</span>
-                                  <input type="number" min="0" value={crew.effShift(r, d, id)} onChange={(e) => write(dept, shiftCountPatch(crew, r.type, d.date, id, e.target.value, ids))}
-                                    className="w-10 h-7 border border-gray-200 rounded text-[13px] text-center font-semibold" />
-                                  {ids.length > 1 && (
-                                    <button onClick={() => write(dept, removeDihariPatch(crew, r.type, d.date, id, ids))} aria-label="Remove this shift"
-                                      className="w-6 h-6 -mr-0.5 rounded flex items-center justify-center text-red-300 hover:text-red-500 hover:bg-red-50 text-sm">×</button>
+                                  {canEdit ? (
+                                    <>
+                                      <input type="number" min="0" value={crew.effShift(r, d, id)} onChange={(e) => write(dept, shiftCountPatch(crew, r.type, d.date, id, e.target.value, ids))}
+                                        className="w-10 h-7 border border-gray-200 rounded text-[13px] text-center font-semibold" />
+                                      {ids.length > 1 && (
+                                        <button onClick={() => write(dept, removeDihariPatch(crew, r.type, d.date, id, ids))} aria-label="Remove this shift"
+                                          className="w-6 h-6 -mr-0.5 rounded flex items-center justify-center text-red-300 hover:text-red-500 hover:bg-red-50 text-sm">×</button>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <span className="w-10 text-[13px] text-center font-semibold text-gray-800">{crew.effShift(r, d, id)}</span>
                                   )}
                                 </span>
                               );
                             })}
-                            <button onClick={() => write(dept, addDihariPatch(crew, r, d.date, ids))} className="h-7 inline-flex items-center text-[11px] font-semibold text-blue-600 hover:text-blue-800 border border-blue-200 rounded-full px-2.5">+ dihari</button>
+                            {canEdit && <button onClick={() => write(dept, addDihariPatch(crew, r, d.date, ids))} className="h-7 inline-flex items-center text-[11px] font-semibold text-blue-600 hover:text-blue-800 border border-blue-200 rounded-full px-2.5">+ dihari</button>}
                           </div>
                         ) : (
                           <span className="text-[11px] text-gray-400">no shifts set</span>

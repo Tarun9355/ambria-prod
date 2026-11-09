@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { isLiveEventOrder } from "../../lib/ims/helpers";
 import { catToDept as sharedCatToDept } from "../../lib/ims/deptClassify";
 import { venueWithParent } from "../../lib/ims/fixedVenues";
+import { actualsLockState, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
+import { logWrite } from "../../lib/studio/userActions";
+import { Modal } from "../../components/ui";
 import SiteReceivingPanel from "./SiteReceivingPanel.jsx";
 import SiteCrewPanel from "./SiteCrewPanel.jsx";
 import SitePdfButton from "./SitePdfButton.jsx";
@@ -31,6 +34,21 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
   // (sessionStorage) for an event that's since gone pending/cancelled must not still open.
   const sel = (eventOrders || []).find((e) => e.id === selId && isLiveEventOrder(e)) || null;
   const pick = (id) => { setSelId(id); try { sessionStorage.setItem(PICK_KEY, id); } catch { /* private window — fine, just won't be remembered */ } };
+  const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
+  const [reopenPrompt, setReopenPrompt] = useState(false);
+  const [reopenReason, setReopenReason] = useState("");
+  const lock = sel ? actualsLockState(sel, settings) : { locked: false, reopened: false };
+  const doReopenActuals = () => {
+    if (!sel) return;
+    setEventOrders((prev) => prev.map((e) => (e.id === sel.id ? { ...e, actualsLock: reopenActualsPatch(e, authUser, reopenReason) } : e)));
+    logWrite(authUser, "actuals.reopen", { targetType: "event_order", targetId: sel.id, targetName: sel.clientName, ok: true, detail: { reason: reopenReason } });
+    setReopenPrompt(false); setReopenReason("");
+  };
+  const doRelockActuals = () => {
+    if (!sel) return;
+    setEventOrders((prev) => prev.map((e) => (e.id === sel.id ? { ...e, actualsLock: relockActualsPatch(e, authUser) } : e)));
+    logWrite(authUser, "actuals.relock", { targetType: "event_order", targetId: sel.id, targetName: sel.clientName, ok: true });
+  };
 
   if (!sel) return <EventPicker eventOrders={eventOrders} settings={settings} onPick={pick} />;
 
@@ -52,8 +70,23 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
             <button onClick={() => setMode("actual")} aria-pressed={mode === "actual"}
               className={"h-8 px-3 rounded-lg text-[12.5px] font-semibold " + (mode === "actual" ? "bg-amber-100 text-amber-700" : "text-gray-500 hover:bg-white")}>✅ Actual</button>
           </div>
-          <span className="text-[11px] text-gray-400">{mode === "actual" ? "What's actually arrived & on site — editable" : "What the dept heads loaded & scheduled"}</span>
+          <span className="text-[11px] text-gray-400">{mode === "actual" ? (lock.locked ? "Locked — this event's actuals are final" : "What's actually arrived & on site — editable") : "What the dept heads loaded & scheduled"}</span>
         </div>
+
+        {lock.locked && (
+          <div className="mt-2.5 flex items-center gap-2 flex-wrap text-xs">
+            <span className="inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-full bg-gray-800 text-white">🔒 Actuals locked</span>
+            {isAdmin && <button type="button" onClick={() => setReopenPrompt(true)} className="font-semibold text-indigo-600 hover:text-indigo-800 underline underline-offset-2">Reopen for editing</button>}
+          </div>
+        )}
+        {lock.reopened && (
+          <div className="mt-2.5 flex items-center gap-2 flex-wrap text-xs">
+            <span className="inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+              🔓 Reopened by {lock.reopenedBy} until {new Date(lock.reopenUntil).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}
+            </span>
+            {isAdmin && <button type="button" onClick={doRelockActuals} className="font-semibold text-gray-600 hover:text-gray-900 underline underline-offset-2">Lock again</button>}
+          </div>
+        )}
 
         <div className="mt-3 pt-3 border-t border-gray-100">
           <SitePdfButton sel={sel} settings={settings} inventory={inventory} blocks={blocks} trussInv={trussInv}
@@ -71,10 +104,20 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
       </div>
 
       {section === "receiving" ? (
-        <SiteReceivingPanel sel={sel} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} authUser={authUser} mode={mode} />
+        <SiteReceivingPanel sel={sel} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} authUser={authUser} mode={mode} settings={settings} />
       ) : (
         <SiteCrewPanel sel={sel} setEventOrders={setEventOrders} settings={settings} inventory={inventory} authUser={authUser} catToDept={catToDept} mode={mode} />
       )}
+
+      <Modal open={reopenPrompt} onClose={() => { setReopenPrompt(false); setReopenReason(""); }} title="Reopen actuals for editing">
+        <p className="text-sm text-gray-600 mb-3">Opens receiving and on-site crew for this event back up for 24 hours. Say why — this is logged.</p>
+        <textarea value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} autoFocus rows={3} placeholder="e.g. a truck's receiving got confirmed before everything was actually checked"
+          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={() => { setReopenPrompt(false); setReopenReason(""); }} className="px-4 py-2 text-sm rounded-lg font-medium text-gray-700 bg-gray-100 hover:bg-gray-200">Cancel</button>
+          <button onClick={doReopenActuals} disabled={!reopenReason.trim()} className="px-4 py-2 text-sm rounded-lg font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50">Reopen</button>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -176,6 +176,10 @@ export const DATE_PRICING_OWNER_ID = "U84ED1E8439";
 export const SETTINGS_DEFAULTS = {
   bufferPct: 5,
   minProfitPct: 30,
+  // Grace window (hours) after a booking's last scheduled day before its on-site actuals
+  // (Dept Ops expenses/mandi/crew, the Site tab's receiving + crew) lock for editing — see
+  // lib/ims/actualsLock.js. Admin → Settings → Site Supervisors.
+  actualsLockGraceHours: 12,
   datePricing: {
     categories: {
       heavy_saya: { label: "👑 King's", multiplier: 1.4, color: "red" },

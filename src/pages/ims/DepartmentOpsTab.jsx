@@ -6,7 +6,7 @@ import { mpDayWise, mpBaseDay, mpDayCost, mpDayDihari, aggregateEventManpower, i
 import { buildDeptCrew, orderWinIds as orderWinIdsShared, flowerTraceForFn as flowerTraceForFnShared, setMpPatch, addMpPatch, removeMpPatch, actualCrewPatch, resetLinePatch, mpDayPatch, resetMpDayPatch, shiftCountPatch, addDihariPatch, removeDihariPatch, eventLabourInfo, eventLabourTotalDeptOps } from "../../lib/ims/deptCrew";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel } from "../../lib/ims/deptClassify";
-import { TabsMenu, useConfirm } from "../../components/ui";
+import { TabsMenu, useConfirm, Modal } from "../../components/ui";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
@@ -36,6 +36,8 @@ import { makeEventPlans } from "../../lib/ims/eventPlans";
 import { buildDeptBookHtml, buildFinish } from "../../lib/ims/deptBookHtml";
 import { renderDeptBook, loadPdfLibs, loadPdfLogosOnce, isStaleChunk, reloadForUpdate } from "../../lib/ims/deptBookPdf";
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
+import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
+import { logWrite } from "../../lib/studio/userActions";
 
 import { kvGet } from "../../lib/ims/kv";
 
@@ -879,6 +881,25 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   }, [focusEventId, focusSearch, focusLeadEntry, eventOrders, onFocusHandled]);
 
   const sel = (eventOrders || []).find(e => e.id === selId);
+  // ── Post-event actuals lock (lib/ims/actualsLock.js) ── `lockNow` ticks every 60s so the banner
+  // and the write guards in saveDept/setEventLabourTotal flip live, without anyone needing to
+  // refresh right as a booking crosses its lock time.
+  const [lockNow, setLockNow] = useState(() => Date.now());
+  useEffect(() => { const id = setInterval(() => setLockNow(Date.now()), 60000); return () => clearInterval(id); }, []);
+  const lock = actualsLockState(sel, settings, lockNow);
+  const [reopenPrompt, setReopenPrompt] = useState(false); // admin's "Reopen for editing" reason dialog
+  const [reopenReason, setReopenReason] = useState("");
+  const doReopenActuals = () => {
+    if (!sel) return;
+    setEventOrders(prev => prev.map(e => e.id === sel.id ? { ...e, actualsLock: reopenActualsPatch(e, authUser, reopenReason) } : e));
+    logWrite(authUser, "actuals.reopen", { targetType: "event_order", targetId: sel.id, targetName: sel.clientName, ok: true, detail: { reason: reopenReason } });
+    setReopenPrompt(false); setReopenReason("");
+  };
+  const doRelockActuals = () => {
+    if (!sel) return;
+    setEventOrders(prev => prev.map(e => e.id === sel.id ? { ...e, actualsLock: relockActualsPatch(e, authUser) } : e));
+    logWrite(authUser, "actuals.relock", { targetType: "event_order", targetId: sel.id, targetName: sel.clientName, ok: true });
+  };
   // A PDF open for one event must not carry over when the picker moves to another.
   useEffect(() => { setDeckView(null); }, [selId]);
   useEffect(() => { setMpFn("all"); setMpHowType(null); setInvFn("all"); }, [selId]);
@@ -1046,6 +1067,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     if (!sel) return;
     setEventOrders(prev => prev.map(e => {
       if (e.id !== sel.id) return e;
+      // Checked against the freshest row (`e`), not the render-time `sel`/`lock` — a realtime
+      // reopen landing between render and this write must be honoured immediately, and a lock
+      // that just kicked in must block a write already in flight from before the UI caught up.
+      if (patchTouchesActuals(patch) && actualsLockState(e, settings, Date.now()).locked) return e;
       const ops = { ...(e.deptOps || {}) };
       ops[dept] = { ...(ops[dept] || {}), ...patch, updatedAt: Date.now(), updatedBy: authUser?.name || "—" };
       return { ...e, deptOps: ops };
@@ -1375,6 +1400,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     // silently reverted by writing a `deptOps` map built from stale data.
     setEventOrders(prev => prev.map(e => {
       if (e.id !== sel.id) return e;
+      if (actualsLockState(e, settings, Date.now()).locked) return e;
       const ops = eventLabourTotalDeptOps(e, val, authUser?.name);
       return ops ? { ...e, deptOps: ops } : e;
     }));
@@ -2802,7 +2828,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                       </span>
                     ); })}
                     <button onClick={() => addDihari(r, d.date, ids)} className="text-[12.5px] font-semibold text-blue-600 hover:bg-blue-50 rounded-md px-1.5 py-0.5" title="Add another dihari (shift) this day">+ dihari</button>
-                    {dayHasEdits(r.type, d.date) && <button onClick={() => resetMpDay(r.type, d.date)} disabled={!canManpower} className="text-[12.5px] font-semibold text-amber-600 hover:bg-amber-50 rounded-md px-1.5 py-0.5 disabled:opacity-50" title="Undo this day's hand edits (shifts, per-shift crew, day crew) and go back to the system plan">↺ reset</button>}
+                    {dayHasEdits(r.type, d.date) && <button onClick={() => resetMpDay(r.type, d.date)} disabled={!canManpower || lock.locked} className="text-[12.5px] font-semibold text-amber-600 hover:bg-amber-50 rounded-md px-1.5 py-0.5 disabled:opacity-50" title={lock.locked ? "Actuals are locked for this event" : "Undo this day's hand edits (shifts, per-shift crew, day crew) and go back to the system plan"}>↺ reset</button>}
                   </span>
                 )}
                 {hasWin && !editable && (
@@ -2813,9 +2839,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                 <span className="ml-auto shrink-0 flex items-center gap-1.5 text-[13px] text-gray-500">
                   {shareHint && <span className="text-[12px] text-gray-400" title="This day's exact fractional crew share, before rounding for display — the total is summed from this, not from the rounded number.">{shareHint} share ·</span>}
                   {editable
-                    ? <input type="number" min="0" value={showDay(r, d)} onChange={e => setMpDay(r.type, d.date, e.target.value)} disabled={!canManpower}
-                        title={canManpower ? "Crew this day" : "Requires \"Manage Manpower\""}
-                        className={"w-12 rounded-md ring-1 px-1 py-0.5 text-[14px] font-semibold text-center text-gray-900 " + (ov ? "ring-amber-400 bg-amber-50" : "ring-gray-200 bg-white") + (canManpower ? "" : " opacity-50 cursor-not-allowed")} />
+                    ? <input type="number" min="0" value={showDay(r, d)} onChange={e => setMpDay(r.type, d.date, e.target.value)} disabled={!canManpower || lock.locked}
+                        title={lock.locked ? "Actuals are locked for this event" : canManpower ? "Crew this day" : "Requires \"Manage Manpower\""}
+                        className={"w-12 rounded-md ring-1 px-1 py-0.5 text-[14px] font-semibold text-center text-gray-900 " + (ov ? "ring-amber-400 bg-amber-50" : "ring-gray-200 bg-white") + ((canManpower && !lock.locked) ? "" : " opacity-50 cursor-not-allowed")} />
                     : <b className="text-[14px] text-gray-900">{d.count}</b>}
                   {winOverridden
                     ? <span className="whitespace-nowrap" title="Per-shift crew counts differ this day, so the total is the sum of each shift's own count, not crew × shifts.">= <b className="text-gray-800">{Math.round(dayDihariReal)}</b> dihari</span>
@@ -3670,6 +3696,32 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                         <span className={"font-bold px-1.5 py-0.5 rounded text-[11px] " + (sel.dealValue.pending > 0 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700")}>
                           {sel.dealValue.pending > 0 ? "+" : ""}₹{Number(sel.dealValue.pending).toLocaleString("en-IN")} pending (not yet applied in Studio)
                         </span>
+                      )}
+                    </div>
+                  )}
+                  {/* ── Actuals lock banner (lib/ims/actualsLock.js) ──
+                      Locked once this booking's last scheduled day (its last function, or its
+                      dismantle crew's own day, whichever is later) passed the grace window set in
+                      Admin → Settings → Site Supervisors. Shown in the event header, not inside any
+                      one panel, since it governs the expenses/mandi/crew cards AND the on-site crew
+                      panel at once. */}
+                  {lock.locked && (
+                    <div className="mt-1.5 flex items-center gap-2 flex-wrap text-xs">
+                      <span className="inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-full bg-gray-800 text-white">
+                        🔒 Actuals locked{lock.autoLockAt ? ` since ${new Date(lock.autoLockAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}` : ""}
+                      </span>
+                      {isAdmin && (
+                        <button type="button" onClick={() => setReopenPrompt(true)} className="font-semibold text-indigo-600 hover:text-indigo-800 underline underline-offset-2">Reopen for editing</button>
+                      )}
+                    </div>
+                  )}
+                  {lock.reopened && (
+                    <div className="mt-1.5 flex items-center gap-2 flex-wrap text-xs">
+                      <span className="inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                        🔓 Reopened by {lock.reopenedBy} until {new Date(lock.reopenUntil).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}
+                      </span>
+                      {isAdmin && (
+                        <button type="button" onClick={doRelockActuals} className="font-semibold text-gray-600 hover:text-gray-900 underline underline-offset-2">Lock again</button>
                       )}
                     </div>
                   )}
@@ -4545,6 +4597,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
               {mpWholeOnly > 0 && (
                 <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-gray-50 text-[11px] text-gray-500">{mpWholeOnly} crew line{mpWholeOnly === 1 ? " is" : "s are"} booked for the whole event, not by day — see All functions.</div>
               )}
+              <fieldset disabled={lock.locked} className="contents">
               <div className="p-2.5 space-y-2">
                 {mpShown.map((r) => {
                   const i = r._i;
@@ -4653,6 +4706,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                   <span aria-hidden="true" className="text-base leading-none">+</span> Add crew type
                 </button>
               </div>
+              </fieldset>
             </div>
 
             {/* Actuals → exact cost */}
@@ -4687,6 +4741,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                   <div className="text-[10px] text-gray-400">{hasActuals ? "logged" : "nothing yet"}</div>
                 </div>
               </div>
+              <fieldset disabled={lock.locked} className="contents">
               <div className="px-3 sm:px-4 py-3 space-y-2">
                 {dept === "Floral" && (() => {
                   // Real-only — the table below lists real mandi flowers alone (artificial is its own
@@ -4924,6 +4979,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                   <span aria-hidden="true" className="text-sm leading-none">+</span> Add on-site expense
                 </button>
               </div>
+              </fieldset>
             </div>
 
             {/* Loading / dispatch — cross-check inventory + essentials while loading the truck.
@@ -6005,6 +6061,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                       <div className={"text-[10px] font-semibold " + (mpEdited ? "text-amber-600" : "text-gray-400")}>{mpEdited ? "actual held" : "as planned"}</div>
                     </div>
                   </div>                </div>
+                <fieldset disabled={lock.locked} className="contents">
                 <div>
                   {mpRows.map((r, i) => {
                     if (r.type === "Supervisors") return null; // ops IS the supervisor — no separate line for him
@@ -6125,6 +6182,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                     );
                   })}
                 </div>
+                </fieldset>
                 {/* Planned against actual as two figures side by side, the difference as a tag
                     under the actual — not one sentence each at the two ends of a line. */}
                 <div className="px-3 sm:px-4 py-3 bg-gray-50 grid grid-cols-2 gap-3">
@@ -6264,6 +6322,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       )}
       {confirmDialog}
       {dcModalOpen && sel && <DeptIncomeModal eo={sel} depts={bookDepts} startDept={dept} onClose={() => setDcModalOpen(false)} />}
+      <Modal open={reopenPrompt} onClose={() => { setReopenPrompt(false); setReopenReason(""); }} title="Reopen actuals for editing">
+        <p className="text-sm text-gray-600 mb-3">Opens expenses, mandi spend and on-site crew for this event back up for 24 hours. Say why — this is logged.</p>
+        <textarea value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} autoFocus rows={3} placeholder="e.g. driver bata entered twice, correcting it"
+          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={() => { setReopenPrompt(false); setReopenReason(""); }} className="px-4 py-2 text-sm rounded-lg font-medium text-gray-700 bg-gray-100 hover:bg-gray-200">Cancel</button>
+          <button onClick={doReopenActuals} disabled={!reopenReason.trim()} className="px-4 py-2 text-sm rounded-lg font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50">Reopen</button>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks, TRUCK_STATUS_LABEL } from "../../lib/ims/eventTrucks";
 import { FLAG_REASONS, receivingOf, lineReceipt, truckReceiptStatus, confirmTruckPatch, setItemReceiptPatch, clearItemReceiptPatch } from "../../lib/ims/receiving";
 import { thumbUrl } from "../../lib/studio/thumb.js";
+import { actualsLockState } from "../../lib/ims/actualsLock";
 
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 
@@ -16,23 +17,35 @@ const STATUS_TEXT = { pending: "Not arrived", confirmed: "Confirmed OK", issue: 
 // site supervisor cares "what's on this truck", not "which truck has item X" (that was the old
 // per-department Receiving panel's question). Planned mode is read-only; Actual mode lets the
 // supervisor confirm a whole truck in one tap, or flag one line with a reason + note.
-export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eventOrders, authUser, mode }) {
+export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eventOrders, authUser, mode, settings }) {
   const [openId, setOpenId] = useState(null);
   const [flaggingKey, setFlaggingKey] = useState(null); // `${truckId}|${dept}|${key}` currently showing its issue panel
 
   const manifest = truckManifest(sel, inventory);
   const transfers = incomingTransfersFor(eventOrders, sel?.id);
   const receiving = receivingOf(sel);
+  // Post-event actuals lock (lib/ims/actualsLock.js) — every write this panel makes is a receiving
+  // actual, so once locked the whole panel is read-only.
+  const lock = actualsLockState(sel, settings);
 
   // Build each patch from the freshest row INSIDE the updater (`e`, not the render-time `sel`) —
   // two supervisors (or a supervisor and a dept head's unrelated write) landing close together
-  // must not let the later write silently revert the earlier one.
-  const write = (build) => setEventOrders((prev) => prev.map((e) => (e.id === sel.id ? { ...e, receiving: build(e) } : e)));
+  // must not let the later write silently revert the earlier one. Also re-checks the lock against
+  // that same freshest row, so a realtime reopen/lock landing between render and this click is
+  // honoured immediately rather than the render-time `lock` above.
+  const write = (build) => setEventOrders((prev) => prev.map((e) => {
+    if (e.id !== sel.id) return e;
+    if (actualsLockState(e, settings).locked) return e;
+    return { ...e, receiving: build(e) };
+  }));
   const confirmTruck = (truckId) => write((e) => confirmTruckPatch(e, truckId, authUser?.name));
   const setLine = (truckId, dept, key, patch) => write((e) => setItemReceiptPatch(e, truckId, dept, key, patch, authUser?.name));
   const clearLine = (truckId, dept, key) => write((e) => clearItemReceiptPatch(e, truckId, dept, key, authUser?.name));
 
   const flagKeyOf = (truckId, ln) => `${truckId}|${ln.dept}|${ln.key}`;
+  // Only gates WRITE controls (confirm/flag/edit) — view-only things (opening a truck, reading a
+  // flag's reason) stay usable on a locked event, same as Planned mode already is.
+  const canEdit = mode === "actual" && !lock.locked;
 
   if (manifest.length === 0 && transfers.length === 0) {
     return (
@@ -46,6 +59,11 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
 
   return (
     <div className="space-y-3">
+      {lock.locked && (
+        <div className="rounded-xl bg-gray-800 text-white px-4 py-2.5 text-xs font-semibold flex items-center gap-2">
+          🔒 Actuals locked for this event — an admin can reopen it above to make changes.
+        </div>
+      )}
       {manifest.map(({ truck, lines }) => {
         const status = truckReceiptStatus(lines, receiving.trucks[truck.id]);
         const open = openId === truck.id || (openId == null && manifest.length === 1);
@@ -66,7 +84,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
             </button>
             {open && (
               <div className="border-t border-gray-100">
-                {mode === "actual" && lines.length > 0 && (
+                {canEdit && lines.length > 0 && (
                   <div className="flex gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-100">
                     <button onClick={() => confirmTruck(truck.id)} className="flex-1 h-9 rounded-lg bg-emerald-50 text-emerald-700 text-[12.5px] font-semibold hover:bg-emerald-100">✓ Arrived as planned</button>
                     <button onClick={() => { setOpenId(truck.id); setFlaggingKey(flagKeyOf(truck.id, lines[0])); }} className="flex-1 h-9 rounded-lg bg-white ring-1 ring-gray-200 text-gray-600 text-[12.5px] font-semibold hover:bg-red-50 hover:text-red-700">⚠ Something's wrong</button>
@@ -77,7 +95,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                   const got = r.got != null ? r.got : (ln.planned + ln.extra);
                   const short = mode === "actual" && Number(got) < ln.planned + ln.extra;
                   const fk = flagKeyOf(truck.id, ln);
-                  const showIssue = flaggingKey === fk || !!r.flag;
+                  const showIssue = canEdit && (flaggingKey === fk || !!r.flag);
                   return (
                     <div key={ln.dept + "|" + ln.key} className="px-4 py-2.5 border-b border-gray-100 last:border-b-0">
                       <div className="flex items-center gap-2.5">
@@ -88,7 +106,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                         </div>
                         {mode === "plan" ? (
                           <div className="text-[12.5px] font-bold text-gray-800 tabular-nums">{ln.planned}{ln.extra ? ` +${ln.extra}` : ""} pcs</div>
-                        ) : (
+                        ) : canEdit ? (
                           <div className="flex items-center gap-2 shrink-0">
                             <input type="number" min="0" value={got} onChange={(e) => { const v = e.target.value; setLine(truck.id, ln.dept, ln.key, { got: v === "" ? null : v, flag: r.flag, note: r.note }); }}
                               className={"w-14 h-8 rounded-lg text-center text-[12.5px] font-bold tabular-nums ring-1 focus:outline-none focus:ring-2 " + (short || r.flag ? "bg-red-50 ring-red-200 text-red-700" : "bg-gray-50 ring-gray-200 text-gray-800")} />
@@ -97,9 +115,15 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                               {r.flag ? "⚑ Flagged" : "⚑ Flag"}
                             </button>
                           </div>
+                        ) : (
+                          // Locked: the final actual, read-only — not the planned figure, the real one.
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div className={"text-[12.5px] font-bold tabular-nums " + (short || r.flag ? "text-red-700" : "text-gray-800")}>{got}</div>
+                            {r.flag && <span className="text-[10px] font-semibold text-red-700 bg-red-50 rounded px-1.5 py-0.5">⚑ {FLAG_REASONS.find((f) => f.key === r.flag)?.label || "Flagged"}</span>}
+                          </div>
                         )}
                       </div>
-                      {mode === "actual" && showIssue && (
+                      {showIssue && (
                         <div className="mt-2 ml-[42px] bg-red-50 rounded-lg p-2.5">
                           <div className="flex gap-1.5 flex-wrap mb-2">
                             {FLAG_REASONS.map((fr) => (
@@ -115,6 +139,9 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                             <button onClick={() => { clearLine(truck.id, ln.dept, ln.key); setFlaggingKey(null); }} className="mt-1.5 text-[10.5px] font-semibold text-gray-400 hover:text-gray-700">Clear this flag</button>
                           )}
                         </div>
+                      )}
+                      {!canEdit && mode === "actual" && !!r.flag && r.note && (
+                        <div className="mt-1.5 ml-[42px] text-[11px] text-gray-500 italic">"{r.note}"</div>
                       )}
                     </div>
                   );
