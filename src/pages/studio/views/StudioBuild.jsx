@@ -2396,10 +2396,11 @@ export default function StudioBuild({ ctx }) {
     // No cap. This used to stop at 50, which silently hid the rest of a zone's tagged photos: the
     // pager read "1–4 of 50" no matter how many the zone actually had. The strip is paginated four
     // at a time and only the visible page renders <img>, so the cost of a longer list is the array
-    // itself, not the images. The DB query behind it bounds the pool at 5000, newest-tagged first
-    // (fetchZoneLibraryPhotos) — a popular zone (Entry & Passage alone is past 1100) WILL reach
-    // even that eventually, so order matters: a photo that falls off the cap is always the oldest
-    // tagged, never an arbitrary one, which is what silently dropped a freshly-tagged photo here.
+    // itself, not the images. The DB query behind it (fetchZoneLibraryPhotos) pages through the
+    // WHOLE matching set via .range() — PostgREST enforces its own 1000-row max per request
+    // regardless of any client .limit(), so a single unpaged query silently dropped photos once a
+    // zone passed 1000 (Entry & Passage alone is past 1100), which is exactly what excluded a
+    // correctly-tagged, newly-verified photo here with zero indication why.
     if (areaNames.length) {
       // Async zone match (getLibPhotosForZone) — read from the cache populated by the effect above
       // (empty array until it resolves, same render cost as before once warm).

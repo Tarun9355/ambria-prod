@@ -318,23 +318,34 @@ export async function fetchLibraryItemsByUrls(urls) {
 /** Photos zone-tagged with any of `zoneList` (areasElements overlap) — the candidate pool
  * for getLibPhotosForZone's scoring, instead of scanning the whole in-memory library.
  *
- * ORDERED + capped well above any zone's current size (confirmed: "Entry & Passage" alone is
- * already at 1106). A popular zone's tagged pool WILL eventually pass any fixed cap again, so the
- * order matters as much as the number: newest-tagged first means a cap that's hit again drops the
- * OLDEST photos, not an arbitrary (effectively random, Postgres-plan-dependent) slice that could
- * just as easily exclude something tagged five minutes ago — which is exactly what silently
- * dropped a correctly-tagged, newly-verified photo here (no ORDER BY + a tied 1000 cap on a
- * 1106-photo pool). */
+ * PAGED via .range(), same pattern as fetchAll (lib/supabase.js) and fetchAllLibraryRowsMinimal
+ * below. A single .limit(), however high, is NOT a real fix here: PostgREST enforces its own
+ * db-max-rows (1000 on this project) on top of any client-requested limit, so `.limit(5000)` was
+ * silently truncated right back down to 1000 regardless — confirmed: "Entry & Passage" alone is
+ * already at 1106 tagged photos, so that first attempt still dropped ~106 of them with zero
+ * indication why. Ordered by tagged_at desc then id desc (a tiebreaker is required for .range()
+ * paging to be gap-free/duplicate-free across requests — ties or NULLs on the primary sort key
+ * alone can otherwise skip or repeat rows at a page boundary) so, if a future zone ever grows large
+ * enough that this genuinely matters for performance, whatever gets deprioritized is still the
+ * oldest-tagged, never an arbitrary slice. */
 export async function fetchZoneLibraryPhotos(zoneList) {
   const zones = (zoneList || []).filter(Boolean);
   if (!zones.length) return [];
-  const { data, error } = await supabase.from("library")
-    .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,ai_confidence:data->>_aiConfidence")
-    .or(zones.map((z) => `tags->areasElements.cs.${pgArrayLit(z)}`).join(","))
-    .order("tagged_at", { ascending: false, nullsFirst: false })
-    .limit(5000);
-  if (error) throw error;
-  return (data || []).map(rowToLibItem);
+  const filter = zones.map((z) => `tags->areasElements.cs.${pgArrayLit(z)}`).join(",");
+  const PAGE = 1000;
+  const out = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from("library")
+      .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,ai_confidence:data->>_aiConfidence")
+      .or(filter)
+      .order("tagged_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+  }
+  return out.map(rowToLibItem);
 }
 
 /** Photos privately tagged to ONE specific custom-zone instance (tags.customZoneIds contains the
@@ -345,13 +356,21 @@ export async function fetchZoneLibraryPhotos(zoneList) {
  * caller signals "this id", not "this literal areasElements string". */
 export async function fetchCustomZoneLibraryPhotos(zoneId) {
   if (!zoneId) return [];
-  const { data, error } = await supabase.from("library")
-    .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,ai_confidence:data->>_aiConfidence")
-    .or(`tags->customZoneIds.cs.${pgArrayLit(zoneId)}`)
-    .order("tagged_at", { ascending: false, nullsFirst: false })
-    .limit(5000);
-  if (error) throw error;
-  return (data || []).map(rowToLibItem);
+  const filter = `tags->customZoneIds.cs.${pgArrayLit(zoneId)}`;
+  const PAGE = 1000;
+  const out = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from("library")
+      .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,ai_confidence:data->>_aiConfidence")
+      .or(filter)
+      .order("tagged_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+  }
+  return out.map(rowToLibItem);
 }
 
 /** Bounded pool of recently-tagged photos, used as last-resort zone-overflow filler
