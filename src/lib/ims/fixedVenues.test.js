@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { availableAtVenue, reservedByVenueToday, venueSlackFor, combineAvailability, standingQty, standingDiscQty, rentalSplit, venueWithParent } from "./fixedVenues";
+import { availableAtVenue, reservedByVenueToday, venueSlackFor, combineAvailability, standingQty, standingDiscQty, rentalSplit, venueWithParent, normalizedTrussCounts, standingPillarCount } from "./fixedVenues";
 
 // Confirmed live bug this covers: an item with 300 total stock, 200 of it configured as standing
 // allocation across two Fixed Venues (Pushpanjali 150, Exotica 50), leaving a 100-unit outdoor pool.
@@ -170,5 +170,39 @@ describe("venueWithParent — a sub-venue is shown with its property", () => {
   });
   it("reads the map when it is stored as a JSON string", () => {
     expect(venueWithParent({ venueParents: JSON.stringify(s.venueParents) }, "Poolside")).toBe("Valencia › Poolside");
+  });
+});
+
+// A fixed venue's standing pillars/beams are tracked per truss material (Iron/Pole/Aluminium) now,
+// but every venue configured before this split existed still has the OLD flat shape ({size: qty})
+// saved — normalizedTrussCounts must read that as entirely Iron, never drop it.
+describe("normalizedTrussCounts — reads both the legacy flat shape and the new material-split shape", () => {
+  it("a legacy flat {size: qty} bucket is attributed entirely to Iron", () => {
+    expect(normalizedTrussCounts({ "15": 29, "12": 14 })).toEqual({
+      iron: { "15": 29, "12": 14 }, pole: {}, aluminium: {},
+    });
+  });
+  it("an already material-split bucket is read as-is, missing materials defaulting to empty", () => {
+    expect(normalizedTrussCounts({ iron: { "15": 10 }, pole: { "12": 5 } })).toEqual({
+      iron: { "15": 10 }, pole: { "12": 5 }, aluminium: {},
+    });
+  });
+  it("empty/missing input reads as every material empty", () => {
+    expect(normalizedTrussCounts(null)).toEqual({ iron: {}, pole: {}, aluminium: {} });
+    expect(normalizedTrussCounts({})).toEqual({ iron: {}, pole: {}, aluminium: {} });
+  });
+});
+
+describe("standingPillarCount — sums across every material, both legacy and material-split data", () => {
+  it("sums a legacy flat venue's pillar counts (all Iron)", () => {
+    const settings = { fixedVenues: [{ name: "Aura", truss: { pillars: { "15": 29, "12": 14, "10": 0, "8": 0 } } }] };
+    expect(standingPillarCount(settings, "Aura")).toBe(43);
+  });
+  it("sums a material-split venue's pillar counts across Iron + Pole + Aluminium", () => {
+    const settings = { fixedVenues: [{ name: "Aura", truss: { pillars: { iron: { "15": 29, "12": 14 }, pole: { "12": 5 }, aluminium: { "10": 2 } } } }] };
+    expect(standingPillarCount(settings, "Aura")).toBe(50);
+  });
+  it("a venue with no truss config at all has 0 standing pillars", () => {
+    expect(standingPillarCount({ fixedVenues: [{ name: "Aura" }] }, "Aura")).toBe(0);
   });
 });

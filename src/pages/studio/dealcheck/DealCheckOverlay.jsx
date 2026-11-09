@@ -100,7 +100,7 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor, combineAvailability } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial } from "../../../lib/studio/pricing";
+import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial, platformStandingDiscount } from "../../../lib/studio/pricing";
 import { resolveBeamSegment, resolvePillarHeight } from "../../../lib/ims/trussEngine";
 import { platformAvgRatePerSqft } from "../../../lib/ims/platformEngine";
 import { carpetPricingFor, CARPET_OFF, carpetTakesStockPick } from "../../../lib/studio/taxonomy";
@@ -1175,9 +1175,11 @@ export default function DealCheckOverlay({ ctx }) {
           // bucket). One row total, not per material — there's only one blended pool now.
           try {
             const sqftByFn = {};
+            const venueByFn = {};
             let totalSqft = 0;
             fns.forEach((fn, fnIdx) => {
               if (!fn?.zoneConfig || !fn?.enabledEls) return;
+              venueByFn[fnIdx] = fn.fnVenue || "";
               Object.keys(fn.enabledEls).filter(k => fn.enabledEls[k]).forEach(zk => {
                 const zc = fn.zoneConfig[zk]; if (!zc) return;
                 [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty },
@@ -1193,12 +1195,21 @@ export default function DealCheckOverlay({ ctx }) {
               });
             });
             const rate = platformAvgRatePerSqft(dealCheckData?.trussInv);
+            const fvCfgForPlatform = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+            let totalPlatformDiscount = 0;
             Object.entries(sqftByFn).forEach(([fnIdx, sqft]) => {
-              const pc = Math.round(sqft * rate);
+              // Fixed-venue standing platform sqft nets off this function's own platform cost — same
+              // "min(needed, standing) × discount%" rule the Truss tab's own standing pillar/beam
+              // discount uses (zoneTrussStandingDiscountDetail's header comment), pooled per function
+              // since Platform's own internal cost already is (see the comment above).
+              const venueTrussHere = fixedVenueFor(fvCfgForPlatform, venueByFn[fnIdx] || "")?.truss;
+              const discount = platformStandingDiscount(sqft, rate, venueTrussHere);
+              const pc = Math.max(0, Math.round(sqft * rate) - discount);
+              totalPlatformDiscount += discount;
               rental += pc; if (byFn[fnIdx]) byFn[fnIdx].rental += pc; addD("Tenting", "rental", pc);
             });
             if (totalSqft > 0 && deptInv["Tenting"]) {
-              deptInv["Tenting"].push({ name: "Platform", photo: "", qty: Math.round(totalSqft * 100) / 100, unit: Math.round(rate), total: Math.round(totalSqft * rate), sub: "platform structure (blended Wood+Iron rate)" });
+              deptInv["Tenting"].push({ name: "Platform", photo: "", qty: Math.round(totalSqft * 100) / 100, unit: Math.round(rate), total: Math.round(totalSqft * rate) - totalPlatformDiscount, sub: "platform structure (blended Wood+Iron rate)" + (totalPlatformDiscount > 0 ? ` · standing discount −₹${Math.round(totalPlatformDiscount).toLocaleString("en-IN")}` : "") });
             }
           } catch {}
           try {
@@ -3072,6 +3083,13 @@ export default function DealCheckOverlay({ ctx }) {
                           zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR, _fnDateForRepeat, _crossFnAvail) + shortQty * shortRate;
                         });
                         manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? repeatCatFor(fns[fnIdx]?.zoneConfig?.[mi.zoneKey], "elements") : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, q)); });
+                        // NOT net of a fixed-venue's standing-platform discount (platformStandingDiscount,
+                        // pricing.js) — that discount is pooled per FUNCTION (every zone's platform sqft
+                        // shares one standing allowance), so there's no single well-defined "this zone's
+                        // share" to subtract here without an arbitrary allocation rule. The main rollup
+                        // (dcCostRollup's own Platform block, above) IS net of it — this pill can read
+                        // slightly higher than that total at a venue with standing platform sqft configured.
+                        // No venue has one configured yet, so this has zero live impact today.
                         platformEntriesForZone.forEach(({ pi }) => { zoneRentalTotal += pi.cost || 0; });
                         {
                           const zcz = fns[fnIdx]?.zoneConfig?.[zk];
