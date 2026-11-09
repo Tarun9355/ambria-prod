@@ -17,7 +17,7 @@ const MAT_LABEL = { wood: "🪵 Wood", iron: "⛓️ Iron", pole: "🪵 Pole", a
 // Per-domain overrides/simulator stay as their own small dialogs (the underlying math genuinely is
 // three different models — pieces+joints vs. two flat pools — collapsing those into one form would
 // hide more than it'd simplify), opened from the one shared events list instead of three tabs.
-export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platformAlloc, setPlatformAlloc, battaAlloc, setBattaAlloc, trussInv, eventOrders, authUser }) {
+export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platformAlloc, setPlatformAlloc, battaAlloc, setBattaAlloc, trussInv, eventOrders, authUser, canEditPlanning = true }) {
   const today = new Date().toISOString().slice(0, 10);
   const [selectedDate, setSelectedDate] = useState(today);
   const [overrides, setOverrides] = useState({ truss: {}, platform: {}, batta: {} });
@@ -27,7 +27,10 @@ export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platfo
   const [simDialog, setSimDialog] = useState(null); // "truss" | "platform" | "batta"
   const [historyExpanded, setHistoryExpanded] = useState(false);
 
-  const canEdit = isDeptHead(authUser);
+  // Edit Access/per-user override, Admin → Users & Roles → Planning tab, ANDed with the existing
+  // dept-head-only check — this can only narrow who can edit here, never grant more than the
+  // pre-existing isDeptHead(authUser) already did on its own.
+  const canEdit = isDeptHead(authUser) && canEditPlanning;
 
   // Three domains, same shape each — loaded/subscribed identically, just against different tables.
   const DOMAINS = useMemo(() => ([

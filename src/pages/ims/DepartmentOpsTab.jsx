@@ -37,6 +37,7 @@ import { buildDeptBookHtml, buildFinish } from "../../lib/ims/deptBookHtml";
 import { renderDeptBook, loadPdfLibs, loadPdfLogosOnce, isStaleChunk, reloadForUpdate } from "../../lib/ims/deptBookPdf";
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
+import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { logWrite } from "../../lib/studio/userActions";
 
 import { kvGet } from "../../lib/ims/kv";
@@ -570,6 +571,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const [confirm, confirmDialog] = useConfirm();
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
   const canManpower = hasIMSPerm(authUser, "events_manpower");
+  // Edit Access/per-user override, Admin → Users & Roles → Planning tab (Dept Ops is one of its
+  // sub-tabs). Planning only declares "ve" — View + Edit, no separate Delete — so every delete
+  // action here (an expense, a crew slot, a movement, a truck) is gated the same way as any other
+  // edit. Deliberately separate from canManpower above: that one specific permission (events_manpower)
+  // already gates crew-count edits and must keep doing so on its own, not be folded into this.
+  const canEditPlanning = hasTabPerm(authUser, settings, "ims", "planning", "edit");
   // This user's allowed departments — an explicit grant (user.departments, set in Admin -> Users &
   // Roles) if present, else the same role-name inference this screen always used (e.g. "Dept Head
   // - Tenting" -> Tenting). null = unrestricted (sees every department), same as before this
@@ -1063,7 +1070,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // and not derived from anything else on this page.
   const discount = deptData.discount ?? "";
 
-  const saveDept = (patch) => {
+  // Raw write, no Planning-edit gate of its own — exists ONLY so the manpower-specific callers
+  // below (already gated by canManpower/events_manpower, a separate and more specific permission)
+  // don't ALSO require Planning edit, which would double-gate the one thing that already has its
+  // own real check. Every other caller in this file goes through the gated `saveDept` wrapper below.
+  const writeDept = (patch) => {
     if (!sel) return;
     setEventOrders(prev => prev.map(e => {
       if (e.id !== sel.id) return e;
@@ -1076,6 +1087,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       return { ...e, deptOps: ops };
     }));
   };
+  const saveDept = (patch) => { if (!canEditPlanning) return; writeDept(patch); };
 
   // mpDay/mpWin/mpWinCountRaw/mpWinBasis/mpWinCount/effDay/effWinIds/effWin/effShift/lineCost/mpCost
   // all came from `crew` above (buildDeptCrew) — only the day-wise/shift UI helpers and the write
@@ -1084,14 +1096,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const dayWise = mpDayWise;
   const showDay = (r, d) => Math.round(effDay(r, d));
   const dayOv = (r, d) => { const ov = mpDay[r.type]; return !!(ov && ov[d.date] != null && Number(ov[d.date]) !== Math.round(mpBaseDay(r, d))); };
-  const setMpDay = (type, date, val) => { if (!canManpower) return; saveDept(mpDayPatch(crew, type, date, val)); };
+  const setMpDay = (type, date, val) => { if (!canManpower) return; writeDept(mpDayPatch(crew, type, date, val)); };
   const setMpAllDays = (type, schedule, val) => { const m = { ...(mpDay[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = val; }); saveDept({ mpDay: { ...mpDay, [type]: m } }); };
   const toggleWin = (type, date, winId, curIds) => { const next = curIds.includes(winId) ? curIds.filter(x => x !== winId) : [...curIds, winId]; saveDept({ mpWin: { ...mpWin, [type]: { ...(mpWin[type] || {}), [date]: next } } }); };
   // ↺ on a day: drop every hand edit for that crew type on that date — chosen shifts, per-shift
   // counts (and the defaults they were typed over), and the day's crew — so the day goes back to the
   // system plan (Deal Check's schedule plus the setup-shift rule).
   const dayHasEdits = (type, date) => [mpWin, mpWinCountRaw, mpDay].some(m => m[type] && m[type][date] != null);
-  const resetMpDay = (type, date) => { if (!canManpower) return; saveDept(resetMpDayPatch(crew, type, date)); };
+  const resetMpDay = (type, date) => { if (!canManpower) return; writeDept(resetMpDayPatch(crew, type, date)); };
   const setWinAllDays = (type, schedule, ids) => { const m = { ...(mpWin[type] || {}) }; (schedule || []).forEach(d => { m[d.date] = ids; }); saveDept({ mpWin: { ...mpWin, [type]: m } }); };
   // Set the crew for ONE shift on ONE day (per-shift split). Ensures that window is marked worked.
   // A cleared box (val "") drops the head's own count for that shift, so it falls back to the
@@ -1394,7 +1406,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const eventManpower = () => aggregateEventManpower(sel?.manpowerDetail, sel?.deptOps);
   const { eventLabourDihari, anyLabours } = eventLabourInfo(sel);
   const setEventLabourTotal = (val) => {
-    if (!sel) return;
+    if (!sel || !canEditPlanning) return;
     // Recompute from the freshest row inside the updater (`e`, not the render-time `sel`) — a
     // realtime update to any department landing between render and this click must not be
     // silently reverted by writing a `deptOps` map built from stale data.
@@ -1559,7 +1571,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   // ── Reusable essentials / tools template (per department) + per-event loading state ──
   const toolkitAll = (settings?.deptToolkits && typeof settings.deptToolkits === "object") ? settings.deptToolkits : {};
   const deptTools = Array.isArray(toolkitAll[dept]) ? toolkitAll[dept] : [];
-  const saveTools = (next) => setSettings && setSettings(s => ({ ...s, deptToolkits: { ...(s.deptToolkits || {}), [dept]: next } }));
+  const saveTools = (next) => { if (!canEditPlanning) return; setSettings && setSettings(s => ({ ...s, deptToolkits: { ...(s.deptToolkits || {}), [dept]: next } })); };
   const addTool = (name) => { const n = String(name || "").trim(); if (!n || deptTools.some(t => (t.name || "").toLowerCase() === n.toLowerCase())) return; saveTools([...deptTools, { name: n, qty: 1 }]); setNewTool(""); };
   const setTool = (i, key, val) => saveTools(deptTools.map((t, j) => j === i ? { ...t, [key]: val } : t));
   const delTool = async (i) => {
@@ -1664,7 +1676,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
       return { id: t.id, vehicle: t.vehicle || "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } };
     }));
   const saveEventTrucks = (fn) => {
-    if (!sel) return;
+    if (!sel || !canEditPlanning) return;
     const next = fn(eventTruckList);
     setEventOrders(prev => prev.map(e => e.id === sel.id ? { ...e, trucks: next } : e));
   };
@@ -1834,7 +1846,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
     });
     return [...map.values()];
   }, [settings, sel]);
-  const saveFleet = (next) => setSettings && setSettings(s => ({ ...s, fleet: next }));
+  const saveFleet = (next) => { if (!canEditPlanning) return; setSettings && setSettings(s => ({ ...s, fleet: next })); };
   const pickFleet = (f) => saveDept({ dispatch: { vehicle: f.vehicle || "", driver: f.driver || "", phone: f.phone || "" } });
   const addFleet = () => { const v = (newVeh.vehicle || "").trim(); if (!v) return; saveFleet([...fleet, { id: "veh_" + Date.now(), vehicle: v, driver: (newVeh.driver || "").trim(), phone: (newVeh.phone || "").trim() }]); setNewVeh({ vehicle: "", driver: "", phone: "" }); };
   const delFleet = async (id) => {
@@ -1979,7 +1991,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
   const movements = Array.isArray(deptData.movements) ? deptData.movements : [];
   const movedQty = (itemKey, type) => movements.filter(m => m.itemKey === itemKey && (!type || m.type === type)).reduce((s, m) => s + (Number(m.qty) || 0), 0);
   const adjustInventory = (invId, delta) => {
-    if (!invId || !setInventory) return;
+    // Gated on its own, not just through the saveDept({movements:...}) call next to each caller —
+    // addMovement/delMovement call this UNCONDITIONALLY right after saveDept, so a blocked saveDept
+    // (view-only user) would otherwise still silently move real stock in or out.
+    if (!invId || !setInventory || !canEditPlanning) return;
     setInventory(prev => prev.map(r => String(r.id) === String(invId) ? { ...r, qty: Math.max(0, (Number(r.qty) || 0) + delta), qtyOwned: Math.max(0, (Number(r.qtyOwned ?? r.qty) || 0) + delta) } : r));
   };
   const addMovement = (it, type, qty, extra = {}) => {
@@ -3671,12 +3686,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                     <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
                     <select
                       value={sel.siteSupervisorId || ""}
+                      disabled={!canEditPlanning}
+                      title={canEditPlanning ? undefined : "View only — your access to Planning doesn't include editing"}
                       onChange={(e) => {
+                        if (!canEditPlanning) return;
                         const id = e.target.value;
                         const sup = supervisors.find((s) => s.id === id);
                         setEventOrders((prev) => prev.map((ev) => ev.id === sel.id ? { ...ev, siteSupervisorId: id || null, siteSupervisorName: sup?.name || null, siteSupervisorPhone: sup?.phone || null } : ev));
                       }}
-                      className="min-w-0 border border-gray-200 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-700 bg-white cursor-pointer"
+                      className="min-w-0 border border-gray-200 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-700 bg-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <option value="">— unassigned —</option>
                       {supervisors.filter((s) => s.active !== false || s.id === sel.siteSupervisorId).map((s) => (
@@ -3697,6 +3715,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                           {sel.dealValue.pending > 0 ? "+" : ""}₹{Number(sel.dealValue.pending).toLocaleString("en-IN")} pending (not yet applied in Studio)
                         </span>
                       )}
+                    </div>
+                  )}
+                  {/* Edit Access/per-user override — Planning tab, View but not Edit. Separate from
+                      the actuals lock below (that's time-based and locks everyone equally once a
+                      booking's done; this is a standing permission that applies regardless of time). */}
+                  {!canEditPlanning && (
+                    <div className="mt-1.5">
+                      <span className="inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-xs">👁 View only — your access to Planning doesn't include editing</span>
                     </div>
                   )}
                   {/* ── Actuals lock banner (lib/ims/actualsLock.js) ──
@@ -4741,7 +4767,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEv
                   <div className="text-[10px] text-gray-400">{hasActuals ? "logged" : "nothing yet"}</div>
                 </div>
               </div>
-              <fieldset disabled={lock.locked} className="contents">
+              <fieldset disabled={lock.locked || !canEditPlanning} className="contents">
               <div className="px-3 sm:px-4 py-3 space-y-2">
                 {dept === "Floral" && (() => {
                   // Real-only — the table below lists real mandi flowers alone (artificial is its own

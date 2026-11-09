@@ -9,7 +9,7 @@ import { supabase } from "../../lib/supabase";
 // The Last-Minute Booking Override (Filler pricing for any booking within N days, regardless of
 // the date's own category) was removed 2026-10-25 by owner request — a date's price now always
 // comes from its own category, full stop.
-export default function DatePricingPanel({ settings, mergeDatePricing, authUser }) {
+export default function DatePricingPanel({ settings, mergeDatePricing, authUser, canEdit = true }) {
   const dp = settings.datePricing || SETTINGS_DEFAULTS.datePricing;
   const cats = dp.categories || {};
   const marked = dp.markedDates || {};
@@ -21,6 +21,7 @@ export default function DatePricingPanel({ settings, mergeDatePricing, authUser 
   // value, which is only as fresh as this tab's own copy. See IMS.jsx's mergeDatePricing comment:
   // confirmed live, this is exactly what kept silently reverting an admin's own multiplier edit.
   function setMultiplier(catKey, val) {
+    if (!canEdit) return;
     const nextCats = { ...dp.categories, [catKey]: { ...dp.categories[catKey], multiplier: parseFloat(val) || 1 } };
     mergeDatePricing({ categories: nextCats });
   }
@@ -115,8 +116,9 @@ export default function DatePricingPanel({ settings, mergeDatePricing, authUser 
               <div className="flex items-center gap-2 flex-shrink-0">
                 <span className="text-xs text-gray-500">Multiplier:</span>
                 <input type="number" step="0.05" min="0.1" max="3" value={cat.multiplier}
-                  onChange={(e) => setMultiplier(key, e.target.value)}
-                  className="w-20 border rounded-lg px-2 py-1.5 text-sm font-bold text-center" />
+                  onChange={(e) => setMultiplier(key, e.target.value)} disabled={!canEdit}
+                  title={canEdit ? undefined : "View only — your access to Calendar doesn't include editing"}
+                  className="w-20 border rounded-lg px-2 py-1.5 text-sm font-bold text-center disabled:opacity-50 disabled:cursor-not-allowed" />
                 <span className="text-xs text-gray-400">× base</span>
                 <span className={"text-xs px-2 py-1 rounded-lg font-semibold border " + (PRICING_CAT_STYLES[key] || "")}>
                   e.g. ₹2000 → ₹{Math.round(2000 * cat.multiplier).toLocaleString("en-IN")}

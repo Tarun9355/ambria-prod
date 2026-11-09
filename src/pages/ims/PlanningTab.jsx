@@ -4,6 +4,7 @@ import PaintPlanningTab from "./PaintPlanningTab.jsx";
 import AdminSettingsTab from "./AdminSettingsTab.jsx";
 import StructurePlanningTab from "./StructurePlanningTab.jsx";
 import DepartmentOpsTab from "./DepartmentOpsTab.jsx";
+import { hasTabPerm } from "../../lib/ims/tabAccess";
 
 // Faithful to the reference PlanningTab wrapper (sub-tabs: Truss / Paint / Truss&Batta /
 // Fabric Stock). Manpower and Boxes & Challans were decommissioned — no longer needed.
@@ -41,6 +42,12 @@ export default function PlanningTab({ projects, functions, setFunctions, invento
   // to be separate blocks, with the department one dragged up by a hand-tuned negative margin
   // that never quite matched and left it sitting a few pixels low.
   const [pickerSlot, setPickerSlot] = useState(null);
+  // Edit Access/per-user override, Admin → Users & Roles — computed once here and passed down, so
+  // every Planning sub-tab (including the Truss/Platform/Batta, Truss & Batta Config, Platform
+  // Config, Fabric Stock and Truck screens, none of which had any edit gate before this) reads the
+  // same answer. Dept Ops computes its own copy internally instead (it already has its own
+  // authUser/settings and its own, more specific events_manpower gate to reconcile this against).
+  const canEditPlanning = hasTabPerm(authUser, settings, "ims", "planning", "edit");
   return (
     // `relative isolate` so the glow layer's -z-10 stays inside this page's own stacking context:
     // it paints behind the Planning content only, never over the nav rail or the header.
@@ -61,12 +68,12 @@ export default function PlanningTab({ projects, functions, setFunctions, invento
         <div ref={setPickerSlot} className="sm:hidden shrink-0 empty:hidden" />
       </div>
       {sub === "deptops" && <DepartmentOpsTab pickerSlot={pickerSlot} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} setInventory={setInventory} blocks={blocks} settings={settings} setSettings={setSettings} trussInv={trussInv} setTrussInv={setTrussInv} authUser={authUser} amendRequests={amendRequests} focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={onFocusHandled} onGoToCalendar={onGoToCalendar} autoPdfFor={autoPdfFor} onAutoPdfDone={onAutoPdfDone} supervisors={supervisors} rateCardCategories={rateCardCategories} />}
-      {sub === "structure" && <StructurePlanningTab trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} platformAlloc={platformAlloc} setPlatformAlloc={setPlatformAlloc} battaAlloc={battaAlloc} setBattaAlloc={setBattaAlloc} trussInv={trussInv} eventOrders={eventOrders} authUser={authUser} />}
+      {sub === "structure" && <StructurePlanningTab trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} platformAlloc={platformAlloc} setPlatformAlloc={setPlatformAlloc} battaAlloc={battaAlloc} setBattaAlloc={setBattaAlloc} trussInv={trussInv} eventOrders={eventOrders} authUser={authUser} canEditPlanning={canEditPlanning} />}
       {sub === "paint" && <PaintPlanningTab projects={projects} functions={functions} inventory={inventory} settings={settings} />}
-      {sub === "trussbatta" && <AdminSettingsTab mode="trussbatta" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}
-      {sub === "platformconfig" && <AdminSettingsTab mode="platformconfig" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}
-      {sub === "fabricstock" && <AdminSettingsTab mode="fabricstock" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} />}
-      {sub === "truck" && <AdminSettingsTab mode="truck" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} rateCardCategories={rateCardCategories} rcItems={rcItems} rcCats={rcCats} inventory={inventory} />}
+      {sub === "trussbatta" && <AdminSettingsTab mode="trussbatta" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} canEdit={canEditPlanning} />}
+      {sub === "platformconfig" && <AdminSettingsTab mode="platformconfig" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} canEdit={canEditPlanning} />}
+      {sub === "fabricstock" && <AdminSettingsTab mode="fabricstock" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} canEdit={canEditPlanning} />}
+      {sub === "truck" && <AdminSettingsTab mode="truck" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} rateCardCategories={rateCardCategories} rcItems={rcItems} rcCats={rcCats} inventory={inventory} canEdit={canEditPlanning} />}
     </div>
   );
 }

@@ -29,6 +29,7 @@ import StudioBrowse from "./views/StudioBrowse.jsx";
 import StudioBuild from "./views/StudioBuild.jsx";
 import StudioSummary from "./views/StudioSummary.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
+import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
 import { availableAtVenue, lockedAtFixedVenues, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
@@ -2748,6 +2749,35 @@ export default function StudioApp() {
   const canManageAny = isAdmin || hasStudioTab("library") || hasStudioTab("settings");
   useEffect(() => { if (mode === "manage" && !canManageAny) setMode("studio"); }, [mode, canManageAny]);
 
+  // Edit Access/per-user override, Admin → Users & Roles → the Edit/Delete half of tabAccess.js's
+  // per-tab model (design/library/settings) — separate from hasStudioTab/studioSub above, which
+  // only ever answer "is this tab/sub-tab VISIBLE", never "can I change anything in it".
+  // Deliberately reads the RAW `user` from useAuth(), not the reshaped `authUser` above: authUser
+  // is trimmed to {id,name,role,perms} and never carries tabOverride/tab_override, so hasTabPerm's
+  // per-user override would silently never apply if called with it. `settings` here is a tiny
+  // shim — tabAccess.js only ever reads `settings.roleTabs`, and Studio's own equivalent of that
+  // is the `studioRoleTabs` state already loaded above (IMS's settings.roleTabs, same key).
+  const studioTabSettings = useMemo(() => ({ roleTabs: studioRoleTabs }), [studioRoleTabs]);
+  const canStudio = useCallback((tab, action) => isAdmin || hasTabPerm(user, studioTabSettings, "studio", tab, action), [isAdmin, user, studioTabSettings]);
+  // A couple of callbacks below (persistDcKitEditsNow) deliberately keep an EMPTY dependency array
+  // (same reasoning as their own activeClientIdRef/clientLedgerRef — read the freshest value via a
+  // ref instead of forcing the callback to be recreated) rather than list `canStudio`, so they read
+  // this permission through a ref too instead of closing over a stale answer from whatever render
+  // first created them — before this ref existed, that bug meant Design Edit stayed permanently
+  // "on" for the rest of the session even after an admin switched it off (confirmed: the value was
+  // read once while studioRoleTabs was still `{}`, before its first real load).
+  const canDesignEditRef = useRef(true);
+  useEffect(() => { canDesignEditRef.current = canStudio("design", "edit"); }, [canStudio]);
+  // Same pattern for Library's Storage handlers (handleCldUpload/handleCldBulkDelete/
+  // handleCldDeleteFolder, further down) — each is its own useCallback whose deps don't include
+  // this permission, so a plain `canStudio(...)` call inside them would equally freeze stale.
+  const canLibraryEditRef = useRef(true);
+  const canLibraryDelRef = useRef(true);
+  useEffect(() => {
+    canLibraryEditRef.current = canStudio("library", "edit");
+    canLibraryDelRef.current = canStudio("library", "del");
+  }, [canStudio]);
+
   const toggleFilter = useCallback((arr, setArr, val) => {
     setArr(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]);
   }, []);
@@ -4356,13 +4386,15 @@ export default function StudioApp() {
   // the old "pending" amount until the build changes again and persistDeptSnapshot's own debounced
   // sync happens to fire. Same freshest-row-first pattern as persistDeptSnapshot, just for one field.
   const syncDealValueNow = useCallback(async (dealValue) => {
+    // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab.
+    if (!canStudio("design", "edit")) return;
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     if (!eo) return;
     try {
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
       if (row && row.data) await retryingUpdate("event_orders", eo.id, { data: { ...row.data, dealValue } });
     } catch (e) { /* best-effort */ }
-  }, [eventOrders, activeClientId, clientName]);
+  }, [eventOrders, activeClientId, clientName, canStudio]);
   const savePhotoImsMap = useCallback(async (nm) => { setPhotoImsMap(nm); await reliableSave(PIMAP_SK, JSON.stringify(nm), "Photo-IMS map"); }, []);
   // Read back the dept-head ACTUALS (real mandi + on-site expenses) that IMS wrote onto the event
   // order row, so Deal Check can show exact cost. The IMS deptOps live on the event_orders TABLE.
@@ -6768,6 +6800,10 @@ export default function StudioApp() {
       if (!cur || !(Number(cur.negotiatedAmount) > 0) || !add) return; // the amount was cleared meanwhile
       // The negotiated amount itself stays put (owner ask 2026-10-31, reversing the auto-follow): the edit's change is kept
       // as negotiatedPending, shown small under the amount on Summary, and only added to it when someone taps it there.
+      // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab — this timer
+      // captures the RAW saveClientLedger (floatLatestRef.current above), not ctx's Design-gated
+      // one, so it needs its own check.
+      if (!canDesignEditRef.current) return;
       const pending = Math.round((Number(cur.negotiatedPending) || 0) + add);
       L.saveClientLedger((clientLedgerRef.current || L.clientLedger).map(c => c.id === cur.id ? { ...c, negotiatedPending: pending } : c));
     }, 800);
@@ -7368,6 +7404,7 @@ export default function StudioApp() {
   }, [storageEntries]);
   const handleCldUpload = useCallback(async (files, isFolderUpload = false) => {
     if (!files || files.length === 0 || cldUploading) return;
+    if (!canLibraryEditRef.current) { showMsg("View only — your access to Library doesn't include editing", "orange"); return; }
     const baseFolder = cldPath.join("/");
     if (!baseFolder) { showMsg("Navigate into a folder first", "orange"); return; }
     // Filter: extension-based whitelist (reliable, unlike MIME which can mis-label RAW as image/*)
@@ -7457,6 +7494,7 @@ export default function StudioApp() {
   const handleCldBulkDelete = useCallback(async () => {
     const ids = Array.from(cldSelected);
     if (!ids.length) return;
+    if (!canLibraryDelRef.current) { showMsg("View only — your access to Library doesn't include deleting", "orange"); return; }
     if (!(await askConfirmAsync(`Delete ${ids.length} photo${ids.length > 1 ? "s" : ""}?`, {
       note: "Removed from Storage permanently. Library rows pointing at them will show as orphaned.",
       yesLabel: "Delete",
@@ -7475,6 +7513,7 @@ export default function StudioApp() {
   // ═══ DELETE FOLDER ═══
   const handleCldDeleteFolder = useCallback(async (folderName) => {
     const fullPath = [...cldPath, folderName].join("/");
+    if (!canLibraryDelRef.current) { showMsg("View only — your access to Library doesn't include deleting", "orange"); return; }
     if (!(await askConfirmAsync(`Delete the folder "${folderName}"?`, {
       note: `Everything inside ${fullPath} goes with it, permanently. This can't be undone.`,
       yesLabel: "Delete folder",
@@ -8254,6 +8293,11 @@ export default function StudioApp() {
 
   // ── Save session — VERBATIM ──
   const saveSession = useCallback((opts = {}) => {
+    // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab. First line, on
+    // purpose — every manual save and every autosave timer funnels through this one function, and
+    // the stale-save-guard machinery below (see STALE_SAVE_GUARD_PITFALLS.md) must never run for a
+    // write that was never going to happen anyway.
+    if (!canStudio("design", "edit")) return;
     if (!clientName.trim()) return;
     // liveMeta read here too (not the extraFunctions closure) — a stale count would under/over-iterate
     // the loop below against liveBuilds' real functions.
@@ -8741,7 +8785,7 @@ export default function StudioApp() {
     // pricingReady for free — but "usually" is not a guarantee: a deal whose seed-default total
     // happens to equal its real one would leave this callback holding pricingReady=false forever,
     // and then no total would be written at all. That is a worse failure than the one being fixed.
-    pricingReady, buildElementPriceSnapshot, persistBuildLayoutSnapshot]);
+    pricingReady, buildElementPriceSnapshot, persistBuildLayoutSnapshot, canStudio]);
 
   // ── Build auto-save (robust) ──────────────────────────────────────────────
   // The build (zone photos, Silver/Gold tab, elements, dims, carpet) previously persisted ONLY on a
@@ -8902,6 +8946,11 @@ export default function StudioApp() {
   // memory only: the next reopen restored the OLD dcKitEdits from the client row and the kit came back with its old parts (and Deal Check's sync writes that
   // copy over Build's). Writes just this field, from the freshest copy (Deal Check's live state, else the row), through the same ledger save Deal Check uses.
   const persistDcKitEditsNow = useCallback((fnIdx, cardKey, comps) => {
+    // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab. Calls the raw
+    // saveClientLedger directly (not through ctx), so the Design-gated ctx wrapper below doesn't
+    // cover this call site on its own. Read via the ref (see canDesignEditRef's own comment above),
+    // not canStudio(...) directly — this callback has an intentionally empty dep array.
+    if (!canDesignEditRef.current) return;
     const id = activeClientIdRef.current;
     const cur = clientLedgerRef.current || [];
     const c = cur.find((x) => x.id === id);
@@ -9303,6 +9352,8 @@ export default function StudioApp() {
 
   const markSold = useCallback(async () => {
     try {
+      // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab.
+      if (!canStudio("design", "edit")) { showMsg("View only — your access to Design Studio doesn't include editing", "red"); return; }
       if (!clientName.trim()) { showMsg("Client name is required", "red"); return; }
       if (!clientDate) { showMsg("Event date is required", "red"); return; }
       if (!venue) { showMsg("Venue is required", "red"); return; }
@@ -9369,7 +9420,7 @@ export default function StudioApp() {
     // Listed because the ₹0 check above reads it. Without this the callback holds whatever
     // eventGrandTotal was when it was last rebuilt — which could warn "nothing has been built" on a
     // deal that has since been priced, or worse, stay silent on one that has been emptied.
-    eventGrandTotal, askConfirmAsync, pushEventOrderPlan, showMsg]);
+    eventGrandTotal, askConfirmAsync, pushEventOrderPlan, showMsg, canStudio]);
 
   // Pushes the CURRENT build into IMS for an ALREADY-BOOKED deal without touching its booked status
   // — owner call (2026-10-25): if a deal is booked, it stays booked in both Studio and IMS; Un-book
@@ -9879,6 +9930,9 @@ export default function StudioApp() {
   // ── Load LMS lead — VERBATIM ──
   const loadLmsLead = useCallback((lead) => {
     if (!lead) return;
+    // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab — this creates or
+    // links a client record from an inbound lead, the same kind of write as starting a new deal.
+    if (!canDesignEditRef.current) { showMsg?.("View only — your access to Design Studio doesn't include editing", "red"); return; }
     setClientName(lead.guestName || "");
     setClientPhone(lead.phone || "");
     setClientPalette("Custom");
@@ -12353,6 +12407,10 @@ export default function StudioApp() {
     // after that shows "No IMS match". A real draft always has cards, so empty = mid-load → skip.
     if (!dcCards || Object.keys(dcCards).length === 0) return;
     const doSave = (saveOpts = {}) => {
+      // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab. Read via the ref
+      // (same reasoning as persistDcKitEditsNow above) rather than canStudio(...) directly, since
+      // this closure is rebuilt by an effect whose own dependency list isn't guaranteed to include it.
+      if (!canDesignEditRef.current) return;
       dcAutosavePendingRef.current = false;
       // Read through the layout-effect-mirrored ref, NOT this closure's own dcCards/etc — see
       // dcStateRef above for why a stale closure here would otherwise re-flush pre-swap state.
@@ -13200,6 +13258,60 @@ export default function StudioApp() {
     setZoneUploadReview(null);
   };
 
+  // ── Permission-gated wrappers for ctx (Edit Access/per-user override, Admin → Users & Roles) ──
+  // The raw functions above stay exactly as they are — these decide whether a VIEW (Build/Browse/
+  // Summary/Deal Check, or Manage Library/Settings) gets handed a function that actually writes, or
+  // one that quietly does nothing. Three separate gates (design/library/settings) because they're
+  // three separate tabs with three separate Edit Access toggles — not one shared "can edit Studio".
+  const canDesignEdit = canStudio("design", "edit");
+  const canDesignDel = canStudio("design", "del");
+  const canLibraryEdit = canStudio("library", "edit");
+  const canLibraryDel = canStudio("library", "del");
+  const canSettingsEdit = canStudio("settings", "edit");
+  const designSaveClientLedger = (nl, del, o) => {
+    if (!canDesignEdit) return Promise.resolve(false);
+    if (Array.isArray(del) && del.length && !canDesignDel) return Promise.resolve(false);
+    return saveClientLedger(nl, del, o);
+  };
+  const designDeleteSessionRows = (sessionId) => {
+    // Requires edit AND delete — a del-without-edit combination would otherwise remove the session
+    // history row while the matching client_ledger update (gated on edit alone) silently no-ops,
+    // leaving the two out of sync.
+    if (!canDesignEdit || !canDesignDel) return Promise.resolve({ ok: false, reason: "view only" });
+    return deleteSessionRows(sessionId);
+  };
+  const librarySaveLib = (nl, del) => {
+    if (!canLibraryEdit) return Promise.resolve({ ok: false });
+    if (Array.isArray(del) && del.length && !canLibraryDel) return Promise.resolve({ ok: false });
+    return saveLib(nl, del);
+  };
+  const librarySaveManualVideos = (nv, del) => {
+    if (!canLibraryEdit) return Promise.resolve({ ok: false });
+    if (Array.isArray(del) && del.length && !canLibraryDel) return Promise.resolve({ ok: false });
+    return saveManualVideos(nv, del);
+  };
+  // Resolves to undefined rather than returning it synchronously — several callers (e.g.
+  // ManageLibrary's "Save rules") chain `.then(...)` straight off the result, which throws if a
+  // blocked call ever handed back a bare `undefined` instead of a promise.
+  const libraryGate = (fn) => (...args) => { if (!canLibraryEdit) return Promise.resolve(undefined); return fn(...args); };
+  const librarySaveYtTags = libraryGate(saveYtTags);
+  const librarySaveHiddenVideos = libraryGate(saveHiddenVideos);
+  const librarySavePaletteData = libraryGate(savePaletteData);
+  const libraryRunBulkTag = libraryGate(runBulkTag);
+  const libraryRunTagSelected = libraryGate(runTagSelected);
+  const libraryRunBulkTagVideos = libraryGate(runBulkTagVideos);
+  const libraryRunBulkTagVideoVenues = libraryGate(runBulkTagVideoVenues);
+  const libraryImportCloudinaryFolder = libraryGate(importCloudinaryFolder);
+  const settingsGate = (fn) => (...args) => { if (!canSettingsEdit) return Promise.resolve(undefined); return fn(...args); };
+  const settingsSaveZD = settingsGate(saveZD);
+  const settingsSaveTax = settingsGate(saveTax);
+  const settingsAddTagWithAreaZoneSync = settingsGate(addTagWithAreaZoneSync);
+  const settingsAddZoneWithAreaSync = settingsGate(addZoneWithAreaSync);
+  const settingsSaveFilterPriority = settingsGate(saveFilterPriority);
+  // Settings' own saveClientLedger (Mark Dead/Reopen) is gated on Settings edit, not Design edit —
+  // a genuinely different tab's permission, not the same control double-checked.
+  const settingsSaveClientLedger = (nl, del, o) => { if (!canSettingsEdit) return Promise.resolve(false); return saveClientLedger(nl, del, o); };
+
   const ctx = {
     // theme / chrome
     S, isDark, accent, border, textS, fmt, cat,
@@ -13223,6 +13335,7 @@ export default function StudioApp() {
     zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview, closeZoneUploadReview, zurElSearch, setZurElSearch, applyZoneUpload, recentUploads,
     // auth
     authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope, studioSettingsAllowed, studioLibraryAllowed,
+    canEditDesign: canDesignEdit, canDelDesign: canDesignDel,
     // app mode + steps
     mode, setMode, canManageAny, step, setStep, manageTab, setManageTab, toast, setToast, showMsg, askConfirm, askConfirmAsync, loaded, setLoaded, saveError, setSaveError,
     // events
@@ -13264,8 +13377,8 @@ export default function StudioApp() {
     // like a fresh, empty deal while a retry runs in the background (retryLedgerLoad).
     showLedgerRestoreWarning: ledgerLoadError && !activeClientId && !!restoreRef.current?.id,
     retryLedgerLoad,
-    deleteSessionRows,
-    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
+    deleteSessionRows: designDeleteSessionRows,
+    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger: designSaveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS
@@ -13384,6 +13497,11 @@ export default function StudioApp() {
     LABOUR, LABOUR_PRESETS, SEASON_MULT, TPL_DEFAULTS, PERM_LABELS, ROLE_DEFAULTS, ROLES, TAX_LABELS,
   };
   void ctx; // consumed by view slices in later commits
+  // ManageLibrary/ManageSettings each get their OWN writes gated on THEIR OWN Edit Access tab
+  // (library/settings), not Design's — overriding just the handful of keys each screen actually
+  // calls, on top of the same base `ctx` everything else already reads.
+  const libCtx = { ...ctx, canEditLib: canLibraryEdit, canDelLib: canLibraryDel, saveLib: librarySaveLib, saveManualVideos: librarySaveManualVideos, saveYtTags: librarySaveYtTags, saveHiddenVideos: librarySaveHiddenVideos, savePaletteData: librarySavePaletteData, runBulkTag: libraryRunBulkTag, runTagSelected: libraryRunTagSelected, runBulkTagVideos: libraryRunBulkTagVideos, runBulkTagVideoVenues: libraryRunBulkTagVideoVenues, importCloudinaryFolder: libraryImportCloudinaryFolder };
+  const settingsCtx = { ...ctx, canEditSettings: canSettingsEdit, saveZD: settingsSaveZD, saveTax: settingsSaveTax, addTagWithAreaZoneSync: settingsAddTagWithAreaZoneSync, addZoneWithAreaSync: settingsAddZoneWithAreaSync, saveFilterPriority: settingsSaveFilterPriority, saveClientLedger: settingsSaveClientLedger };
 
   // ═══════════════════════════════════════════════════════════════
   // RENDER — header chrome + mode/step routing skeleton.
@@ -13987,7 +14105,7 @@ export default function StudioApp() {
         return <div style={effManageTab === "library" ? { ...S.main, maxWidth: 1640 } : S.main}>
           {effManageTab === "library" || effManageTab === "settings" ? (
             <Suspense fallback={<div style={{ padding: "24px 18px", display: "flex", flexDirection: "column", gap: 16 }}><SkStyle /><div style={{ display: "flex", gap: 8 }}><Sk w={90} h={28} r={999} /><Sk w={90} h={28} r={999} /><Sk w={90} h={28} r={999} /></div><SkTiles n={12} min={150} label="Loading" /></div>}>
-              {effManageTab === "library" ? <ManageLibrary ctx={ctx} /> : <ManageSettings ctx={ctx} />}
+              {effManageTab === "library" ? <ManageLibrary ctx={libCtx} /> : <ManageSettings ctx={settingsCtx} />}
             </Suspense>
           ) : (
             <div style={{ textAlign: "center", padding: 60, color: textS }}>

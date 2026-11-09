@@ -6,6 +6,7 @@ import {
   shiftCountPatch, addDihariPatch, removeDihariPatch,
 } from "../../lib/ims/deptCrew";
 import { actualsLockState, patchTouchesActuals } from "../../lib/ims/actualsLock";
+import { hasTabPerm } from "../../lib/ims/tabAccess";
 
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 const phaseLbl = (d) => d.phase === "minusOne" ? "−1 setup" : d.phase === "dismantle" ? "+1 dismantle" : d.phase === "gap" ? "gap" : (d.date || "event");
@@ -72,12 +73,18 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
     };
   });
 
+  // Edit Access/per-user override, Admin → Users & Roles → Site tab — a standing permission,
+  // separate from the actuals lock above (that's time-based and locks everyone equally once a
+  // booking's done; this applies regardless of time).
+  const canSiteEdit = hasTabPerm(authUser, settings, "ims", "site", "edit");
+  const canSiteDel = hasTabPerm(authUser, settings, "ims", "site", "del");
   // Only gates WRITE controls — opening a department/row, the day pills and "By day / shift" stay
   // usable on a locked event, same as they already are in Planned mode.
-  const canEdit = mode === "actual" && !lock.locked;
+  const canEdit = mode === "actual" && !lock.locked && canSiteEdit;
 
   const write = (dept, patch) => setEventOrders((prev) => prev.map((e) => {
     if (e.id !== sel.id) return e;
+    if (!canSiteEdit) return e;
     // Checked against the freshest row, not the render-time `lock` — a realtime reopen landing
     // between render and this write must be honoured immediately.
     if (patchTouchesActuals(patch) && actualsLockState(e, settings).locked) return e;
@@ -89,6 +96,11 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
       {lock.locked && (
         <div className="rounded-xl bg-gray-800 text-white px-4 py-2.5 text-xs font-semibold flex items-center gap-2">
           🔒 Actuals locked for this event — an admin can reopen it above to make changes.
+        </div>
+      )}
+      {mode === "actual" && !lock.locked && !canSiteEdit && (
+        <div className="rounded-xl bg-gray-100 text-gray-500 px-4 py-2.5 text-xs font-semibold flex items-center gap-2">
+          👁 View only — your access to Site doesn't include editing
         </div>
       )}
       {depts.map(({ dept, rows, planTotal, actTotal, anyEdited }, di) => {
@@ -187,8 +199,8 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
                                     <>
                                       <input type="number" min="0" value={crew.effShift(r, d, id)} onChange={(e) => write(dept, shiftCountPatch(crew, r.type, d.date, id, e.target.value, ids))}
                                         className="w-10 h-7 border border-gray-200 rounded text-[13px] text-center font-semibold" />
-                                      {ids.length > 1 && (
-                                        <button onClick={() => write(dept, removeDihariPatch(crew, r.type, d.date, id, ids))} aria-label="Remove this shift"
+                                      {ids.length > 1 && canSiteDel && (
+                                        <button onClick={() => { if (!canSiteDel) return; write(dept, removeDihariPatch(crew, r.type, d.date, id, ids)); }} aria-label="Remove this shift"
                                           className="w-6 h-6 -mr-0.5 rounded flex items-center justify-center text-red-300 hover:text-red-500 hover:bg-red-50 text-sm">×</button>
                                       )}
                                     </>

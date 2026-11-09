@@ -3,6 +3,7 @@ import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks, TRUCK_S
 import { FLAG_REASONS, receivingOf, lineReceipt, truckReceiptStatus, confirmTruckPatch, setItemReceiptPatch, clearItemReceiptPatch } from "../../lib/ims/receiving";
 import { thumbUrl } from "../../lib/studio/thumb.js";
 import { actualsLockState } from "../../lib/ims/actualsLock";
+import { hasTabPerm } from "../../lib/ims/tabAccess";
 
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 
@@ -33,19 +34,25 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // must not let the later write silently revert the earlier one. Also re-checks the lock against
   // that same freshest row, so a realtime reopen/lock landing between render and this click is
   // honoured immediately rather than the render-time `lock` above.
+  // Edit Access/per-user override, Admin → Users & Roles → Site tab — a standing permission,
+  // separate from the actuals lock above (that's time-based and locks everyone equally once a
+  // booking's done; this applies regardless of time).
+  const canSiteEdit = hasTabPerm(authUser, settings, "ims", "site", "edit");
+  const canSiteDel = hasTabPerm(authUser, settings, "ims", "site", "del");
   const write = (build) => setEventOrders((prev) => prev.map((e) => {
     if (e.id !== sel.id) return e;
+    if (!canSiteEdit) return e;
     if (actualsLockState(e, settings).locked) return e;
     return { ...e, receiving: build(e) };
   }));
   const confirmTruck = (truckId) => write((e) => confirmTruckPatch(e, truckId, authUser?.name));
   const setLine = (truckId, dept, key, patch) => write((e) => setItemReceiptPatch(e, truckId, dept, key, patch, authUser?.name));
-  const clearLine = (truckId, dept, key) => write((e) => clearItemReceiptPatch(e, truckId, dept, key, authUser?.name));
+  const clearLine = (truckId, dept, key) => { if (!canSiteDel) return; write((e) => clearItemReceiptPatch(e, truckId, dept, key, authUser?.name)); };
 
   const flagKeyOf = (truckId, ln) => `${truckId}|${ln.dept}|${ln.key}`;
   // Only gates WRITE controls (confirm/flag/edit) — view-only things (opening a truck, reading a
   // flag's reason) stay usable on a locked event, same as Planned mode already is.
-  const canEdit = mode === "actual" && !lock.locked;
+  const canEdit = mode === "actual" && !lock.locked && canSiteEdit;
 
   if (manifest.length === 0 && transfers.length === 0) {
     return (
@@ -62,6 +69,11 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
       {lock.locked && (
         <div className="rounded-xl bg-gray-800 text-white px-4 py-2.5 text-xs font-semibold flex items-center gap-2">
           🔒 Actuals locked for this event — an admin can reopen it above to make changes.
+        </div>
+      )}
+      {mode === "actual" && !lock.locked && !canSiteEdit && (
+        <div className="rounded-xl bg-gray-100 text-gray-500 px-4 py-2.5 text-xs font-semibold flex items-center gap-2">
+          👁 View only — your access to Site doesn't include editing
         </div>
       )}
       {manifest.map(({ truck, lines }) => {
@@ -135,7 +147,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                           </div>
                           <input defaultValue={r.note || ""} onBlur={(e) => setLine(truck.id, ln.dept, ln.key, { got, flag: r.flag, note: e.target.value })}
                             placeholder="Note for the dept head" className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11.5px]" />
-                          {r.flag && (
+                          {r.flag && canSiteDel && (
                             <button onClick={() => { clearLine(truck.id, ln.dept, ln.key); setFlaggingKey(null); }} className="mt-1.5 text-[10.5px] font-semibold text-gray-400 hover:text-gray-700">Clear this flag</button>
                           )}
                         </div>

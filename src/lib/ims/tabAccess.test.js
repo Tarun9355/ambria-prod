@@ -106,6 +106,11 @@ describe("user overrides on top of the role", () => {
     expect(userTabOn(user, settings, "ims", "inventory")).toBe(true);
   });
 
+  it("reads a raw DB row's snake_case tab_override too — the logged-in user object is never remapped to camelCase", () => {
+    const user = { role: "Sales", tab_override: { ims: { tabs: { finance: true } } } };
+    expect(userTabOn(user, settings, "ims", "finance")).toBe(true);
+  });
+
   // ── The confirmed bug: unchecking a restricted role's LAST visible sub-tab must not silently
   // re-grant every other sub-tab the role itself restricts. Fixed by giving "explicitly show all"
   // its own "ALL" sentinel instead of overloading a bare empty array. ──

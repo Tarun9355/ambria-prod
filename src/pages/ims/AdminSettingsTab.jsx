@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
-import { supabase, updateRow, deleteRow } from "../../lib/supabase";
+import { supabase, updateRow as rawUpdateRow, deleteRow as rawDeleteRow } from "../../lib/supabase";
 import { DEFAULT_AGENCY_FEE_PCT } from "../../lib/studio/agencyFee";
 import { RC_SK_CATS } from "../../lib/studio/keys";
 import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm, DraftInput } from "../../components/ui";
@@ -111,7 +111,17 @@ function withPrevPrice(history, price) {
   return last && last.date === today ? h : [...h, { price: price || 0, date: today }];
 }
 
-export default function AdminSettingsTab({ settings, setSettings, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [], authUser, settingsLoaded = false }) {
+export default function AdminSettingsTab({ settings, setSettings: setSettingsProp, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv: setTrussInvProp, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [], authUser, settingsLoaded = false, canEdit = true }) {
+  // Only meaningful for the handful of `forcedMode` mounts this task gates (Planning's Truss &
+  // Batta Config / Platform Config / Fabric Stock / Truck, Flowers' Mandi Prices / Recipes) — every
+  // other caller (Admin → Settings itself, Master Data, …) doesn't pass `canEdit` at all, so it
+  // defaults to `true` and every write below behaves exactly as it always has. Shadowing the
+  // mutators here (rather than adding `if (!canEdit)` at each of the ~30 call sites across this
+  // file) is the one choke point for every write this component can make.
+  const setTrussInv = canEdit ? setTrussInvProp : () => {};
+  const setSettings = canEdit ? setSettingsProp : () => {};
+  const updateRow = canEdit ? rawUpdateRow : () => Promise.reject(new Error("View only — you don't have edit access here"));
+  const deleteRow = canEdit ? rawDeleteRow : () => Promise.reject(new Error("View only — you don't have edit access here"));
   const canManageCategories = hasIMSPerm(authUser, "inv_categories");
   // Same live source as Build's Flower Palette picker (lib/ims/helpers.js) — a new "Artificial
   // Flower Bunch" colour added in IMS is immediately both pickable in Build AND taggable here on a
@@ -488,6 +498,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
 
   return (
     <div className="space-y-4">
+      {/* Edit Access/per-user override, Admin → Users & Roles — only ever false on a forcedMode
+          mount (Planning's Truss & Batta / Platform / Fabric Stock / Truck, Flowers' Mandi /
+          Recipes); Admin → Settings itself always passes the canEdit=true default. */}
+      {forcedMode && !canEdit && (
+        <div className="rounded-lg bg-gray-100 text-gray-500 text-xs font-semibold px-3 py-2 inline-flex items-center gap-1.5">👁 View only — your access here doesn't include editing</div>
+      )}
       {!forcedMode && <Tabs tabs={panelsShown} active={panel} onChange={setPanel} />}
       {!forcedMode && panel === "masterdata" && (
         <div className="pl-1">
@@ -985,6 +1001,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                   })()}
                 </div>
                 <button onClick={() => {
+                  if (!canEdit) return;
                   const newId = genMandiFlowerId();
                   const newVId = "V" + Date.now();
                   supabase.from("mandi_flowers").insert(mandiFlowerToRow({
@@ -993,7 +1010,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     colorVariants: [{ variantId: newVId, name: "New Variant", photoUrl: null, currentPrice: 0, priceHistory: [] }],
                   })).then(() => {}, () => {});
                   setSMandiExpanded((prev) => { const s = new Set(prev); s.add(newId); return s; });
-                }} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm">+ Add Flower</button>
+                }} disabled={!canEdit} title={canEdit ? undefined : "View only — your access to Flowers doesn't include editing"} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed">+ Add Flower</button>
               </div>
               <div className="flex flex-wrap gap-2 items-center">
                 <input value={sMandiSearch} onChange={(e) => setSMandiSearch(e.target.value)} placeholder="🔍 Search flowers..." className="border rounded-lg px-3 py-1.5 text-sm w-44" />
@@ -1039,11 +1056,12 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           <span className="text-[9px] text-gray-400">({inUse})</span>
                           {!isOther && (
                             <button onClick={async () => {
+                              if (!canEdit) return;
                               if (inUse > 0 && !(await confirm({ title: `Delete category "${c}"?`, body: `${inUse} flower${inUse === 1 ? " uses" : "s use"} it — they will move to "Other".` }))) return;
                               setSettings((s) => ({ ...s, flowerCategories: (s.flowerCategories || []).filter((x) => x !== c) }));
                               supabase.from("mandi_flowers").update({ flower_cat: "Other" }).eq("flower_cat", c).then(() => {}, () => {});
                               if (sMandiCat === c) setSMandiCat("All");
-                            }} className="text-red-400 hover:text-red-600 leading-none ml-0.5">×</button>
+                            }} disabled={!canEdit} title={canEdit ? undefined : "View only"} className="text-red-400 hover:text-red-600 leading-none ml-0.5 disabled:opacity-40 disabled:cursor-not-allowed">×</button>
                           )}
                           {isOther && <span className="text-[9px] text-gray-300 ml-0.5" title="The 'Other' category cannot be removed.">🔒</span>}
                         </span>
@@ -1138,6 +1156,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                           );
                         }
                         const replaceParentPhoto = async (file) => {
+                          if (!canEdit) return;
                           setSMandiUploading((prev) => ({ ...prev, [parentUploadKey]: true }));
                           try {
                             const compressed = await compressImageForUpload(file);
@@ -1300,6 +1319,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                               const uploadKey = `${p.id}:${v.variantId}`;
                               const uploading = !!sMandiUploading[uploadKey];
                               const replaceVariantPhoto = async (file) => {
+                                if (!canEdit) return;
                                 setSMandiUploading((prev) => ({ ...prev, [uploadKey]: true }));
                                 try {
                                   const compressed = await compressImageForUpload(file);
@@ -1492,6 +1512,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
           setSettings((s) => { const cur = s.flowerRecipeSubcats || []; const next = cur.includes(sub) ? cur.filter((x) => x !== sub) : [...cur, sub]; return { ...s, flowerRecipeSubcats: next.sort((a, b) => a.localeCompare(b)) }; });
         };
         const mutatePattern = (studioItem, mutator) => {
+          if (!canEdit) return;
           const norm = (x) => (x || "").toLowerCase().trim();
           const targetName = studioItem.name;
           const existing = (settings.flowerPatterns || []).find((p) => norm(p.name) === norm(targetName));
@@ -1522,7 +1543,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                     : <div className="w-16 h-16 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-xl hover:border-indigo-400 hover:text-indigo-500" title={`Upload a ${sizeLabel.toLowerCase()} reference photo`}>
                         {recipeImgUploading[`${studioItem.id}:${sz}`] ? "…" : "+"}
                       </div>}
-                  <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                  <input type="file" accept="image/*" className="hidden" disabled={!canEdit} onChange={async (e) => {
+                    if (!canEdit) return;
                     const file = e.target.files?.[0]; if (!file) return;
                     const key = `${studioItem.id}:${sz}`;
                     setRecipeImgUploading((prev) => ({ ...prev, [key]: true }));
@@ -1720,6 +1742,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
         // A recipe item IS its flowerPatterns entry — add/rename/delete act on it directly, no
         // Rate Card row involved.
         const addRecipeItem = (sub) => {
+          if (!canEdit) return;
           const nm = (recipeAddForm.name || "").trim();
           if (!nm) { alert("Item needs a name"); return; }
           if ((settings.flowerPatterns || []).some((p) => norm(p.name) === norm(nm))) { alert(`An item named "${nm}" already exists.`); return; }
@@ -1766,8 +1789,8 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
               </div>
               <div className="ml-auto flex items-center gap-2">
                 <span className="text-[10px] text-emerald-600">Last sync: {fmtSyncTime(tier15LastSync)}</span>
-                <button onClick={async () => { if (!syncRecipeRatesToStudio) return; const res = await syncRecipeRatesToStudio({ silent: false }); if (res?.error) alert(`Sync failed: ${res.error}`); else alert(`Synced to Studio: ${res?.updated || 0} updated, ${res?.cleared || 0} unlocked.`); }}
-                  disabled={!!tier15Syncing} className={"text-xs px-3 py-1.5 rounded-lg font-semibold " + (tier15Syncing ? "bg-gray-300 text-gray-500" : "bg-emerald-600 hover:bg-emerald-700 text-white")}>
+                <button onClick={async () => { if (!canEdit || !syncRecipeRatesToStudio) return; const res = await syncRecipeRatesToStudio({ silent: false }); if (res?.error) alert(`Sync failed: ${res.error}`); else alert(`Synced to Studio: ${res?.updated || 0} updated, ${res?.cleared || 0} unlocked.`); }}
+                  disabled={!!tier15Syncing || !canEdit} title={canEdit ? undefined : "View only — your access to Flowers doesn't include editing"} className={"text-xs px-3 py-1.5 rounded-lg font-semibold " + (tier15Syncing || !canEdit ? "bg-gray-300 text-gray-500" : "bg-emerald-600 hover:bg-emerald-700 text-white")}>
                   {tier15Syncing ? "⏳ Syncing…" : "📤 Sync to Studio"}
                 </button>
               </div>
@@ -2292,7 +2315,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
                             <td className="px-2 py-1.5 relative">
                               {(() => {
                                 const onPick = async (file) => {
-                                  if (!file) return;
+                                  if (!file || !canEdit) return;
                                   setFabricPhotoMenuOpen(null);
                                   setFabricPhotoUploading((prev) => ({ ...prev, [photoKey]: true }));
                                   try {
@@ -2968,7 +2991,7 @@ export default function AdminSettingsTab({ settings, setSettings, supervisors, s
       {activePanel === "transport" && <ImsTransportPanel rcItems={rcItems} rcCats={rcCats} rateCardCategories={rateCardCategories} inventory={inventory} />}
       {/* Truck Capacity Rules + Buffer Trucks by Budget — moved off this screen onto their own
           Planning → 🚚 Truck tab (owner ask, 2026-10-16), still the same ctx adapter/editor pair. */}
-      {activePanel === "truck" && <ImsTransportPanel variant="truck" rcItems={rcItems} rcCats={rcCats} rateCardCategories={rateCardCategories} inventory={inventory} />}
+      {activePanel === "truck" && <ImsTransportPanel variant="truck" rcItems={rcItems} rcCats={rcCats} rateCardCategories={rateCardCategories} inventory={inventory} canEdit={canEdit} />}
 
       {/* Moved here from Studio → Manage → Settings, which no longer carries a Departments tab. */}
       {activePanel === "departments" && (() => {

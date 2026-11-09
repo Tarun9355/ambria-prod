@@ -140,16 +140,22 @@ export function roleSubTabs(role, settings, app, parentId) {
 // {[parentId]: string[]} }, studio: {...same shape...} } — any key PRESENT overrides that one
 // field; an absent key means "inherit from the role", exactly like settings.rolePerms already
 // works for the flat Actions permissions.
+//
+// `user` here is sometimes the camelCase `rowToUser()` object (the Admin → Users list) and
+// sometimes the raw Supabase row `useAuth()`/`fetchProfile()` hand back for the LOGGED-IN user
+// (snake_case `tab_override`, never remapped) — every real enforcement call site passes the
+// latter. Reading both spellings here, once, is simpler and safer than fixing every caller.
+const ovOf = (user) => user?.tabOverride ?? user?.tab_override ?? null;
 export function userTabOn(user, settings, app, tabId) {
   if (user?.role === "Admin" || user?.id === "u_admin") return true;
-  const ov = user?.tabOverride?.[app]?.tabs;
+  const ov = ovOf(user)?.[app]?.tabs;
   if (ov && Object.prototype.hasOwnProperty.call(ov, tabId)) return !!ov[tabId];
   return roleTabOn(user?.role, settings, app, tabId);
 }
 export function userTabVed(user, settings, app, tabId) {
   if (user?.role === "Admin" || user?.id === "u_admin") return { edit: true, del: true };
   const base = roleTabVed(user?.role, settings, app, tabId);
-  const v = user?.tabOverride?.[app]?.ved?.[tabId];
+  const v = ovOf(user)?.[app]?.ved?.[tabId];
   if (!v) return base;
   return { edit: v.edit != null ? v.edit : base.edit, del: v.del != null ? v.del : base.del };
 }
@@ -162,7 +168,7 @@ export function userTabVed(user, settings, app, tabId) {
 // overloading the empty array.
 export function userSubTabs(user, settings, app, parentId) {
   if (user?.role === "Admin" || user?.id === "u_admin") return null;
-  const ov = user?.tabOverride?.[app]?.subTabs;
+  const ov = ovOf(user)?.[app]?.subTabs;
   if (ov && Object.prototype.hasOwnProperty.call(ov, parentId)) {
     const v = ov[parentId];
     return v === "ALL" ? null : (Array.isArray(v) ? v : null);
@@ -172,7 +178,7 @@ export function userSubTabs(user, settings, app, parentId) {
 // Which of this one tab's fields (on/edit/del) differ from what the role alone would give —
 // drives the "customized for this user" badges in the Edit User override tree.
 export function userTabCustom(user, app, tabId) {
-  const ov = user?.tabOverride?.[app] || {};
+  const ov = ovOf(user)?.[app] || {};
   return {
     on: !!(ov.tabs && Object.prototype.hasOwnProperty.call(ov.tabs, tabId)),
     edit: !!(ov.ved?.[tabId] && ov.ved[tabId].edit != null),
@@ -181,7 +187,7 @@ export function userTabCustom(user, app, tabId) {
   };
 }
 export function userHasAnyOverride(user) {
-  const t = user?.tabOverride;
+  const t = ovOf(user);
   if (!t) return false;
   return ["ims", "studio"].some((app) => {
     const a = t[app];
