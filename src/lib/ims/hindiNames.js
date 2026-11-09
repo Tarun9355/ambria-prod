@@ -75,8 +75,18 @@ export async function loadHindiNames() {
   Object.entries(readCache()).forEach(([k, v]) => { if (typeof v === "string" && isDevanagari(v)) map.set(k, v); });
   try {
     const { supabase } = await import("../supabase");
-    const { data, error } = await supabase.from("hindi_names").select("en, hi");
-    if (!error && Array.isArray(data)) data.forEach(r => { if (r?.en && r?.hi && isDevanagari(r.hi)) map.set(nameKey(r.en), String(r.hi)); });
+    // PAGED: no .limit()/.range() here still means PostgREST's own 1000-row max-rows applies,
+    // silently. Names are open-ended per the file header (every inventory item, zone, client and
+    // venue name ever asked for) — a years-old deployment easily passes 1000 distinct names, past
+    // which this would quietly stop finding some of them and print them in English instead, with
+    // no error and nothing to say why just that one name didn't come out in Devanagari.
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await supabase.from("hindi_names").select("en, hi").range(from, from + PAGE - 1);
+      if (error || !Array.isArray(data)) break;
+      data.forEach(r => { if (r?.en && r?.hi && isDevanagari(r.hi)) map.set(nameKey(r.en), String(r.hi)); });
+      if (data.length < PAGE) break;
+    }
   } catch { /* table not there yet / offline: the cache alone */ }
   return map;
 }

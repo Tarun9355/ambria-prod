@@ -28,16 +28,59 @@ export async function triggerLmsSync() {
 }
 
 // Read cached contracts from Supabase (instant — no LMS call). Returns { contracts, lastSync }.
+// PAGED: PostgREST enforces its own 1000-row max per request regardless of any client .limit() —
+// a single `.limit(5000)` request here was silently truncated to 1000, so once the synced contract
+// history (every booking ever pulled from the LMS, across all venues/years) passed that, older
+// contracts would quietly stop reaching the Calendar/cross-reference check with no indication why
+// — the exact same bug confirmed and fixed for library zone photos (see libraryQueries.js).
+//
+// Ordered by `id` ONLY, never `synced_at`: the sync edge function (supabase/functions/lms)
+// re-upserts every contract with a fresh `synced_at = now()` in batches, then deletes whatever is
+// left with an older `synced_at`. A read paginated by `synced_at` running DURING a sync would see
+// rows jump to the front as they're re-stamped — shifting already-read rows into later pages (read
+// twice) and pushing not-yet-read rows ahead of where the cursor already passed (never read at
+// all). `id` is the contract's own identity ("<dept>-<entryNo>") and an upsert never changes it, so
+// ordering by it alone stays stable across a concurrent sync. `lastSync` is the MAX over every row
+// actually read (not just the first), since the first row is no longer necessarily the newest-
+// synced one once the sort key is `id` instead of `synced_at`. Deduped by id as a backstop in case
+// a row's identity position still shifts under the sync's own DELETE pass.
+// Throws on ANY page's error (matching fetchAll's pattern, lib/supabase.js) rather than returning
+// whatever was read so far — a partial contract list silently handed to Calendar's date-category
+// logic as if it were everything would misjudge date pricing for real users; callers already expect
+// to catch a failure here (this never threw before either, just returned an empty result, so every
+// call site already treats a thrown error here the same way it already treated "nothing synced
+// yet").
 export async function fetchCachedContracts() {
-  const { data, error } = await supabase
-    .from("lms_contracts")
-    .select("data, synced_at")
-    .order("synced_at", { ascending: false })
-    .limit(5000);
-  if (error) return { contracts: [], lastSync: 0 };
-  const contracts = (data || []).map((r) => r.data);
-  const lastSync = data?.[0]?.synced_at ? new Date(data[0].synced_at).getTime() : 0;
+  const PAGE = 1000;
+  const byId = new Map();
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("lms_contracts")
+      .select("id, data, synced_at")
+      .order("id", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    (data || []).forEach((r) => byId.set(r.id, r));
+    if (!data || data.length < PAGE) break;
+  }
+  const rows = [...byId.values()];
+  const contracts = rows.map((r) => r.data);
+  const lastSync = rows.reduce((max, r) => {
+    const t = r.synced_at ? new Date(r.synced_at).getTime() : 0;
+    return t > max ? t : max;
+  }, 0);
   return { contracts, lastSync };
+}
+
+// Just the newest sync timestamp — for the mount pre-warm, which only needs to know how stale the
+// cache is, not the whole contract list (fetchCachedContracts now has to page through every
+// contract to be complete, which is wasted bandwidth when a single timestamp is all that's needed).
+export async function fetchLmsLastSync() {
+  const { data, error } = await supabase
+    .from("lms_contracts").select("synced_at")
+    .order("synced_at", { ascending: false }).limit(1);
+  if (error || !data?.length) return 0;
+  return data[0].synced_at ? new Date(data[0].synced_at).getTime() : 0;
 }
 
 const LMS_VENUE_MAP = {

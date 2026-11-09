@@ -1809,10 +1809,14 @@ export default function IMS() {
   }, [loadLmsFromCache]);
 
   // On mount: read the cache instantly; only kick a background server-side sync if stale.
+  // fetchCachedContracts (inside loadLmsFromCache) now throws on a real fetch failure instead of
+  // silently returning an empty cache — catch it here the same way a failure always behaved before:
+  // treat it as "nothing synced yet" and let the stale check below kick off a real sync.
   useEffect(() => {
     let active = true;
     (async () => {
-      const lastSync = await loadLmsFromCache();
+      let lastSync = 0;
+      try { lastSync = await loadLmsFromCache(); } catch { /* treated as stale below */ }
       if (active && Date.now() - lastSync > LMS_STALE_MS) syncLms();
     })();
     return () => { active = false; };

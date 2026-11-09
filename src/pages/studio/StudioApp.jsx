@@ -33,7 +33,7 @@ import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
 import { availableAtVenue, lockedAtFixedVenues, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
-import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
+import { searchLmsLeads, triggerLmsSync, fetchLmsLastSync, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { allocateForDate, buildEventAllocation } from "../../lib/ims/trussEngine";
 import { allocatePlatformForDate, buildEventPlatformAllocation } from "../../lib/ims/platformEngine";
 import { allocateBattaForDate, buildEventBattaAllocation } from "../../lib/ims/battaEngine";
@@ -1651,7 +1651,7 @@ export default function StudioApp() {
   useEffect(() => {
     (async () => {
       try {
-        const { lastSync } = await fetchCachedContracts();
+        const lastSync = await fetchLmsLastSync();
         if (Date.now() - lastSync > 30 * 60 * 1000) triggerLmsSync().catch(() => {});
       } catch { /* ignore */ }
     })();
