@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { PERM_GROUPS, PERM_LABELS, PERM_UNWIRED, effectiveRolePerms } from "../../lib/ims/constants";
+import { IMS_TABS, IMS_SUBTABS, SETTINGS_PANELS, MASTER_DATA_CHILDREN, STUDIO_TABS, STUDIO_SUBTABS, roleTabVed } from "../../lib/ims/tabAccess";
 
 // ═══ ROLE ACCESS — dedicated modal, replacing the inline panel that used to expand below the
 // role card grid (UsersTab.jsx). Mirrors the REAL tab → sub-tab (→ sub-sub-tab, for Admin →
@@ -20,108 +21,12 @@ import { PERM_GROUPS, PERM_LABELS, PERM_UNWIRED, effectiveRolePerms } from "../.
 // instead of the old model's first click keeping ONLY that one (same underlying array, more
 // intuitive edit).
 
-// ── IMS structure (verified against the real components, not the drifted copy the old inline
-// editor carried — e.g. Planning was missing "Dept Ops", Flowers had a phantom "Function
-// Planning" nobody's FlowersTab.jsx has ever had) ──
-const IMS_TABS = [
-  { id: "dashboard", label: "📊 Dashboard" },
-  { id: "attendance", label: "👥 Attendance" },
-  { id: "inventory", label: "📦 Inventory" },
-  { id: "calendar", label: "🗓️ Calendar" },
-  { id: "planning", label: "📋 Planning" },
-  { id: "supply", label: "🛒 Supply" },
-  { id: "flowers", label: "🌺 Flowers" },
-  { id: "finance", label: "💰 Finance" },
-  { id: "admin", label: "⚙️ Admin" },
-  { id: "site", label: "🦺 Site" },
-];
-// KEEP IN SYNC: every list below is a hand-maintained mirror of a real tab bar elsewhere in the
-// app (PlanningTab.jsx's allTabs, AdminSettingsTab.jsx's panels/MASTER_DATA, FlowersTab.jsx's
-// sub-tabs, FinanceTab.jsx's sub-tabs, ManageSettings.jsx's settingsView list, …) — there is no
-// shared source of truth, which is exactly how Planning lost "Dept Ops" and Flowers grew a
-// phantom "Function Planning" before (see the comment above IMS_TABS). Whenever a real tab or
-// sub-tab is added, removed, or renamed anywhere in Studio or IMS, update its matching entry here
-// too in the same change, not as a follow-up.
-const IMS_SUBTABS = {
-  planning: [
-    { id: "deptops", label: "🏦 Dept Ops" },
-    { id: "structure", label: "🏗️ Truss/Platform/Batta" },
-    { id: "paint", label: "🎨 Paint" },
-    { id: "trussbatta", label: "🏗️ Truss & Batta Config" },
-    { id: "platformconfig", label: "🛏️ Platform Config" },
-    { id: "fabricstock", label: "🧵 Fabric Stock" },
-    { id: "truck", label: "🚚 Truck" },
-  ],
-  supply: [
-    { id: "purchase", label: "🛒 Purchase" },
-    { id: "production", label: "🏭 Production" },
-  ],
-  flowers: [
-    { id: "mandi", label: "🌸 Mandi Prices" },
-    { id: "recipes", label: "🌺 Recipes" },
-    { id: "transfers", label: "🔄 Transfers" },
-  ],
-  finance: [
-    { id: "pl", label: "📊 Event P&L" },
-    { id: "company_pl", label: "📊 Company P&L" },
-    { id: "overheads", label: "🏢 Overheads" },
-  ],
-};
-// Admin is the one branch that goes deeper than every other tab — Settings has 8 panels of its
-// own, and one of those (Master Data) has 7 children of its own again. Admin's own flat layer
-// (Users & Roles / Vendors / Settings) is hand-assembled below rather than mapped from a list,
-// since Settings is the only one of the three that itself branches further; the two deeper
-// layers are their own constants below, read via subTabs.settings and subTabs.masterdata — same
-// map, two more keys.
-const SETTINGS_PANELS = [
-  { id: "labourtiers", label: "👷 Workforce" },
-  { id: "venuemin", label: "🏛️ Fixed Venues" },
-  { id: "venuedumping", label: "🚛 Venue Dumping" },
-  { id: "dihari", label: "💰 Dihari Timings" },
-  { id: "supervisors", label: "👷 Supervisors" },
-  { id: "synonyms", label: "🔤 AI Synonyms" },
-  { id: "masterdata", label: "🗂️ Master Data" },
-  { id: "canva", label: "🎨 Canva" },
-];
-const MASTER_DATA_CHILDREN = [
-  { id: "subcats", label: "📂 Sub-Categories" },
-  { id: "venues", label: "🌆 Venues" },
-  { id: "printmaterials", label: "🖨️ Print Materials" },
-  { id: "carpetmaterials", label: "🟫 Carpet & Platform" },
-  { id: "structurerates", label: "🏗️ Truss & Masking" },
-  { id: "transport", label: "🚛 Transport & Power" },
-  { id: "departments", label: "🏦 Departments" },
-];
-// ── Studio structure — Design Studio's sub-tabs already matched reality; Library and Settings
-// did not (Library was missing the always-on "Palettes" note, Settings carried four sub-tabs —
-// Venues/Calendar/Departments/Transport — that don't correspond to any real view in
-// ManageSettings.jsx). Corrected to the 4 real settingsView values. ──
-const STUDIO_TABS = [
-  { id: "design", label: "🎨 Design Studio" },
-  { id: "library", label: "📚 Library & Content" },
-  { id: "settings", label: "⚙️ Settings" },
-];
-const STUDIO_SUBTABS = {
-  design: [
-    { id: "dealcheck", label: "Deal Check" },
-    { id: "viewpricing", label: "View Pricing & Costs" },
-    { id: "export", label: "Export PDF/PPT" },
-  ],
-  library: [
-    { id: "images", label: "Images" },
-    { id: "videos", label: "Videos" },
-    { id: "corrections", label: "Contributions" },
-  ],
-  settings: [
-    { id: "clients", label: "Clients" },
-    { id: "zones", label: "Zones" },
-    { id: "tags", label: "Tags" },
-    { id: "priority", label: "Photo Priority" },
-  ],
-};
+// IMS_TABS/IMS_SUBTABS/SETTINGS_PANELS/MASTER_DATA_CHILDREN/STUDIO_TABS/STUDIO_SUBTABS now live in
+// lib/ims/tabAccess.js — the one place both this screen and UsersTab.jsx's per-user override read
+// the tab/sub-tab tree from, so the two can't drift the way the old inline editor once did.
 
 // ═══ A toggle switch ═══
-function Toggle({ on, onClick, size = "md", color = "indigo" }) {
+export function Toggle({ on, onClick, size = "md", color = "indigo" }) {
   const track = size === "sm" ? "w-7 h-4" : "w-9 h-5";
   const knob = size === "sm" ? "w-3 h-3" : "w-4 h-4";
   const onBg = color === "amber" ? "bg-amber-600" : "bg-indigo-600";
@@ -136,18 +41,32 @@ function Toggle({ on, onClick, size = "md", color = "indigo" }) {
 // ═══ One toggleable row — a top-level tab, or one of Admin's deeper levels. If `subs` is given,
 // it can expand to show them (flat pills, or — for the one row that needs it — a further nested
 // <SectionRow> passed as `extra`). ═══
-function SectionRow({ icon, label, on, onToggle, color = "indigo", subs, rcSubs, onSetAll, onSetCustom, onToggleSub, note, extra, dense }) {
+// `ved`/`vedState`/`onToggleVed`/`vedCustom` are all optional — a row with no `ved` capability
+// renders exactly as it always has. `ved`: true = View+Edit+Delete, "ve" = View+Edit only.
+// `vedState`: {edit, del}. `vedCustom`: {edit, del} — which of those differ from the role default,
+// only ever passed by the per-user override screen (UsersTab.jsx), never by this one.
+export function SectionRow({ icon, label, on, onToggle, color = "indigo", subs, rcSubs, onSetAll, onSetCustom, onToggleSub, note, extra, dense, ved, vedState, onToggleVed, vedCustom, allowEmptySubs }) {
   const [open, setOpen] = useState(false);
   const hasSubs = Array.isArray(subs) && subs.length > 0;
   // Admin has no flat pills of its own — its children (Users & Roles / Vendors / Settings) are
   // nested SectionRows passed as `extra`, not a `subs` list. A row can expand on either: flat
   // pills, a nested row, or (Settings' case) both together.
   const hasChildren = hasSubs || !!extra;
-  const restricted = Array.isArray(rcSubs) && rcSubs.length > 0;
+  // The role screen's own toggleSub/setSubAll/setSubCustom never store an explicitly-empty array
+  // (toggleSub deletes the key instead once nothing's left, reverting to unrestricted) — so there,
+  // an empty rcSubs can only mean old/stray data, and `.length > 0` is the safe read. The per-user
+  // override screen's userToggleSub has no such guard (see tabAccess.js's userSubTabs comment: an
+  // explicit `[]` there deliberately means "this one person sees none of these"), so it passes
+  // `allowEmptySubs` to read ARRAY-PRESENCE as "customized", zero items included — without this,
+  // unchecking a restricted role's very last visible sub-tab read back as "all sub-tabs visible".
+  const restricted = allowEmptySubs ? Array.isArray(rcSubs) : (Array.isArray(rcSubs) && rcSubs.length > 0);
   const tint = color === "amber" ? "bg-amber-50" : "bg-indigo-50";
   const text = color === "amber" ? "text-amber-900" : "text-indigo-900";
   const accentText = color === "amber" ? "text-amber-500" : "text-indigo-400";
   const pad = dense ? "px-2.5 py-1.5" : "px-3 py-2";
+  const vedFields = ved === "ve" ? ["edit"] : ved ? ["edit", "del"] : [];
+  const vedMeta = { edit: ["✏️", "Edit"], del: ["🗑️", "Delete"] };
+  const onBg = color === "amber" ? "bg-amber-600 border-amber-600" : "bg-indigo-600 border-indigo-600";
   return (
     <div className={`border rounded-lg overflow-hidden ${color === "amber" ? "border-amber-100" : "border-indigo-100"}`}>
       <div className={`flex items-center justify-between gap-2.5 ${pad} ${hasChildren && on ? "cursor-pointer" : ""} ${on ? tint : "bg-gray-50"}`}
@@ -157,12 +76,32 @@ function SectionRow({ icon, label, on, onToggle, color = "indigo", subs, rcSubs,
           <span className={dense ? "text-xs" : "text-sm"} style={{ opacity: on ? 1 : 0.55 }}>{icon}</span>
           <span className={`${dense ? "text-xs" : "text-sm"} font-semibold ${on ? text : "text-gray-400"}`}>{label}</span>
         </div>
-        {hasChildren && on && (
-          <div className="flex items-center gap-2">
-            {!open && hasSubs && <span className={`text-[10px] ${accentText}`}>{restricted ? `custom · ${rcSubs.length} of ${subs.length} shown` : `${subs.length} sub-tab${subs.length === 1 ? "" : "s"} · all visible`}</span>}
-            <span className={`text-xs ${accentText}`}>{open ? "▾" : "▸"}</span>
-          </div>
-        )}
+        <div className="flex items-center gap-2.5">
+          {on && vedFields.length > 0 && (
+            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              {vedFields.map((f) => {
+                const fOn = !!vedState?.[f];
+                const isCustom = !!vedCustom?.[f];
+                const cls = fOn
+                  ? (isCustom ? "bg-rose-600 border-rose-600 text-white" : `${onBg} text-white`)
+                  : (isCustom ? "bg-rose-50 border-rose-200 text-rose-400" : "bg-white border-gray-200 text-gray-300");
+                return (
+                  <button key={f} type="button" title={`${vedMeta[f][1]}${isCustom ? " — custom for this user" : ""}`}
+                    onClick={() => onToggleVed(f)}
+                    className={`w-6 h-5 rounded border flex items-center justify-center text-[10.5px] ${cls}`}>
+                    {vedMeta[f][0]}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {hasChildren && on && (
+            <div className="flex items-center gap-2">
+              {!open && hasSubs && <span className={`text-[10px] ${accentText}`}>{restricted ? `custom · ${rcSubs.length} of ${subs.length} shown` : `${subs.length} sub-tab${subs.length === 1 ? "" : "s"} · all visible`}</span>}
+              <span className={`text-xs ${accentText}`}>{open ? "▾" : "▸"}</span>
+            </div>
+          )}
+        </div>
       </div>
       {hasChildren && on && open && (
         <div className={`bg-white border-t ${color === "amber" ? "border-amber-100" : "border-indigo-100"} space-y-2`} style={{ padding: dense ? "8px 10px 10px 26px" : "12px 14px 14px 44px" }}>
@@ -222,6 +161,13 @@ export default function RoleAccessModal({ role, settings, setSettings, onClose }
     const base = app === "studio" ? (cur.studio || { tabs: [], subTabs: {} }) : cur;
     const subTabs = { ...(base.subTabs || {}), [parent]: [...allIds] };
     return app === "studio" ? { ...cur, studio: { ...base, subTabs } } : { ...cur, subTabs };
+  }); };
+  // Edit/Delete per tab — settings.roleTabs[role].ved[tabId] (ims) or .studio.ved[tabId].
+  const toggleVed = (app, tabId, field) => { if (role === "Admin") return; patchRole((cur) => {
+    const base = app === "studio" ? (cur.studio || { tabs: [], subTabs: {} }) : cur;
+    const curVed = roleTabVed(role, settings, app, tabId);
+    const ved = { ...(base.ved || {}), [tabId]: { ...curVed, [field]: !curVed[field] } };
+    return app === "studio" ? { ...cur, studio: { ...base, ved } } : { ...cur, ved };
   }); };
 
   // ── Action-level permissions (settings.rolePerms[role]) — a flat array, unlike the tabs' nested
@@ -300,7 +246,8 @@ export default function RoleAccessModal({ role, settings, setSettings, onClose }
                       on={on} onToggle={() => toggleTab("ims", t.id)}
                       subs={subs} rcSubs={rc.subTabs?.[t.id]}
                       onSetAll={() => setSubAll("ims", t.id)} onSetCustom={(ids) => setSubCustom("ims", t.id, ids)}
-                      onToggleSub={(id) => toggleSub("ims", t.id, id)} />
+                      onToggleSub={(id) => toggleSub("ims", t.id, id)}
+                      ved={t.ved} vedState={roleTabVed(role, settings, "ims", t.id)} onToggleVed={(f) => toggleVed("ims", t.id, f)} />
                   );
                 })}
 
@@ -372,7 +319,8 @@ export default function RoleAccessModal({ role, settings, setSettings, onClose }
                       on={on} onToggle={() => toggleTab("studio", t.id)}
                       subs={subs} rcSubs={rcSt.subTabs?.[t.id]} note={note} extra={lockedNote}
                       onSetAll={() => setSubAll("studio", t.id)} onSetCustom={(ids) => setSubCustom("studio", t.id, ids)}
-                      onToggleSub={(id) => toggleSub("studio", t.id, id)} />
+                      onToggleSub={(id) => toggleSub("studio", t.id, id)}
+                      ved={t.ved} vedState={roleTabVed(role, settings, "studio", t.id)} onToggleVed={(f) => toggleVed("studio", t.id, f)} />
                   );
                 })}
               </div>
