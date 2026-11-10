@@ -5611,7 +5611,18 @@ undefined
                   const sqft=(Number(p.areaW)||0)*(Number(p.areaD)||0);
                   const rate=mat?.ratePerSqft||0;
                   const qty=Math.max(1,Math.round(Number(p.qty)||1));
+                  // Raw — stays undiscounted/unscaled on purpose. calcStructCost's own r.print (what
+                  // the Print chip and the transport truck-fill classifier, printJobPrice in
+                  // truckPrint.js, both key off) is this same raw sqft×rate×qty; smallJob below must
+                  // match that classification exactly or a print could cross the SMALL_PRINT_LIMIT
+                  // line here but not there.
                   const cost=sqft*rate*qty;
+                  // Same Fixed-Venue/Repeat discount + guestPriceMultiplier the Print chip already
+                  // takes (calcStructCost's GROUP_KEYS.print, then scaleStruct) — this per-row figure
+                  // was reading the raw `cost` straight, so it showed the stale pre-discount/pre-markup
+                  // amount next to an already-discounted chip (the same bug as Platform/Carpet).
+                  const printDiscPct = structDiscountFor(zoneConfig[k],aVenue)?.print ? 25 : 0;
+                  const costShown = guestPriceMultiplier * (printDiscPct > 0 ? Math.round(cost * (1 - printDiscPct / 100)) : cost);
                   // the function's flat transport for small prints is shown on ONE job (the first small one), since it is charged once
                   const smallJob=rate>0&&sqft>0&&Math.round(cost)<SMALL_PRINT_LIMIT;
                   const _fsp=smallJob&&!isPhantom?firstSmallPrint(zoneConfig,enabledEls,imsPrintMaterials):null;
@@ -5638,7 +5649,7 @@ undefined
                         const s=zoneScaleVal(k);
                         setPrint({qty:nextQty, qtyBase: s>1?nextQty/s:nextQty});
                       }} title="Qty — how many copies of this same print. Scale By rescales this the same way it rescales elements, Truss Qty and Platform Qty." style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}} />
-                      {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto",whiteSpace:"nowrap"}}>{rate>0?(carriesFlat?`${fmt(cost)} + ${fmt(SMALL_PRINT_CHARGE)}`:fmt(cost)):"— pick material"}</span>}
+                      {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto",whiteSpace:"nowrap"}}>{rate>0?(carriesFlat?`${fmt(costShown)} + ${fmt(SMALL_PRINT_CHARGE)}`:fmt(costShown)):"— pick material"}</span>}
                       {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>}
                     </div>
                     {/* A print under ₹2,000 does not fill a truck, so the function is charged one flat amount for its small prints instead
@@ -6323,6 +6334,11 @@ undefined
                         const sqft=(Number(p.areaW)||0)*(Number(p.areaD)||0);
                         const rate=mat?.ratePerSqft||0;
                         const pq=Math.max(1,Math.round(Number(p.qty)||1));
+                        // Same Fixed-Venue/Repeat discount + guestPriceMultiplier fix as the build
+                        // card's own Print row above — this draft view showed the raw, undiscounted
+                        // figure too.
+                        const printDiscPct = structDiscountFor(cfgCur,aVenue)?.print ? 25 : 0;
+                        const pCostShown = guestPriceMultiplier * (printDiscPct > 0 ? Math.round(sqft * rate * pq * (1 - printDiscPct / 100)) : sqft * rate * pq);
                         return <div key={p.id||pi} style={{padding:"8px 10px",borderRadius:8,background:isDark?"rgba(14,165,233,0.06)":"rgba(14,165,233,0.05)",border:"1px solid rgba(14,165,233,0.25)"}}>
                           <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                             <select value={p.material||""} onChange={e=>setPrint(pi,{material:e.target.value})} style={{...S.select,fontSize:11.5,padding:"3px 6px",width:"auto"}}>
@@ -6334,7 +6350,7 @@ undefined
                             <NumField min={0} value={p.areaD||""} onCommit={n=>setPrint(pi,{areaD:n})} placeholder="D ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}}/>
                             <span style={{fontSize:11.5,color:textS}}>ft = {sqft?sqft.toFixed(1):0} sqft ×</span>
                             <NumField min={1} allowDecimal={false} value={p.qty??1} onCommit={rawQty=>{const nq=Math.max(1,Math.round(rawQty||1));const s=scaleFor;setPrint(pi,{qty:nq,qtyBase:s>1?nq/s:nq});}} style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}}/>
-                            {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(sqft*rate*pq):"— pick material"}</span>}
+                            {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(pCostShown):"— pick material"}</span>}
                             <span onClick={()=>removePrint(pi)} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5,marginLeft:showCosts?0:"auto"}}>×</span>
                           </div>
                           <PrintRefPhoto value={p.refImageUrl} onChange={url=>setPrint(pi,{refImageUrl:url})} S={S} textS={textS} border={border} accent={accent} />

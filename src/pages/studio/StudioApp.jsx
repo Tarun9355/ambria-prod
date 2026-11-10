@@ -11729,20 +11729,34 @@ export default function StudioApp() {
       // One row PER print job (not one lumped "Print (N jobs)" row) — each job can be a different
       // material/size/qty, so a single combined row had nothing sensible to put in Size/Qty/Rate
       // and left them blank in the cost sheet even though the money (zl.print) was already correct.
+      //
+      // Each row's total is this job's SHARE of zl.print (already Fixed-Venue/Repeat-discounted and
+      // guestPriceMultiplier-scaled by calcStructCost/scaleStruct), not its own raw dims×rate×qty —
+      // same pattern the Platform/Carpet rows just above already use (_platRaw/_platRawSumP/_platRawSumC
+      // → `zl.platform * share`). A row priced straight off raw dims×rate missed BOTH the multiplier
+      // (the chip/zone total already had it) and the discount (a Fixed-Venue/Repeat print job's row
+      // total ran ~33% over what the zone actually charges, and the rows no longer summed to zl.total).
+      // zl.printFlat (the flat ₹400 small-print transport charge, never discounted/scaled — see
+      // withPrintFlat) is subtracted out first since it isn't a per-job amount to share; it gets its
+      // own flat line just below.
+      const _printRawSum = (zc.prints || []).reduce((s, p) => {
+        const m = (structRates.printMaterials || []).find((x) => x.id === p.material);
+        const pw = Number(p.areaW) || 0, pd = Number(p.areaD) || 0;
+        const pq = Math.max(1, Math.round(Number(p.qty) || 1));
+        return s + pw * pd * (m?.ratePerSqft || 0) * pq;
+      }, 0);
+      const _printGuestTotal = Math.max(0, (zl.print || 0) - (zl.printFlat || 0));
       (zc.prints || []).forEach((p) => {
         const m = (structRates.printMaterials || []).find((x) => x.id === p.material);
         const pw = Number(p.areaW) || 0, pd = Number(p.areaD) || 0;
         const pq = Math.max(1, Math.round(Number(p.qty) || 1));
         const pRate = m?.ratePerSqft || 0;
-        // guestPriceMultiplier — every other guest-facing cost on this page folds it in (scaleStruct,
-        // getElPriceForFn, truck/genset); this one row computed straight from raw dims×rate and never
-        // did, so a Print line item understated itself next to a zone/function total (zl.total, via
-        // scaleStruct) that already had the multiplier baked in — the line items could never be summed
-        // back up to match the total they supposedly made up.
-        const pTotal = pw * pd * pRate * pq * guestPriceMultiplier;
-        if (pTotal <= 0) return;
-        // Same fold for the displayed rate as pTotal just above it, so Rate × Qty still reads as
-        // Amount on the sheet instead of a stale pre-markup number next to an already-scaled total.
+        const pRaw = pw * pd * pRate * pq;
+        if (pRaw <= 0) return;
+        const share = _printRawSum > 0 ? pRaw / _printRawSum : 0;
+        const pTotal = _printGuestTotal * share;
+        // guestPriceMultiplier only — the rate caption deliberately stays at the undiscounted list
+        // rate, same convention the Truss/Platform/Carpet rate captions on this sheet already follow.
         const pRateShown = Math.round(pRate * guestPriceMultiplier * 100) / 100;
         structItems.push({
           name: "🖨 Print — " + (m?.name || "material") + " ₹" + pRateShown + "/sqft" + (pq > 1 ? " ×" + pq : ""),
