@@ -187,7 +187,7 @@ export default function StudioEventInfo({ ctx }) {
     clientVenueOther, setClientVenueOther, clientPalette, setClientPalette, setClientFlowerPalette, fnBuilds, setFnBuilds, restoreBuildState,
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, switchActiveFn,
-    clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch, ledgerReady, houseAgencyFeePct,
+    clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch, ledgerReady, ledgerLoadError, houseAgencyFeePct,
     activeClient, loadClientSession, loadClientSessionGuarded, resumeSavedSession, startNewDeal, askConfirm,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     lmsLeads, lmsLoading, lmsError, lmsFilling, lmsCacheRef, setLmsRefreshCounter, loadLmsLead,
@@ -301,6 +301,27 @@ export default function StudioEventInfo({ ctx }) {
     const existing = clientLedger.find((c) => c && c.id === activeClientId) || null;
     let base = existing;
     if (!base) {
+      // ── DON'T MINT AGAINST AN INCOMPLETE LEDGER ──
+      // findDuplicateClient (and every other dupe-prevention check in this app — findPhoneMatches,
+      // saveSession's own phone-match-before-mint fallback, loadLmsLead's phoneMatches) only ever
+      // searches the client_ledger ALREADY IN MEMORY — all now gated on ledgerReady/ledgerLoadError
+      // (this check, and its twins in saveSession and loadLmsLead itself), but originally weren't: a
+      // network blip (or just a slow initial load) delaying that fetch left a real window where the
+      // true existing client simply isn't in `clientLedger` yet — not because it doesn't exist, but
+      // because it hasn't arrived. Continue during that window finds no duplicate (there's nothing to
+      // compare against) and mints a fresh one, same guest/date/venue, zero history: the exact
+      // "duplicate deal with an empty build" reported live. canContinue (the button's own disabled
+      // state) only checks form completeness, so nothing upstream already stops this. Refusing here,
+      // the same way an actual detected duplicate is refused below, closes the window instead of
+      // trying to detect a collision that the data to detect it with hasn't loaded yet.
+      // ledgerReady alone isn't enough: it's set true whether the fetch SUCCEEDED or FAILED ("we
+      // asked", not "we found work" — see its own comment in StudioApp.jsx) — a fetch that failed
+      // outright leaves clientLedger empty just as surely as one still in flight does, and would
+      // otherwise sail straight past this check into the exact same duplicate-minting gap.
+      if (!ledgerReady || ledgerLoadError) {
+        showMsg("Still loading existing clients — wait a moment and try Continue again", "red");
+        return false;
+      }
       // Only on CREATE. Editing a loaded client into a collision is a judgement call a salesperson
       // is entitled to make; minting a second copy of a deal that already exists is not.
       const dupe = findDuplicateClient();
@@ -1341,16 +1362,18 @@ export default function StudioEventInfo({ ctx }) {
                 </div>
               </div>
               <div style={{padding:"22px 24px 26px"}}>
-                {/* There WAS a deal open when this tab last closed/refreshed, but the client_ledger
-                    fetch actually failed to bring it back (network blip, not "nothing to restore").
-                    The data itself is safe server-side — this exists so the user doesn't mistake a
-                    failed restore for a genuinely fresh, empty deal and start retyping/duplicating a
-                    client that's really just one retry away. retryLedgerLoad is already firing itself
-                    a few times in the background; this button is for after it gives up, or for "now",
-                    not "in 2-6 seconds". */}
+                {/* The client_ledger fetch actually failed (network blip), not merely still loading —
+                    whether or not there was a deal open when this tab last closed/refreshed. The data
+                    itself is safe server-side. Shown either way because every duplicate-client guard
+                    (Continue's own check, the background autosave's phone-match-before-mint fallback,
+                    loadLmsLead) now refuses to create or match a client while this is true — so a
+                    brand-new session is just as stuck starting any deal as an unrestored one is at
+                    continuing theirs, and both need the same way out. retryLedgerLoad is already
+                    firing itself a few times in the background; this button is for after it gives up,
+                    or for "now", not "in 2-6 seconds". */}
                 {showLedgerRestoreWarning && (
                   <div style={{marginBottom:16,padding:"10px 14px",borderRadius:10,background:"rgba(239,68,68,0.06)",border:"1px solid rgba(239,68,68,0.25)",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                    <span style={{fontSize:12,color:"#B91C1C",flex:1,minWidth:200}}>⚠ Couldn't reach the server to restore your in-progress deal. Your data is safe — this is just a connection hiccup. Retrying automatically…</span>
+                    <span style={{fontSize:12,color:"#B91C1C",flex:1,minWidth:200}}>⚠ Couldn't reach the server to load existing clients. Your data is safe — this is just a connection hiccup. Retrying automatically… (Continue is blocked until this clears, so a repeat guest can't accidentally get a duplicate deal.)</span>
                     <button type="button" onClick={retryLedgerLoad} style={{padding:"4px 12px",borderRadius:6,border:"1px solid rgba(239,68,68,0.4)",background:"rgba(239,68,68,0.1)",color:"#B91C1C",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>🔄 Retry now</button>
                   </div>
                 )}
@@ -1454,8 +1477,14 @@ export default function StudioEventInfo({ ctx }) {
                   // different times; showing whichever resolves first (as this used to) reads as a
                   // complete answer while the other is still in flight — exactly how "no existing
                   // client" gets acted on a few seconds before the real match would have shown up.
-                  // Nothing renders below until BOTH are in.
-                  if (lmsLoading || !ledgerReady) {
+                  // Nothing renders below until BOTH are in. ledgerLoadError too — ledgerReady alone
+                  // is set true even when the client_ledger fetch FAILED outright ("we asked", not "we
+                  // found work"), and the results below (and their "Load →" buttons) are only as
+                  // trustworthy as that fetch actually having landed — loadLmsLead itself now refuses
+                  // to run while it hasn't, but showing a list whose every button just silently toasts
+                  // "still loading" on click is worse than showing the same waiting state this already
+                  // shows for the plain still-in-flight case.
+                  if (lmsLoading || !ledgerReady || ledgerLoadError) {
                     // The search line stays (it says what is being waited on); the result rows' shape fills in below it.
                     return <div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(59,130,246,0.06)":"rgba(59,130,246,0.04)",border:`1px solid ${isDark?"rgba(59,130,246,0.2)":"rgba(59,130,246,0.15)"}`,display:"flex",flexDirection:"column",gap:10}}>
                       <div style={{display:"flex",alignItems:"center",gap:8}}>

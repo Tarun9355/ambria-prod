@@ -138,6 +138,10 @@ export default function ManageSettings({ ctx }) {
     askConfirm(
       `Rename "${from}" → "${to}"?`,
       async () => {
+        // Edit Access/per-user override, Admin → Users & Roles → Studio Settings tab —
+        // migrateLibraryTag writes to the `library` table directly, bypassing every gated ctx
+        // function below it, so it needs its own check rather than relying on saveTax's.
+        if (!ctx.canEditSettings) { showMsg("View only — your access to Settings doesn't include editing", "red"); return; }
         setTaxBusy(true);
         try {
           if (n) await migrateLibraryTag(cat, from, to);

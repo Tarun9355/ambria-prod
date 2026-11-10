@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology, pillarCountForSpan, pillarCountForSpanRaw, nearestCleanSpans, buildPlatformPlan, trussInvForMaterial } from "./pricing";
+import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology, pillarCountForSpan, pillarCountForSpanRaw, nearestCleanSpans, buildPlatformPlan, trussInvForMaterial, zoneTrussStandingDiscountDetail, platformStandingDiscount } from "./pricing";
 
 // §23 Phase 7 (2026-11-04, owner-confirmed worked examples): the sales team pads a zone's entered
 // width/depth themselves by a round 1ft per pillar (easy mental math) BEFORE typing it — a true
@@ -399,5 +399,80 @@ describe("trussInvForMaterial — no longer resolves platforms per truss-materia
     };
     expect(trussInvForMaterial(base, "pole").platforms).toBe(base.platforms);
     expect(trussInvForMaterial(base, "iron").platforms).toBe(base.platforms);
+  });
+});
+
+// A fixed venue's standing pillars/beams are now tracked per truss material (Iron/Pole/Aluminium —
+// see fixedVenues.js's normalizedTrussCounts). zoneTrussStandingDiscountDetail must only discount a
+// zone against the slice of standing stock that matches ITS OWN truss material — an Iron zone must
+// never draw down a venue's Pole allocation, or vice versa.
+describe("zoneTrussStandingDiscountDetail — matches a zone's OWN truss material against the venue's standing count for that material", () => {
+  const trussInv = {
+    settings: { maxSpanFt: 30, pillarWidthFt: 0.75 },
+    pillars: { 10: { stock: 50 } }, beams: { 12: { stock: 50 } },
+    rates: { pillarRftRate: 20, beamRftRate: 15, battaRftRate: 7 },
+    batta: { bufferPct: 10 },
+    materials: {
+      pole: {
+        pillars: { 10: { stock: 50 } }, beams: { 8: { stock: 50 } },
+        settings: { maxSpanFt: 15, pillarWidthFt: 0.3 },
+        rates: { pillarRftRate: 10, beamRftRate: 8 },
+      },
+    },
+  };
+  const zcIron = { dims: { L: 14, W: 14, H: 10 }, trT: "u_only", trussQty: 1, trussMaterial: "iron" };
+  const zcPole = { ...zcIron, trussMaterial: "pole" };
+
+  it("an Iron-material zone draws against the venue's Iron standing pillars, not its (larger) Pole bucket", () => {
+    const venueTruss = { pillars: { iron: { 10: 10 }, pole: { 10: 2 } }, beams: {}, pillarDiscountPct: 50, beamDiscountPct: 0 };
+    const preview = calcZoneTrussPreview(zcIron, trussInv);
+    const detail = zoneTrussStandingDiscountDetail(zcIron, trussInv, venueTruss);
+    expect(detail.pillar).toBe(Math.round(Math.min(preview.costs.pillarRft, 10 * 10) * trussInv.rates.pillarRftRate * 0.5));
+  });
+
+  it("a Pole-material zone draws against the venue's (smaller) Pole standing pillars, valued at Pole's OWN rate — never Iron's bucket or Iron's rate", () => {
+    const venueTruss = { pillars: { iron: { 10: 10 }, pole: { 10: 2 } }, beams: {}, pillarDiscountPct: 50, beamDiscountPct: 0 };
+    const preview = calcZoneTrussPreview(zcPole, trussInv);
+    const detail = zoneTrussStandingDiscountDetail(zcPole, trussInv, venueTruss);
+    const poleRate = trussInv.materials.pole.rates.pillarRftRate; // 10 — half Iron's 20
+    const ifWronglyUsedIronBucketAndRate = Math.round(Math.min(preview.costs.pillarRft, 10 * 10) * trussInv.rates.pillarRftRate * 0.5);
+    expect(detail.pillar).toBe(Math.round(Math.min(preview.costs.pillarRft, 2 * 10) * poleRate * 0.5));
+    expect(detail.pillar).toBeLessThan(ifWronglyUsedIronBucketAndRate);
+  });
+
+  it("an unrecognized trussMaterial value falls back to Iron, matching calcZoneTrussPreview's own fallback — not silently 0", () => {
+    const venueTruss = { pillars: { iron: { 10: 10 } }, beams: {}, pillarDiscountPct: 50, beamDiscountPct: 0 };
+    const zcWeird = { ...zcIron, trussMaterial: "titanium" };
+    const preview = calcZoneTrussPreview(zcWeird, trussInv); // also falls back to iron internally
+    const detail = zoneTrussStandingDiscountDetail(zcWeird, trussInv, venueTruss);
+    expect(detail.pillar).toBe(Math.round(Math.min(preview.costs.pillarRft, 10 * 10) * trussInv.rates.pillarRftRate * 0.5));
+  });
+
+  it("a legacy (pre-material-split) flat venueTruss.pillars is read entirely as Iron — an Iron zone sees it, a Pole zone does not", () => {
+    const venueTruss = { pillars: { 10: 10 }, beams: {}, pillarDiscountPct: 50, beamDiscountPct: 0 };
+    expect(zoneTrussStandingDiscountDetail(zcIron, trussInv, venueTruss).pillar).toBeGreaterThan(0);
+    expect(zoneTrussStandingDiscountDetail(zcPole, trussInv, venueTruss).pillar).toBe(0);
+  });
+});
+
+describe("platformStandingDiscount — fixed-venue standing platform sqft discount (flat pool, no material split)", () => {
+  it("discounts only the overlap between sqft needed and sqft standing, at the configured %", () => {
+    expect(platformStandingDiscount(900, 25, { platformSqft: 500, platformDiscountPct: 25 })).toBe(3125); // 500 × 25 × 0.25
+  });
+  it("caps at what's actually needed — more standing than needed doesn't over-discount", () => {
+    expect(platformStandingDiscount(200, 25, { platformSqft: 500, platformDiscountPct: 25 })).toBe(1250); // 200 × 25 × 0.25
+  });
+  it("0 with no venue config, no standing sqft, or no discount %", () => {
+    expect(platformStandingDiscount(900, 25, null)).toBe(0);
+    expect(platformStandingDiscount(900, 25, { platformSqft: 0, platformDiscountPct: 25 })).toBe(0);
+    expect(platformStandingDiscount(900, 25, { platformSqft: 500, platformDiscountPct: 0 })).toBe(0);
+  });
+  it("0 when nothing is actually needed or the rate itself is 0", () => {
+    expect(platformStandingDiscount(0, 25, { platformSqft: 500, platformDiscountPct: 25 })).toBe(0);
+    expect(platformStandingDiscount(900, 0, { platformSqft: 500, platformDiscountPct: 25 })).toBe(0);
+  });
+  it("a stray >100% (the admin % input has no hard ceiling) is clamped to 100, never discounting more than the sqft actually cost", () => {
+    expect(platformStandingDiscount(900, 25, { platformSqft: 500, platformDiscountPct: 150 }))
+      .toBe(platformStandingDiscount(900, 25, { platformSqft: 500, platformDiscountPct: 100 }));
   });
 });

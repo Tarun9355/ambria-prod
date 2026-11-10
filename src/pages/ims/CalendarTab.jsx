@@ -3,6 +3,7 @@ import { supabase } from "../../lib/supabase";
 import DatePricingPanel from "./DatePricingPanel.jsx";
 import { resolveDateCategory } from "../../lib/inventory/helpers";
 import { DATE_PRICING_LABELS, SETTINGS_DEFAULTS, hasIMSPerm, DATE_PRICING_OWNER_ID } from "../../lib/ims/constants";
+import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
 import { releaseBlocks } from "../../lib/ims/eventAutoConfirm";
 import { useAuth } from "../../lib/AuthContext";
@@ -17,6 +18,10 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
   // own comment below) — the nearest real target for block_release, which has no dedicated
   // per-item "release" UI anywhere in the app.
   const canRelease = hasIMSPerm(authUser, "block_release");
+  // Edit Access/per-user override, Admin → Users & Roles — the only ungated write in this tab's
+  // own Date Pricing Config panel (Category Multipliers); everything else here already has its
+  // own specific gate (block_release above, the owner-only checks inside DatePricingPanel).
+  const canEditCalendar = hasTabPerm(authUser, settings, "ims", "calendar", "edit");
   // Owner-only (not a role check — "Admin" is shared by several people): manually overriding a
   // date's pricing category is restricted to Tarun's own account by owner request, confirmed
   // 2026-10-25 after a reported case of an override appearing to "get cleared" — see setDateCategory's
@@ -470,7 +475,7 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
             <span className="flex-1">Date Pricing Config</span>
             <span aria-hidden="true" className={"shrink-0 text-gray-400 text-xs transition-transform " + (showDatePricing ? "rotate-90" : "")}>▸</span>
           </button>
-          {showDatePricing && <div className="px-4 pb-4 border-t border-gray-100 pt-4"><DatePricingPanel settings={settings} mergeDatePricing={mergeDatePricing} authUser={authUser} /></div>}
+          {showDatePricing && <div className="px-4 pb-4 border-t border-gray-100 pt-4"><DatePricingPanel settings={settings} mergeDatePricing={mergeDatePricing} authUser={authUser} canEdit={canEditCalendar} /></div>}
         </div>
       )}
     </div>

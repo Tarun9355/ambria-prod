@@ -13,6 +13,7 @@ import { priceForInvItem } from "../ims/helpers.js";
 // below for how it's used.
 import { builtBeamTotal, PILLAR_BUDGET_FT, resolvePillarHeight, resolveBeamSegment, pillarCountForSpanRaw, materialHasSpanPadding } from "../ims/trussEngine.js";
 import { platformAvgRatePerSqft } from "../ims/platformEngine.js";
+import { normalizedTrussCounts, TRUSS_MATERIAL_KEYS } from "../ims/fixedVenues.js";
 export { resolveMandiFlower, pillarCountForSpanRaw };
 
 // One shared resolver for "is THIS pricing category of a zone repeat-discounted". Build's own
@@ -590,11 +591,24 @@ export function zoneTrussStandingDiscountDetail(zc, trussInv, venueTruss) {
   if (zc?.trussQty === 0) return { pillar: 0, beam: 0, total: 0 };
   const preview = calcZoneTrussPreview(zc, trussInv);
   if (!preview?.costs) return { pillar: 0, beam: 0, total: 0 };
-  const pillarRftRate = trussInv?.rates?.pillarRftRate || 0;
-  const beamRftRate = trussInv?.rates?.beamRftRate || 0;
+  // A venue's standing pillars/beams are tracked per material (Iron/Pole/Aluminium) — only the
+  // slice matching THIS zone's own truss material is actually what's bolted in place for it.
+  // Defaults to Iron, same field/default calcZoneTrussPreview just above already resolved its own
+  // cost against (zc?.trussMaterial, via its own internal trussInvForMaterial call) — resolving the
+  // SAME way here, not just picking the right standing-count bucket, matters just as much: a
+  // Pole/Aluminium zone's rate can genuinely differ from Iron's, and preview.costs.pillarRft/beamRft
+  // were already priced at that resolved material's rate, so the discount has to be valued the same
+  // way or it nets a Pole-costed RFT figure against an Iron ₹/RFT rate.
+  const material = TRUSS_MATERIAL_KEYS.includes(String(zc?.trussMaterial || "").toLowerCase())
+    ? String(zc.trussMaterial).toLowerCase() : "iron";
+  const matInv = trussInvForMaterial(trussInv, material);
+  const pillarRftRate = matInv?.rates?.pillarRftRate || 0;
+  const beamRftRate = matInv?.rates?.beamRftRate || 0;
+  const pillarsForMaterial = normalizedTrussCounts(venueTruss.pillars)[material] || {};
+  const beamsForMaterial = normalizedTrussCounts(venueTruss.beams)[material] || {};
   const standingRft = (bySize) => Object.entries(bySize || {}).reduce((s, [sz, cnt]) => s + (Number(sz) || 0) * (Number(cnt) || 0), 0);
-  const standingPillarRft = standingRft(venueTruss.pillars);
-  const standingBeamRft = standingRft(venueTruss.beams);
+  const standingPillarRft = standingRft(pillarsForMaterial);
+  const standingBeamRft = standingRft(beamsForMaterial);
   const pillarPct = Number(venueTruss.pillarDiscountPct) || 0;
   const beamPct = Number(venueTruss.beamDiscountPct) || 0;
   const usedPillarRft = Math.min(preview.costs.pillarRft || 0, standingPillarRft);
@@ -630,6 +644,24 @@ export function trussDiscountedCosts(costs, detail, isRepeat, repeatPct = 30) {
 }
 export function zoneTrussStandingDiscount(zc, trussInv, venueTruss) {
   return zoneTrussStandingDiscountDetail(zc, trussInv, venueTruss).total;
+}
+
+// Fixed-venue standing PLATFORM sqft discount — same "min(needed, standing) × discount%" rule as
+// the truss pillar/beam discount above, against a flat sqft pool (no material split: Platform's own
+// guest-facing rate already blends Wood+Iron into one pool — platformAvgRatePerSqft, owner decision
+// 2026-11-05 — so its standing count follows the same one-pool model, unlike Truss). Pooled per
+// FUNCTION, not per zone, matching how Platform's own internal cost (dcCostRollup) is already pooled
+// across every zone of one function for the same blended-rate reason.
+export function platformStandingDiscount(sqftNeeded, rate, venueTruss) {
+  if (!venueTruss || !(sqftNeeded > 0) || !(rate > 0)) return 0;
+  const standingSqft = Number(venueTruss.platformSqft) || 0;
+  // Clamped to 100 — the admin % input has no hard ceiling (HTML max= doesn't stop a typed value),
+  // and an unclamped >100% would discount for MORE than the sqft ever cost, which the caller's own
+  // Math.max(0, cost - discount) can't catch since it clamps the final price, not this raw amount.
+  const pct = Math.min(100, Math.max(0, Number(venueTruss.platformDiscountPct) || 0));
+  if (standingSqft <= 0 || pct <= 0) return 0;
+  const used = Math.min(sqftNeeded, standingSqft);
+  return Math.round(used * rate * pct / 100);
 }
 
 //   Full Box → CEILING DRAPE MODEL: kg = ceiling area × fabricFactors.kgPerSqft[density]

@@ -7,7 +7,8 @@
 import { useState, useMemo, useEffect } from "react";
 import { supabase, fetchAll, updateRow, deleteRow } from "../../lib/supabase";
 import { assembleVenuesFromRows, normVenueName } from "../../lib/ims/venueProperties";
-import { genFixedVenueId, assembleFixedVenuesFromRows, fixedVenuePatchToRow } from "../../lib/ims/fixedVenues";
+import { genFixedVenueId, assembleFixedVenuesFromRows, fixedVenuePatchToRow, normalizedTrussCounts, TRUSS_MATERIAL_KEYS } from "../../lib/ims/fixedVenues";
+import { TRUSS_MATERIALS } from "../../lib/studio/taxonomy";
 import { MANPOWER_TYPES } from "../../lib/ims/constants";
 import { thumbUrl } from "../../lib/studio/thumb";
 import { useConfirm } from "../../components/ui";
@@ -104,8 +105,11 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     (inventory || []).forEach((i) => { const sub = String(i.subCat || i.subcategory || "").trim(); if (!sub) return; const dept = _catToDept(i.cat || i.category); (m[dept] = m[dept] || new Set()).add(sub); });
     const out = {}; Object.keys(m).sort().forEach((d) => { out[d] = [...m[d]].sort((a, b) => a.localeCompare(b)); }); return out;
   }, [inventory, settings.categoryDepartments]);
-  const pillarSizes = Object.keys(trussInv?.pillars || {}).sort((a, b) => Number(b) - Number(a));
-  const beamSizes = Object.keys(trussInv?.beams || {}).sort((a, b) => Number(b) - Number(a));
+  // Planning's own truss stock, per material — Iron lives at the top level (the engine's default,
+  // trussInvForMaterial pricing.js), Pole/Aluminium each in their own skeleton under `.materials`.
+  const trussInvForMat = (mat) => (mat === "iron" ? trussInv : (trussInv?.materials?.[mat] || null));
+  const pillarSizesFor = (mat) => Object.keys(trussInvForMat(mat)?.pillars || {}).sort((a, b) => Number(b) - Number(a));
+  const beamSizesFor = (mat) => Object.keys(trussInvForMat(mat)?.beams || {}).sort((a, b) => Number(b) - Number(a));
   const [activeId, setActiveId] = useState(null);
   // Raw text of whichever number field is mid-edit, keyed "<venueId>:<invId>:<field>".
   // The inputs used to normalise on every keystroke — `parseInt(v) || 1` meant backspacing to empty
@@ -183,11 +187,18 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
     const it = inventory.find((i) => i.id === invId);
     if (!(await confirm({ title: `Remove ${it?.name ? `"${it.name}"` : "this item"} from ${v?.name || "this venue"}?`, body: "It will no longer count as standing at this venue." }))) return;
     updVenue(vid, { items: v.items.filter((it) => it.invId !== invId) }); };
-  const updTruss = (vid, kind, size, qty) => {
+  // kind: "pillars" | "beams". material: "iron" | "pole" | "aluminium". Always spreads the venue's
+  // FULL existing truss object first (pillarDiscountPct/beamDiscountPct/platformSqft/
+  // platformDiscountPct included) — building the patch from scratch here, as this used to, meant
+  // every count edit silently wiped every other truss field on save. normalizedTrussCounts migrates
+  // a legacy flat (pre-material-split) bucket to the new shape the moment it's first edited; it's
+  // left exactly as it was for every OTHER kind/venue that hasn't been touched yet.
+  const updTruss = (vid, kind, material, size, qty) => {
     const v = fixedVenues.find((x) => x.id === vid);
-    const truss = { pillars: { ...(v.truss?.pillars || {}) }, beams: { ...(v.truss?.beams || {}) } };
-    if (qty > 0) truss[kind][size] = qty; else delete truss[kind][size];
-    updVenue(vid, { truss });
+    const norm = normalizedTrussCounts(v.truss?.[kind]);
+    const nextKindVal = { ...norm, [material]: { ...(norm[material] || {}) } };
+    if (qty > 0) nextKindVal[material][size] = qty; else delete nextKindVal[material][size];
+    updVenue(vid, { truss: { ...(v.truss || {}), [kind]: nextKindVal } });
   };
   // Pieces of an inventory item free to assign HERE = stock minus what other fixed venues hold.
   const invAvail = (invId, vid) => {
@@ -225,11 +236,13 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   // (which searches the rest of IMS inventory to ADD something new). Keyed by venue id, same as
   // pickQuery, so switching tabs doesn't carry one venue's filter onto another.
   const [standingSearch, setStandingSearch] = useState({});
-  // Pieces of a truss size available to assign HERE = stock (Planning) minus what other
-  // fixed venues already hold standing.
-  const trussAvail = (kind, size, vid) => {
-    const stock = Number(trussInv?.[kind]?.[size]?.stock) || 0;
-    const otherStanding = fixedVenues.filter((x) => x.id !== vid).reduce((s, x) => s + (Number(x.truss?.[kind]?.[size]) || 0), 0);
+  // Pieces of a truss size (ONE material) available to assign HERE = that material's own stock
+  // (Planning) minus what other fixed venues already hold standing of it — a Pole pillar never
+  // competes with an Iron one for the same stock pool.
+  const trussAvail = (kind, material, size, vid) => {
+    const stock = Number(trussInvForMat(material)?.[kind]?.[size]?.stock) || 0;
+    const otherStanding = fixedVenues.filter((x) => x.id !== vid)
+      .reduce((s, x) => s + (Number(normalizedTrussCounts(x.truss?.[kind])[material]?.[size]) || 0), 0);
     return Math.max(0, stock - otherStanding);
   };
 
@@ -294,7 +307,8 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
         <div className="flex items-center gap-1.5 flex-wrap border-b border-gray-200 mb-4">
           {fixedVenues.map((v) => {
             const isActive = (active?.id || fixedVenues[0]?.id) === v.id;
-            const count = (v.items?.length || 0) + Object.keys(v.truss?.pillars || {}).length + Object.keys(v.truss?.beams || {}).length;
+            const trussSizeCount = (bySize) => TRUSS_MATERIAL_KEYS.reduce((s, m) => s + Object.keys(normalizedTrussCounts(bySize)[m] || {}).length, 0);
+            const count = (v.items?.length || 0) + trussSizeCount(v.truss?.pillars) + trussSizeCount(v.truss?.beams) + ((Number(v.truss?.platformSqft) || 0) > 0 ? 1 : 0);
             return (
               <button key={v.id} onClick={() => setActiveId(v.id)}
                 className={"px-3 py-2 text-sm font-semibold rounded-t-lg -mb-px border-b-2 transition-colors " + (isActive ? "border-indigo-600 text-indigo-700 bg-indigo-50" : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50")}>
@@ -590,52 +604,86 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
               );
             })()}
 
-            {/* Standing truss — pillars/beams installed here (totals per size, sizes live from Planning) */}
-            <div className="text-xs font-semibold text-gray-500 uppercase mt-3 mb-1.5">Standing truss <span className="font-normal text-gray-400 normal-case">— installed pillars/beams · “/N” = pieces free to assign here</span></div>
+            {/* Standing truss — pillars/beams installed here, by material (totals per size, sizes live from Planning) */}
+            <div className="text-xs font-semibold text-gray-500 uppercase mt-3 mb-1.5">Standing truss <span className="font-normal text-gray-400 normal-case">— installed pillars/beams, by material · “/N” = pieces free to assign here</span></div>
             {(() => {
-              // Sizes come live from Planning truss inventory; also keep any size this venue
-              // already uses (so a size removed in Planning can still be zeroed, not lost).
-              const vPillars = [...new Set([...pillarSizes, ...Object.keys(v.truss?.pillars || {})])].sort((a, b) => Number(b) - Number(a));
-              const vBeams = [...new Set([...beamSizes, ...Object.keys(v.truss?.beams || {})])].sort((a, b) => Number(b) - Number(a));
-              if (vPillars.length === 0 && vBeams.length === 0) return <div className="text-xs text-gray-400 italic">Truss sizes load from Planning → Truss inventory. Add sizes there first.</div>;
-              return (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs text-gray-500 w-14">🔩 Pillars</span>
-                    {vPillars.map((sz) => { const avail = trussAvail("pillars", sz, v.id); return (
-                      <span key={sz} className="inline-flex items-center gap-1 bg-teal-50 border border-teal-200 rounded-lg px-2 py-1">
-                        <span className="text-xs text-teal-700 font-medium">{sz}ft</span>
-                        <input type="number" min="0" max={avail} value={v.truss?.pillars?.[sz] ?? 0} onChange={(e) => updTruss(v.id, "pillars", sz, Math.min(parseInt(e.target.value) || 0, avail))} className="w-12 border border-teal-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
+              const MAT_STYLE = {
+                pillars: { bg: "bg-teal-50", border: "border-teal-200", text: "text-teal-700" },
+                beams: { bg: "bg-amber-50", border: "border-amber-200", text: "text-amber-700" },
+              };
+              // One material's row of size inputs — sizes come live from Planning's per-material
+              // truss stock; also keep any size this venue already uses for that material (so a
+              // size removed in Planning can still be zeroed, not lost). null when the material has
+              // no sizes at all yet (nothing configured in Planning, nothing standing here either) —
+              // same "sizes load from Planning" rule the old single Iron-only row followed.
+              const materialRow = (kind, mat) => {
+                const live = kind === "pillars" ? pillarSizesFor(mat.key) : beamSizesFor(mat.key);
+                const counts = normalizedTrussCounts(v.truss?.[kind])[mat.key] || {};
+                const sizes = [...new Set([...live, ...Object.keys(counts)])].sort((a, b) => Number(b) - Number(a));
+                if (!sizes.length) return null;
+                const s = MAT_STYLE[kind];
+                return (
+                  <div key={mat.key} className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] text-gray-400 w-16">{mat.label}</span>
+                    {sizes.map((sz) => { const avail = trussAvail(kind, mat.key, sz, v.id); return (
+                      <span key={sz} className={`inline-flex items-center gap-1 ${s.bg} border ${s.border} rounded-lg px-2 py-1`}>
+                        <span className={`text-xs ${s.text} font-medium`}>{sz}ft</span>
+                        <input type="number" min="0" max={avail} value={counts[sz] ?? 0} onChange={(e) => updTruss(v.id, kind, mat.key, sz, Math.min(parseInt(e.target.value) || 0, avail))} className={`w-12 border ${s.border} rounded px-1 py-0.5 text-xs text-center font-bold`} />
                         <span className="text-[10px] text-gray-400">/{avail}</span>
                       </span>
                     ); })}
-                    <span className="text-[10px] text-gray-400">total {Object.values(v.truss?.pillars || {}).reduce((s, q) => s + (Number(q) || 0), 0)} pillars</span>
-                    {/* One discount for pillars as a whole — not per size, unlike the qty boxes above. */}
-                    <span className="inline-flex items-center gap-1 ml-auto">
-                      <span className="text-[10px] text-gray-500">Discount</span>
-                      <input type="number" min="0" max="100" value={v.truss?.pillarDiscountPct ?? 0} onChange={(e) => updVenue(v.id, { truss: { ...(v.truss || {}), pillarDiscountPct: parseFloat(e.target.value) || 0 } })} className="w-12 border border-teal-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
-                      <span className="text-[10px] text-gray-500">%</span>
-                    </span>
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs text-gray-500 w-14">➖ Beams</span>
-                    {vBeams.map((sz) => { const avail = trussAvail("beams", sz, v.id); return (
-                      <span key={sz} className="inline-flex items-center gap-1 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
-                        <span className="text-xs text-amber-700 font-medium">{sz}ft</span>
-                        <input type="number" min="0" max={avail} value={v.truss?.beams?.[sz] ?? 0} onChange={(e) => updTruss(v.id, "beams", sz, Math.min(parseInt(e.target.value) || 0, avail))} className="w-12 border border-amber-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
-                        <span className="text-[10px] text-gray-400">/{avail}</span>
+                );
+              };
+              const totalOf = (kind) => { const n = normalizedTrussCounts(v.truss?.[kind]); return TRUSS_MATERIAL_KEYS.reduce((s, m) => s + Object.values(n[m] || {}).reduce((ss, q) => ss + (Number(q) || 0), 0), 0); };
+              const anyPillars = TRUSS_MATERIALS.some(m => materialRow("pillars", m));
+              const anyBeams = TRUSS_MATERIALS.some(m => materialRow("beams", m));
+              if (!anyPillars && !anyBeams) return <div className="text-xs text-gray-400 italic">Truss sizes load from Planning → Truss inventory. Add sizes there first.</div>;
+              return (
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500 font-medium">🔩 Pillars</span>
+                      <span className="text-[10px] text-gray-400">total {totalOf("pillars")} pillars</span>
+                      {/* One discount for pillars as a whole — not per size or material. */}
+                      <span className="inline-flex items-center gap-1 ml-auto">
+                        <span className="text-[10px] text-gray-500">Discount</span>
+                        <input type="number" min="0" max="100" value={v.truss?.pillarDiscountPct ?? 0} onChange={(e) => updVenue(v.id, { truss: { ...(v.truss || {}), pillarDiscountPct: parseFloat(e.target.value) || 0 } })} className="w-12 border border-teal-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
+                        <span className="text-[10px] text-gray-500">%</span>
                       </span>
-                    ); })}
-                    {/* One discount for beams as a whole — not per size. */}
-                    <span className="inline-flex items-center gap-1 ml-auto">
-                      <span className="text-[10px] text-gray-500">Discount</span>
-                      <input type="number" min="0" max="100" value={v.truss?.beamDiscountPct ?? 0} onChange={(e) => updVenue(v.id, { truss: { ...(v.truss || {}), beamDiscountPct: parseFloat(e.target.value) || 0 } })} className="w-12 border border-amber-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
-                      <span className="text-[10px] text-gray-500">%</span>
-                    </span>
+                    </div>
+                    {TRUSS_MATERIALS.map(m => materialRow("pillars", m))}
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500 font-medium">➖ Beams</span>
+                      {/* One discount for beams as a whole — not per size or material. */}
+                      <span className="inline-flex items-center gap-1 ml-auto">
+                        <span className="text-[10px] text-gray-500">Discount</span>
+                        <input type="number" min="0" max="100" value={v.truss?.beamDiscountPct ?? 0} onChange={(e) => updVenue(v.id, { truss: { ...(v.truss || {}), beamDiscountPct: parseFloat(e.target.value) || 0 } })} className="w-12 border border-amber-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
+                        <span className="text-[10px] text-gray-500">%</span>
+                      </span>
+                    </div>
+                    {TRUSS_MATERIALS.map(m => materialRow("beams", m))}
                   </div>
                 </div>
               );
             })()}
+
+            {/* Standing platform — installed platform sqft (one blended Wood+Iron pool, same as
+                Build's own platform rate — see platformStandingDiscount's header comment, pricing.js) */}
+            <div className="text-xs font-semibold text-gray-500 uppercase mt-3 mb-1.5">Standing platform <span className="font-normal text-gray-400 normal-case">— installed platform sqft</span></div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 bg-sky-50 border border-sky-200 rounded-lg px-2 py-1">
+                <span className="text-xs text-sky-700 font-medium">Sqft</span>
+                <input type="number" min="0" value={v.truss?.platformSqft ?? 0} onChange={(e) => updVenue(v.id, { truss: { ...(v.truss || {}), platformSqft: Math.max(0, parseInt(e.target.value) || 0) } })} className="w-20 border border-sky-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
+              </span>
+              <span className="inline-flex items-center gap-1 ml-auto">
+                <span className="text-[10px] text-gray-500">Discount</span>
+                <input type="number" min="0" max="100" value={v.truss?.platformDiscountPct ?? 0} onChange={(e) => updVenue(v.id, { truss: { ...(v.truss || {}), platformDiscountPct: parseFloat(e.target.value) || 0 } })} className="w-12 border border-sky-200 rounded px-1 py-0.5 text-xs text-center font-bold" />
+                <span className="text-[10px] text-gray-500">%</span>
+              </span>
+            </div>
           </div>
           );
         })}

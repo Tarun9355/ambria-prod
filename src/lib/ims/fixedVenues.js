@@ -18,6 +18,24 @@ import { walkKitUnits, kitDescendantIds } from "./helpers";
 // won't match), just tolerant of stray end-of-string punctuation.
 function normVenue(s) { return String(s || "").toLowerCase().replace(/^ambria\s+/, "").trim().replace(/[.,;:]+$/, "").trim(); }
 
+// Truss materials a Fixed Venue's standing pillars/beams can be tracked against — the same set
+// Build's own truss material picker offers (TRUSS_MATERIALS, lib/studio/taxonomy.js).
+export const TRUSS_MATERIAL_KEYS = ["iron", "pole", "aluminium"];
+
+// A pillars/beams bucket is either the OLD shape ({size: qty}, saved before the material split
+// existed) or the NEW shape ({material: {size: qty}}). A legacy flat count is attributed entirely
+// to Iron — the truss engine's own default material (trussInvForMaterial, lib/studio/pricing.js)
+// and the only one any fixed venue's standing count could have meant before this split existed.
+// Detecting the shape on read (rather than migrating stored data) keeps every venue's existing
+// counts exactly where they are until an admin actually edits them — the first edit through
+// FixedVenuesEditor's updTruss then writes the new shape going forward.
+export function normalizedTrussCounts(bySize) {
+  const vals = Object.values(bySize || {});
+  const isMaterialSplit = vals.length > 0 && typeof vals[0] === "object" && vals[0] !== null;
+  if (isMaterialSplit) return { iron: bySize.iron || {}, pole: bySize.pole || {}, aluminium: bySize.aluminium || {} };
+  return { iron: bySize || {}, pole: {}, aluminium: {} };
+}
+
 // A standing item can carry TWO buckets of qty: `qty` (gets this venue's own discountPct) and
 // `fullQty` (also physically standing — no rebuild labour either — but always bills at the item's
 // full rental rate, never discounted). `fullQty` is opt-in: an item added before this existed, or
@@ -294,7 +312,8 @@ export function venueSlackFor(settings, venueName, item, reservedByVenue) {
 export function standingPillarCount(settings, venueName) {
   const fv = fixedVenueFor(settings, venueName);
   if (!fv?.truss?.pillars) return 0;
-  return Object.values(fv.truss.pillars).reduce((s, q) => s + (Number(q) || 0), 0);
+  const byMat = normalizedTrussCounts(fv.truss.pillars);
+  return TRUSS_MATERIAL_KEYS.reduce((s, m) => s + Object.values(byMat[m] || {}).reduce((ss, q) => ss + (Number(q) || 0), 0), 0);
 }
 
 // True if this item is part of `venueName`'s own standing inventory.

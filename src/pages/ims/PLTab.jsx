@@ -5,7 +5,7 @@ import { calcDihari, hoursFromSlots } from "../../lib/ims/helpers";
 import { getEffectivePricing } from "../../lib/inventory/helpers";
 
 // Faithful copy of the reference IMS PLTab (Finance → Event P&L).
-export default function PLTab({ projects, functions, inventory, purchase, settings, setSettings }) {
+export default function PLTab({ projects, functions, inventory, purchase, settings, setSettings, canEdit = true }) {
   const [selProject, setSelProject] = useState(projects[0]?.id || "");
 
   const proj = projects.find((p) => p.id === selProject);
@@ -59,9 +59,10 @@ export default function PLTab({ projects, functions, inventory, purchase, settin
             {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
-        {setSettings && <div className="flex gap-3 ml-auto">
-          <div><label className="text-xs text-gray-500">Buffer %</label><input type="number" min="0" max="50" value={settings.bufferPct} onChange={(e) => setSettings((s) => ({ ...s, bufferPct: parseFloat(e.target.value) || 0 }))} className="mt-1 border rounded-lg px-2 py-2 text-sm w-16" /></div>
-          <div><label className="text-xs text-gray-500">Min Profit %</label><input type="number" min="0" max="100" value={settings.minProfitPct} onChange={(e) => setSettings((s) => ({ ...s, minProfitPct: parseFloat(e.target.value) || 0 }))} className="mt-1 border rounded-lg px-2 py-2 text-sm w-16" /></div>
+        {setSettings && <div className="flex gap-3 ml-auto items-end">
+          <div><label className="text-xs text-gray-500">Buffer %</label><input type="number" min="0" max="50" value={settings.bufferPct} disabled={!canEdit} title={canEdit ? undefined : "View only — your access to Finance doesn't include editing"} onChange={(e) => canEdit && setSettings((s) => ({ ...s, bufferPct: parseFloat(e.target.value) || 0 }))} className="mt-1 border rounded-lg px-2 py-2 text-sm w-16 disabled:opacity-50 disabled:cursor-not-allowed" /></div>
+          <div><label className="text-xs text-gray-500">Min Profit %</label><input type="number" min="0" max="100" value={settings.minProfitPct} disabled={!canEdit} title={canEdit ? undefined : "View only — your access to Finance doesn't include editing"} onChange={(e) => canEdit && setSettings((s) => ({ ...s, minProfitPct: parseFloat(e.target.value) || 0 }))} className="mt-1 border rounded-lg px-2 py-2 text-sm w-16 disabled:opacity-50 disabled:cursor-not-allowed" /></div>
+          {!canEdit && <span className="text-xs text-gray-400 font-semibold self-center">👁 View only</span>}
         </div>}
       </div>
 

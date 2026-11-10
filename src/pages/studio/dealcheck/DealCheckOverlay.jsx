@@ -100,7 +100,7 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor, combineAvailability } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial } from "../../../lib/studio/pricing";
+import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial, platformStandingDiscount } from "../../../lib/studio/pricing";
 import { resolveBeamSegment, resolvePillarHeight } from "../../../lib/ims/trussEngine";
 import { platformAvgRatePerSqft } from "../../../lib/ims/platformEngine";
 import { carpetPricingFor, CARPET_OFF, carpetTakesStockPick } from "../../../lib/studio/taxonomy";
@@ -604,6 +604,13 @@ export default function DealCheckOverlay({ ctx }) {
         // The 2-run counter came out with the Generate button — nothing starts a run from this
         // screen any more, so there is no allowance left to display. dcRunCounter is still written
         // by runDealCheckGenerate in StudioApp; only this read of it is gone.
+        // P&L has nothing to show before a function has actually happened — Ops only starts
+        // logging real mandi bills / on-site expenses / crew changes once that function's day
+        // arrives (IMS Dept Ops, the Site tab). Hidden rather than shown empty, same as every
+        // other gated affordance in this strip.
+        const _plFns = collectAllFunctionData ? collectAllFunctionData() : [];
+        const _plToday = new Date().toLocaleDateString("en-CA");
+        const anyFnPassedForPL = _plFns.some(f => f.fnDate && f.fnDate <= _plToday);
         // Tab definitions — only Inventory/Florals/Transport are functional in Deploy 1
         const TABS = [
           { id: "inventory", label: "Inventory",        icon: "📦", live: true  },
@@ -616,12 +623,21 @@ export default function DealCheckOverlay({ ctx }) {
           { id: "power",     label: "Power",            icon: "⚡", live: true  },
           { id: "commission",label: "Commission",       icon: "🤝", live: true  },
           { id: "gyv",       label: "GYV & Buffer",     icon: "💰", live: true  },
+          ...(anyFnPassedForPL ? [{ id: "pl", label: "P&L", icon: "💹", live: true }] : []),
           { id: "status",    label: "Inventory Status", icon: "📊", live: true  },
           // Dept Income removed from the tab strip. Its body below is left in place and still
           // renders if dcActiveTab is somehow "depts" — the department split is also pushed to
           // IMS Dept Ops from persistDeptSnapshot, which does not depend on this tab.
         ];
         const activeTabDef = TABS.find(t => t.id === dcActiveTab) || TABS[0];
+        // P&L is hidden (not just disabled) before any function has passed — switching FROM a
+        // booking where it was open TO one where it isn't left dcActiveTab stuck at "pl" with no
+        // tab chip showing selected and the P&L body still rendering underneath a strip that no
+        // longer offers it. The tab render chain below still switches on the raw dcActiveTab (not
+        // activeTabDef.id), so this corrects the state itself rather than every branch.
+        useEffect(() => {
+          if (dcActiveTab === "pl" && !anyFnPassedForPL) setDcActiveTab("inventory");
+        }, [dcActiveTab, anyFnPassedForPL]);
 
         // ═══ Shared cost rollup — single computation used by GYV tab + bottom strip (§26.19) ═══
         const dcCostRollup = (() => {
@@ -1159,9 +1175,11 @@ export default function DealCheckOverlay({ ctx }) {
           // bucket). One row total, not per material — there's only one blended pool now.
           try {
             const sqftByFn = {};
+            const venueByFn = {};
             let totalSqft = 0;
             fns.forEach((fn, fnIdx) => {
               if (!fn?.zoneConfig || !fn?.enabledEls) return;
+              venueByFn[fnIdx] = fn.fnVenue || "";
               Object.keys(fn.enabledEls).filter(k => fn.enabledEls[k]).forEach(zk => {
                 const zc = fn.zoneConfig[zk]; if (!zc) return;
                 [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty },
@@ -1177,12 +1195,21 @@ export default function DealCheckOverlay({ ctx }) {
               });
             });
             const rate = platformAvgRatePerSqft(dealCheckData?.trussInv);
+            const fvCfgForPlatform = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+            let totalPlatformDiscount = 0;
             Object.entries(sqftByFn).forEach(([fnIdx, sqft]) => {
-              const pc = Math.round(sqft * rate);
+              // Fixed-venue standing platform sqft nets off this function's own platform cost — same
+              // "min(needed, standing) × discount%" rule the Truss tab's own standing pillar/beam
+              // discount uses (zoneTrussStandingDiscountDetail's header comment), pooled per function
+              // since Platform's own internal cost already is (see the comment above).
+              const venueTrussHere = fixedVenueFor(fvCfgForPlatform, venueByFn[fnIdx] || "")?.truss;
+              const discount = platformStandingDiscount(sqft, rate, venueTrussHere);
+              const pc = Math.max(0, Math.round(sqft * rate) - discount);
+              totalPlatformDiscount += discount;
               rental += pc; if (byFn[fnIdx]) byFn[fnIdx].rental += pc; addD("Tenting", "rental", pc);
             });
             if (totalSqft > 0 && deptInv["Tenting"]) {
-              deptInv["Tenting"].push({ name: "Platform", photo: "", qty: Math.round(totalSqft * 100) / 100, unit: Math.round(rate), total: Math.round(totalSqft * rate), sub: "platform structure (blended Wood+Iron rate)" });
+              deptInv["Tenting"].push({ name: "Platform", photo: "", qty: Math.round(totalSqft * 100) / 100, unit: Math.round(rate), total: Math.round(totalSqft * rate) - totalPlatformDiscount, sub: "platform structure (blended Wood+Iron rate)" + (totalPlatformDiscount > 0 ? ` · standing discount −₹${Math.round(totalPlatformDiscount).toLocaleString("en-IN")}` : "") });
             }
           } catch {}
           try {
@@ -1840,6 +1867,28 @@ export default function DealCheckOverlay({ ctx }) {
             if (!edited) return;
             mpDelta += (deptMpReconciled(manpowerDetail[d], dd) - (dept[d]?.manpower || 0));
           });
+          // ── Per-department actuals (Deal Check → P&L tab) ── Same reconciliation as mpDelta
+          // above, just kept broken out by department instead of collapsed into one deal-wide
+          // delta, so the P&L tab can show each department's own planned → actual, not just one
+          // deal-wide number.
+          const deptActual = {};
+          DEPTS.forEach(d => {
+            const dd = aDeptOps?.[d] || null;
+            const planned = dept[d];
+            const realMandi = d === "Floral" ? (Number(dd?.realMandi) || 0) : 0;
+            const florals = realMandi > 0 ? realMandi : planned.florals;
+            const mpEdited = !!(dd && ((dd.mpOverrides && Object.keys(dd.mpOverrides).length) || (Array.isArray(dd.mpExtra) && dd.mpExtra.length) || (dd.mpDay && Object.keys(dd.mpDay).length) || (dd.mpWin && Object.keys(dd.mpWin).length) || (Array.isArray(dd.mp) && dd.mp.length)));
+            const mpCost = mpEdited ? deptMpReconciled(manpowerDetail[d], dd) : planned.manpower;
+            const expenses = Array.isArray(dd?.expenses) ? dd.expenses : [];
+            const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+            const total = planned.rental + florals + planned.truss + planned.fabric + planned.transport + planned.power + mpCost + planned.production + planned.buying + expenseTotal;
+            deptActual[d] = {
+              rental: planned.rental, florals, truss: planned.truss, fabric: planned.fabric, transport: planned.transport,
+              power: planned.power, manpower: mpCost, production: planned.production, buying: planned.buying,
+              expenses, expenseTotal, total,
+              hasActuals: realMandi > 0 || expenseTotal > 0 || mpEdited,
+            };
+          });
           const effManpower = manpower + mpDelta;
           const hasActuals = actualMandi > 0 || actualExpenses > 0 || mpDelta !== 0;
           const effFlorals = actualMandi > 0 ? actualMandi : florals;
@@ -1972,7 +2021,7 @@ export default function DealCheckOverlay({ ctx }) {
           const liveCommissionTotal = (smartQuoteActive && dealAmount > 0) ? Math.round(commissionTotal * (liveQuote / dealAmount)) : commissionTotal;
           return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, venueDiscount, agencyFee, agencyFeePct, dealAmount, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType, byFn,
             mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal, manpowerDetail, manpowerPlan: dcMpPlan,
-            hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta,
+            hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta, deptActual,
             commissionByVenue, commissionTotal,
             smartQuoteActive, smartOrigProfitPct, smartDesiredPct, liveQuote, liveCommissionTotal };
         })();
@@ -3034,6 +3083,13 @@ export default function DealCheckOverlay({ ctx }) {
                           zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR, _fnDateForRepeat, _crossFnAvail) + shortQty * shortRate;
                         });
                         manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? repeatCatFor(fns[fnIdx]?.zoneConfig?.[mi.zoneKey], "elements") : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, q)); });
+                        // NOT net of a fixed-venue's standing-platform discount (platformStandingDiscount,
+                        // pricing.js) — that discount is pooled per FUNCTION (every zone's platform sqft
+                        // shares one standing allowance), so there's no single well-defined "this zone's
+                        // share" to subtract here without an arbitrary allocation rule. The main rollup
+                        // (dcCostRollup's own Platform block, above) IS net of it — this pill can read
+                        // slightly higher than that total at a venue with standing platform sqft configured.
+                        // No venue has one configured yet, so this has zero live impact today.
                         platformEntriesForZone.forEach(({ pi }) => { zoneRentalTotal += pi.cost || 0; });
                         {
                           const zcz = fns[fnIdx]?.zoneConfig?.[zk];
@@ -5413,6 +5469,176 @@ export default function DealCheckOverlay({ ctx }) {
                           </div>
                         );
                       })()}
+                    </div>
+                  );
+                })() : dcActiveTab === "pl" ? (() => {
+                  // ═══ P&L TAB — planned vs. actual cost & margin, by department ═══
+                  // Income/planned cost = dcCostRollup.dept (same split "Dept Income" already
+                  // shows — a department's income IS its allocated share of project cost here,
+                  // not a separate quoted price). Actual cost = dcCostRollup.deptActual, built
+                  // the exact same way the GYV tab's own deal-wide actuals overlay is (real mandi
+                  // bill replaces projected florals, a dept head's edited crew replaces planned
+                  // manpower, on-site expenses add on top) — just kept per department instead of
+                  // collapsed into one number.
+                  const plDept = dcCostRollup.dept || {};
+                  const plActual = dcCostRollup.deptActual || {};
+                  const plDepts = dcCostRollup.DEPTS || [];
+                  const deptIcon = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
+                  const fmt = (n) => n < 0 ? "−₹" + Math.round(Math.abs(n)).toLocaleString("en-IN") : "₹" + Math.round(n).toLocaleString("en-IN");
+                  const pctStr = (n) => (n < 0 ? "−" : "") + (Math.abs(Math.round(n * 10) / 10)).toFixed(1) + "%";
+                  const deltaTone = (d) => d > 0 ? BAD : d < 0 ? GOOD : INK_3;
+
+                  const dcDealAmount = dcCostRollup.dealAmount || 0; // what the client is actually billed
+                  // The split's own denominator is Σ dept[d].total, NOT dcCostRollup.base — the two
+                  // can disagree by a few rupees (a bundle-discounted kit's own share can go
+                  // negative and gets dropped rather than subtracted, see addD/kitOwnShare above),
+                  // and dividing by the wrong one meant department income shares didn't actually
+                  // sum back to the deal amount. Dividing by the departments' own sum guarantees
+                  // Σ incomeOf(d) === dcDealAmount exactly, whatever that drift is upstream.
+                  const plannedTotalAll = plDepts.reduce((s, d) => s + (plDept[d]?.total || 0), 0);
+                  // Each department's income is a revenue SHARE — dealAmount split by planned-cost
+                  // share, the same proportional-split logic this file already uses for shared
+                  // labour/supervisors (deptDirectMap, above). GYV fixed, buffer and commission are
+                  // deliberately left out of the split (same reasoning as the GYV tab's own "commission
+                  // isn't a department's production cost") — they're company-level, not any one
+                  // department's to earn or spend against.
+                  const incomeOf = (d) => plannedTotalAll > 0 ? dcDealAmount * ((plDept[d]?.total || 0) / plannedTotalAll) : 0;
+                  const rows = plDepts
+                    .map((d) => ({ d, planned: plDept[d]?.total || 0, income: incomeOf(d), actual: plActual[d] }))
+                    // A department with $0 planned cost but a real on-site expense or crew row (e.g.
+                    // an unplanned truck a dept head still logged a bill for) must still show up, or
+                    // its actual cost silently vanishes from this tab while the GYV tab still counts it.
+                    .filter((r) => r.planned > 0 || r.actual?.hasActuals);
+                  const totIncome = rows.reduce((s, r) => s + r.income, 0);
+                  const totPlanned = rows.reduce((s, r) => s + r.planned, 0);
+                  const totActual = rows.reduce((s, r) => s + (r.actual?.total ?? r.planned), 0);
+                  const anyActuals = rows.some((r) => r.actual?.hasActuals);
+                  const pendingCount = rows.filter((r) => !r.actual?.hasActuals).length;
+                  const projMargin = totIncome > 0 ? ((totIncome - totPlanned) / totIncome) * 100 : 0;
+                  const finalMargin = totIncome > 0 ? ((totIncome - totActual) / totIncome) * 100 : 0;
+
+                  const SUM_TILE = { background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 11, boxShadow: CARD_SHADOW, padding: "9px 13px", minWidth: 0 };
+                  const EYEBROW = { fontSize: 9.5, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: INK_2, marginBottom: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
+                  const LINE_DEFS = [
+                    ["rental", "📦 Inventory rental"], ["truss", "🏗️ Truss"], ["fabric", "🧵 Fabric / draping"],
+                    ["florals", "🌸 Florals (mandi)"], ["production", "🏭 Production"], ["buying", "🛒 Buying"],
+                    ["transport", "🚚 Transport"], ["power", "⚡ Power / genset"], ["manpower", "👷 Manpower"],
+                  ];
+
+                  return (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      <style>{DC_CSS}</style>
+
+                      <div className="dc2-sum">
+                        {[
+                          { label: "Deal amount", value: fmt(dcDealAmount), foot: "sum of department income shares" },
+                          { label: "Planned cost", value: fmt(totPlanned), foot: `${pctStr(projMargin)} projected margin` },
+                          { label: "Actual cost · so far", value: fmt(totActual), foot: anyActuals ? `${pendingCount} dept${pendingCount === 1 ? "" : "s"} not yet logged` : "no actuals logged yet" },
+                          { label: "Margin · projected → final", value: pctStr(finalMargin), foot: `was ${pctStr(projMargin)} at quote`, tone: deltaTone(totActual - totPlanned) },
+                        ].map((s, si) => (
+                          <div key={si} className="dc2-card" style={SUM_TILE}>
+                            <div style={EYEBROW}>{s.label}</div>
+                            <div style={{ fontSize: 16.5, fontWeight: 700, letterSpacing: -0.4, lineHeight: 1.15, color: s.tone || INK, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", ...NUM }}>{s.value}</div>
+                            <div style={{ fontSize: 10, color: INK_3, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.foot}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {!anyActuals && (
+                        <div className="dc2-card" style={{ background: GOLD_SOFT, border: `1px solid ${GOLD}33`, borderRadius: 12, padding: "11px 14px", fontSize: 12, color: GOLD, fontWeight: 600 }}>
+                          No department has logged real on-site numbers yet — every figure below is still the system's planned estimate. This fills in as dept heads enter actuals in IMS Dept Ops (and the Site tab) after each function.
+                        </div>
+                      )}
+
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        {rows.map(({ d, planned, income }) => {
+                          const acc = deptAccent(d);
+                          const a = plActual[d] || { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, power: 0, manpower: 0, production: 0, buying: 0, expenses: [], expenseTotal: 0, total: planned, hasActuals: false };
+                          const delta = a.total - planned;
+                          const projPct = income > 0 ? ((income - planned) / income) * 100 : 0;
+                          const finPct = income > 0 ? ((income - a.total) / income) * 100 : 0;
+                          const key = "pl:" + d;
+                          const open = dcCollapsedFnBlocks[key] !== undefined ? dcCollapsedFnBlocks[key] : a.hasActuals;
+                          const toggle = () => setDcCollapsedFnBlocks((prev) => ({ ...prev, [key]: !open }));
+                          const plannedLines = { rental: plDept[d]?.rental || 0, truss: plDept[d]?.truss || 0, fabric: plDept[d]?.fabric || 0, florals: plDept[d]?.florals || 0, production: plDept[d]?.production || 0, buying: plDept[d]?.buying || 0, transport: plDept[d]?.transport || 0, power: plDept[d]?.power || 0, manpower: plDept[d]?.manpower || 0 };
+                          const lineRows = LINE_DEFS.filter(([k]) => plannedLines[k] > 0 || a[k] > 0);
+                          // A dept head's "+ Add on-site expense" row starts blank ({label:"",
+                          // amount:""}) until they fill it in — with realtime sync, that blank row
+                          // can already be on this event while they're mid-edit. Not worth showing
+                          // as a logged "Expense ₹0" line here; expenseTotal already only counts
+                          // the ones with a real amount.
+                          const loggedExpenses = a.expenses.filter((e) => (Number(e.amount) || 0) > 0);
+
+                          return (
+                            <div key={d} className="dc2-card" style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 14, boxShadow: CARD_SHADOW, overflow: "hidden", display: "flex" }}>
+                              <div aria-hidden="true" style={{ width: 4, flexShrink: 0, background: acc.stripe }} />
+                              <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+                                <div onClick={toggle} className="dc2-hd" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 15px", cursor: "pointer", borderBottom: open ? `1px solid ${HAIRLINE}` : "none" }}>
+                                  <span aria-hidden="true" style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 17, background: acc.tile }}>{deptIcon[d] || "🏦"}</span>
+                                  <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontSize: 15, fontWeight: 700, color: INK, letterSpacing: -0.2 }}>{d}</div>
+                                    <div style={{ fontSize: 11, color: a.hasActuals ? GOOD : INK_3, fontWeight: a.hasActuals ? 650 : 500, marginTop: 2 }}>
+                                      {a.hasActuals ? "✓ Actuals recorded" : "No actuals logged yet"}
+                                    </div>
+                                  </div>
+                                  <div style={{ marginLeft: "auto", display: "flex", gap: 20, flexShrink: 0 }}>
+                                    {[
+                                      { l: "Income", v: fmt(income) },
+                                      { l: "Planned", v: fmt(planned) },
+                                      { l: "Actual", v: a.hasActuals ? fmt(a.total) : "—", muted: !a.hasActuals },
+                                      { l: "Margin", v: a.hasActuals ? `${pctStr(projPct)} → ${pctStr(finPct)}` : `${pctStr(projPct)} proj.`, tone: a.hasActuals ? deltaTone(delta) : INK },
+                                    ].map((f, fi) => (
+                                      <div key={fi} style={{ textAlign: "right", minWidth: 64 }}>
+                                        <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: INK_3 }}>{f.l}</div>
+                                        <div style={{ fontSize: 14, fontWeight: 700, color: f.muted ? INK_3 : (f.tone || INK), marginTop: 2, ...NUM }}>{f.v}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                  <span aria-hidden="true" style={{ fontSize: 11, color: INK_3, flexShrink: 0, display: "inline-block", transform: open ? "rotate(90deg)" : "none", transition: "transform 0.16s ease" }}>▸</span>
+                                </div>
+                                {open && (
+                                  <div style={{ padding: "11px 15px 13px" }}>
+                                    <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 90px 70px", gap: 8, fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: INK_3, padding: "0 8px 4px" }}>
+                                      <span>Cost line</span><span style={{ textAlign: "right" }}>Planned</span><span style={{ textAlign: "right" }}>Actual</span><span style={{ textAlign: "right" }}>Δ</span>
+                                    </div>
+                                    {lineRows.map(([k, label]) => {
+                                      const pv = plannedLines[k]; const av = a.hasActuals ? a[k] : null;
+                                      const dl = av == null ? null : av - pv;
+                                      return (
+                                        <div key={k} className="dc2-row" style={{ display: "grid", gridTemplateColumns: "1fr 90px 90px 70px", gap: 8, padding: "6px 8px", borderRadius: 8, fontSize: 12.5, alignItems: "center" }}>
+                                          <span style={{ color: INK_2, fontWeight: 600 }}>{label}</span>
+                                          <span style={{ textAlign: "right", ...NUM }}>{fmt(pv)}</span>
+                                          <span style={{ textAlign: "right", color: av == null ? INK_3 : INK, ...NUM }}>{av == null ? "—" : fmt(av)}</span>
+                                          <span style={{ textAlign: "right", fontWeight: 650, color: dl == null ? INK_3 : deltaTone(dl), ...NUM }}>{dl == null ? "—" : (dl > 0 ? "+" : dl < 0 ? "−" : "") + fmt(Math.abs(dl)).replace("₹", "")}</span>
+                                        </div>
+                                      );
+                                    })}
+                                    {loggedExpenses.length > 0 && (
+                                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${TILE_BORDER}` }}>
+                                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: INK_3, marginBottom: 6 }}>On-site expenses logged</div>
+                                        {loggedExpenses.map((e, ei) => (
+                                          <div key={ei} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 9px", borderRadius: 8, background: TILE_BG, fontSize: 12, marginTop: ei ? 4 : 0 }}>
+                                            <span style={{ color: INK_2 }}>{e.label || e.category || "Expense"}</span>
+                                            <span style={{ fontWeight: 650, ...NUM }}>{fmt(Number(e.amount) || 0)}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="dc2-card" style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 14, padding: "13px 15px", fontSize: 11.5, color: INK_3, lineHeight: 1.6 }}>
+                        Income is each department's share of the deal amount — the deal's revenue split by each department's
+                        share of planned cost (GYV fixed, buffer and commission are company-level and left out of the split,
+                        same as the <b style={{ color: INK_2 }}>GYV &amp; Buffer</b> tab). Actual cost is whatever Ops has logged
+                        so far in IMS Dept Ops and the Site tab — real mandi bills, on-site expenses, any crew a dept head
+                        changed. A department shows only its projected margin until it has logged something real.
+                      </div>
                     </div>
                   );
                 })() : dcActiveTab === "commission" ? (() => {

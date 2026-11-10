@@ -4,7 +4,8 @@ import { ROLES, ROLE_DEFAULTS, PERM_LABELS, PERM_GROUPS, PERM_UNWIRED, effective
 import { callUserAdmin } from "../../lib/userAdmin";
 import { DEPTS, userDepartments } from "../../lib/ims/deptClassify";
 import { useAuth } from "../../lib/AuthContext";
-import RoleAccessModal from "./RoleAccessModal.jsx";
+import RoleAccessModal, { SectionRow } from "./RoleAccessModal.jsx";
+import { IMS_TABS, IMS_SUBTABS, STUDIO_TABS, STUDIO_SUBTABS, roleTabOn, roleTabVed, roleSubTabs, userTabOn, userTabVed, userSubTabs, userTabCustom, userHasAnyOverride } from "../../lib/ims/tabAccess";
 
 // App-access default derived from role (the one addition to the reference).
 const defaultApps = (role) => role === "Admin" ? ["studio","ims"] : role === "Sales" ? ["studio"] : ["ims"];
@@ -75,13 +76,75 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
       // default, i.e. nobody has customized them yet. Same "was this hand-edited" reasoning as
       // permsOverridden above, applied to departments instead of permissions.
       const deptsOverridden = JSON.stringify([...(f.departments||[])].sort()) !== JSON.stringify([...defaultDepartments(f.role)].sort());
-      return {...f, role, permissions:[...effectiveRolePerms(role, settings)], apps:defaultApps(role), departments: deptsOverridden ? f.departments : defaultDepartments(role)};
+      // Tab/sub-tab/Edit-Delete overrides reset too, same as permissions above — they're overrides
+      // ON TOP of the OLD role's own defaults, so carried unchanged onto a different role they'd be
+      // comparing against defaults that no longer apply (a "customized" badge with nothing real
+      // behind it, or a reset that silently lands on the wrong role's baseline).
+      return {...f, role, permissions:[...effectiveRolePerms(role, settings)], apps:defaultApps(role), departments: deptsOverridden ? f.departments : defaultDepartments(role), tabOverride: {}};
     });
   }
   function resetPermsToRoleDefault(){ setForm(f=>({...f, permissions:[...effectiveRolePerms(f.role, settings)]})); }
   function togglePerm(p){ setForm(f=>({ ...f, permissions:(f.permissions||[]).includes(p)?(f.permissions||[]).filter(x=>x!==p):[...(f.permissions||[]),p] })); }
   function toggleApp(a){ setForm(f=>{ const cur=f.apps || defaultApps(f.role); return { ...f, apps:cur.includes(a)?cur.filter(x=>x!==a):[...cur,a] }; }); }
   function toggleDept(d){ setForm(f=>{ const cur=f.departments || []; return { ...f, departments:cur.includes(d)?cur.filter(x=>x!==d):[...cur,d] }; }); }
+
+  // ── Per-user tab/sub-tab/Edit/Delete override (form.tabOverride) ──
+  // Same shape and same read helpers (lib/ims/tabAccess.js) the Edit Access screen's own
+  // settings.roleTabs uses, just scoped to this one user and layered on top of their role's
+  // default instead of replacing it — any key PRESENT here overrides that one field; an absent
+  // key inherits from the role, exactly like form.permissions already does for Actions.
+  const patchUserOverride = (app, updater) => setForm((f) => {
+    const cur = f.tabOverride || {};
+    const appCur = cur[app] || {};
+    return { ...f, tabOverride: { ...cur, [app]: updater(appCur) } };
+  });
+  // Deletes the key instead of just writing it whenever the new value happens to match the role's
+  // own — otherwise a toggle-and-back-again leaves a false "customized for this user" badge (and a
+  // value frozen against later changes to the role) even though nothing actually differs any more.
+  const userToggleTab = (app, tabId) => patchUserOverride(app, (appCur) => {
+    const next = !userTabOn(form, settings, app, tabId);
+    const tabs = { ...(appCur.tabs || {}) };
+    if (next === roleTabOn(form.role, settings, app, tabId)) delete tabs[tabId]; else tabs[tabId] = next;
+    return { ...appCur, tabs };
+  });
+  const userResetTab = (app, tabId) => patchUserOverride(app, (appCur) => {
+    const tabs = { ...(appCur.tabs || {}) }; delete tabs[tabId];
+    const ved = { ...(appCur.ved || {}) }; delete ved[tabId];
+    const subTabs = { ...(appCur.subTabs || {}) }; delete subTabs[tabId];
+    return { ...appCur, tabs, ved, subTabs };
+  });
+  const userToggleVed = (app, tabId, field) => patchUserOverride(app, (appCur) => {
+    const cur = userTabVed(form, settings, app, tabId);
+    const next = !cur[field];
+    const roleVal = roleTabVed(form.role, settings, app, tabId)[field];
+    const entry = { ...((appCur.ved || {})[tabId] || {}) };
+    if (next === roleVal) delete entry[field]; else entry[field] = next;
+    const ved = { ...(appCur.ved || {}) };
+    if (Object.keys(entry).length) ved[tabId] = entry; else delete ved[tabId];
+    return { ...appCur, ved };
+  });
+  const userSetSubAll = (app, parent) => patchUserOverride(app, (appCur) => {
+    const subTabs = { ...(appCur.subTabs || {}) };
+    // "ALL" is a distinct sentinel from an empty array — tabAccess.js's userSubTabs reserves `[]`
+    // for "explicitly show none of these", which un-checking a restricted role's last sub-tab can
+    // legitimately produce via userToggleSub below. Skipped (key deleted instead) when the role is
+    // already unrestricted here, so clicking "All sub-tabs" on an already-all row doesn't pin a
+    // redundant override — same reasoning as userToggleTab/userToggleVed's own clean-up.
+    if (roleSubTabs(form.role, settings, app, parent) === null) delete subTabs[parent];
+    else subTabs[parent] = "ALL";
+    return { ...appCur, subTabs };
+  });
+  const userSetSubCustom = (app, parent, allIds) => patchUserOverride(app, (appCur) => {
+    const subTabs = { ...(appCur.subTabs || {}), [parent]: [...allIds] };
+    return { ...appCur, subTabs };
+  });
+  const userToggleSub = (app, parent, subId, allIds) => patchUserOverride(app, (appCur) => {
+    const effective = userSubTabs(form, settings, app, parent); // null = every child currently shown
+    const curList = effective || allIds;
+    const has = curList.includes(subId);
+    const subTabs = { ...(appCur.subTabs || {}), [parent]: has ? curList.filter((x) => x !== subId) : [...curList, subId] };
+    return { ...appCur, subTabs };
+  });
 
   const [busy, setBusy] = useState(false);
   async function save(){
@@ -108,7 +171,7 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
     let newId = mint(); while (taken.has(newId)) newId = mint();
     // Create the Supabase Auth account + profile row server-side (service role, admin-gated).
     // The new row arrives via realtime; we just confirm the credentials.
-    const profile = { id: newId, name: form.name.trim(), username, role: form.role, permissions: form.permissions || [], apps: form.apps || defaultApps(form.role), departments: form.departments || defaultDepartments(form.role), phone: form.phone || "", email: form.email || "", active: form.active ?? true };
+    const profile = { id: newId, name: form.name.trim(), username, role: form.role, permissions: form.permissions || [], apps: form.apps || defaultApps(form.role), departments: form.departments || defaultDepartments(form.role), phone: form.phone || "", email: form.email || "", active: form.active ?? true, tabOverride: form.tabOverride || null };
     setBusy(true);
     try { await callUserAdmin("createUser", { user: profile, password: form.password.trim() }); }
     catch(e){ setBusy(false); alert("Create user failed: " + e.message); return; }
@@ -319,38 +382,125 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
               <button type="button" onClick={()=>setRoleEditor(form.role)} className="text-[11px] text-indigo-600 hover:underline">🔐 Edit {form.role}'s defaults</button>
             </div>
             {/* Role is the source of truth now (Edit Access, RoleAccessModal) — this just inherits
-                it. No manual ticking needed for the common case; the checklist below is only for
-                the rare "this one person needs an exception" case, and stays collapsed otherwise. */}
-            <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 text-xs text-indigo-800 mb-2">
-              Inherits <strong>{roleDefaultPerms.length}</strong> permission{roleDefaultPerms.length===1?"":"s"} from <strong>{form.role}</strong>'s Edit Access config.
-              {permsOverridden && <div className="mt-1 text-amber-700">⚠ Customized for this user ({(form.permissions||[]).length} enabled) — differs from the role default.</div>}
-            </div>
+                it. No manual ticking needed for the common case; the tree below is only for the
+                rare "this one person needs an exception" case, and stays collapsed otherwise. */}
+            {(() => {
+              const tabOverridden = userHasAnyOverride(form);
+              const anyOverridden = permsOverridden || tabOverridden;
+              return (
+                <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 text-xs text-indigo-800 mb-2">
+                  Inherits <strong>{roleDefaultPerms.length}</strong> permission{roleDefaultPerms.length===1?"":"s"} from <strong>{form.role}</strong>'s Edit Access config.
+                  {anyOverridden && <div className="mt-1 text-amber-700">⚠ Customized for this user — differs from the role default.</div>}
+                </div>
+              );
+            })()}
             <button type="button" onClick={()=>setPermsOverrideOpen(v=>!v)} className="text-xs text-gray-500 hover:text-gray-700 underline mb-2">
-              {permsOverrideOpen ? "▾ Hide override checklist" : "▸ Override for this user"}
+              {permsOverrideOpen ? "▾ Hide override" : "▸ Override for this user"}
             </button>
             {permsOverrideOpen && (
-              <>
-                {permsOverridden && (
-                  <div className="flex justify-end mb-2">
-                    <button type="button" onClick={resetPermsToRoleDefault} className="text-[11px] text-indigo-600 hover:underline">↺ Reset to role defaults</button>
-                  </div>
-                )}
-                <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
-                  {Object.entries(PERM_GROUPS).map(([group, perms])=>(
-                    <div key={group} className="border rounded-lg p-3">
-                      <p className="text-xs font-semibold text-gray-600 mb-2 uppercase tracking-wide">{group}</p>
-                      <div className="space-y-1">
-                        {perms.map(p=>(
-                          <label key={p} className="flex items-center gap-2 cursor-pointer" title={PERM_UNWIRED.has(p) ? "Not yet wired to any control in the app" : undefined}>
-                            <input type="checkbox" checked={(form.permissions||[]).includes(p)} onChange={()=>togglePerm(p)} className="rounded" />
-                            <span className="text-xs text-gray-600">{PERM_LABELS[p]}{PERM_UNWIRED.has(p) ? " ⚪" : ""}</span>
-                          </label>
-                        ))}
-                      </div>
+              <div className="max-h-[32rem] overflow-y-auto pr-1 space-y-4">
+                {/* ═══ Tab access — same tree Edit Access shows, scoped to this one person ═══ */}
+                <div>
+                  {userHasAnyOverride(form) && (
+                    <div className="flex justify-end mb-1.5">
+                      <button type="button" onClick={()=>setForm(f=>({...f, tabOverride:{}}))} className="text-[11px] text-rose-600 hover:underline">↺ Reset all tab access to role defaults</button>
                     </div>
-                  ))}
+                  )}
+                  <div className="space-y-2 mb-4">
+                    <div className="flex items-center gap-2 mb-1"><span className="text-xs">🛠️</span><span className="text-[11px] font-bold text-indigo-700 uppercase tracking-wide">IMS</span><div className="flex-1 h-px bg-indigo-50" /></div>
+                    <div className="space-y-1.5">
+                      {IMS_TABS.filter(t=>t.id!=="dashboard"&&t.id!=="attendance").map(t=>{
+                        if (t.id === "admin") {
+                          const adminCustom = userTabCustom(form, "ims", "admin").on;
+                          return (
+                            <div key={t.id} className="relative">
+                              <SectionRow icon="⚙️" label="Admin" color="indigo"
+                                on={userTabOn(form, settings, "ims", "admin")} onToggle={()=>userToggleTab("ims","admin")}
+                                // `note` only ever renders inside an EXPANDED row (subs or extra),
+                                // and this row has neither — passed as `extra` instead so it's
+                                // actually visible (and the row becomes expandable just to show it).
+                                extra={<div className="text-[10.5px] text-gray-400">Admin's own Users &amp; Roles / Vendors / Settings tree follows the role only — no per-user override yet.</div>} />
+                              {adminCustom && (
+                                <button type="button" onClick={()=>userResetTab("ims", "admin")} title="Reset this tab to the role default"
+                                  className="absolute -top-1.5 -right-1.5 text-[9px] font-bold bg-rose-600 text-white rounded-full w-4 h-4 flex items-center justify-center shadow">↺</button>
+                              )}
+                            </div>
+                          );
+                        }
+                        const subs = IMS_SUBTABS[t.id];
+                        const custom = userTabCustom(form, "ims", t.id);
+                        return (
+                          <div key={t.id} className="relative">
+                            <SectionRow icon={t.label.split(" ")[0]} label={t.label.replace(/^\S+\s/, "")} color="indigo"
+                              on={userTabOn(form, settings, "ims", t.id)} onToggle={()=>userToggleTab("ims", t.id)}
+                              subs={subs} rcSubs={userSubTabs(form, settings, "ims", t.id)}
+                              onSetAll={()=>userSetSubAll("ims", t.id)} onSetCustom={(ids)=>userSetSubCustom("ims", t.id, ids)}
+                              onToggleSub={(id)=>userToggleSub("ims", t.id, id, (subs||[]).map(s=>s.id))} allowEmptySubs
+                              ved={t.ved} vedState={userTabVed(form, settings, "ims", t.id)} onToggleVed={(f)=>userToggleVed("ims", t.id, f)}
+                              vedCustom={{ edit: custom.edit, del: custom.del }} />
+                            {(custom.on || custom.edit || custom.del || custom.subTabs) && (
+                              <button type="button" onClick={()=>userResetTab("ims", t.id)} title="Reset this tab to the role default"
+                                className="absolute -top-1.5 -right-1.5 text-[9px] font-bold bg-rose-600 text-white rounded-full w-4 h-4 flex items-center justify-center shadow">↺</button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 mb-1"><span className="text-xs">🎨</span><span className="text-[11px] font-bold text-amber-700 uppercase tracking-wide">Studio</span><div className="flex-1 h-px bg-amber-50" /></div>
+                    <div className="space-y-1.5">
+                      {STUDIO_TABS.map(t=>{
+                        const subs = STUDIO_SUBTABS[t.id];
+                        const custom = userTabCustom(form, "studio", t.id);
+                        return (
+                          <div key={t.id} className="relative">
+                            <SectionRow icon={t.label.split(" ")[0]} label={t.label.replace(/^\S+\s/, "")} color="amber"
+                              on={userTabOn(form, settings, "studio", t.id)} onToggle={()=>userToggleTab("studio", t.id)}
+                              subs={subs} rcSubs={userSubTabs(form, settings, "studio", t.id)}
+                              onSetAll={()=>userSetSubAll("studio", t.id)} onSetCustom={(ids)=>userSetSubCustom("studio", t.id, ids)}
+                              onToggleSub={(id)=>userToggleSub("studio", t.id, id, (subs||[]).map(s=>s.id))} allowEmptySubs
+                              ved={t.ved} vedState={userTabVed(form, settings, "studio", t.id)} onToggleVed={(f)=>userToggleVed("studio", t.id, f)}
+                              vedCustom={{ edit: custom.edit, del: custom.del }} />
+                            {(custom.on || custom.edit || custom.del || custom.subTabs) && (
+                              <button type="button" onClick={()=>userResetTab("studio", t.id)} title="Reset this tab to the role default"
+                                className="absolute -top-1.5 -right-1.5 text-[9px] font-bold bg-rose-600 text-white rounded-full w-4 h-4 flex items-center justify-center shadow">↺</button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
-              </>
+
+                {/* ═══ Actions — the flat, one-off workflow permissions (Approve Purchase, Manage
+                    Manpower, …) that don't fit a per-tab View/Edit/Delete shape, unchanged. ═══ */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-2"><span className="text-xs">⚡</span><span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">Actions</span><div className="flex-1 h-px bg-emerald-50" /></div>
+                    {permsOverridden && <button type="button" onClick={resetPermsToRoleDefault} className="text-[11px] text-rose-600 hover:underline shrink-0 ml-2">↺ Reset</button>}
+                  </div>
+                  <div className="space-y-2">
+                    {Object.entries(PERM_GROUPS).map(([group, perms])=>(
+                      <div key={group} className="border rounded-lg p-2.5">
+                        <p className="text-[11px] font-semibold text-gray-600 mb-1.5 uppercase tracking-wide">{group}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {perms.map(p=>{
+                            const on = (form.permissions||[]).includes(p);
+                            return (
+                              <button key={p} type="button" onClick={()=>togglePerm(p)}
+                                title={PERM_UNWIRED.has(p) ? "Not yet wired to any control in the app" : undefined}
+                                className={`inline-flex items-center gap-1 rounded-full font-semibold text-[11px] px-2 py-0.5 ${on ? "bg-emerald-100 text-emerald-800" : "bg-white text-gray-400 border border-gray-200"}`}>
+                                {on ? "✓ " : ""}{PERM_LABELS[p]}{PERM_UNWIRED.has(p) ? " ⚪" : ""}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </div>

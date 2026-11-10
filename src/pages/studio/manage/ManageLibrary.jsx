@@ -450,6 +450,7 @@ export default function ManageLibrary({ ctx }) {
   const handleColourRefUpload = async (i, files) => {
     const imgs = [...(files || [])].filter(f => f.type?.startsWith("image/"));
     if (!imgs.length) return;
+    if (!ctx.canEditLib) { showMsg("View only — your access to Library doesn't include editing", "red"); return; }
     setColourRefBusy(i);
     try {
       const urls = [];
@@ -497,6 +498,7 @@ export default function ManageLibrary({ ctx }) {
   };
   const handleVideoPhotoUpload = async (v, items) => {
     if (!v || !items?.length) return;
+    if (!ctx.canEditLib) { showMsg("View only — your access to Library doesn't include editing", "red"); return; }
     // A Storage-hosted video keeps its photos beside the file. A YouTube video has no folder, so it
     // gets one of its own under "ambria-ref" — the one top-level folder that BOTH the upload function
     // accepts (FOLDERS in supabase/functions/upload) and the Library lists (ALLOWED_SOURCE_FOLDERS).
@@ -602,7 +604,11 @@ export default function ManageLibrary({ ctx }) {
     }))) return;
     setOrphanDeleting(true);
     try {
-      await saveLib([], ids);
+      const res = await saveLib([], ids);
+      // saveLib resolves (never rejects) { ok: false } both when blocked by permission and on a
+      // genuine save failure — without this check, either case still showed "✓ Deleted" for rows
+      // that were never actually touched.
+      if (res && res.ok === false) { showMsg("Delete failed — nothing was removed. (Check your Library access, or try again.)", "red"); setOrphanDeleting(false); return; }
       ids.forEach((id) => libPage.removeItem(id));
       logBulk(authUser, "photo.delete-orphans", ids.length, { ok: true }, { ids: ids.slice(0, 50) });
       showMsg(`✓ Deleted ${ids.length} orphaned row(s).`, "green");
@@ -1130,7 +1136,14 @@ export default function ManageLibrary({ ctx }) {
               <textarea value={tagRules} onChange={e => setTagRules(e.target.value)} rows={10} style={{ ...S.input, fontSize: 12, width: "100%", fontFamily: "inherit", lineHeight: 1.5 }} placeholder={"Always count every light fixture and report the total.\nChairs and tables are Furniture; count them.\n..."} />
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 10 }}>
                 <button onClick={() => setTagRules(null)} style={{ ...S.btn(false), fontSize: 11, padding: "6px 12px" }}>Cancel</button>
-                <button onClick={() => { saveTax({ ...taxonomy, taggingStandards: tagRules }); setTagRules(null); showMsg("📋 Tagging rules saved — applied to all future tagging", "green"); }} style={{ ...S.btn(true), fontSize: 11, padding: "6px 12px", background: "#7C3AED" }}>Save rules</button>
+                <button onClick={() => {
+                  // Edit Access/per-user override, Admin → Users & Roles → Library & Content tab —
+                  // this control lives in Library, not Settings, so it's gated on Library's own
+                  // edit permission (ctx.saveTax here is the RAW function; Library's ctx doesn't
+                  // override it the way Settings' ctx does, so this needs its own check).
+                  if (!ctx.canEditLib) { showMsg("View only — your access to Library doesn't include editing", "red"); return; }
+                  saveTax({ ...taxonomy, taggingStandards: tagRules }); setTagRules(null); showMsg("📋 Tagging rules saved — applied to all future tagging", "green");
+                }} style={{ ...S.btn(true), fontSize: 11, padding: "6px 12px", background: "#7C3AED" }}>Save rules</button>
               </div>
             </div>
           </div>
@@ -2680,6 +2693,9 @@ export default function ManageLibrary({ ctx }) {
                 </div>
                 {!cldSelectMode&&<button onClick={async(e)=>{
                   e.stopPropagation();
+                  // Edit Access/per-user override, Admin → Users & Roles → Library & Content tab —
+                  // a raw Storage delete, not routed through any ctx function, so it needs its own check.
+                  if(!ctx.canDelLib){ showMsg("View only — your access to Library doesn't include deleting.","red"); return; }
                   if(!(await askConfirmAsync("Delete this photo?", { note: "Removed from Storage permanently. This can't be undone.", yesLabel: "Delete" }))) return;
                   try {
                     await deleteStorageObjects([img.public_id]);
@@ -2780,6 +2796,7 @@ export default function ManageLibrary({ ctx }) {
                       using it is in the prompt, because that is the cost you cannot see from here. */}
                   <span onClick={async () => {
                     const used = imsPaletteCatalogue.filter(p => (p.anchorColours || []).includes(c.name)).length;
+                    if (!ctx.canDelLib) return;
                     if (!(await askConfirmAsync(`Delete the colour "${c.name || "Untitled"}"?`, {
                       note: used > 0
                         ? `It is an anchor colour in ${used} palette${used === 1 ? "" : "s"} and will be removed from ${used === 1 ? "it" : "them"}. It also feeds the paint picker and inventory base colour. This cannot be undone.`
@@ -2819,6 +2836,7 @@ export default function ManageLibrary({ ctx }) {
                   {/* Same for a whole palette — salespeople pick these per function on Build, so
                       deleting one takes away a choice from that screen and the library filter. */}
                   <span onClick={async () => {
+                    if (!ctx.canDelLib) return;
                     if (!(await askConfirmAsync(`Delete the palette "${p.name || "Untitled"}"?`, {
                       note: "Salespeople pick this per function on the Build screen, and it drives the library colour filter. This cannot be undone.",
                       yesLabel: "Delete",
@@ -3291,7 +3309,14 @@ export default function ManageLibrary({ ctx }) {
                     <button onClick={(e)=>{e.stopPropagation();const nowHidden=!hiddenVideos[v.id];saveHiddenVideos({[v.id]:nowHidden?true:null});showMsg(nowHidden?"Video hidden":"Video visible","green");}} style={{...S.btn(false),fontSize:9,padding:"4px 10px"}}>
                       {hiddenVideos[v.id]?"👁 Unhide":"👁‍🗨 Hide"}
                     </button>
-                    {v.source==="cloudinary"&&<button onClick={(e)=>{e.stopPropagation();askConfirm("Remove this video from the app?", () => { saveManualVideos(manualVideos.filter(m=>m.id!==v.id),[v.id]); saveYtTags({[v.id]:null}); setYtTagEdit(null); }, { note: "The file stays in Storage — only its entry in the app is removed.", yesLabel: "Remove" });}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>🗑 Delete</button>}
+                    {v.source==="cloudinary"&&<button onClick={(e)=>{e.stopPropagation();askConfirm("Remove this video from the app?", () => {
+                      // ctx.saveManualVideos already refuses without canDelLib (it's a delete), but
+                      // ctx.saveYtTags only checks canEditLib — without this upfront check, an
+                      // edit-but-not-delete user kept the video entry (saveManualVideos no-op'd)
+                      // while its tags were still wiped (saveYtTags isn't delete-gated on its own).
+                      if (!ctx.canDelLib) return;
+                      saveManualVideos(manualVideos.filter(m=>m.id!==v.id),[v.id]); saveYtTags({[v.id]:null}); setYtTagEdit(null);
+                    }, { note: "The file stays in Storage — only its entry in the app is removed.", yesLabel: "Remove" });}} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>🗑 Delete</button>}
                     {hasTag&&<button onClick={()=>saveYtTags({[v.id]:null})} style={{...S.btn(false),fontSize:9,padding:"4px 10px",color:"#E11D48"}}>Clear Tags</button>}
                     {/* Verify video tags — marks reviewed + logs a video contribution. Keeps the
                         original verifier's credit if someone re-verifies after editing tags. */}

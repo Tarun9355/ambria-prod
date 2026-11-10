@@ -5,18 +5,19 @@ import { nextId } from "../../lib/ims/helpers";
 import { OVERHEAD_CATS } from "../../lib/ims/constants";
 
 // Faithful copy of the reference IMS OverheadsTab (Finance → Overheads).
-export default function OverheadsTab({ overheads, setOverheads }) {
+export default function OverheadsTab({ overheads, setOverheads, canEdit = true }) {
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState({ type: "manual", category: "Utilities", description: "", amount: "", month: new Date().getMonth() + 1, year: new Date().getFullYear(), receipt: "", loggedBy: "Tarun Sharma" });
   const [filterMonth, setFilterMonth] = useState(new Date().getMonth() + 1);
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
 
   function addOverhead() {
+    if (!canEdit) return;
     const id = nextId(overheads, "OH");
     setOverheads((p) => [...p, { ...form, id, amount: parseFloat(form.amount) || 0, status: "Pending", date: new Date().toISOString().slice(0, 10), isTemplate: false }]);
     setModal(false); setForm({ type: "manual", category: "Utilities", description: "", amount: "", month: new Date().getMonth() + 1, year: new Date().getFullYear(), receipt: "", loggedBy: "Tarun Sharma" });
   }
-  function markPaid(id) { setOverheads((p) => p.map((o) => o.id === id ? { ...o, status: "Paid" } : o)); }
+  function markPaid(id) { if (!canEdit) return; setOverheads((p) => p.map((o) => o.id === id ? { ...o, status: "Paid" } : o)); }
 
   const filtered = overheads.filter((o) => o.month === filterMonth && o.year === filterYear);
   const total = filtered.reduce((s, o) => s + o.amount, 0);
@@ -34,7 +35,9 @@ export default function OverheadsTab({ overheads, setOverheads }) {
             {[2025, 2026, 2027].map((y) => <option key={y}>{y}</option>)}
           </Sel>
         </div>
-        <Btn onClick={() => setModal(true)} size="sm">+ Add Overhead</Btn>
+        {canEdit
+          ? <Btn onClick={() => setModal(true)} size="sm">+ Add Overhead</Btn>
+          : <span className="text-xs text-gray-400 font-semibold">👁 View only — your access to Finance doesn't include editing</span>}
       </div>
 
       <div className="grid grid-cols-3 gap-4">
@@ -56,7 +59,7 @@ export default function OverheadsTab({ overheads, setOverheads }) {
             </div>
             <div className="flex items-center gap-3">
               <span className="font-bold text-gray-900">{fmt(o.amount)}</span>
-              {o.status === "Pending" ? <Btn onClick={() => markPaid(o.id)} color="green" size="sm">Mark Paid</Btn> : <Badge color="green">✓ Paid</Badge>}
+              {o.status === "Pending" ? (canEdit ? <Btn onClick={() => markPaid(o.id)} color="green" size="sm">Mark Paid</Btn> : <Badge color="gray">Pending</Badge>) : <Badge color="green">✓ Paid</Badge>}
             </div>
           </div>
         ))}

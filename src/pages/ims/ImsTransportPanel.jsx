@@ -27,7 +27,7 @@ const parseRow = (v, fallback) => {
   try { return JSON.parse(v); } catch { return fallback; }
 };
 
-export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardCategories = [], inventory = [], showMsg, variant }) {
+export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardCategories = [], inventory = [], showMsg, variant, canEdit = true }) {
   const [tr, setTr] = useState(null);                  // the transport blob
   const [venues, setVenues] = useState({ inhouse: [], outdoor: [] });
   const [loading, setLoading] = useState(true);
@@ -58,6 +58,7 @@ export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardC
   // Same positional signature as Studio's saveTR, because TransportEditor calls it that way:
   // (venues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62).
   const saveTR = useCallback(async (nv, ntc, nfpt, nbt, ngr, ngr62, ngcr, ngcr62) => {
+    if (!canEdit) return;
     setTr((prev) => {
       const next = {
         venues: nv || prev.venues,
@@ -74,7 +75,7 @@ export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardC
         .then(({ error }) => { if (error) { setErr(error.message); showMsg?.("Save failed: " + error.message, "red"); } });
       return next;
     });
-  }, [showMsg]);
+  }, [showMsg, canEdit]);
 
   // Studio derives these two from the venues blob; mirror it exactly so the venue table matches
   // what Studio shows rather than quietly listing a different set.
@@ -116,7 +117,10 @@ export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardC
   return (
     <div>
       {err && <p className="text-xs text-red-600 mb-2">{err}</p>}
-      {variant === "truck" ? <TruckCapacityEditor ctx={ctx} /> : <TransportEditor ctx={ctx} />}
+      {!canEdit && <div className="rounded-lg bg-gray-100 text-gray-500 text-xs font-semibold px-3 py-2 inline-flex items-center gap-1.5 mb-2">👁 View only — your access to Planning doesn't include editing</div>}
+      <fieldset disabled={!canEdit} className="contents">
+        {variant === "truck" ? <TruckCapacityEditor ctx={ctx} /> : <TransportEditor ctx={ctx} />}
+      </fieldset>
     </div>
   );
 }

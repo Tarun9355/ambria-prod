@@ -316,16 +316,36 @@ export async function fetchLibraryItemsByUrls(urls) {
 }
 
 /** Photos zone-tagged with any of `zoneList` (areasElements overlap) — the candidate pool
- * for getLibPhotosForZone's scoring, instead of scanning the whole in-memory library. */
+ * for getLibPhotosForZone's scoring, instead of scanning the whole in-memory library.
+ *
+ * PAGED via .range(), same pattern as fetchAll (lib/supabase.js) and fetchAllLibraryRowsMinimal
+ * below. A single .limit(), however high, is NOT a real fix here: PostgREST enforces its own
+ * db-max-rows (1000 on this project) on top of any client-requested limit, so `.limit(5000)` was
+ * silently truncated right back down to 1000 regardless — confirmed: "Entry & Passage" alone is
+ * already at 1106 tagged photos, so that first attempt still dropped ~106 of them with zero
+ * indication why. Ordered by tagged_at desc then id desc (a tiebreaker is required for .range()
+ * paging to be gap-free/duplicate-free across requests — ties or NULLs on the primary sort key
+ * alone can otherwise skip or repeat rows at a page boundary) so, if a future zone ever grows large
+ * enough that this genuinely matters for performance, whatever gets deprioritized is still the
+ * oldest-tagged, never an arbitrary slice. */
 export async function fetchZoneLibraryPhotos(zoneList) {
   const zones = (zoneList || []).filter(Boolean);
   if (!zones.length) return [];
-  const { data, error } = await supabase.from("library")
-    .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,ai_confidence:data->>_aiConfidence")
-    .or(zones.map((z) => `tags->areasElements.cs.${pgArrayLit(z)}`).join(","))
-    .limit(1000);
-  if (error) throw error;
-  return (data || []).map(rowToLibItem);
+  const filter = zones.map((z) => `tags->areasElements.cs.${pgArrayLit(z)}`).join(",");
+  const PAGE = 1000;
+  const out = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from("library")
+      .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,ai_confidence:data->>_aiConfidence")
+      .or(filter)
+      .order("tagged_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+  }
+  return out.map(rowToLibItem);
 }
 
 /** Photos privately tagged to ONE specific custom-zone instance (tags.customZoneIds contains the
@@ -336,12 +356,21 @@ export async function fetchZoneLibraryPhotos(zoneList) {
  * caller signals "this id", not "this literal areasElements string". */
 export async function fetchCustomZoneLibraryPhotos(zoneId) {
   if (!zoneId) return [];
-  const { data, error } = await supabase.from("library")
-    .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,ai_confidence:data->>_aiConfidence")
-    .or(`tags->customZoneIds.cs.${pgArrayLit(zoneId)}`)
-    .limit(1000);
-  if (error) throw error;
-  return (data || []).map(rowToLibItem);
+  const filter = `tags->customZoneIds.cs.${pgArrayLit(zoneId)}`;
+  const PAGE = 1000;
+  const out = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from("library")
+      .select("id,name,url,tags,elements,dims,prints,linked_templates,zone_config_by_type,status,tag_source,tagged_at,ai_confidence:data->>_aiConfidence")
+      .or(filter)
+      .order("tagged_at", { ascending: false, nullsFirst: false })
+      .order("id", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+  }
+  return out.map(rowToLibItem);
 }
 
 /** Bounded pool of recently-tagged photos, used as last-resort zone-overflow filler
@@ -356,23 +385,56 @@ export async function fetchRecentLibraryPhotos(limit = 200) {
   return (data || []).map(rowToLibItem);
 }
 
-/** Untagged targets for the bulk AI tagger — light columns only. */
-export async function fetchUntaggedLibraryTargets(limit = 2000) {
-  const { data, error } = await supabase.from("library")
-    .select("id,name,url,tags,dims")
-    .eq("status", LIB_STATUS.UNTAGGED)
-    .in("source_folder", ALLOWED_SOURCE_FOLDERS)
-    .order("created_at", { ascending: true })
-    .limit(limit);
-  if (error) throw error;
-  return (data || []).map(rowToLibItem);
+/** Untagged targets for the bulk AI tagger — light columns only.
+ *
+ * PAGED via .range(). The old default (limit=2000) asked PostgREST for more than it will ever hand
+ * back in one request (hard-capped at 1000 regardless of the client's .limit()) — not silent data
+ * loss here, since runBulkTag's caller treats this as resumable (a photo only leaves `status=
+ * UNTAGGED` once it's actually tagged, so a capped batch just means a second run picks up where the
+ * first left off) — but the "🤖 Done" toast after one run claimed completion with no hint that up
+ * to ~1000 more untagged photos could still be waiting. Paging through the whole set fixes both:
+ * one run now really can finish everything, and `limit` (still honoured, for a caller that wants a
+ * bounded sample) trims the final accumulated list rather than silently asking for an unenforceable
+ * per-request count. */
+export async function fetchUntaggedLibraryTargets(limit) {
+  const PAGE = 1000;
+  const out = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from("library")
+      .select("id,name,url,tags,dims")
+      .eq("status", LIB_STATUS.UNTAGGED)
+      .in("source_folder", ALLOWED_SOURCE_FOLDERS)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+    if (limit && out.length >= limit) break;
+  }
+  const rows = limit ? out.slice(0, limit) : out;
+  return rows.map(rowToLibItem);
 }
 
-/** Verified photos, full fidelity — feeds the AI-tagging knowledge base rebuild. */
+/** Verified photos, full fidelity — feeds the AI-tagging knowledge base rebuild. Its own caller
+ * comment says it needs the WHOLE verified set — but with no .limit()/.range() at all, PostgREST's
+ * own 1000-row default max-rows was already silently capping this (an unrelated zone's tagged pool
+ * alone is past 1100, so total verified photos across the whole library is well past 1000 too),
+ * handing the knowledge base an arbitrary (no ORDER BY) ~1000-row slice instead of everything
+ * verified. PAGED via .range() so every verified photo actually reaches it. */
 export async function fetchVerifiedLibraryPhotos() {
-  const { data, error } = await supabase.from("library").select("*").eq("status", LIB_STATUS.VERIFIED);
-  if (error) throw error;
-  return (data || []).map(rowToLibItem);
+  const PAGE = 1000;
+  const out = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from("library").select("*")
+      .eq("status", LIB_STATUS.VERIFIED)
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < PAGE) break;
+  }
+  return out.map(rowToLibItem);
 }
 
 /** Batched existence checks for Cloudinary import/rebuild dedupe (replaces a full-table Set scan). */

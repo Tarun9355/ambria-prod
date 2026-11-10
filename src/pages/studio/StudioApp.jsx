@@ -29,10 +29,11 @@ import StudioBrowse from "./views/StudioBrowse.jsx";
 import StudioBuild from "./views/StudioBuild.jsx";
 import StudioSummary from "./views/StudioSummary.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
+import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
 import { availableAtVenue, lockedAtFixedVenues, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
-import { searchLmsLeads, triggerLmsSync, fetchCachedContracts, fetchLmsLeadByEntry } from "../../lib/ims/lms";
+import { searchLmsLeads, triggerLmsSync, fetchLmsLastSync, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { allocateForDate, buildEventAllocation } from "../../lib/ims/trussEngine";
 import { allocatePlatformForDate, buildEventPlatformAllocation } from "../../lib/ims/platformEngine";
 import { allocateBattaForDate, buildEventBattaAllocation } from "../../lib/ims/battaEngine";
@@ -1588,6 +1589,14 @@ export default function StudioApp() {
   const lmsDebounceRef = useRef(null);
   const lmsAbortRef = useRef(null);
   const lmsPollRef = useRef(null);
+  // Which query the CURRENT lmsLeads actually belong to (lowercased, matching cacheKey below) — the
+  // IMS deep-link effect's auto-load (further down) only fires once lmsLeads is non-empty, and while
+  // it's gated on the ledger, someone can type a completely different name into Guest Name in the
+  // meantime (realistic: the error banner is up, they're waiting on Retry and search for someone
+  // else). Without this, that effect would happily auto-load whatever lmsLeads happens to hold the
+  // moment the gate opens — a different guest's lead — the instant lmsLeads.length === 1 for THAT
+  // query. Checked there against the deep link's own req.name before acting.
+  const lmsLeadsQueryRef = useRef("");
 
   // ═══ §25 LMS lead search — debounced lookup on clientName (faithful port) ═══
   // Real backend: the cached lms_contracts table via searchLmsLeads. Since the cache
@@ -1597,15 +1606,24 @@ export default function StudioApp() {
     if (lmsPollRef.current) clearTimeout(lmsPollRef.current);
     const query = (clientName || "").trim();
     if (query.length < 2) {
+      lmsLeadsQueryRef.current = query.toLowerCase();
       setLmsLeads([]); setLmsLoading(false); setLmsError(false); setLmsFilling(false);
       return;
     }
     const cacheKey = query.toLowerCase();
     if (lmsCacheRef.current.has(cacheKey)) {
+      lmsLeadsQueryRef.current = cacheKey;
       const cached = lmsCacheRef.current.get(cacheKey);
       setLmsLeads(cached.leads || []); setLmsError(!!cached.error); setLmsLoading(false); setLmsFilling(false);
       return;
     }
+    // In flight: an UNCACHED search takes a 400ms debounce plus a real round trip, during which
+    // lmsLeads still holds whatever the PREVIOUS query returned — setting the ref to this query right
+    // now (before the search has actually landed) would make it look like those stale results already
+    // belong to this one, during exactly the window a deep-link auto-load effect checks it against.
+    // null so the "does this match what's currently in lmsLeads" check elsewhere always fails while
+    // nothing has landed yet, rather than fail OPEN here.
+    lmsLeadsQueryRef.current = null;
     const runSearch = async () => {
       const abort = new AbortController();
       lmsAbortRef.current = abort;
@@ -1619,6 +1637,7 @@ export default function StudioApp() {
         lmsCacheRef.current.set(cacheKey, { leads: result.leads, error: !result.ok });
       }
       setLmsLeads(result.leads || []);
+      lmsLeadsQueryRef.current = cacheKey; // NOW lmsLeads actually corresponds to this query
       setLmsError(!result.ok);
       setLmsLoading(false);
       const stillFilling = !result.complete && result.ok;
@@ -1650,7 +1669,7 @@ export default function StudioApp() {
   useEffect(() => {
     (async () => {
       try {
-        const { lastSync } = await fetchCachedContracts();
+        const lastSync = await fetchLmsLastSync();
         if (Date.now() - lastSync > 30 * 60 * 1000) triggerLmsSync().catch(() => {});
       } catch { /* ignore */ }
     })();
@@ -2748,6 +2767,35 @@ export default function StudioApp() {
   const canManageAny = isAdmin || hasStudioTab("library") || hasStudioTab("settings");
   useEffect(() => { if (mode === "manage" && !canManageAny) setMode("studio"); }, [mode, canManageAny]);
 
+  // Edit Access/per-user override, Admin → Users & Roles → the Edit/Delete half of tabAccess.js's
+  // per-tab model (design/library/settings) — separate from hasStudioTab/studioSub above, which
+  // only ever answer "is this tab/sub-tab VISIBLE", never "can I change anything in it".
+  // Deliberately reads the RAW `user` from useAuth(), not the reshaped `authUser` above: authUser
+  // is trimmed to {id,name,role,perms} and never carries tabOverride/tab_override, so hasTabPerm's
+  // per-user override would silently never apply if called with it. `settings` here is a tiny
+  // shim — tabAccess.js only ever reads `settings.roleTabs`, and Studio's own equivalent of that
+  // is the `studioRoleTabs` state already loaded above (IMS's settings.roleTabs, same key).
+  const studioTabSettings = useMemo(() => ({ roleTabs: studioRoleTabs }), [studioRoleTabs]);
+  const canStudio = useCallback((tab, action) => isAdmin || hasTabPerm(user, studioTabSettings, "studio", tab, action), [isAdmin, user, studioTabSettings]);
+  // A couple of callbacks below (persistDcKitEditsNow) deliberately keep an EMPTY dependency array
+  // (same reasoning as their own activeClientIdRef/clientLedgerRef — read the freshest value via a
+  // ref instead of forcing the callback to be recreated) rather than list `canStudio`, so they read
+  // this permission through a ref too instead of closing over a stale answer from whatever render
+  // first created them — before this ref existed, that bug meant Design Edit stayed permanently
+  // "on" for the rest of the session even after an admin switched it off (confirmed: the value was
+  // read once while studioRoleTabs was still `{}`, before its first real load).
+  const canDesignEditRef = useRef(true);
+  useEffect(() => { canDesignEditRef.current = canStudio("design", "edit"); }, [canStudio]);
+  // Same pattern for Library's Storage handlers (handleCldUpload/handleCldBulkDelete/
+  // handleCldDeleteFolder, further down) — each is its own useCallback whose deps don't include
+  // this permission, so a plain `canStudio(...)` call inside them would equally freeze stale.
+  const canLibraryEditRef = useRef(true);
+  const canLibraryDelRef = useRef(true);
+  useEffect(() => {
+    canLibraryEditRef.current = canStudio("library", "edit");
+    canLibraryDelRef.current = canStudio("library", "del");
+  }, [canStudio]);
+
   const toggleFilter = useCallback((arr, setArr, val) => {
     setArr(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]);
   }, []);
@@ -2941,6 +2989,10 @@ export default function StudioApp() {
           }
           const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
           clientJsonRef.current = seed;
+          // Set alongside the state, not left to the passive sync effect a render later (same fix as
+          // the other ledger-replacing write, ~line 3969) — a timer landing in that one-render gap
+          // would see ledgerReady true but clientLedgerRef.current still the pre-load value.
+          clientLedgerRef.current = list;
           setClientLedger(list);
           if (!cancelled) setLedgerLoadError(false);
         }
@@ -4356,13 +4408,15 @@ export default function StudioApp() {
   // the old "pending" amount until the build changes again and persistDeptSnapshot's own debounced
   // sync happens to fire. Same freshest-row-first pattern as persistDeptSnapshot, just for one field.
   const syncDealValueNow = useCallback(async (dealValue) => {
+    // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab.
+    if (!canStudio("design", "edit")) return;
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     if (!eo) return;
     try {
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
       if (row && row.data) await retryingUpdate("event_orders", eo.id, { data: { ...row.data, dealValue } });
     } catch (e) { /* best-effort */ }
-  }, [eventOrders, activeClientId, clientName]);
+  }, [eventOrders, activeClientId, clientName, canStudio]);
   const savePhotoImsMap = useCallback(async (nm) => { setPhotoImsMap(nm); await reliableSave(PIMAP_SK, JSON.stringify(nm), "Photo-IMS map"); }, []);
   // Read back the dept-head ACTUALS (real mandi + on-site expenses) that IMS wrote onto the event
   // order row, so Deal Check can show exact cost. The IMS deptOps live on the event_orders TABLE.
@@ -6768,6 +6822,10 @@ export default function StudioApp() {
       if (!cur || !(Number(cur.negotiatedAmount) > 0) || !add) return; // the amount was cleared meanwhile
       // The negotiated amount itself stays put (owner ask 2026-10-31, reversing the auto-follow): the edit's change is kept
       // as negotiatedPending, shown small under the amount on Summary, and only added to it when someone taps it there.
+      // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab — this timer
+      // captures the RAW saveClientLedger (floatLatestRef.current above), not ctx's Design-gated
+      // one, so it needs its own check.
+      if (!canDesignEditRef.current) return;
       const pending = Math.round((Number(cur.negotiatedPending) || 0) + add);
       L.saveClientLedger((clientLedgerRef.current || L.clientLedger).map(c => c.id === cur.id ? { ...c, negotiatedPending: pending } : c));
     }, 800);
@@ -7368,6 +7426,7 @@ export default function StudioApp() {
   }, [storageEntries]);
   const handleCldUpload = useCallback(async (files, isFolderUpload = false) => {
     if (!files || files.length === 0 || cldUploading) return;
+    if (!canLibraryEditRef.current) { showMsg("View only — your access to Library doesn't include editing", "orange"); return; }
     const baseFolder = cldPath.join("/");
     if (!baseFolder) { showMsg("Navigate into a folder first", "orange"); return; }
     // Filter: extension-based whitelist (reliable, unlike MIME which can mis-label RAW as image/*)
@@ -7457,6 +7516,7 @@ export default function StudioApp() {
   const handleCldBulkDelete = useCallback(async () => {
     const ids = Array.from(cldSelected);
     if (!ids.length) return;
+    if (!canLibraryDelRef.current) { showMsg("View only — your access to Library doesn't include deleting", "orange"); return; }
     if (!(await askConfirmAsync(`Delete ${ids.length} photo${ids.length > 1 ? "s" : ""}?`, {
       note: "Removed from Storage permanently. Library rows pointing at them will show as orphaned.",
       yesLabel: "Delete",
@@ -7475,6 +7535,7 @@ export default function StudioApp() {
   // ═══ DELETE FOLDER ═══
   const handleCldDeleteFolder = useCallback(async (folderName) => {
     const fullPath = [...cldPath, folderName].join("/");
+    if (!canLibraryDelRef.current) { showMsg("View only — your access to Library doesn't include deleting", "orange"); return; }
     if (!(await askConfirmAsync(`Delete the folder "${folderName}"?`, {
       note: `Everything inside ${fullPath} goes with it, permanently. This can't be undone.`,
       yesLabel: "Delete folder",
@@ -8254,6 +8315,11 @@ export default function StudioApp() {
 
   // ── Save session — VERBATIM ──
   const saveSession = useCallback((opts = {}) => {
+    // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab. First line, on
+    // purpose — every manual save and every autosave timer funnels through this one function, and
+    // the stale-save-guard machinery below (see STALE_SAVE_GUARD_PITFALLS.md) must never run for a
+    // write that was never going to happen anyway.
+    if (!canStudio("design", "edit")) return;
     if (!clientName.trim()) return;
     // liveMeta read here too (not the extraFunctions closure) — a stale count would under/over-iterate
     // the loop below against liveBuilds' real functions.
@@ -8513,6 +8579,17 @@ export default function StudioApp() {
       if (byPhone) {
         client = byPhone;
         setActiveClientId(byPhone.id);
+      } else if (!ledgerReady || ledgerLoadError) {
+        // Same gap StudioEventInfo.jsx's Continue button closes, for the same reason (see its own
+        // comment on this): minting here would search a client_ledger that hasn't finished its
+        // initial load yet — a real existing client for this exact phone could simply not have
+        // arrived, not be genuinely absent. ledgerReady alone doesn't cover a fetch that failed
+        // outright (it's set true either way — "we asked", not "we found work") — ledgerLoadError
+        // is the real "did it actually land" signal. Skip this tick entirely rather than fork a
+        // duplicate; this branch only runs when there was no active client to begin with, so
+        // nothing is lost — the next genuine edit's autosave (or the dirty-pill's own retry) tries
+        // again once the ledger has actually loaded.
+        return;
       } else {
         client = { id: "CLI_" + Date.now().toString(36), name: clientName.trim(), phone: clientPhone.trim(), sessions: [], createdAt: Date.now(), status: "ongoing", createdBy: authUser?.name || "—", bookedAt: null, bookedBy: null, finalSession: null };
         updated.push(client);
@@ -8741,7 +8818,7 @@ export default function StudioApp() {
     // pricingReady for free — but "usually" is not a guarantee: a deal whose seed-default total
     // happens to equal its real one would leave this callback holding pricingReady=false forever,
     // and then no total would be written at all. That is a worse failure than the one being fixed.
-    pricingReady, buildElementPriceSnapshot, persistBuildLayoutSnapshot]);
+    pricingReady, buildElementPriceSnapshot, persistBuildLayoutSnapshot, canStudio, ledgerReady, ledgerLoadError]);
 
   // ── Build auto-save (robust) ──────────────────────────────────────────────
   // The build (zone photos, Silver/Gold tab, elements, dims, carpet) previously persisted ONLY on a
@@ -8902,6 +8979,11 @@ export default function StudioApp() {
   // memory only: the next reopen restored the OLD dcKitEdits from the client row and the kit came back with its old parts (and Deal Check's sync writes that
   // copy over Build's). Writes just this field, from the freshest copy (Deal Check's live state, else the row), through the same ledger save Deal Check uses.
   const persistDcKitEditsNow = useCallback((fnIdx, cardKey, comps) => {
+    // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab. Calls the raw
+    // saveClientLedger directly (not through ctx), so the Design-gated ctx wrapper below doesn't
+    // cover this call site on its own. Read via the ref (see canDesignEditRef's own comment above),
+    // not canStudio(...) directly — this callback has an intentionally empty dep array.
+    if (!canDesignEditRef.current) return;
     const id = activeClientIdRef.current;
     const cur = clientLedgerRef.current || [];
     const c = cur.find((x) => x.id === id);
@@ -9303,6 +9385,8 @@ export default function StudioApp() {
 
   const markSold = useCallback(async () => {
     try {
+      // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab.
+      if (!canStudio("design", "edit")) { showMsg("View only — your access to Design Studio doesn't include editing", "red"); return; }
       if (!clientName.trim()) { showMsg("Client name is required", "red"); return; }
       if (!clientDate) { showMsg("Event date is required", "red"); return; }
       if (!venue) { showMsg("Venue is required", "red"); return; }
@@ -9369,7 +9453,7 @@ export default function StudioApp() {
     // Listed because the ₹0 check above reads it. Without this the callback holds whatever
     // eventGrandTotal was when it was last rebuilt — which could warn "nothing has been built" on a
     // deal that has since been priced, or worse, stay silent on one that has been emptied.
-    eventGrandTotal, askConfirmAsync, pushEventOrderPlan, showMsg]);
+    eventGrandTotal, askConfirmAsync, pushEventOrderPlan, showMsg, canStudio]);
 
   // Pushes the CURRENT build into IMS for an ALREADY-BOOKED deal without touching its booked status
   // — owner call (2026-10-25): if a deal is booked, it stays booked in both Studio and IMS; Un-book
@@ -9688,27 +9772,46 @@ export default function StudioApp() {
       }
       const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
       clientJsonRef.current = seed;
+      clientLedgerRef.current = list; // see the matching comment on the mount load's own setClientLedger
       setClientLedger(list);
       setLedgerLoadError(false);
       setLedgerReady(true);
     } catch {
       setLedgerLoadError(true);
+      // ledgerLoadError was ALREADY true going into this retry (that's the only way retryLedgerLoad
+      // gets called), so setting it to true again is a no-op React bails out on — the auto-retry
+      // effect below never re-runs off that alone, and clientLedger.length doesn't change on a
+      // failure either, so a failed retry silently stopped the whole chain after one attempt
+      // regardless of the ">= 3" cap. ledgerRetryTick is a plain counter with no other meaning;
+      // bumping it on every failed attempt forces that effect to re-run so the backoff actually
+      // continues, same as if the error value had genuinely changed.
+      setLedgerRetryTick((t) => t + 1);
     }
   }, []);
   // Auto-retry a couple of times on its own before asking the user to click anything — most blips
-  // clear within a few seconds. Only engages while there's actually a deal to restore (a `savedId`
-  // in sessionStorage) and the ledger hasn't already loaded; a genuinely fresh session with no saved
-  // deal and a failed reference-data fetch elsewhere has nothing here worth retrying for.
+  // clear within a few seconds. Engages for ANY ledger-load failure, not only when there's a deal to
+  // restore — a brand-new session needs its client_ledger loaded just as much, to actually match
+  // against before minting a client (every duplicate-client guard depends on this, see ledgerLoadError
+  // in ctx), so "nothing here worth retrying for" stopped being true the moment those guards started
+  // failing CLOSED on a load error instead of silently proceeding.
   const ledgerRetryCountRef = useRef(0);
+  const [ledgerRetryTick, setLedgerRetryTick] = useState(0);
   useEffect(() => {
     if (!ledgerLoadError) { ledgerRetryCountRef.current = 0; return; }
-    if (clientLedger.length > 0) return; // a later successful load already arrived
-    if (!restoreRef.current?.id) return; // nothing was open — no urgency to retry automatically
+    // Deliberately NOT also checking clientLedger.length here (a prior version returned early once
+    // it was non-empty, reasoning "a later successful load already arrived"). That's wrong: the
+    // realtime client_ledger subscription can append a row (another salesperson's save) at any time,
+    // completely independent of whether OUR OWN failed fetch has actually recovered — that alone
+    // flipped clientLedger.length from 0 to 1 while ledgerLoadError was still true, silently killing
+    // the retry chain (the effect's own cleanup cleared the pending timer) with the banner still
+    // claiming "Retrying automatically…" forever after. A genuinely successful retry already sets
+    // ledgerLoadError to false itself, which this first line already catches — that's the only
+    // "arrived" signal that actually matters here.
     if (ledgerRetryCountRef.current >= 3) return; // give up automatically; the banner's button remains
     ledgerRetryCountRef.current += 1;
     const t = setTimeout(() => { retryLedgerLoad(); }, 2000 * ledgerRetryCountRef.current);
     return () => clearTimeout(t);
-  }, [ledgerLoadError, clientLedger.length, retryLedgerLoad]);
+  }, [ledgerLoadError, retryLedgerLoad, ledgerRetryTick]);
 
   // ── setFilterMood / setFilterPalette ARE NOT setSelectedMoods / setSelectedPalettes ── (BUG-20)
   // Two similarly named pairs, and this reset cleared only the wrong one. selectedMoods/
@@ -9879,6 +9982,17 @@ export default function StudioApp() {
   // ── Load LMS lead — VERBATIM ──
   const loadLmsLead = useCallback((lead) => {
     if (!lead) return;
+    // Guard lives HERE, not just at each caller — this function has three call sites (the manual
+    // "Load →" button, the IMS deep-link effect, the LMS search-results auto-load effect) and the
+    // button's own results list was only ever gated on `lmsLoading || !ledgerReady` (StudioEventInfo.jsx),
+    // never on ledgerLoadError. ledgerReady is set true whether the client_ledger fetch SUCCEEDED or
+    // FAILED ("we asked", not "we found work" — see its own comment) — a genuinely failed fetch left
+    // clientLedger empty, so phoneMatches below found nothing and this minted a duplicate regardless
+    // of which of the three paths called it. One check here covers all three at once.
+    if (!ledgerReady || ledgerLoadError) { showMsg?.("Still loading existing clients — wait a moment and try again", "red"); return; }
+    // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab — this creates or
+    // links a client record from an inbound lead, the same kind of write as starting a new deal.
+    if (!canDesignEditRef.current) { showMsg?.("View only — your access to Design Studio doesn't include editing", "red"); return; }
     setClientName(lead.guestName || "");
     setClientPhone(lead.phone || "");
     setClientPalette("Custom");
@@ -10055,7 +10169,7 @@ export default function StudioApp() {
     } else {
       showMsg(`Loaded LMS lead #${lead.entryNo} (${lead.dept === "venue" ? "Venue" : "Decor"})`, "green");
     }
-  }, [clientLedger, saveClientLedger, authUser, allInhouseVenues, allOutdoorDB, loadClientSession, customProperties, customInhouse]);
+  }, [clientLedger, saveClientLedger, authUser, allInhouseVenues, allOutdoorDB, loadClientSession, customProperties, customInhouse, ledgerReady, ledgerLoadError]);
 
   // ── §25b DEEP LINK FROM IMS: "Build this deal in Studio" ──
   // IMS Dept Ops links here when a calendar lead has no Studio deal behind it yet, as
@@ -10069,6 +10183,16 @@ export default function StudioApp() {
   // Placed AFTER loadLmsLead rather than beside the search effect: the dependency array is
   // evaluated during render, so naming loadLmsLead before its own `const` would throw on the
   // temporal dead zone rather than simply reading stale.
+  // loadLmsLead itself depends on clientLedger (its own useCallback deps), so it's a fresh closure
+  // every render the ledger changes on — but the effect below fires with an EMPTY dependency array
+  // (one-shot by design: a deep link should only ever be actioned once per page load), which closes
+  // over whatever loadLmsLead WAS on the FIRST render — clientLedger=[], nothing loaded yet — FOREVER.
+  // Confirmed: every #/studio?client=...&lmsRef=... deep link from IMS's calendar always minted a
+  // duplicate client, never finding a phone match, regardless of how long the ledger had actually been
+  // loaded by the time the effect fired. A ref kept current every render (same pattern saveSessionRef,
+  // ~line 8811, already uses) lets the one-shot effect call whatever loadLmsLead CURRENTLY is.
+  const loadLmsLeadRef = useRef(loadLmsLead);
+  useLayoutEffect(() => { loadLmsLeadRef.current = loadLmsLead; });
   const pendingLmsEntryRef = useRef(undefined);
   if (pendingLmsEntryRef.current === undefined) {
     // Read once, during the first render, before anything can type into clientName.
@@ -10095,6 +10219,13 @@ export default function StudioApp() {
   useEffect(() => {
     const req = pendingLmsEntryRef.current;
     if (!req || req.applied) return;
+    // Wait for the ledger too — a fresh closure alone is pointless if clientLedger is still empty
+    // (still loading, or a failed fetch — ledgerReady is set true in BOTH cases, "we asked" not "we
+    // found work", hence checking ledgerLoadError separately) when this actually runs: loadLmsLead
+    // would genuinely find no phone match against an empty list and mint a duplicate anyway, the same
+    // root cause as every other guard in this file. This effect now re-runs as those two flip rather
+    // than firing exactly once on mount, but `req.applied` still makes sure it only ever ACTS once.
+    if (!ledgerReady || ledgerLoadError) return;
     req.applied = true;
     setClientName(req.name);
     // Strip the query so a refresh does not re-fill over work already in progress.
@@ -10108,13 +10239,26 @@ export default function StudioApp() {
       const lead = await fetchLmsLeadByEntry(req.dept, req.entry);
       if (cancelled || !lead) return;   // not found → leave the ref set so the search path can try
       pendingLmsEntryRef.current = null; // and stop it from firing a second fill on top of this one
-      loadLmsLead(lead);
+      loadLmsLeadRef.current(lead);
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [ledgerReady, ledgerLoadError]);
   useEffect(() => {
     const req = pendingLmsEntryRef.current;
     if (!req || lmsLoading || !lmsLeads.length) return;
+    // lmsLeads has to actually BE a search for req.name, not just non-empty — while the ledger gate
+    // above holds this effect back, nothing stops someone typing a DIFFERENT name into Guest Name
+    // (the error banner is up, they're searching for someone else while waiting on Retry). Once the
+    // gate opens, lmsLeads could hold that other person's results, and with no entry-number match,
+    // `lmsLeads.length === 1` would auto-load THEIR lead under this deep link's name instead.
+    // lmsLeadsQueryRef is set synchronously every time the search effect (re)fires, so it always
+    // names whichever query the CURRENT lmsLeads actually belongs to.
+    if (lmsLeadsQueryRef.current !== String(req.name || "").trim().toLowerCase()) return;
+    // loadLmsLead itself now refuses to run while the ledger isn't ready/failed (its own first check),
+    // so this isn't strictly needed for safety any more — kept so this effect WAITS and retries
+    // instead of firing once, getting silently rejected, and never trying again (same reasoning as
+    // the deep-link effect above, which needs this for exactly that reason, not just as a safety net).
+    if (!ledgerReady || ledgerLoadError) return;
     // Prefer the exact contract the link names. But the entry number often will NOT be here:
     // searchLmsLeads deliberately queries decor records only (see its own comment — Studio is the
     // décor tool and loadLmsLead has nothing to pull from a venue contract), while the IMS
@@ -10129,7 +10273,7 @@ export default function StudioApp() {
     // One-shot: clear BEFORE loading, or loadLmsLead's own state changes would re-enter here.
     pendingLmsEntryRef.current = null;
     loadLmsLead(hit);
-  }, [lmsLeads, lmsLoading, loadLmsLead]);
+  }, [lmsLeads, lmsLoading, loadLmsLead, ledgerReady, ledgerLoadError]);
 
   // ── Resume saved session (per-pill) — VERBATIM ──
   // `targetFnIdx` says WHICH pill to restore into. Without it the caller could only ever resume
@@ -12353,6 +12497,10 @@ export default function StudioApp() {
     // after that shows "No IMS match". A real draft always has cards, so empty = mid-load → skip.
     if (!dcCards || Object.keys(dcCards).length === 0) return;
     const doSave = (saveOpts = {}) => {
+      // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab. Read via the ref
+      // (same reasoning as persistDcKitEditsNow above) rather than canStudio(...) directly, since
+      // this closure is rebuilt by an effect whose own dependency list isn't guaranteed to include it.
+      if (!canDesignEditRef.current) return;
       dcAutosavePendingRef.current = false;
       // Read through the layout-effect-mirrored ref, NOT this closure's own dcCards/etc — see
       // dcStateRef above for why a stale closure here would otherwise re-flush pre-swap state.
@@ -13200,6 +13348,60 @@ export default function StudioApp() {
     setZoneUploadReview(null);
   };
 
+  // ── Permission-gated wrappers for ctx (Edit Access/per-user override, Admin → Users & Roles) ──
+  // The raw functions above stay exactly as they are — these decide whether a VIEW (Build/Browse/
+  // Summary/Deal Check, or Manage Library/Settings) gets handed a function that actually writes, or
+  // one that quietly does nothing. Three separate gates (design/library/settings) because they're
+  // three separate tabs with three separate Edit Access toggles — not one shared "can edit Studio".
+  const canDesignEdit = canStudio("design", "edit");
+  const canDesignDel = canStudio("design", "del");
+  const canLibraryEdit = canStudio("library", "edit");
+  const canLibraryDel = canStudio("library", "del");
+  const canSettingsEdit = canStudio("settings", "edit");
+  const designSaveClientLedger = (nl, del, o) => {
+    if (!canDesignEdit) return Promise.resolve(false);
+    if (Array.isArray(del) && del.length && !canDesignDel) return Promise.resolve(false);
+    return saveClientLedger(nl, del, o);
+  };
+  const designDeleteSessionRows = (sessionId) => {
+    // Requires edit AND delete — a del-without-edit combination would otherwise remove the session
+    // history row while the matching client_ledger update (gated on edit alone) silently no-ops,
+    // leaving the two out of sync.
+    if (!canDesignEdit || !canDesignDel) return Promise.resolve({ ok: false, reason: "view only" });
+    return deleteSessionRows(sessionId);
+  };
+  const librarySaveLib = (nl, del) => {
+    if (!canLibraryEdit) return Promise.resolve({ ok: false });
+    if (Array.isArray(del) && del.length && !canLibraryDel) return Promise.resolve({ ok: false });
+    return saveLib(nl, del);
+  };
+  const librarySaveManualVideos = (nv, del) => {
+    if (!canLibraryEdit) return Promise.resolve({ ok: false });
+    if (Array.isArray(del) && del.length && !canLibraryDel) return Promise.resolve({ ok: false });
+    return saveManualVideos(nv, del);
+  };
+  // Resolves to undefined rather than returning it synchronously — several callers (e.g.
+  // ManageLibrary's "Save rules") chain `.then(...)` straight off the result, which throws if a
+  // blocked call ever handed back a bare `undefined` instead of a promise.
+  const libraryGate = (fn) => (...args) => { if (!canLibraryEdit) return Promise.resolve(undefined); return fn(...args); };
+  const librarySaveYtTags = libraryGate(saveYtTags);
+  const librarySaveHiddenVideos = libraryGate(saveHiddenVideos);
+  const librarySavePaletteData = libraryGate(savePaletteData);
+  const libraryRunBulkTag = libraryGate(runBulkTag);
+  const libraryRunTagSelected = libraryGate(runTagSelected);
+  const libraryRunBulkTagVideos = libraryGate(runBulkTagVideos);
+  const libraryRunBulkTagVideoVenues = libraryGate(runBulkTagVideoVenues);
+  const libraryImportCloudinaryFolder = libraryGate(importCloudinaryFolder);
+  const settingsGate = (fn) => (...args) => { if (!canSettingsEdit) return Promise.resolve(undefined); return fn(...args); };
+  const settingsSaveZD = settingsGate(saveZD);
+  const settingsSaveTax = settingsGate(saveTax);
+  const settingsAddTagWithAreaZoneSync = settingsGate(addTagWithAreaZoneSync);
+  const settingsAddZoneWithAreaSync = settingsGate(addZoneWithAreaSync);
+  const settingsSaveFilterPriority = settingsGate(saveFilterPriority);
+  // Settings' own saveClientLedger (Mark Dead/Reopen) is gated on Settings edit, not Design edit —
+  // a genuinely different tab's permission, not the same control double-checked.
+  const settingsSaveClientLedger = (nl, del, o) => { if (!canSettingsEdit) return Promise.resolve(false); return saveClientLedger(nl, del, o); };
+
   const ctx = {
     // theme / chrome
     S, isDark, accent, border, textS, fmt, cat,
@@ -13223,6 +13425,7 @@ export default function StudioApp() {
     zoneUploading, setZoneUploading, zoneUploadReview, setZoneUploadReview, closeZoneUploadReview, zurElSearch, setZurElSearch, applyZoneUpload, recentUploads,
     // auth
     authUser, isAdmin, hasPerm, doLogout, teamData, setTeamData, userVenueScope, studioSettingsAllowed, studioLibraryAllowed,
+    canEditDesign: canDesignEdit, canDelDesign: canDesignDel,
     // app mode + steps
     mode, setMode, canManageAny, step, setStep, manageTab, setManageTab, toast, setToast, showMsg, askConfirm, askConfirmAsync, loaded, setLoaded, saveError, setSaveError,
     // events
@@ -13258,14 +13461,25 @@ export default function StudioApp() {
     // pill nav has always read `fnPending ?? activeFnIdx`; Deal Check never received it, so it had
     // nothing to render from but the deferred value (BUG-11).
     fnPending,
-    // True only while there WAS an in-progress deal (sessionStorage remembers one) that hasn't been
-    // restored yet AND the last client_ledger fetch actually failed — not "still loading", a real
-    // error. StudioEventInfo shows a "couldn't reach the server" banner instead of silently looking
+    // True whenever the last client_ledger fetch actually failed (not "still loading", a real
+    // error) and no deal is open yet — whether or not there was an in-progress deal to restore.
+    // Originally scoped to the restore case only ("showLedgerRestoreWarning"); broadened because
+    // ledgerReady alone can't be trusted to mean "safe to create/match a client" — see ledgerLoadError
+    // below — so a brand-new session with nothing to restore needs this same banner and retry path,
+    // or it's simply stuck unable to start any deal while the ledger stays empty for the rest of the
+    // session. StudioEventInfo shows a "couldn't reach the server" banner instead of silently looking
     // like a fresh, empty deal while a retry runs in the background (retryLedgerLoad).
-    showLedgerRestoreWarning: ledgerLoadError && !activeClientId && !!restoreRef.current?.id,
+    showLedgerRestoreWarning: ledgerLoadError && !activeClientId,
     retryLedgerLoad,
-    deleteSessionRows,
-    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
+    // Whether the ledger genuinely finished loading vs. gave up and left clientLedger empty.
+    // ledgerReady alone is set true in BOTH cases ("we asked", not "we found work" — see its own
+    // comment) — every duplicate-client guard (doSaveClient's Continue check, saveSession's own
+    // phone-match-before-mint fallback) has to fail CLOSED on a real fetch failure too, not just
+    // while the fetch is still in flight, or a network blip that fails outright still mints a
+    // duplicate against the empty ledger it left behind — exactly the bug being fixed here.
+    ledgerLoadError,
+    deleteSessionRows: designDeleteSessionRows,
+    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger: designSaveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS
@@ -13384,6 +13598,11 @@ export default function StudioApp() {
     LABOUR, LABOUR_PRESETS, SEASON_MULT, TPL_DEFAULTS, PERM_LABELS, ROLE_DEFAULTS, ROLES, TAX_LABELS,
   };
   void ctx; // consumed by view slices in later commits
+  // ManageLibrary/ManageSettings each get their OWN writes gated on THEIR OWN Edit Access tab
+  // (library/settings), not Design's — overriding just the handful of keys each screen actually
+  // calls, on top of the same base `ctx` everything else already reads.
+  const libCtx = { ...ctx, canEditLib: canLibraryEdit, canDelLib: canLibraryDel, saveLib: librarySaveLib, saveManualVideos: librarySaveManualVideos, saveYtTags: librarySaveYtTags, saveHiddenVideos: librarySaveHiddenVideos, savePaletteData: librarySavePaletteData, runBulkTag: libraryRunBulkTag, runTagSelected: libraryRunTagSelected, runBulkTagVideos: libraryRunBulkTagVideos, runBulkTagVideoVenues: libraryRunBulkTagVideoVenues, importCloudinaryFolder: libraryImportCloudinaryFolder };
+  const settingsCtx = { ...ctx, canEditSettings: canSettingsEdit, saveZD: settingsSaveZD, saveTax: settingsSaveTax, addTagWithAreaZoneSync: settingsAddTagWithAreaZoneSync, addZoneWithAreaSync: settingsAddZoneWithAreaSync, saveFilterPriority: settingsSaveFilterPriority, saveClientLedger: settingsSaveClientLedger };
 
   // ═══════════════════════════════════════════════════════════════
   // RENDER — header chrome + mode/step routing skeleton.
@@ -13987,7 +14206,7 @@ export default function StudioApp() {
         return <div style={effManageTab === "library" ? { ...S.main, maxWidth: 1640 } : S.main}>
           {effManageTab === "library" || effManageTab === "settings" ? (
             <Suspense fallback={<div style={{ padding: "24px 18px", display: "flex", flexDirection: "column", gap: 16 }}><SkStyle /><div style={{ display: "flex", gap: 8 }}><Sk w={90} h={28} r={999} /><Sk w={90} h={28} r={999} /><Sk w={90} h={28} r={999} /></div><SkTiles n={12} min={150} label="Loading" /></div>}>
-              {effManageTab === "library" ? <ManageLibrary ctx={ctx} /> : <ManageSettings ctx={ctx} />}
+              {effManageTab === "library" ? <ManageLibrary ctx={libCtx} /> : <ManageSettings ctx={settingsCtx} />}
             </Suspense>
           ) : (
             <div style={{ textAlign: "center", padding: 60, color: textS }}>

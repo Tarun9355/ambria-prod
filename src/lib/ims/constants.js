@@ -35,6 +35,15 @@ export const ROLE_DEFAULTS = {
   "Site Supervisor": ["inv_view", "events_view", "events_manpower", "purchase_request", "reports_generate"],
 };
 
+// Which tabs a role sees before an admin has ever touched its Tab Access config in Edit Access
+// (settings.roleTabs). A role with no entry there falls back to this map, else to every tab except
+// the Site tab (IMS.jsx's own `roleConfig` fallback) — a narrow, single-purpose role like Site
+// Supervisor should never land on the rest of IMS by default just because nobody has configured it
+// yet. The admin can still widen it any time from Edit Access.
+export const DEFAULT_ROLE_TABS = {
+  "Site Supervisor": { tabs: ["site"] },
+};
+
 // Permission ids with no real control anywhere in the app to gate — either the feature itself is
 // unreachable dead code (Import Excel, Bulk Block: the modals exist but nothing ever opens them),
 // or there is genuinely no IMS UI for the concept at all (Events was a removed tab; creating/editing
@@ -167,6 +176,10 @@ export const DATE_PRICING_OWNER_ID = "U84ED1E8439";
 export const SETTINGS_DEFAULTS = {
   bufferPct: 5,
   minProfitPct: 30,
+  // Grace window (hours) after a booking's last scheduled day before its on-site actuals
+  // (Dept Ops expenses/mandi/crew, the Site tab's receiving + crew) lock for editing — see
+  // lib/ims/actualsLock.js. Admin → Settings → Site Supervisors.
+  actualsLockGraceHours: 12,
   datePricing: {
     categories: {
       heavy_saya: { label: "👑 King's", multiplier: 1.4, color: "red" },

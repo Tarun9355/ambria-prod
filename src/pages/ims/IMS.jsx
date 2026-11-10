@@ -8,7 +8,8 @@ import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDef
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { assemblePrintMaterialsFromRows, assembleCarpetMaterialsFromRows, assemblePlatformRatesFromRows, assembleMaskingRatesFromRows, assembleTrussRatesFromRows } from "../../lib/studio/taxonomy";
 import { createSettingsWriter } from "../../lib/ims/settingsWriter";
-import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
+import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, DEFAULT_ROLE_TABS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
+import SiteSupervisorTab from "./SiteSupervisorTab.jsx";
 import { assembleAttendanceLocationsFromRows, assembleAttendanceTrainingByDeptFromRows } from "../../lib/ims/attendance";
 import { assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher";
 import { assembleMarkedDatesFromRows } from "../../lib/inventory/helpers";
@@ -60,6 +61,7 @@ const TABS = [
   { id: "flowers", label: "🌺 Flowers" },
   { id: "finance", label: "💰 Finance" },
   { id: "admin", label: "⚙️ Admin" },
+  { id: "site", label: "🦺 Site" },
 ];
 
 // Vertical nav rail. Shared by the lg+ sidebar and the mobile drawer so the two can never
@@ -151,7 +153,7 @@ const overheadToRow = (o) => ({ id: o.id, name: o.description ?? null, amount: o
 const rowToSupervisor = (row) => ({ id: row.id, name: row.name, phone: row.phone, active: row.active });
 const supervisorToRow = (s) => ({ id: s.id, name: s.name ?? null, phone: s.phone ?? null, active: s.active ?? true });
 
-const rowToUser = (row) => ({ id: row.id, name: row.name, username: row.username, role: row.role, permissions: row.permissions || [], active: row.active ?? true, phone: row.phone, email: row.email, apps: row.apps ?? null, departments: row.departments ?? null, createdAt: row.created_at });
+const rowToUser = (row) => ({ id: row.id, name: row.name, username: row.username, role: row.role, permissions: row.permissions || [], active: row.active ?? true, phone: row.phone, email: row.email, apps: row.apps ?? null, departments: row.departments ?? null, tabOverride: row.tab_override ?? null, createdAt: row.created_at });
 // ═══ A STABLE ORDER FOR THE USERS TABLE ═══
 // fetchAll is a bare select("*") with no ORDER BY, so Postgres hands back rows in physical order.
 // An UPDATE does not edit a row in place — it writes a NEW tuple, usually at the end of the table
@@ -181,7 +183,7 @@ const sortUsers = (list, recentIds = []) => {
 // Passwords live in Supabase Auth now — NEVER write a `password` column (it was dropped in migration
 // 005). Sending it makes every users upsert fail ("Could not find the 'password' column"). Password
 // changes go through the user-admin edge function instead.
-const userToRow = (u) => ({ id: u.id, name: u.name ?? null, username: u.username ?? null, role: u.role ?? "Sales", permissions: u.permissions || [], active: u.active ?? true, phone: u.phone ?? null, email: u.email ?? null, apps: u.apps ?? null, departments: Array.isArray(u.departments) && u.departments.length ? u.departments : null });
+const userToRow = (u) => ({ id: u.id, name: u.name ?? null, username: u.username ?? null, role: u.role ?? "Sales", permissions: u.permissions || [], active: u.active ?? true, phone: u.phone ?? null, email: u.email ?? null, apps: u.apps ?? null, departments: Array.isArray(u.departments) && u.departments.length ? u.departments : null, tab_override: (u.tabOverride && Object.keys(u.tabOverride).length) ? u.tabOverride : null });
 
 const rowToProd = (row) => ({ ...(row.data || {}), id: row.id, status: row.status ?? row.data?.status });
 const prodToRow = (p) => ({ id: p.id, item_id: p.inventoryId ?? null, fn_id: p.functionId ?? null, status: p.status ?? "Requested", data: p });
@@ -1807,10 +1809,14 @@ export default function IMS() {
   }, [loadLmsFromCache]);
 
   // On mount: read the cache instantly; only kick a background server-side sync if stale.
+  // fetchCachedContracts (inside loadLmsFromCache) now throws on a real fetch failure instead of
+  // silently returning an empty cache — catch it here the same way a failure always behaved before:
+  // treat it as "nothing synced yet" and let the stale check below kick off a real sync.
   useEffect(() => {
     let active = true;
     (async () => {
-      const lastSync = await loadLmsFromCache();
+      let lastSync = 0;
+      try { lastSync = await loadLmsFromCache(); } catch { /* treated as stale below */ }
       if (active && Date.now() - lastSync > LMS_STALE_MS) syncLms();
     })();
     return () => { active = false; };
@@ -2651,7 +2657,11 @@ export default function IMS() {
   );
 
   // Role-based tab filtering (faithful to reference).
-  const roleConfig = (settings?.roleTabs || {})[user?.role] || { tabs: TABS.map((t) => t.id) };
+  // A role with no Tab Access config saved yet (settings.roleTabs) falls back to DEFAULT_ROLE_TABS
+  // (so a narrow role like Site Supervisor lands on its own tab out of the box, not the whole app),
+  // else to every tab EXCEPT Site — a brand-new, never-configured role has no business on a
+  // single-purpose cross-department screen just because nobody has set up its Tab Access yet.
+  const roleConfig = (settings?.roleTabs || {})[user?.role] || DEFAULT_ROLE_TABS[user?.role] || { tabs: TABS.filter((t) => t.id !== "site").map((t) => t.id) };
   const isAdmin = user?.role === "Admin" || user?.id === "u_admin";
   // Dashboard is Admin-only, full stop — not something a per-role Tab Access config can grant.
   // It's a company-wide rollup (total stock, finance-adjacent numbers, every upcoming function),
@@ -2905,6 +2915,13 @@ export default function IMS() {
             amendRequests={amendRequests} saveAmendRequests={saveAmendRequests}
             authUser={user} inventory={items}
             blocks={blocks} setBlocks={setBlocksState} saveBlocks={saveBlocks}
+          />
+        ) : activeTab === "site" ? (
+          <SiteSupervisorTab
+            eventOrders={eventOrders} setEventOrders={setEventOrders}
+            inventory={items} settings={settings}
+            blocks={blocks} trussInv={trussInv} rateCardCategories={rateCardCategories}
+            authUser={user}
           />
         ) : (
           <div className="text-center text-gray-400 py-20">

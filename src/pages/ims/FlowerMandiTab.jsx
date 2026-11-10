@@ -6,7 +6,7 @@ import { supabase, updateRow } from "../../lib/supabase";
 
 function fmt(n){ return "₹"+(Number(n)||0).toLocaleString("en-IN"); }
 
-export default function FlowerMandiTab({ settings, setSettings, functions, setFunctions, mode }) {
+export default function FlowerMandiTab({ settings, setSettings, functions, setFunctions, mode, canEdit = true }) {
   const forcedMode = !!mode;
   const [subTab,setSubTab]=useState(mode || "planning");
   const activeSubTab = forcedMode ? mode : subTab;
@@ -523,7 +523,11 @@ export default function FlowerMandiTab({ settings, setSettings, functions, setFu
               )}
 
               <div className="mt-4">
-                <Btn onClick={()=>{
+                {/* Plain <button>, not <Btn> — <Btn> (components/ui) doesn't pass through
+                    `disabled`/`title`, so a view-only user previously saw a fully-enabled button
+                    that silently did nothing on click. */}
+                <button onClick={()=>{
+                  if(!canEdit) return;
                   if(!txFrom||!txTo||txFrom===txTo) return alert("Select two different functions");
                   const amt=parseFloat(txAmount); if(!amt||amt<=0) return alert("Enter a valid amount");
                   const txId="FTX-"+Date.now();
@@ -562,7 +566,8 @@ export default function FlowerMandiTab({ settings, setSettings, functions, setFu
                   }));
 
                   setTxFrom(""); setTxTo(""); setTxAmount(""); setTxNote("");
-                }} color="green" disabled={!txFrom||!txTo||!txAmount||txFrom===txTo}>🌸 Confirm Transfer</Btn>
+                }} disabled={!canEdit||!txFrom||!txTo||!txAmount||txFrom===txTo} title={canEdit?undefined:"View only — your access to Flowers doesn't include editing"}
+                  className="px-4 py-2 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-green-600">🌸 Confirm Transfer</button>
               </div>
             </div>
 

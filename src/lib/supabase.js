@@ -258,15 +258,35 @@ export const claimDealPresence = (clientId, me) => new Promise((resolve) => {
     console.warn(`[claimDealPresence] Presence check for client ${clientId} never synced — letting the open proceed rather than block on it.`);
     settle({ others: [], selfElsewhere: false });
   }, 5000);
+  // A presence entry is supposed to disappear the instant its socket disconnects — that's the whole
+  // point of using ephemeral presence instead of a stored "is this open" flag. In practice a socket
+  // can die without a clean close (the tab crashes, the laptop sleeps or loses network mid-session,
+  // the process is killed) and Supabase's own disconnect/heartbeat detection doesn't always clear
+  // that entry as fast as the few seconds/minutes it's supposed to. Confirmed live: a deal nobody had
+  // touched since a PRIOR DAY still reported "you already have this open". `since` (set once, in the
+  // track() call below, and never refreshed again for as long as a tab stays open — there is no
+  // periodic re-track/heartbeat here) is already recorded on every claim; it just wasn't checked for
+  // age until now. Treating anything older than this window as a dead leftover rather than a real
+  // conflict isn't a perfect substitute for a true heartbeat (a single tab genuinely left open longer
+  // than this window would stop being seen as "live") — acceptable because presence isn't the only
+  // protection here: saveSession's own stale-save guard (buildSaveBaselineRef) still blocks an old
+  // tab from silently autosaving over a newer save even if presence missed the conflict.
+  const STALE_MS = 8 * 60 * 60 * 1000; // a full workday session; comfortably covers same-day use
+  const isLive = (meta) => (Date.now() - (Number(meta?.since) || 0)) < STALE_MS;
   channel
     .on("presence", { event: "sync" }, async () => {
       if (settled) return;
       const state = channel.presenceState();
+      // A key can hold MULTIPLE entries (the same person on two tabs/devices, or a dead leftover
+      // sitting beside a genuinely live one) — Supabase orders existing entries before new joins, so
+      // the leftover is typically metas[0], not whichever one is actually live. Check every entry
+      // under a key, not just the first, or a leftover sitting in front of a live entry would read
+      // the whole key as stale and silently let a second concurrent editor in.
       const others = Object.entries(state)
         .filter(([key]) => key !== me.id)
-        .map(([, metas]) => metas[0])
+        .map(([, metas]) => (metas || []).find(isLive))
         .filter(Boolean);
-      const selfElsewhere = Array.isArray(state[me.id]) && state[me.id].length > 0;
+      const selfElsewhere = (state[me.id] || []).some(isLive);
       if (!others.length && !selfElsewhere) {
         try { await channel.track({ userId: me.id, userName: me.name || "Someone", since: Date.now() }); } catch { /* best-effort */ }
       }

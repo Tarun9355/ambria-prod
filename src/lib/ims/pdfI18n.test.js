@@ -85,8 +85,10 @@ describe("hindiReportHtml", () => {
 });
 
 // ── COVERAGE ── every literal the book passes to t() has its Hindi, so a label added without one fails here.
-describe("coverage: every t() literal in DepartmentOpsTab.jsx has a Hindi entry", () => {
-  const file = fileURLToPath(new URL("../../pages/ims/DepartmentOpsTab.jsx", import.meta.url));
+// The book's template (and every t() call in it) lives in deptBookHtml.js, not DepartmentOpsTab.jsx
+// — see that file's own module comment for why (shared with the Site Supervisor page's PDF button).
+describe("coverage: every t() literal in deptBookHtml.js has a Hindi entry", () => {
+  const file = fileURLToPath(new URL("./deptBookHtml.js", import.meta.url));
   const text = readFileSync(file, "utf8");
   const found = new Set();
   // t("…") / t('…') / t(`…`) — a template literal only when it has no ${}

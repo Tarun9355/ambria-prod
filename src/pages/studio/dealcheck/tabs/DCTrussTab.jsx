@@ -370,6 +370,10 @@ export default function DCTrussTab({ ctx }) {
                               Cancel
                             </button>
                             <button onClick={async () => {
+                              // Edit Access/per-user override, Admin → Users & Roles → Design Studio
+                              // tab — writes truss_allocations directly, bypassing ctx.saveClientLedger
+                              // entirely, so it needs its own check.
+                              if (!ctx.canEditDesign) { showMsg("View only — your access to Design Studio doesn't include editing", "red"); return; }
                               // Submit amend: replace this client's hard entry with new totals; audit log added.
                               try {
                                 let next = { ...trussAlloc };
