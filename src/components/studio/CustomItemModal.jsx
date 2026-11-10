@@ -84,7 +84,13 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
   // one. No category to guess first, and every match is a real IMS row — a Production/Buying item
   // now always has a genuine reference (no more free-typed, unmatched category/sub-category with a
   // purely manual price).
-  const [cSearch, setCSearch] = useState("");
+  // Editing a no-match item (existing.refItemId null, saved with a free-typed name): pre-fill the
+  // search box with that name so it isn't silently dropped on save (onSave falls back to
+  // cSearch.trim() whenever nothing is selected) — editing one no longer requires retyping it.
+  const [cSearch, setCSearch] = useState(() => (existing && !existing.refItemId && existing.name) ? existing.name : "");
+  // Starts dismissed when editing a no-match item — the pre-filled name above would otherwise pop
+  // the results dropdown open immediately, covering the form before anyone has touched anything.
+  const [cSearchDismissed, setCSearchDismissed] = useState(() => !!(existing && !existing.refItemId && existing.name));
   const cSearchResults = useMemo(() => {
     const q = cSearch.trim().toLowerCase();
     if (q.length < 1) return [];
@@ -117,14 +123,23 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
   };
   const refPrice = cSelectedItem ? Number(cSelectedItem.cost) || 0 : 0;
   const finalPrice = cManualPrice ? Number(cManualPrice) : refPrice;
-  const canSave = !!cSelectedItem && Number(cForm.qty) > 0 && finalPrice > 0;
+  // A genuine IMS match is still the default path (auto-fills photo/dims/a reference price), but a
+  // Production/Buying item is routinely something bought or made fresh FOR this event precisely
+  // because it ISN'T already in rental stock — requiring a match here blocked that real, legitimate
+  // case outright (owner report, 2026-11-10: "not able to add production item"). A typed name with
+  // no match now saves fine, as long as a real price is given — there's no reference price to fall
+  // back on without a match, so that's still required.
+  const canSave = (!!cSelectedItem || cSearch.trim().length > 0) && Number(cForm.qty) > 0 && finalPrice > 0;
   const onSave = () => {
     const item = {
       id: editId || `custom-${Date.now()}`,
       fnIdx, zoneKey, type,
-      cat: imsField.category(cSelectedItem), subCat: imsField.subcategory(cSelectedItem), qty: Number(cForm.qty) || 1,
+      name: cSelectedItem ? cSelectedItem.name : cSearch.trim(),
+      cat: cSelectedItem ? imsField.category(cSelectedItem) : "",
+      subCat: cSelectedItem ? imsField.subcategory(cSelectedItem) : "",
+      qty: Number(cForm.qty) || 1,
       dims: { l: Number(cForm.dims.l)||0, w: Number(cForm.dims.w)||0, h: Number(cForm.dims.h)||0 },
-      refItemId: cSelectedItem.id, refPrice,
+      refItemId: cSelectedItem ? cSelectedItem.id : null, refPrice,
       manualPrice: cManualPrice ? Number(cManualPrice) : null,
       finalPrice, notes: cForm.notes || "",
       photo: cForm.photo || ""
@@ -197,9 +212,14 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
               </div>
             ) : (
               <div style={{position:"relative"}}>
-                <input value={cSearch} onChange={e => setCSearch(e.target.value)} placeholder="Search inventory by name..."
+                <input value={cSearch} onChange={e => { setCSearch(e.target.value); setCSearchDismissed(false); }} placeholder="Search inventory by name..."
                   style={{width:"100%",padding:"8px 10px",borderRadius:8,border:`1px solid ${border}`,background:isDark?"#1A1A2E":"#fff",color:textP,fontSize:12}} />
-                {cSearch.trim().length >= 1 && (
+                {/* `cSearchDismissed` — a typed, unmatched name saves fine now (see canSave above),
+                    but the results dropdown sat over the Qty/Dims/Notes/Manual-price fields below
+                    with no way to close it short of clearing the typed text (which would also lose
+                    that name). An explicit "use this name" row dismisses the dropdown without
+                    touching cSearch, uncovering the price field a no-match item still needs. */}
+                {cSearch.trim().length >= 1 && !cSearchDismissed && (
                   cSearchResults.length > 0 ? (
                     <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:isDark?"#1A1A2E":"#fff",border:`1px solid ${border}`,borderRadius:8,marginTop:2,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto"}}>
                       {cSearchResults.map((it) => (
@@ -212,9 +232,16 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
                           </div>
                         </div>
                       ))}
+                      <div onClick={() => setCSearchDismissed(true)}
+                        style={{padding:"8px 10px",fontSize:11.5,fontWeight:600,color,cursor:"pointer",borderTop:`1px dashed ${border}`}}>
+                        Not in IMS — use "{cSearch.trim()}" with your own price
+                      </div>
                     </div>
                   ) : (
-                    <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:isDark?"#1A1A2E":"#fff",border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:11.5,color:textS}}>No matches — check the spelling, or open IMS Inventory above to look it up.</div>
+                    <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:50,background:isDark?"#1A1A2E":"#fff",border:`1px solid ${border}`,borderRadius:8,marginTop:2,padding:"8px 10px",fontSize:11.5,color:textS}}>
+                      No matches — check the spelling, or open IMS Inventory above to look it up.
+                      <div onClick={() => setCSearchDismissed(true)} style={{marginTop:6,fontWeight:600,color,cursor:"pointer"}}>Not in IMS at all? Use "{cSearch.trim()}" below with your own price →</div>
+                    </div>
                   )
                 )}
               </div>
@@ -247,7 +274,9 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
                 <div style={{fontSize:18,fontWeight:800,color}}>₹{Math.round(finalPrice * (Number(cForm.qty)||1)).toLocaleString("en-IN")}</div>
               </div>
             </div>
-            {!cShowManual ? (
+            {/* No matched item means no reference price to show "Adjust" over — go straight to the
+                input instead of a button that would otherwise sit above a permanent ₹0. */}
+            {!cShowManual && cSelectedItem ? (
               <button onClick={() => setCShowManual(true)} style={{marginTop:8,fontSize:9,color:textS,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Adjust price manually</button>
             ) : (
               <div style={{marginTop:8,display:"flex",alignItems:"center",gap:8}}>

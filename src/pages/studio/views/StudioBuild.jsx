@@ -5782,7 +5782,7 @@ undefined
                   <div key={ci.id} style={{padding:"10px 14px",borderRadius:10,border:`1px solid ${ciColor}30`,background:isDark?`${ciColor}08`:`${ciColor}06`,marginBottom:6,display:"flex",alignItems:"center",gap:10}}>
                     <span style={{display:"flex"}}>{ciIcon}</span>
                     <div style={{flex:1}}>
-                      <div style={{fontSize:12.5,fontWeight:600,color:textP}}>{ci.subCat} <span style={{fontSize:11,padding:"1px 6px",borderRadius:4,background:`${ciColor}15`,color:ciColor,fontWeight:700}}>{isP?"PRODUCTION":"BUYING"}</span></div>
+                      <div style={{fontSize:12.5,fontWeight:600,color:textP}}>{ci.subCat || ci.name || "Custom"} <span style={{fontSize:11,padding:"1px 6px",borderRadius:4,background:`${ciColor}15`,color:ciColor,fontWeight:700}}>{isP?"PRODUCTION":"BUYING"}</span></div>
                       <div style={{fontSize:11.5,color:textS,marginTop:2}}>× {ci.qty}{ci.dims.l?` · ${ci.dims.w}W × ${ci.dims.l}D × ${ci.dims.h}H ft`:""}{ci.notes?` · ${ci.notes}`:""}</div>
                     </div>
                     <div style={{textAlign:"right"}}>

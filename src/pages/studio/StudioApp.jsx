@@ -11770,7 +11770,7 @@ export default function StudioApp() {
         const isP = ci.type === "production";
         const unitCost = ci.manualPrice || ci.refPrice || 0;
         const lineCost = unitCost * (Number(ci.qty) || 1);
-        if (lineCost > 0) items.push({ name: (isP ? "🏭 " : "🛒 ") + (ci.subCat || ci.cat || "Custom"), size: "", qty: Number(ci.qty) || 1, unit: "pc", rate: unitCost, total: lineCost, isCustom: true, customType: ci.type });
+        if (lineCost > 0) items.push({ name: (isP ? "🏭 " : "🛒 ") + (ci.subCat || ci.name || ci.cat || "Custom"), size: "", qty: Number(ci.qty) || 1, unit: "pc", rate: unitCost, total: lineCost, isCustom: true, customType: ci.type });
       });
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, roundAdj, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };

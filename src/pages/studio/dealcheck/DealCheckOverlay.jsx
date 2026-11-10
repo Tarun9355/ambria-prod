@@ -1809,7 +1809,7 @@ export default function DealCheckOverlay({ ctx }) {
             if (byFn[c.fnIdx]) byFn[c.fnIdx][c.type === "buying" ? "buying" : "production"] += amt;
             const d = catToDept(c.cat || c.subCat);
             addD(d, c.type === "buying" ? "buying" : "production", amt);
-            if (deptInv[d]) deptInv[d].push({ name: c.subCat || c.cat || "Custom item", photo: c.photo || "", qty: Number(c.qty) || 1, unit: c.manualPrice || c.refPrice || 0, total: Math.round(amt), sub: c.subCat || "", imsId: c.refItemId || null, prodOrBuy: c.type === "buying" ? "buying" : "production" });
+            if (deptInv[d]) deptInv[d].push({ name: c.subCat || c.name || c.cat || "Custom item", photo: c.photo || "", qty: Number(c.qty) || 1, unit: c.manualPrice || c.refPrice || 0, total: Math.round(amt), sub: c.subCat || "", imsId: c.refItemId || null, prodOrBuy: c.type === "buying" ? "buying" : "production" });
           });
           // ── Distribute manpower per type to departments ──
           const MP_DEPT = { "Flowerists": "Floral", "Carpenters": "Structure", "Painters": "Tenting", "Truss Labour": "Tenting", "Fabric Bangali": "Tenting", "Electricians": "Lighting", "Drivers": "Transport" };
@@ -4209,7 +4209,7 @@ export default function DealCheckOverlay({ ctx }) {
                                     <div key={ci.id} style={{padding:"10px 12px",borderRadius:8,border:`1px solid ${ciColor}40`,background:`${ciColor}08`,display:"flex",gap:10,alignItems:"center"}}>
                                       {photo ? <img loading="lazy" decoding="async" src={thumbUrl(photo, 56)} alt="" style={{width:44,height:44,borderRadius:6,objectFit:"cover"}} /> : <div style={{width:44,height:44,borderRadius:6,background:`${ciColor}15`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>{ciIcon}</div>}
                                       <div style={{flex:1,minWidth:0}}>
-                                        <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E"}}>{ciIcon} {ci.subCat} <span style={{fontSize:11,padding:"1px 5px",borderRadius:4,background:`${ciColor}20`,color:ciColor,fontWeight:700,marginLeft:4}}>{isP?"PRODUCTION":"BUYING"}</span></div>
+                                        <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E"}}>{ciIcon} {ci.subCat || ci.name || "Custom"} <span style={{fontSize:11,padding:"1px 5px",borderRadius:4,background:`${ciColor}20`,color:ciColor,fontWeight:700,marginLeft:4}}>{isP?"PRODUCTION":"BUYING"}</span></div>
                                         <div style={{fontSize:11,color:"#1A1A2E",marginTop:2}}>× {ci.qty} · {ci.dims.w||"?"}W × {ci.dims.l||"?"}D × {ci.dims.h||"?"}H ft{ci.notes?` · ${ci.notes}`:""}</div>
                                       </div>
                                       <div style={{textAlign:"right"}}>
@@ -4753,7 +4753,7 @@ export default function DealCheckOverlay({ ctx }) {
                                             Pot Small", so the name you scan for was the tail of a
                                             longer string. */}
                                         {ci.cat && <div style={{fontSize:9.5,fontWeight:700,letterSpacing:0.7,textTransform:"uppercase",color:INK_3,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ci.cat}</div>}
-                                        <div title={ci.subCat} style={{fontSize:12.5,fontWeight:650,color:INK,letterSpacing:-0.1,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ci.subCat}</div>
+                                        <div title={ci.subCat || ci.name} style={{fontSize:12.5,fontWeight:650,color:INK,letterSpacing:-0.1,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ci.subCat || ci.name || "Custom"}</div>
                                         <div style={{fontSize:10.5,color:INK_3,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...NUM}}>
                                           {ci.zoneKey}{dims ? ` · ${dims}` : ""}
                                         </div>
@@ -4772,7 +4772,7 @@ export default function DealCheckOverlay({ ctx }) {
                                         <div style={{fontSize:9.5,color:INK_3,marginTop:2,letterSpacing:0.4,textTransform:"uppercase",fontWeight:600,...NUM}}>₹{Math.round(unitCost).toLocaleString("en-IN")} × {qty}</div>
                                       </div>
                                       <button onClick={()=>setDcCustomItems(prev=>prev.filter(x=>x.id!==ci.id))}
-                                        title={`Remove ${ci.subCat} from ${isP ? "production" : "buying"}`}
+                                        title={`Remove ${ci.subCat || ci.name || "item"} from ${isP ? "production" : "buying"}`}
                                         className="dc2-ghost"
                                         style={{flexShrink:0,width:26,height:26,borderRadius:8,border:`1px solid ${TILE_BORDER}`,background:CARD_BG,color:INK_3,fontSize:12,lineHeight:1,cursor:"pointer"}}>✕</button>
                                     </div>
