@@ -4,6 +4,39 @@ import { callClaudeStreaming } from "../../lib/ai";
 import { PROD_STATUSES, PROD_DEPTS, DIM_UNITS, hasIMSPerm } from "../../lib/ims/constants";
 import { canSeeProdDept } from "../../lib/ims/deptClassify";
 
+// Each production department gets its own colour so a card's department reads at a glance,
+// before its name or image. Keys are PROD_DEPTS; a department added there later falls back to grey.
+const DEPT_STYLE = {
+  Floral: { band: "bg-rose-600", pill: "bg-rose-600 text-white border-rose-600" },
+  Fabric: { band: "bg-violet-600", pill: "bg-violet-600 text-white border-violet-600" },
+  Structural: { band: "bg-slate-700", pill: "bg-slate-700 text-white border-slate-700" },
+  Lighting: { band: "bg-amber-700", pill: "bg-amber-700 text-white border-amber-700" },
+  "Painter & Production": { band: "bg-orange-600", pill: "bg-orange-600 text-white border-orange-600" },
+  Props: { band: "bg-teal-600", pill: "bg-teal-600 text-white border-teal-600" },
+  Furniture: { band: "bg-emerald-700", pill: "bg-emerald-700 text-white border-emerald-700" },
+  Other: { band: "bg-gray-600", pill: "bg-gray-600 text-white border-gray-600" },
+};
+const deptStyle = (dept) => DEPT_STYLE[dept] || DEPT_STYLE.Other;
+
+// The quantity to produce, as a whole number, or null when the request never had a real one.
+// Older requests saved it as the form's text ("500"), and an empty field once saved "" — read every
+// one the same way so cards, totals and the purchase request agree. A missing quantity shows as
+// "Not set" rather than being guessed as 1.
+const qtyOf = (r) => { const n = parseInt(r?.qty, 10); return n > 0 ? n : null; };
+// Indian digit grouping (1,000 / 10,000) so 100, 500 and 1,000 never read alike.
+const fmtQty = (n) => (n == null ? "Not set" : Number(n).toLocaleString("en-IN"));
+
+// The department strip at the very top of a card: which department makes this item. The name
+// wraps rather than truncates — a board column is narrow, and the department is the point.
+function DeptBand({ dept, rounded = "rounded-t-xl" }) {
+  return (
+    <div className={`${deptStyle(dept).band} ${rounded} px-3 py-1.5 text-white leading-tight`}>
+      <span className="block text-[9px] font-semibold uppercase tracking-widest opacity-80">Production</span>
+      <span className="block text-[13px] font-bold">{dept || "Other"} Department</span>
+    </div>
+  );
+}
+
 // Faithful rebuild of the reference IMS ProductionTab (Supply → Production sub-tab).
 // Kanban board (drag & drop), Confirm & Add to Inventory (with AI photo comparison),
 // History, plus the New Request / Confirm / Purchase modals and image lightbox.
@@ -64,10 +97,10 @@ export default function ProductionTab({ prodRequests, setProdRequests, inventory
   }
 
   function createRequest() {
-    if (!form.name.trim()) return;
+    if (!form.name.trim() || !qtyOf(form)) return;
     const id = "PROD" + String(prodRequests.length + 1).padStart(3, "0");
     setProdRequests(prev => [...prev, {
-      ...form, id, raisedBy: "Priya Mehta",
+      ...form, qty: qtyOf(form), id, raisedBy: "Priya Mehta",
       raisedDate: new Date().toISOString().split("T")[0],
       status: "Requested", finishedImg: null, finishedQty: null,
       aiComparison: null, confirmedBy: null, confirmedDate: null, inventoryId: null,
@@ -166,7 +199,7 @@ Compare the two and return ONLY JSON:
       const prNum = String(Date.now()).slice(-6);
       setPurchase(prev => [...prev, {
         id: "PR-PROD-" + prNum, poNumber: "PO-PROD-" + prNum,
-        item: req.name, qty: req.qty, unit: "Piece", cat: deptToCategory(req.dept),
+        item: req.name, qty: qtyOf(req) ?? 1, unit: "Piece", cat: deptToCategory(req.dept),
         reason: `Full production item outsourced — ${req.description || req.name}`,
         requestedBy: req.raisedBy || "Production Head", requestedByRole: "Production",
         date: today, estimatedCost: parseFloat(materialLines[0]?.estimatedCost) || 0,
@@ -236,14 +269,23 @@ Compare the two and return ONLY JSON:
         )}
       </div>
 
-      {/* Dept filter pills — only departments this user can see */}
+      {/* Dept filter pills — only departments this user can see. Each shows what is still open
+          for that department: how many items and how many pieces in all. */}
       <div className="flex flex-wrap gap-2">
-        {["All", ...myProdDepts].map(d => (
-          <button key={d} onClick={() => setDeptFilter(d)}
-            className={"px-3 py-1 rounded-full text-xs font-medium transition-all " + (deptFilter === d ? "bg-indigo-600 text-white" : "bg-white border text-gray-600 hover:border-indigo-300 hover:text-indigo-600")}>
-            {d} {d !== "All" && <span className="opacity-60">({prodRequests.filter(r => r.dept === d && r.status !== "Added to Inventory").length})</span>}
-          </button>
-        ))}
+        {["All", ...myProdDepts].map(d => {
+          const open = prodRequests.filter(r => canSeeProdDept(authUser, r.dept) && (d === "All" || r.dept === d) && r.status !== "Added to Inventory");
+          const pcs = open.reduce((s, r) => s + (qtyOf(r) || 0), 0);
+          const on = deptFilter === d;
+          return (
+            <button key={d} onClick={() => setDeptFilter(d)}
+              className={"px-3 py-1.5 rounded-full text-xs font-semibold border transition-all " + (on ? (d === "All" ? "bg-indigo-600 text-white border-indigo-600" : deptStyle(d).pill) : "bg-white text-gray-700 hover:border-gray-400")}>
+              {d}
+              <span className={"ml-1.5 font-normal tabular-nums " + (on ? "opacity-90" : "text-gray-500")}>
+                · {open.length} item{open.length === 1 ? "" : "s"}{pcs ? ` · ${fmtQty(pcs)} pcs` : ""}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════ */}
@@ -277,11 +319,21 @@ Compare the two and return ONLY JSON:
                       return (
                         <div key={req.id} draggable={canUpdate} onDragStart={e => onDragStart(e, req.id)}
                           className={"bg-white rounded-xl border shadow-sm hover:shadow-md transition-all select-none " + (canUpdate ? "cursor-grab active:cursor-grabbing" : "") + (dragId === req.id ? " opacity-40 scale-95" : "")}>
-                          {/* Reference image */}
-                          {req.refImg
-                            ? <img src={req.refImg} alt="" className="w-full h-20 object-cover rounded-t-xl border-b cursor-pointer hover:opacity-90 transition-opacity" onClick={e => { e.stopPropagation(); const slides = fn?.designFile?.extractedSlides; setViewImg(slides && slides.length > 1 ? { title: req.name + " — Design Slides", slides, idx: 0 } : { src: req.refImg, title: req.name + " — Reference" }); }} />
-                            : <div className="w-full h-12 rounded-t-xl bg-gradient-to-r from-indigo-50 to-purple-50 border-b flex items-center justify-center text-gray-300 text-xs">No reference image</div>
-                          }
+                          {/* Department first — the first thing anyone reading the board sees */}
+                          <DeptBand dept={req.dept} />
+                          {/* Reference image, with the quantity to produce on it */}
+                          <div className="relative">
+                            {req.refImg
+                              ? <img src={req.refImg} alt="" className="w-full h-24 object-cover border-b cursor-pointer hover:opacity-90 transition-opacity" onClick={e => { e.stopPropagation(); const slides = fn?.designFile?.extractedSlides; setViewImg(slides && slides.length > 1 ? { title: req.name + " — Design Slides", slides, idx: 0 } : { src: req.refImg, title: req.name + " — Reference" }); }} />
+                              : <div className="w-full h-14 bg-gradient-to-r from-indigo-50 to-purple-50 border-b flex items-center justify-start pl-3 text-gray-300 text-xs">No reference image</div>
+                            }
+                            <div className="absolute right-2 bottom-2 bg-white/95 border border-gray-200 shadow-sm rounded-lg px-2 py-0.5 text-right leading-none pointer-events-none">
+                              <span className="block text-[9px] font-semibold uppercase tracking-wide text-gray-500 mt-0.5">Qty</span>
+                              {qtyOf(req)
+                                ? <><span className="text-lg font-extrabold text-gray-900 tabular-nums">{fmtQty(qtyOf(req))}</span><span className="ml-0.5 text-[10px] font-medium text-gray-500">pcs</span></>
+                                : <span className="block text-xs font-bold text-amber-600 py-0.5">Not set</span>}
+                            </div>
+                          </div>
                           <div className="p-3">
                             <p className="font-bold text-gray-900 text-sm leading-tight">{req.name}</p>
                             {req.description && <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">{req.description}</p>}
@@ -292,9 +344,7 @@ Compare the two and return ONLY JSON:
                               </p>
                             )}
                             <div className="flex flex-wrap gap-1 mt-2">
-                              <Badge color="indigo">×{req.qty}</Badge>
                               <Badge color={req.buildType === "function" ? "blue" : "green"}>{req.buildType === "function" ? "Function" : "Stock"}</Badge>
-                              <Badge color="gray">{req.dept}</Badge>
                             </div>
                             {fn && (
                               <p className="text-xs text-gray-500 mt-1.5 flex items-center gap-1">
@@ -352,8 +402,9 @@ Compare the two and return ONLY JSON:
             const fn = functions.find(f => f.id === req.functionId);
             const proj = projects.find(p => p.id === req.projectId);
             return (
-              <div key={req.id} className="bg-white border rounded-2xl p-5 hover:shadow-sm transition-shadow">
-                <div className="flex items-start gap-4">
+              <div key={req.id} className="bg-white border rounded-2xl overflow-hidden hover:shadow-sm transition-shadow">
+                <DeptBand dept={req.dept} rounded="" />
+                <div className="flex items-start gap-4 p-5">
                   <div className="flex-shrink-0 text-center">
                     <p className="text-xs text-gray-400 font-medium mb-1.5">Reference</p>
                     {req.refImg
@@ -374,16 +425,16 @@ Compare the two and return ONLY JSON:
                         {req.notes && <p className="text-xs text-gray-500 mt-1 italic">📝 {req.notes}</p>}
                       </div>
                       <div className="text-right flex-shrink-0">
-                        <Badge color="gray">{req.dept}</Badge>
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Qty to produce</p>
+                        <p className="text-2xl font-extrabold text-gray-900 tabular-nums leading-tight">{qtyOf(req) ? <>{fmtQty(qtyOf(req))} <span className="text-xs font-medium text-gray-500">pcs</span></> : <span className="text-base text-amber-600">Not set</span>}</p>
                         {fn && <p className="text-xs text-gray-500 mt-1">{fn.name} · {fn.date}</p>}
                         {proj && <p className="text-xs text-gray-400">{proj.name}</p>}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2 mt-3">
-                      <Badge color="indigo">×{req.qty} needed</Badge>
                       <Badge color={req.buildType === "function" ? "blue" : "green"}>{req.buildType === "function" ? "For Function" : "General Stock"}</Badge>
                     </div>
-                    <button onClick={() => { setConfirmModal(req.id); setConfirmForm({ finishedImg: null, finishedQty: req.qty, notes: "" }); setAiCompResult(null); }}
+                    <button onClick={() => { setConfirmModal(req.id); setConfirmForm({ finishedImg: null, finishedQty: qtyOf(req) ?? 1, notes: "" }); setAiCompResult(null); }}
                       className="mt-4 bg-green-600 hover:bg-green-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2">
                       📸 Upload Finished Photo & Add to Inventory
                     </button>
@@ -413,8 +464,9 @@ Compare the two and return ONLY JSON:
             const compColor = comp?.result === "Match" ? "green" : comp?.result === "Partial" ? "amber" : "red";
             const compIcon = comp?.result === "Match" ? "✅" : comp?.result === "Partial" ? "⚠️" : "❌";
             return (
-              <div key={req.id} className="bg-white border rounded-2xl p-4">
-                <div className="flex items-start gap-4">
+              <div key={req.id} className="bg-white border rounded-2xl overflow-hidden">
+                <DeptBand dept={req.dept} rounded="" />
+                <div className="flex items-start gap-4 p-4">
                   {/* Side by side photos */}
                   <div className="flex-shrink-0 flex gap-2">
                     {req.refImg && (
@@ -435,11 +487,23 @@ Compare the two and return ONLY JSON:
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-gray-900">{req.name}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{req.dept} · {req.buildType === "function" ? "For Function" : "General Stock"}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{req.buildType === "function" ? "For Function" : "General Stock"}</p>
                     {proj && fn && <p className="text-xs text-gray-500">{proj.name} → {fn.name} ({fn.date})</p>}
+                    {/* Needed vs built, labelled apart so the two numbers are never mistaken for each other */}
+                    {(() => {
+                      const need = qtyOf(req), built = parseInt(req.finishedQty, 10) || need;
+                      const short = need != null && built != null && built < need;
+                      return (
+                        <p className="mt-2 text-sm text-gray-700 tabular-nums">
+                          <span className={"font-bold " + (need == null ? "text-amber-600" : "text-gray-900")}>{fmtQty(need)}</span> needed
+                          <span className="mx-1.5 text-gray-300">·</span>
+                          <span className={"font-bold " + (short ? "text-amber-600" : "text-green-700")}>{fmtQty(built)}</span> built
+                          {short && <span className="ml-1.5 text-xs text-amber-600">({fmtQty(need - built)} short)</span>}
+                        </p>
+                      );
+                    })()}
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       <Badge color="teal">✅ In Inventory</Badge>
-                      <Badge color="indigo">×{req.finishedQty || req.qty} built</Badge>
                       {comp && (
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium bg-${compColor}-100 text-${compColor}-700`}>
                           {compIcon} {comp.result} — {comp.reason}
@@ -493,9 +557,10 @@ Compare the two and return ONLY JSON:
           </div>
           {/* Qty + Dept */}
           <div>
-            <label className="text-xs text-gray-500">Quantity Needed</label>
-            <input type="number" min="1" value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })}
-              className="mt-1 w-full border rounded-lg px-3 py-2 text-sm" />
+            <label className="text-xs text-gray-500">Quantity Needed (pcs)</label>
+            <input type="number" min="1" step="1" inputMode="numeric" value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })}
+              className={"mt-1 w-full border rounded-lg px-3 py-2 text-sm " + (qtyOf(form) ? "" : "border-red-400 bg-red-50")} />
+            {!qtyOf(form) && <p className="text-xs text-red-600 mt-1">Enter how many pieces to make (1 or more).</p>}
           </div>
           <div>
             <label className="text-xs text-gray-500">Department</label>
@@ -565,7 +630,7 @@ Compare the two and return ONLY JSON:
               placeholder="Special materials, colour codes, finishing, priority..." />
           </div>
         </div>
-        <button onClick={createRequest} disabled={!form.name.trim()}
+        <button onClick={createRequest} disabled={!form.name.trim() || !qtyOf(form)}
           className="mt-4 w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded-lg py-3 text-sm font-bold">
           🏭 Raise Production Request
         </button>
@@ -656,7 +721,7 @@ Compare the two and return ONLY JSON:
             {/* What will happen summary */}
             <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3">
               <p className="text-xs font-bold text-indigo-800 mb-1">What happens when you confirm:</p>
-              <p className="text-xs text-indigo-700">✅ New inventory entry created: <strong>{confirmReq.name}</strong> × {confirmForm.finishedQty || confirmReq.qty}</p>
+              <p className="text-xs text-indigo-700">✅ New inventory entry created: <strong>{confirmReq.name}</strong> × {fmtQty(parseInt(confirmForm.finishedQty, 10) || qtyOf(confirmReq))}</p>
               <p className="text-xs text-indigo-700 mt-0.5">{confirmReq.buildType === "function" ? "💰 Cost split: 40% to linked function · 60% to central procurement · No rental on first use" : "💰 100% cost to central procurement · Rental applies from first use"}</p>
             </div>
 
@@ -681,7 +746,7 @@ Compare the two and return ONLY JSON:
               {purchaseReq.refImg && <img src={purchaseReq.refImg} alt="" className="w-16 h-16 rounded-lg object-cover border flex-shrink-0 cursor-pointer hover:opacity-90 transition-opacity" onClick={() => { const pfn = functions.find(f => f.id === purchaseReq.functionId); const slides = pfn?.designFile?.extractedSlides; setViewImg(slides && slides.length > 1 ? { title: purchaseReq.name + " — Design Slides", slides, idx: 0 } : { src: purchaseReq.refImg, title: purchaseReq.name + " — Reference" }); }} />}
               <div>
                 <p className="font-bold text-indigo-900">{purchaseReq.name}</p>
-                <p className="text-xs text-indigo-700 mt-0.5">{purchaseReq.description} · ×{purchaseReq.qty} · {purchaseReq.dept}</p>
+                <p className="text-xs text-indigo-700 mt-0.5">{purchaseReq.description} · Qty {fmtQty(qtyOf(purchaseReq))}{qtyOf(purchaseReq) ? " pcs" : ""} · {purchaseReq.dept} Department</p>
                 {(() => { const fn = functions.find(f => f.id === purchaseReq.functionId); return fn ? <p className="text-xs text-indigo-500 mt-0.5">📅 {fn.name} · {fn.date}</p> : null; })()}
               </div>
             </div>
@@ -717,7 +782,7 @@ Compare the two and return ONLY JSON:
                   </div>
                 </div>
                 <div className="bg-white border border-amber-100 rounded-lg p-3 text-xs text-amber-700">
-                  💡 This will create a Purchase Request for <strong>{purchaseReq.name} ×{purchaseReq.qty}</strong> and mark the production task accordingly.
+                  💡 This will create a Purchase Request for <strong>{purchaseReq.name} × {fmtQty(qtyOf(purchaseReq) ?? 1)}</strong> and mark the production task accordingly.
                 </div>
               </div>
             )}
