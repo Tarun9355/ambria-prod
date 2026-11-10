@@ -45,6 +45,7 @@ import { makeS } from "../../lib/studio/styles";
 import { dealAgencyFeePct, feePctOf, DEFAULT_AGENCY_FEE_PCT } from "../../lib/studio/agencyFee";
 import { sameVenueHolds, siblingCarpetUse } from "../../lib/studio/carpetReuse";
 import { elementAfterPick } from "../../lib/studio/elementPick";
+import { syncElementKit, markKitCustom } from "../../lib/studio/kitVariants";
 import { printSqftOf, smallPrintFlat, printFlatForZone, PRINT_TRUCK_SUB } from "../../lib/studio/truckPrint";
 import { zoneDimLabel } from "../../lib/studio/zoneDims";
 import { withKitEdit } from "../../lib/studio/dealCheckSync";
@@ -8993,6 +8994,51 @@ export default function StudioApp() {
     const next = withKitEdit(base, fnIdx, cardKey, comps);
     try { saveClientLedger(cur.map((x) => (x.id === id ? { ...x, dcKitEdits: next } : x))); } catch { /* best effort: Deal Check's own autosave still carries it */ }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── LIVE KITS (owner ask 2026-11-10) ── An element on a kit picked in Build (Kit 2, or another item's kit) takes that kit's parts as
+  // they are in IMS now: an edit in IMS → Inventory reaches the open deal in real time (the inventory subscription), and the save that
+  // follows carries it to Deal Check, Planning and the Setup Book. A kit removed in IMS puts the element back on Kit 1. Not on a sold
+  // deal (what was sold stays as sold), not on a kit this deal edited by hand (kitCustom), and Kit 1 needs nothing - it reads the master.
+  // Deal Check's copy of the parts moves with it, so its reconcile does not put the old list back. A card whose Deal Check copy differs
+  // from Build's is mid-edit there and is left for that edit to land first.
+  const liveKitNotedRef = useRef("");
+  useEffect(() => {
+    if (!activeClientId || isFnSwitching || !Array.isArray(imsInventory) || imsInventory.length === 0) return;
+    if (activeClient?.status === "booked" || !canDesignEditRef.current) return;
+    const byId = new Map(imsInventory.map((i) => [i.id, i]));
+    const fi = activeFnIdx || 0;
+    const dcFn = dcKitEdits?.[fi] || {};
+    const updates = []; // { zk, idx, el, ck, removed, name }
+    Object.entries(zoneElements || {}).forEach(([zk, els]) => (Array.isArray(els) ? els : []).forEach((el, idx) => {
+      const r = el?.invId ? syncElementKit(el, byId.get(el.invId)) : null;
+      if (!r) return;
+      const ck = buildElCardKey(zk, el.name || "", idx);
+      const d = dcFn[ck];
+      if (Array.isArray(d) && JSON.stringify(d) !== JSON.stringify(el.kitOverrides)) return;
+      updates.push({ zk, idx, el: r.el, ck, hadDc: d !== undefined, removed: r.removed, name: el.name || byId.get(el.invId)?.name || "a kit" });
+    }));
+    if (!updates.length) return;
+    setZoneElements((p) => {
+      const out = { ...p };
+      updates.forEach((u) => {
+        const arr = [...(out[u.zk] || [])];
+        if (arr[u.idx]?.invId !== u.el.invId) return; // moved since - the next pass picks it up
+        arr[u.idx] = u.el; out[u.zk] = arr;
+      });
+      return out;
+    });
+    const dcUps = updates.filter((u) => u.hadDc);
+    if (dcUps.length) {
+      setDcKitEdits((prev) => { const f = { ...(prev?.[fi] || {}) }; dcUps.forEach((u) => { f[u.ck] = Array.isArray(u.el.kitOverrides) ? u.el.kitOverrides : null; }); return { ...prev, [fi]: f }; });
+      dcUps.forEach((u) => persistDcKitEditsNow(fi, u.ck, Array.isArray(u.el.kitOverrides) ? u.el.kitOverrides : null));
+    }
+    const removed = updates.filter((u) => u.removed);
+    const note = `${activeClientId}|${fi}|${updates.map((u) => `${u.zk}:${u.idx}:${u.removed}`).join(",")}`;
+    if (liveKitNotedRef.current !== note) {
+      liveKitNotedRef.current = note;
+      if (removed.length) showMsg(`A kit was removed in IMS - ${[...new Set(removed.map((u) => u.name))].join(", ")} back on Kit 1`, "orange");
+      else showMsg(`Kit updated from IMS - ${[...new Set(updates.map((u) => u.name))].join(", ")}`, "green");
+    }
+  }, [imsInventory, zoneElements, dcKitEdits, activeFnIdx, activeClientId, activeClient?.status, isFnSwitching, persistDcKitEditsNow, showMsg]);
   // 1) Debounced on edits.
   useEffect(() => {
     if (!buildHasDataRef.current) return;
@@ -12053,7 +12099,8 @@ export default function StudioApp() {
       setZoneElements((p) => {
         const elems = [...(p[f.zoneKey] || [])];
         if (elems[f.idx]?.invId !== f.invId) return p;
-        elems[f.idx] = { ...elems[f.idx], kitOverrides: next };
+        // a part swapped by hand: the kit is this deal's own now, so IMS edits to the kit no longer replace it (markKitCustom)
+        elems[f.idx] = markKitCustom({ ...elems[f.idx], kitOverrides: next });
         return { ...p, [f.zoneKey]: elems };
       });
       const ck = buildElCardKey(f.zoneKey, el.name || "", f.idx);

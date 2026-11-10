@@ -55,7 +55,8 @@ import { sizeClassToPatternKey, resolveSizeKey } from "../../../lib/ims/flowerHe
 import { itemDimsText, kitDescendantIds, flowerPaletteTuplesOf } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
-import { kitVariants, hasKitChoice, elementWithKit, currentKitId } from "../../../lib/studio/kitVariants";
+import { kitVariants, elementWithKit, currentKitId, kitPool, markKitCustom } from "../../../lib/studio/kitVariants";
+import { elementAfterPick } from "../../../lib/studio/elementPick";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
 import PrintedWallsModal from "../../../components/studio/PrintedWallsModal.jsx";
@@ -5196,9 +5197,9 @@ undefined
                         {el.invId&&priceInfo.warning&&!priceInfo.madeToOrder&&<span title={priceInfo.shortWhy?`${priceInfo.warning}\n\n${priceInfo.shortWhy}`:priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>{priceInfo.outOfStock?"⚠ out of stock":"⚠ short"}</span>}
                         {kitShort.length>0&&<span title={`Short for this date inside this kit:\n${kitShort.map(p=>`${p.name}: ${p.short} of ${p.need} short${p.canMake?" (production can make it)":" (can't be made, pick another part)"}`).join("\n")}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:kitShortOut?"rgba(239,68,68,0.15)":"rgba(245,158,11,0.15)",color:kitShortOut?"#EF4444":"#B45309",fontWeight:700}}>⚠ {kitShort.length} part{kitShort.length===1?"":"s"} short</span>}
                         {(rc||el.invId)&&<span onClick={()=>((!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))||(()=>openAvailModal(k, idx, el, rc)))()} title={(!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))?`Check what is free and name up to ${ELEMENT_PREF_MAX} ${/cover/i.test(invItem?.name||"")?"cushion cover":"overlay"} designs in order of preference - Planning decides which one is used`:_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}
-                        {/* Exchange Kit - only on an item with more than one kit; names the kit the element is on */}
-                        {isKit&&hasKitChoice(invItem)&&(()=>{const kid=currentKitId(el,invItem);const cur=kitVariants(invItem).find(x=>x.id===kid);return(
-                          <button type="button" onClick={()=>setKitPicker({k,idx})} title="Exchange the whole kit for another kit of this item"
+                        {/* Exchange Kit - when the item's sub-category has more than one kit (any Console Table's kits for a Console Table); names the kit the element is on */}
+                        {isKit&&kitPool(invItem,imsInventory).length>1&&(()=>{const kid=currentKitId(el,invItem);const cur=kitVariants(invItem).find(x=>x.id===kid);return(
+                          <button type="button" onClick={()=>setKitPicker({k,idx})} title={`Exchange the whole kit for another ${invItem?.subCat||"kit"} kit`}
                             style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10.5,fontWeight:700,padding:"2px 8px",borderRadius:999,border:"1px solid rgba(99,102,241,0.45)",background:"rgba(99,102,241,0.08)",color:isDark?"#A5B4FC":"#4F46E5",cursor:"pointer",whiteSpace:"nowrap",maxWidth:150,overflow:"hidden",textOverflow:"ellipsis"}}>
                             ⇄ {cur?cur.name:"Edited kit"}</button>);})()}
                         {/* Only when the manually-pinned stock item's name actually differs from
@@ -5458,7 +5459,7 @@ undefined
                     {isKit&&<KitComponentsEditor
                       item={invItem}
                       overrides={el.kitOverrides}
-                      onChange={(next)=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],kitOverrides:next};setZoneElements(p=>({...p,[k]:elems}));
+                      onChange={(next)=>{const elems=[...(zoneElements[k]||[])];elems[idx]=markKitCustom({...elems[idx],kitOverrides:next});setZoneElements(p=>({...p,[k]:elems}));
                         // Deal Check keeps its own copy of this kit's parts (dcKitEdits), seeded from
                         // Build only once, at its first Generate. It is what goes to IMS (Dept Ops'
                         // kit parts, the PDF's parts list) and what Deal Check writes BACK into Build —
@@ -6384,38 +6385,48 @@ undefined
       const {k,idx}=kitPicker;
       const el=(zoneElements[k]||[])[idx];
       const item=el?.invId?(imsInventory||[]).find(i=>i.id===el.invId):null;
-      const kits=kitVariants(item);
-      if(!el||kits.length<2) return null;
+      // Every kit of the sub-category (kitPool): this item's own first, then each other kit item's, by name.
+      const pool=kitPool(item,imsInventory);
+      if(!el||pool.length<2) return null;
       const curId=currentKitId(el,item);
       const close=()=>setKitPicker(null);
       // The whole kit is replaced, never merged: the element's parts become the chosen kit's (Kit 1 clears them back to the master).
-      // Deal Check's copy of this kit's parts follows at once, as a part swapped in the kit breakdown does.
-      const pick=(kitId)=>{
-        if(kitId===curId){close();return;}
+      // A kit of ANOTHER item turns the element into that item - its name, photo, price and stock - since that is where the stock
+      // comes from. Deal Check's copy of the kit's parts follows at once, as a part swapped in the kit breakdown does.
+      const pick=(toItem,kitId)=>{
+        if(toItem.id===item.id&&kitId===curId){close();return;}
         const elems=[...(zoneElements[k]||[])]; if(!elems[idx]||elems[idx].invId!==el.invId){close();return;}
-        const next=elementWithKit(elems[idx],item,kitId);
+        const base=toItem.id===item.id?elems[idx]
+          :elementAfterPick(elems[idx],toItem.id,{id:toItem.id,name:toItem.name,photo:toItem.img||(Array.isArray(toItem.photoUrls)&&toItem.photoUrls[0])||"",unit:toItem.unit},[]);
+        const next=elementWithKit(base,toItem,kitId);
         elems[idx]=next;
         setZoneElements(p=>({...p,[k]:elems}));
-        if(setDcKitEdits&&buildElCardKey){const ck=buildElCardKey(k,el.name||"",idx);const fi=activeFnIdx||0;const ov=Array.isArray(next.kitOverrides)?next.kitOverrides:null;setDcKitEdits(prev=>({...prev,[fi]:{...(prev?.[fi]||{}),[ck]:ov}}));persistDcKitEditsNow?.(fi,ck,ov);}
+        if(setDcKitEdits&&buildElCardKey){const ck=buildElCardKey(k,next.name||"",idx);const fi=activeFnIdx||0;const ov=Array.isArray(next.kitOverrides)?next.kitOverrides:null;setDcKitEdits(prev=>({...prev,[fi]:{...(prev?.[fi]||{}),[ck]:ov}}));persistDcKitEditsNow?.(fi,ck,ov);}
+        if(toItem.id!==item.id) showMsg?.(`${item.name} → ${toItem.name}`,"green");
         close();
       };
+      const groups=[];pool.forEach(p=>{const g=groups[groups.length-1];if(g&&g.item.id===p.item.id)g.kits.push(p.kit);else groups.push({item:p.item,kits:[p.kit]});});
       const partOf=(c)=>{if(c.patternId)return {name:"Flowers",photo:"",flower:true};const it=(imsInventory||[]).find(i=>i.id===c.itemId);return {name:it?.name||"Item",photo:it?(it.img||(Array.isArray(it.photoUrls)&&it.photoUrls[0])||""):""};};
       return createPortal((
         <div className="ui-overlay-in" onClick={close} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(10,10,20,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
           <div className="ui-pop-in" role="dialog" aria-label={`Kits of ${item?.name||"this item"}`} onClick={e=>e.stopPropagation()} onKeyDown={e=>{if(e.key==="Escape")close();}} style={{width:"min(640px,100%)",maxHeight:"82vh",background:isDark?"#15151f":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
             <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
               <div style={{minWidth:0}}>
-                <div style={{fontSize:14.5,fontWeight:700,color:textP}}>⇄ Exchange kit - {item?.name||"Kit"}</div>
-                <div style={{fontSize:11.5,color:textS,marginTop:3}}>The chosen kit replaces every part of this one{curId===null?" (including your own edits to it)":""}. Qty and the rest of the build stay as they are.</div>
+                <div style={{fontSize:14.5,fontWeight:700,color:textP}}>⇄ Exchange kit - {item?.subCat||item?.name||"Kit"}</div>
+                <div style={{fontSize:11.5,color:textS,marginTop:3}}>{pool.length} kits. The chosen kit replaces every part of this one{curId===null?" (including your own edits to it)":""}; a kit of another item swaps the element to that item. Qty and the rest of the build stay as they are.</div>
               </div>
               <button autoFocus onClick={close} aria-label="Close" style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textP,fontSize:14.5,cursor:"pointer",flexShrink:0}}>✕</button>
             </div>
-            <div style={{padding:"14px 18px",overflowY:"auto",flex:1,display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:10}}>
-              {kits.map(kit=>{
-                const sel=kit.id===curId;
+            <div style={{padding:"14px 18px",overflowY:"auto",flex:1,display:"flex",flexDirection:"column",gap:16}}>
+              {groups.map(g=>(
+              <div key={g.item.id}>
+                <div style={{fontSize:11,fontWeight:700,color:textS,textTransform:"uppercase",letterSpacing:0.4,marginBottom:8}}>{g.item.name}{g.item.id===item.id?" · this item":""}</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:10}}>
+              {g.kits.map(kit=>{
+                const sel=g.item.id===item.id&&kit.id===curId;
                 const parts=(Array.isArray(kit.subItems)?kit.subItems:[]).filter(c=>c&&(c.itemId||c.patternId));
                 return (
-                  <button type="button" key={kit.id} onClick={()=>pick(kit.id)} aria-pressed={sel}
+                  <button type="button" key={kit.id} onClick={()=>pick(g.item,kit.id)} aria-pressed={sel}
                     style={{textAlign:"left",cursor:"pointer",padding:12,borderRadius:10,border:sel?"2px solid #4F46E5":`1px solid ${border}`,background:sel?"rgba(79,70,229,0.07)":isDark?"rgba(255,255,255,0.03)":"#FAFAFA",display:"flex",flexDirection:"column",gap:6,color:textP,font:"inherit"}}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                       <span style={{fontSize:13,fontWeight:700}}>{kit.name}</span>
@@ -6423,7 +6434,7 @@ undefined
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
                       {/* the kit item itself first, then each part with its stock photo - as Build's "Kit - includes" list reads */}
-                      {[{itemId:item?.id,qty:1,_main:true},...parts].map((c,i)=>{const pt=partOf(c);return(
+                      {[{itemId:g.item.id,qty:1,_main:true},...parts].map((c,i)=>{const pt=partOf(c);return(
                         <span key={i} style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
                           {pt.photo
                             ? <img src={thumbUrl(pt.photo,64)} loading="lazy" decoding="async" alt="" style={{width:32,height:32,borderRadius:6,objectFit:"cover",flexShrink:0,background:isDark?"#1a1a2e":"#eee"}}/>
@@ -6436,6 +6447,9 @@ undefined
                   </button>
                 );
               })}
+                </div>
+              </div>
+              ))}
             </div>
           </div>
         </div>

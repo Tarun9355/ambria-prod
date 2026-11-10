@@ -517,6 +517,8 @@ export default function DealCheckOverlay({ ctx }) {
   // vs. a non-active function's snapshot in fnBuilds — the same duality collectAllFunctionData
   // already resolves, mirrored here via the same activeFnIdx/fnPending signals).
   const isSoldForSync = activeClient?.status === "booked";
+  // "fnIdx::cardKey" of every kit whose parts were edited by hand in the kit editor below this session (lib/studio/dealCheckSync.js)
+  const kitHandEditsRef = useRef(new Set());
   useEffect(() => {
     if (isSoldForSync) return;
     if (isFnSwitching) return;
@@ -532,7 +534,8 @@ export default function DealCheckOverlay({ ctx }) {
     // before openDealCheck has reset-or-restored dcManualItems for activeClientId, so the destructive
     // stale-manual-item prune must stay off until the ref confirms it's actually caught up.
     const manualItemsReady = dcStateReadyForClientRef?.current === activeClientId;
-    const next = reconcileDealCheckIntoBuild(currentZE, dcCards[fnIdx], dcKitEdits[fnIdx], dcManualItems.filter(m => m.fnIdx === fnIdx), dcInventoryCache, parseCardKey, manualItemsReady);
+    const handEdited = new Set([...kitHandEditsRef.current].filter(s => s.startsWith(`${fnIdx}::`)).map(s => s.slice(String(fnIdx).length + 2)));
+    const next = reconcileDealCheckIntoBuild(currentZE, dcCards[fnIdx], dcKitEdits[fnIdx], dcManualItems.filter(m => m.fnIdx === fnIdx), dcInventoryCache, parseCardKey, manualItemsReady, handEdited);
     if (next === currentZE) return;
     if (isActiveFn) setZoneElements(next);
     else setFnBuilds(prev => ({ ...prev, [fnIdx]: { ...(prev[fnIdx] || {}), zoneElements: next } }));
@@ -3869,7 +3872,8 @@ export default function DealCheckOverlay({ ctx }) {
                                           const comps = Array.isArray(editedSub) ? editedSub : item.subItems.map(s=>({itemId:s.itemId, qty:Number(s.qty)||1}));
                                           const isEdited = Array.isArray(editedSub);
                                           const cardQty = Number(card.qty)||1;
-                                          const setComps = (next)=> setDcKitEdits(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[editKey]: next}}));
+                                          // a hand edit: this card's kit becomes the deal's own, kept when the kit is edited in IMS (kitHandEditsRef)
+                                          const setComps = (next)=> { kitHandEditsRef.current.add(`${fnIdx}::${editKey}`); setDcKitEdits(prev=>({...prev,[fnIdx]:{...(prev[fnIdx]||{}),[editKey]: next}})); };
                                           // Explicit `null`, not delete — reconcileDealCheckIntoBuild (dealCheckSync.js) needs a
                                           // real, stored "this card was deliberately reset" marker to sync the reset into Build,
                                           // distinct from a key that was simply never touched (undefined) — see its own comment

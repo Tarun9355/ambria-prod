@@ -80,7 +80,7 @@ export function syncSwapToBuild(zoneElements, parsed, pick, cardKey) {
 // zero user action inside Deal Check. resetKit (DealCheckOverlay.jsx) now sets the key to an
 // explicit `[]` on a genuine reset instead of deleting it, so this can finally tell "never touched"
 // (undefined — leave Build's own kitOverrides exactly as-is) apart from "deliberately reset" ([]).
-export function syncKitOverridesToBuild(zoneElements, parsed, comps, cardKey) {
+export function syncKitOverridesToBuild(zoneElements, parsed, comps, cardKey, handEdited = false) {
   if (!parsed || parsed.kind !== "el") return zoneElements;
   if (comps === undefined) return zoneElements;
   const arr = zoneElements[parsed.zoneKey];
@@ -91,9 +91,14 @@ export function syncKitOverridesToBuild(zoneElements, parsed, comps, cardKey) {
   if (wantsReset && !has) return zoneElements;
   if (!wantsReset && has && JSON.stringify(el.kitOverrides) === JSON.stringify(comps)) return zoneElements;
   const nextArr = arr.slice();
+  // A reset is the default kit again (no kitId). A list edited by hand in Deal Check's kit editor (handEdited) is the deal's own
+  // (kitCustom); any other list arriving here is Build's own pick or the IMS kit coming back round, and stays on its kit.
   if (wantsReset) {
-    const { kitOverrides, ...rest } = el; // eslint-disable-line no-unused-vars
+    const { kitOverrides, kitId, kitCustom, kitLive, ...rest } = el; // eslint-disable-line no-unused-vars
     nextArr[parsed.idx] = { ...rest, _dcSyncedCardKey: cardKey };
+  } else if (handEdited && el.kitId) {
+    const { kitLive, ...rest } = el; // eslint-disable-line no-unused-vars
+    nextArr[parsed.idx] = { ...rest, kitOverrides: comps, kitCustom: true, _dcSyncedCardKey: cardKey };
   } else {
     nextArr[parsed.idx] = { ...el, kitOverrides: comps, _dcSyncedCardKey: cardKey };
   }
@@ -225,7 +230,9 @@ export function revertSplitToSingle(zoneElements, zoneKey, groupId, identity) {
  *   dcManualItems — so without this gate, a fresh Deal Check open deleted every real, already-saved
  *   manual item from Build the instant the overlay mounted, before the restore had even landed.
  */
-export function reconcileDealCheckIntoBuild(zoneElements, cardsForFn, kitEditsForFn, manualItemsForFn, inventoryCache, parseCardKey, manualItemsReady) {
+// handEditedKeys: the cards whose kit parts were edited by hand in Deal Check's kit editor this session - their element becomes
+// the deal's own kit (kitCustom), which IMS edits to the kit no longer replace.
+export function reconcileDealCheckIntoBuild(zoneElements, cardsForFn, kitEditsForFn, manualItemsForFn, inventoryCache, parseCardKey, manualItemsReady, handEditedKeys) {
   try {
     let ze = zoneElements || {};
     const cards = cardsForFn || {};
@@ -255,7 +262,7 @@ export function reconcileDealCheckIntoBuild(zoneElements, cardsForFn, kitEditsFo
           ze = revertSplitToSingle(ze, parsed.zoneKey, card.splitGroupId, card.imsId ? { imsId: card.imsId, name: card.imsName } : null);
         } else if (card.imsId) {
           ze = syncSwapToBuild(ze, parsed, { imsId: card.imsId, name: card.imsName }, cardKey);
-          ze = syncKitOverridesToBuild(ze, parsed, kitEditsForFn?.[cardKey], cardKey);
+          ze = syncKitOverridesToBuild(ze, parsed, kitEditsForFn?.[cardKey], cardKey, !!handEditedKeys?.has?.(cardKey));
         }
       });
     });

@@ -61,6 +61,19 @@ describe("syncKitOverridesToBuild", () => {
     expect(next.stage[0].kitOverrides).toBeUndefined();
     expect(syncKitOverridesToBuild(next, parsed, [])).toBe(next);
   });
+
+  it("live kits: only a hand edit in Deal Check makes a picked kit the deal's own; a reset puts it back on Kit 1", () => {
+    const ze = { stage: [{ name: "Console", invId: "K1", kitId: "k2", kitOverrides: [{ itemId: "C1", qty: 2 }] }] };
+    const comps = [{ itemId: "C9", qty: 1 }];
+    const live = syncKitOverridesToBuild(ze, parsed, comps); // Build's pick / the IMS kit coming back round
+    expect(live.stage[0]).toMatchObject({ kitId: "k2", kitOverrides: comps });
+    expect(live.stage[0].kitCustom).toBeUndefined();
+    const own = syncKitOverridesToBuild(ze, parsed, comps, undefined, true); // edited in Deal Check's kit editor
+    expect(own.stage[0]).toMatchObject({ kitId: "k2", kitCustom: true });
+    const reset = syncKitOverridesToBuild(own, parsed, []);
+    expect(reset.stage[0].kitId).toBeUndefined();
+    expect(reset.stage[0].kitCustom).toBeUndefined();
+  });
 });
 
 describe("syncManualItemToBuild", () => {

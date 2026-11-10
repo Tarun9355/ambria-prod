@@ -45,7 +45,7 @@ export function elementAfterPick(el, selectedId, pick, items) {
     : (() => { const e = { ...el }; delete e.imsId; delete e.imsName; delete e.imsPhoto; delete e.swappedFrom; delete e.baseInvId; return e; })();
   if (!next.swappedFrom) delete next.swappedFrom;
   if (!next.baseInvId) delete next.baseInvId;
-  if (itemChanged) { delete next.kitOverrides; delete next.kitId; } // kitId: which of the old item's kits it was on (lib/studio/kitVariants.js)
+  if (itemChanged) { delete next.kitOverrides; delete next.kitId; delete next.kitCustom; delete next.kitLive; } // kitId: which of the old item's kits it was on (lib/studio/kitVariants.js)
   // Choices (overlays / cushion covers, lib/studio/elementPrefs.js) belong to the item they started from: swapping the element to another item
   // is a fresh decision, and the old list must not come back to life if the first item is picked again later.
   if (Array.isArray(next.prefs) && String(next.prefs[0]?.id) !== String(next.invId)) delete next.prefs;
