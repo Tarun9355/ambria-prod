@@ -5129,7 +5129,14 @@ export default function StudioApp() {
         // second same-day function at a different venue competed for the SAME pool as the first,
         // exactly as if it were a completely different client's deal on that date.
         const alloc = allocateRowAvailability(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName);
-        rowMaxQty = maxQtyForRow(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName);
+        // crossFnSiblingsFree (last arg, only when a venue is known — see maxQtyForRow's own
+        // comment): a sibling FUNCTION at this exact same date+venue is, by this deal's own
+        // cross-function reuse rule (findCrossFnReuseSource, dayDiff === 0), always reuse-eligible —
+        // its units were never really "someone else's" demand, just this deal's own stock already
+        // standing here. allocateRowAvailability (ownedQty/shortQty, for pricing) is untouched —
+        // pricing's own reuse credit (crossFnTake/crossFnBonus below) already handles that
+        // separately and correctly; this only affects the typed-quantity CEILING.
+        rowMaxQty = maxQtyForRow(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName, !!opts?.venueName);
         ownedQty = alloc.ownedQty; shortQty = alloc.shortQty;
       } else {
         ownedQty = Math.min(qty, otherEventsAvail);
@@ -5170,12 +5177,24 @@ export default function StudioApp() {
       const outOfStock = shortQty > 0 && !canMakeShort;
       // maxQty: the ceiling on a quantity typed or stepped in Build — what stock can actually cover on this date,
       // for EVERY inventory item (owner ask: ask for 140 of something with 130 and it lands on 130, tagged short).
-      // A row already above it (saved earlier) keeps pricing its excess as before. Units reused from the deal's
-      // preceding function count as owned, so they raise the ceiling too. An item the studio owns NONE of (IMS qty 0 —
-      // made-to-order things like a customised ceiling) has no stock to hold a number to, so it is not capped.
-      // An item ticked "Can be made" in IMS Inventory is not capped either (owner ask 2026-11-06): production makes whatever stock
-      // does not cover, so Build takes any quantity - free or not. The part past stock is still marked short and priced at cost%.
-      const maxQty = Number(item.qty) > 0 && item.canBeMade !== true ? rowMaxQty + crossFnTake : null;
+      // A row already above it (saved earlier) keeps pricing its excess as before. A same-day sibling function's
+      // units already don't count against this ceiling — rowMaxQty itself excludes them (maxQtyForRow's
+      // crossFnSiblingsFree flag, passed above) rather than subtracting them and adding a separate "reuse bonus"
+      // back on top (plain rowMaxQty, no `+ crossFnTake` the way this line read before today). Two earlier
+      // attempts today tried exactly that subtract-then-credit-back shape (owner report 2026-11-10) and were
+      // both caught on regression review before shipping: maxQtyForRow clamps its result at 0, so once same-day
+      // siblings already used more than the naive pool, the negative was discarded and ANY bonus added after that
+      // clamp created headroom with no basis in physical stock — reachable by a brand-new row in one keystroke,
+      // with no short/warning flag at all. The ORIGINAL `rowMaxQty + crossFnTake` (before today) had this exact
+      // same overshoot bug for a day-before sibling too (crossFnTake = min(qty, pool) grows with the row's own
+      // qty, so a row typed large enough could already reach it) — this isn't a narrower fix than before, it's a
+      // strictly safer one, just scoped to same-date reuse only (day-before reuse still prices correctly via
+      // crossFnTake/crossFnBonus below, it just no longer inflates the ceiling). An item the studio owns NONE of
+      // (IMS qty 0 — made-to-order things like a customised ceiling) has no stock to hold a number to, so it is
+      // not capped. An item ticked "Can be made" in IMS Inventory is not capped either (owner ask 2026-11-06):
+      // production makes whatever stock does not cover, so Build takes any quantity - free or not. The part past
+      // stock is still marked short and priced at cost%.
+      const maxQty = Number(item.qty) > 0 && item.canBeMade !== true ? rowMaxQty : null;
       // Why it is short, for the card's "⚠ short" hover: where the stock is - kept at fixed venues, blocked in IMS, booked by
       // another event that date, or used elsewhere in this deal - so a short with no event on the calendar explains itself.
       const shortWhy = shortQty > 0 ? (() => {
