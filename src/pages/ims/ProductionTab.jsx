@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Badge, Modal, Tabs } from "../../components/ui";
+import { Badge, Modal, Tabs, useConfirm } from "../../components/ui";
 import { callClaudeStreaming } from "../../lib/ai";
 import { PROD_STATUSES, PROD_DEPTS, DIM_UNITS, hasIMSPerm } from "../../lib/ims/constants";
 import { canSeeProdDept } from "../../lib/ims/deptClassify";
@@ -43,6 +43,10 @@ function DeptBand({ dept, rounded = "rounded-t-xl" }) {
 export default function ProductionTab({ prodRequests, setProdRequests, inventory, setInventory, projects, functions, purchase, setPurchase, authUser }) {
   const canUpdate = hasIMSPerm(authUser, "prod_update");
   const canAddInv = hasIMSPerm(authUser, "prod_addinv");
+  // Only an Admin can delete a request (a mistaken or test one) - same Admin test as hasIMSPerm.
+  const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
+  const myName = authUser?.name || authUser?.username || "—";
+  const [confirm, confirmDialog] = useConfirm();
   const [subTab, setSubTab] = useState("board");
   const [deptFilter, setDeptFilter] = useState("All");
   // Department gate — same as Inventory (lib/ims/deptClassify.js): a department-scoped user only
@@ -98,14 +102,31 @@ export default function ProductionTab({ prodRequests, setProdRequests, inventory
 
   function createRequest() {
     if (!form.name.trim() || !qtyOf(form)) return;
-    const id = "PROD" + String(prodRequests.length + 1).padStart(3, "0");
+    // Next number after the highest PROD id - counting the list reused an existing id once a request
+    // was deleted, and the save would overwrite that row.
+    const maxNo = prodRequests.reduce((m, r) => Math.max(m, parseInt(String(r.id || "").replace(/^PROD/, ""), 10) || 0), 0);
+    const id = "PROD" + String(maxNo + 1).padStart(3, "0");
     setProdRequests(prev => [...prev, {
-      ...form, qty: qtyOf(form), id, raisedBy: "Priya Mehta",
+      ...form, qty: qtyOf(form), id, raisedBy: myName,
       raisedDate: new Date().toISOString().split("T")[0],
       status: "Requested", finishedImg: null, finishedQty: null,
       aiComparison: null, confirmedBy: null, confirmedDate: null, inventoryId: null,
     }]);
     setForm(blankForm()); setNewModal(false);
+  }
+
+  // Admin only. Removing it from the list deletes its row (IMS saves production_requests by diff).
+  // An inventory item it already added stays - that is real stock now.
+  async function deleteRequest(req) {
+    if (!isAdmin) return;
+    const ok = await confirm({
+      title: `Delete "${req.name || req.id}"?`,
+      body: req.inventoryId
+        ? `This removes the production request only. The inventory item it added (${req.inventoryId}) stays - delete it from Inventory if it was a test.`
+        : "This removes the production request for everyone. It cannot be undone.",
+    });
+    if (!ok) return;
+    setProdRequests(prev => prev.filter(r => r.id !== req.id));
   }
 
   function updateStatus(id, status) {
@@ -169,7 +190,7 @@ Compare the two and return ONLY JSON:
     }]);
     setProdRequests(prev => prev.map(r => r.id === req.id ? {
       ...r, status: "Added to Inventory", finishedImg: finImg, finishedQty: finQty,
-      aiComparison: comparison, confirmedBy: "Production Team",
+      aiComparison: comparison, confirmedBy: myName,
       confirmedDate: new Date().toISOString().split("T")[0], inventoryId: invId,
     } : r));
     setConfirmModal(null);
@@ -257,6 +278,7 @@ Compare the two and return ONLY JSON:
 
   return (
     <div className="space-y-4">
+      {confirmDialog}
       {/* Header row */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <Tabs tabs={[{ id: "board", label: "📋 Requests Board" }, { id: "confirm", label: "📸 Confirm & Add" }, { id: "history", label: "📊 History" }]}
@@ -368,7 +390,13 @@ Compare the two and return ONLY JSON:
                                 {req.purchaseRaised ? "✅ PR Raised" + (req.materialPRCount ? ` (${req.materialPRCount} items)` : "") : "🛒 Raise Purchase"}
                               </button>
                             )}
-                            <p className="text-xs text-gray-400 mt-1">↑ {req.raisedBy} · {req.raisedDate}</p>
+                            <div className="flex items-center justify-between gap-2 mt-1">
+                              <p className="text-xs text-gray-400 truncate">↑ {req.raisedBy} · {req.raisedDate}</p>
+                              {isAdmin && (
+                                <button type="button" onClick={e => { e.stopPropagation(); deleteRequest(req); }} title="Delete this request (Admin)"
+                                  className="shrink-0 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 px-1.5 py-0.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300">🗑 Delete</button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );
@@ -513,6 +541,10 @@ Compare the two and return ONLY JSON:
                     <p className="text-xs text-gray-400 mt-1.5">Confirmed by {req.confirmedBy} · {req.confirmedDate}</p>
                     {req.inventoryId && <p className="text-xs text-indigo-600 mt-0.5">📦 Inventory ID: {req.inventoryId}</p>}
                   </div>
+                  {isAdmin && (
+                    <button type="button" onClick={() => deleteRequest(req)} title="Delete this request (Admin)"
+                      className="shrink-0 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-red-300">🗑 Delete</button>
+                  )}
                 </div>
               </div>
             );
