@@ -2427,7 +2427,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
             <div className="contents" key={ri}>
               <div className={"flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-1 text-[13px] text-gray-700 border-t border-gray-200" + (ri % 2 ? " bg-gray-50" : "")}>
                 <span className="truncate" title={row.label}>{row.label}</span>
-                {row.how && <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [howKey]: !p[howKey] }))} className="shrink-0 text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[howKey] ? "hide" : "how?"}</button>}
+                {/* <span>, not <button> — see the day-arrow's own comment above: a view-only toggle must
+                    survive the ancestor `<fieldset disabled={lock.locked}>` once actuals lock. */}
+                {row.how && <span role="button" tabIndex={0} onClick={() => setLaboursHow(p => ({ ...p, [howKey]: !p[howKey] }))}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setLaboursHow(p => ({ ...p, [howKey]: !p[howKey] })); } }}
+                  className="shrink-0 text-[12px] font-semibold text-blue-600 hover:underline cursor-pointer select-none">{laboursHow[howKey] ? "hide" : "how?"}</span>}
                 <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
               </div>
               <span className={"px-2 py-1 text-[13px] text-center border-l border-t border-gray-200 whitespace-nowrap font-semibold " + (ri % 2 ? "bg-gray-50 " : "") + (row.warn ? "text-amber-600" : "text-gray-800")}>{row.value}</span>
@@ -2495,7 +2499,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
             <div className="contents">
               <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600 flex items-center gap-1.5" title={t.kind === "labours" ? `${poolLabourDeptLabel(dept)}'s own raw slice of each function's shared crew — not yet rounded; the day's "Today's N labours" line below rounds each department's own total UP to a whole person` : undefined}>
                 {t.kind === "labours" ? `${poolLabourDeptLabel(dept)}'s share per function` : "Crew per function"}
-                <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [labHowKey]: !p[labHowKey] }))} className="text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[labHowKey] ? "hide" : "how?"}</button>
+                {/* <span>, not <button> — view-only toggle, must survive the ancestor disabled fieldset after actuals lock (see renderMpSchedule's own comment). */}
+                <span role="button" tabIndex={0} onClick={() => setLaboursHow(p => ({ ...p, [labHowKey]: !p[labHowKey] }))}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setLaboursHow(p => ({ ...p, [labHowKey]: !p[labHowKey] })); } }}
+                  className="text-[12px] font-semibold text-blue-600 hover:underline cursor-pointer select-none">{laboursHow[labHowKey] ? "hide" : "how?"}</span>
               </span>
               {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{t.kind === "labours" ? deptNeedForFn(c).toFixed(2) : c.result}</span>)}
             </div>
@@ -2614,7 +2621,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
             ))}
             <div className="contents">
               <span className="px-2 py-1 bg-gray-50 text-[13px] text-gray-600 flex items-center gap-1.5">Crew per function
-                <button type="button" onClick={() => setLaboursHow(p => ({ ...p, [t2HowKey]: !p[t2HowKey] }))} className="text-[12px] font-semibold text-blue-600 hover:underline">{laboursHow[t2HowKey] ? "hide" : "how?"}</button>
+                {/* <span>, not <button> — view-only toggle, must survive the ancestor disabled fieldset after actuals lock (see renderMpSchedule's own comment). */}
+                <span role="button" tabIndex={0} onClick={() => setLaboursHow(p => ({ ...p, [t2HowKey]: !p[t2HowKey] }))}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setLaboursHow(p => ({ ...p, [t2HowKey]: !p[t2HowKey] })); } }}
+                  className="text-[12px] font-semibold text-blue-600 hover:underline cursor-pointer select-none">{laboursHow[t2HowKey] ? "hide" : "how?"}</span>
               </span>
               {/* Plain sum of the rows above (owner ask) — the rounding up to whole people is shown below. */}
               {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap tabular-nums">{((c.rows || []).reduce((acc, r) => acc + Math.round((Number(r.need) || 0) * 100), 0) / 100).toFixed(2)}</span>)}
@@ -2829,8 +2839,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
           return (
             <div key={i} className="px-3 py-1.5">
               <div className="flex items-center gap-2 flex-wrap">
-                <button onClick={() => setMpDayHow(o => ({ ...o, [dayKey]: !o[dayKey] }))} title="How this day's crew was calculated"
-                  className={"shrink-0 w-6 h-6 rounded text-[11.5px] leading-none flex items-center justify-center transition-colors " + (howOpen ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-blue-50 hover:text-blue-600")}>{howOpen ? "▾" : "▸"}</button>
+                {/* A <span>, not a <button> — purely a view toggle (no edit), so it must stay clickable
+                    even when the surrounding `<fieldset disabled={lock.locked}>` (below) locks every
+                    real form control after an event's actuals lock engages. A <button> nested inside a
+                    disabled fieldset is unconditionally disabled by the HTML spec regardless of its own
+                    props, which silently killed this arrow (and every other crew type's) for any event
+                    past its actuals-lock date — owner report 2026-11-10. */}
+                <span role="button" tabIndex={0} onClick={() => setMpDayHow(o => ({ ...o, [dayKey]: !o[dayKey] }))}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setMpDayHow(o => ({ ...o, [dayKey]: !o[dayKey] })); } }}
+                  title="How this day's crew was calculated"
+                  className={"shrink-0 w-6 h-6 rounded text-[11.5px] leading-none flex items-center justify-center transition-colors cursor-pointer select-none " + (howOpen ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-blue-50 hover:text-blue-600")}>{howOpen ? "▾" : "▸"}</span>
                 <span className={"shrink-0 w-32 rounded-md px-2 py-0.5 text-[13px] font-semibold text-center " + phaseCls(d)}>{phaseLbl(d)}</span>
                 {/* Per-dihari (per-shift) crew — a head can hold different crew per shift (e.g. 6 day,
                     3 evening). Same mpWinCount data + cost model as the on-site editor → synced. */}
@@ -4647,15 +4665,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       <div className="flex items-center gap-2">
                         {/* Supervisors has nothing to expand into — ops IS the supervisor, so there's
                             no per-day plan behind the number, just the name and what it costs. */}
+                        {/* <span>, not <button> — a view-only expand toggle, so it must survive the
+                            ancestor `<fieldset disabled={lock.locked}>` once actuals lock (see the
+                            day-arrow's own comment, renderMpSchedule, for the full story). */}
                         {r.type !== "Supervisors" && (
-                          <button onClick={() => setMpOpen(o => ({ ...o, [i]: o[i] === false }))}
+                          <span role="button" tabIndex={0} onClick={() => setMpOpen(o => ({ ...o, [i]: o[i] === false }))}
+                            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setMpOpen(o => ({ ...o, [i]: o[i] === false })); } }}
                             aria-expanded={open}
-                            className="shrink-0 w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center transition-colors"
+                            className="shrink-0 w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-500 flex items-center justify-center transition-colors cursor-pointer select-none"
                             title={open ? "Hide how this crew number was calculated" : "How this crew number was calculated"}>
                             <span aria-hidden="true" className={"transition-transform duration-150 " + (open ? "rotate-180" : "")}>
                               <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M3.5 5 L7 8.5 L10.5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                             </span>
-                          </button>
+                          </span>
                         )}
                         <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm leading-none">{crewIcon(r.type)}</span>
                         <span className="flex-1 min-w-0 text-sm font-semibold text-gray-900 truncate">{r.type}{r.shared && <span className="ml-1.5 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold align-middle">SHARED</span>}</span>
