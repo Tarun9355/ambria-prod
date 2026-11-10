@@ -96,6 +96,12 @@ const PROD_DEPT_TO_CANON = {
   "Painter & Production": null,
   Other: null,
 };
+// The Planning → Dept Ops view a production request belongs in: its ops department, and "Painter & Production" in the
+// 🎨 Paint view. "Other" has no department, so it is in none.
+export function prodDeptToOpsDept(prodDept) {
+  if (prodDept === "Painter & Production") return "Paint";
+  return PROD_DEPT_TO_CANON[prodDept] ?? null;
+}
 export function canSeeProdDept(authUser, prodDept) {
   return canSeeDept(authUser, PROD_DEPT_TO_CANON[prodDept] ?? null);
 }

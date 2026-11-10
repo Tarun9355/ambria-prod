@@ -7,6 +7,7 @@ import { parseFlowerPalette, parseFabricPalette } from "../../lib/studio/pricing
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel } from "../../lib/ims/deptClassify";
 import { TabsMenu, useConfirm } from "../../components/ui";
+import ProductionRequestsCard from "./ProductionRequestsCard.jsx";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
@@ -768,7 +769,7 @@ function DeptIncomeModal({ eo, depts, startDept, onClose }) {
   );
 }
 
-export default function DepartmentOpsTab({ pickerSlot = null, eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [] }) {
+export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [] }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   // A labour usage row belongs to the department Deal Check charged it to (ur.dept — the item's own
@@ -6487,6 +6488,10 @@ ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t
 
             {/* Sub-view switch (Planning / On-site) now lives in the event header above — it
                 scopes the entire column, so it sits with the event rather than between cards. */}
+
+            {/* This department's open requests from Supply → Production (Painter & Production in the Paint view) */}
+            {opsView === "planning" && <ProductionRequestsCard prodRequests={prodRequests} functions={functions} dept={dept} onZoom={setZoomImg}
+              eventDates={new Set([sel?.date, ...(Array.isArray(sel?.functionsDetail) ? sel.functionsDetail.map(f => f?.fnDate || f?.date) : [])].map(d => String(d || "").slice(0, 10)).filter(Boolean))} />}
 
             {dept === PAINT && <PaintDeptView sel={sel} inventory={inventory} colourCatalogue={settings?.colourCatalogue} defaultPaintCost={Number(settings?.defaultPaintCostPerItem) || 400} zoneLabel={zoneLabelFor} onZoom={setZoomImg} />}
 
