@@ -1921,11 +1921,11 @@ Rules:
                           <p className="text-[11px] font-semibold text-indigo-800 mb-2">All {editForm.subCat || "sub-category"} kits · {total} <span className="font-normal text-indigo-500">— click one to edit it</span></p>
                           <div className="space-y-1.5 max-h-48 overflow-y-auto">
                             {others.map(({ item, kits }) => (
-                              <div key={item.id} className="flex items-center gap-2 flex-wrap">
+                              <div key={item.id} className="flex items-center gap-2">
                                 {item.img
                                   ? <img src={item.img} alt="" className="w-6 h-6 rounded object-cover border border-gray-200 shrink-0" />
                                   : <span className="w-6 h-6 rounded bg-gray-100 shrink-0 flex items-center justify-center text-[11px]">📦</span>}
-                                <span className="text-xs font-medium text-gray-700 min-w-[7rem]">{item.name}</span>
+                                <span className="text-xs font-medium text-gray-700 w-44 shrink-0 truncate" title={item.name}>{item.name}</span>
                                 {kits.map((k) => (
                                   <button key={k.id} type="button" onClick={() => jumpToKit(item.id, k.id)} title={`Edit ${item.name} - ${k.name}`}
                                     className="px-2 py-0.5 rounded-full text-[11px] font-semibold border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
