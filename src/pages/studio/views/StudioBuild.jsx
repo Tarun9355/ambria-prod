@@ -23,7 +23,7 @@ import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, car
 import { trussRowCost, calcZoneFabricCost, calcZoneFabric, guestFabricMultiplier, fabricRepeatDiscount, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig, trussInvForMaterial, nearestCleanSpans } from "../../../lib/studio/pricing";
-import { fabricColourOptions } from "../../../lib/studio/fabricColourOptions";
+import { fabricColourOptions, dropRemovedFabricColours } from "../../../lib/studio/fabricColourOptions";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { crossedMiddle } from "../../../lib/studio/zoneDrop";
 import { logDiscountToClientToggle } from "../../../lib/studio/userActions";
@@ -1199,6 +1199,19 @@ export default function StudioBuild({ ctx }) {
   // Details & pricing are always shown now (the old global toggle is gone). Each zone is instead
   // independently collapsable via zoneCollapsed — collapsed = header + total only; expanded = full body.
   const showCosts = true;
+  // A Fabric Palette colour no stock row has any more (deleted from IMS Fabric Stock, or an old pick like "PASTELS") is taken off
+  // the deal's palettes, every function, once the stock has loaded - so it is not left active for Deal Check, Planning and the
+  // Setup Book, and nobody has to hunt for a gone option to un-pick it (owner ask 2026-11-10). Earlier saves keep it as history.
+  // A colour that still has a row, even with no stock or switched off for Build, is kept.
+  const fabricInvForClean = structRates?.trussInv;
+  useEffect(() => {
+    const cleaned = (raw) => { const keep = dropRemovedFabricColours(fabricInvForClean, parseFabricPalette(raw)); return keep ? stringifyFabricPalette(keep) : null; };
+    const p0 = cleaned(clientPalette);
+    if (p0 != null) setClientPalette(p0);
+    if ((extraFunctions || []).some((f) => cleaned(f?.palette) != null)) {
+      setExtraFunctions((prev) => prev.map((f) => { const v = cleaned(f?.palette); return v != null ? { ...f, palette: v } : f; }));
+    }
+  }, [fabricInvForClean, clientPalette, extraFunctions, setClientPalette, setExtraFunctions]);
   const [copyBuildModalOpen, setCopyBuildModalOpen] = useState(false);
   // "View Deck" (video master's own Canva deck) — idle | loading | error, keyed loosely by not
   // needing a per-video map: only one such card is ever on screen at a time (the active function's
@@ -3832,6 +3845,8 @@ undefined
             <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:13,height:13,borderRadius:4,flexShrink:0,border:`1px solid ${on?accent:border}`,background:on?accent:"transparent",color:"#fff"}}>{on&&<IconCheck size={9}/>}</span>
             {info?.photo ? <img src={thumbUrl(info.photo, 16)} loading="lazy" decoding="async" alt="" onClick={e=>{e.stopPropagation();setLightbox({idx:0,items:[{src:info.photo,name:v}]});}} style={{width:16,height:16,borderRadius:3,objectFit:"cover",flexShrink:0,cursor:"zoom-in"}}/> : null}
             <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{v}</span>
+            {/* picked on this deal but gone from IMS Fabric Stock - listed only so it can be un-ticked */}
+            {info?.removed && <span title="No longer in IMS Fabric Stock - untick to remove it from this deal" style={{fontSize:9,fontWeight:700,color:"#c0392b",textTransform:"uppercase",letterSpacing:0.3,flexShrink:0}}>Removed</span>}
             {/* which of the three fabrics this colour is available for: a struck, faded icon = not available */}
             <span style={{display:"inline-flex",gap:2,flexShrink:0}}>
               {FABRIC_MATERIAL_ICONS.map(([m, icon]) => { const has = !!info?.in.has(m); return <span key={m} title={`${m[0].toUpperCase()}${m.slice(1)} — ${has?"available":"not available"}`} style={{fontSize:10,lineHeight:1,opacity:has?1:0.22,filter:has?undefined:"grayscale(1)",textDecoration:has?undefined:"line-through"}}>{icon}</span>; })}

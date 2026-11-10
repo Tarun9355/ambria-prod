@@ -25,5 +25,22 @@ export function fabricColourOptions(trussInv, pickedNames = []) {
       if (!e.photo && s.photo) e.photo = s.photo;
     });
   });
+  // A colour picked on the deal that no stock row has at all - deleted from Fabric Stock, or an old pick such as "PASTELS" from
+  // before the palette came from stock - is still listed, flagged removed, so it can be found and un-picked.
+  pickedSpelling.forEach((name, k) => { if (!byKey.has(k)) byKey.set(k, { name, photo: "", in: new Set(), removed: true }); });
   return new Map([...byKey.values()].map((e) => [e.name, e]));
+}
+
+// True once the fabric stock has loaded (any of the three has a row) - until then every colour would look removed.
+export const fabricStockLoaded = (trussInv) => FABRICS.some(([, key]) => Array.isArray(trussInv?.[key]) && trussInv[key].length > 0);
+
+// The palette's colours without the removed ones (no stock row in any fabric). Returns null when nothing changes, or when the
+// stock has not loaded, so a caller writes only a real clean-up. A colour that still has a row - out of stock or switched off
+// for Build - is kept.
+export function dropRemovedFabricColours(trussInv, colors) {
+  const list = Array.isArray(colors) ? colors.filter((c) => c && c.name) : [];
+  if (!list.length || !fabricStockLoaded(trussInv)) return null;
+  const info = fabricColourOptions(trussInv, list.map((c) => c.name));
+  const keep = list.filter((c) => info.get(String(c.name).trim())?.removed !== true);
+  return keep.length === list.length ? null : keep;
 }

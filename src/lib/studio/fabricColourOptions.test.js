@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fabricColourOptions } from "./fabricColourOptions.js";
+import { fabricColourOptions, dropRemovedFabricColours, fabricStockLoaded } from "./fabricColourOptions.js";
 
 const inv = {
   lizaStock: [{ colour: "Ivory", stockKg: 40, stockKgNew: 56, photo: "ivory.jpg" }, { colour: "Magenta", stockKg: 0, stockKgNew: 0 }, { colour: "Maroon", stockKg: 10, stockKgNew: 0, hideInBuild: true }],
@@ -44,5 +44,30 @@ describe("fabricColourOptions — one colour whatever its capitals", () => {
   it("keeps the spelling already picked on the deal, so the pick stays ticked", () => {
     const m = fabricColourOptions(inv2, ["Navy Blue"]);
     expect([...m.keys()]).toEqual(["Navy Blue"]);
+  });
+});
+
+describe("removed colours - picked on a deal, no stock row any more", () => {
+  it("is still listed, flagged removed, so it can be un-picked", () => {
+    const m = fabricColourOptions(inv, ["PASTELS", "Ivory"]);
+    expect(m.get("PASTELS")).toMatchObject({ removed: true });
+    expect(m.get("PASTELS").in.size).toBe(0);
+    expect(m.get("Ivory").removed).toBeUndefined();
+  });
+  it("a colour that still has a row (no stock, or switched off) is not removed", () => {
+    const m = fabricColourOptions(inv, ["Magenta", "Maroon"]);
+    expect(m.get("Magenta").removed).toBeUndefined();
+    expect(m.get("Maroon").removed).toBeUndefined();
+  });
+  it("dropRemovedFabricColours keeps every colour that has a row, whatever its capitals", () => {
+    const out = dropRemovedFabricColours(inv, [{ name: "PASTELS", materials: null }, { name: "ivory", materials: ["liza"] }, { name: "Magenta", materials: null }]);
+    expect(out).toEqual([{ name: "ivory", materials: ["liza"] }, { name: "Magenta", materials: null }]);
+  });
+  it("returns null when nothing is removed, the palette is empty, or the stock has not loaded", () => {
+    expect(dropRemovedFabricColours(inv, [{ name: "Ivory", materials: null }])).toBeNull();
+    expect(dropRemovedFabricColours(inv, [])).toBeNull();
+    expect(dropRemovedFabricColours({}, [{ name: "PASTELS", materials: null }])).toBeNull();
+    expect(dropRemovedFabricColours(null, [{ name: "PASTELS", materials: null }])).toBeNull();
+    expect(fabricStockLoaded({ lizaStock: [] })).toBe(false);
   });
 });
