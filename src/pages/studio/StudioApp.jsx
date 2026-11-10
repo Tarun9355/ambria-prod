@@ -9002,6 +9002,22 @@ export default function StudioApp() {
   // Populated once runDealCheckGenerate is declared further down (ref-sync effect right after its
   // own declaration) — autoSaveBuild needs to call it, but is declared long before it exists.
   const runDealCheckGenerateRef = useRef(null);
+  // Client ids a runDealCheckGenerate call is CURRENTLY in flight for — see runDealCheckGenerate's own
+  // in-flight guard comment. This reconcile now has four independent triggers for the same sold deal
+  // (markSold, Apply Changes, the headless auto-fill, and the post-edit autosave) that can all fire
+  // within seconds of each other; without this, two overlapping runs for the SAME client could race on
+  // that one event's `blocks` upsert, each built from a different intermediate snapshot of dcCards.
+  // A Set, not a single clientId-or-null scalar (regression-caught on review of the first version):
+  // two DIFFERENT clients legitimately running at once is fine and must not block each other, but a
+  // single scalar slot can only remember the MOST RECENTLY started client — a second client's call
+  // starting while the first is still in flight would silently overwrite the shared slot, making the
+  // first client's own still-running call invisible to a LATER same-client call that should have been
+  // refused against it. Each client gets its own entry; clearing one can never touch another's.
+  const dcGenInFlightRef = useRef(new Set());
+  // The latest refused request per client, replayed once that client's in-flight run finishes (see
+  // runDealCheckGenerate's own `finally`) — a refused call used to just vanish with nothing queued,
+  // reopening the exact "this edit never got reconciled" gap the in-flight guard exists alongside.
+  const dcGenRerunPendingRef = useRef(new Map());
   const buildHasDataRef = useRef(false);
   useEffect(() => {
     // Auto-save as soon as there's a named deal with any build data — even a BRAND-NEW deal with no
@@ -9605,6 +9621,21 @@ export default function StudioApp() {
       saveClientLedger(updated);
       const pushed = await pushEventOrderPlan(client);
       if (!pushed) return;
+      // ── RESERVE INVENTORY THE MOMENT A DEAL IS ACTUALLY SOLD ──
+      // Same gap, same fix, as applyBookedChanges's own copy (see its comment) — reconcileSoldInventoryBlocks
+      // (the only writer of real `blocks` table rows) only ever ran from inside runDealCheckGenerate, i.e.
+      // only once Deal Check was actually opened/regenerated for this deal. markSold itself never triggered
+      // it, so a freshly-booked deal could sit with NOTHING reserved in the real stock table at all until
+      // someone separately opened Deal Check — the single moment this reservation matters most (confirming
+      // a booking is exactly when another deal must stop being able to oversell the same stock).
+      // Fire-and-forget, NOT awaited (regression-caught): this call downloads the full IMS inventory +
+      // blocks tables and does per-zone name matching, realistically 1-4s — awaiting it held up the
+      // confetti/success toast for work that's silent anyway (skipAi, silent) and can't change the
+      // outcome shown to the salesperson. The in-flight guard inside runDealCheckGenerate itself
+      // (dcGenInFlightRef) is what actually protects this from racing the deal's other three existing
+      // reconcile triggers (Apply Changes, the headless auto-fill, the post-edit autosave) — not the
+      // await, which this never relied on for correctness.
+      runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true })?.catch((e) => console.warn("[markSold] inventory reconcile failed:", e?.message || e));
       setShowSoldConfetti(true);
       setTimeout(() => setShowSoldConfetti(false), 4000);
       showMsg("🎉 Booking confirmed for " + client.name, "green");
@@ -9648,6 +9679,31 @@ export default function StudioApp() {
       }
       const pushed = await pushEventOrderPlan(freshClient, { skipDupeConfirm: true, activityVerb: "Booking updated", activityEmoji: "✏️" });
       if (!pushed) return false;
+      // ── RE-RESERVE INVENTORY FOR THIS EDIT, NOT JUST ON A DEAL CHECK REGENERATE ──
+      // reconcileSoldInventoryBlocks (the ONLY writer of real `blocks` table rows for a sold deal)
+      // only ever ran from inside runDealCheckGenerate — i.e. only when Deal Check itself was
+      // (re)opened/regenerated for this deal, never from this, the actual everyday path a
+      // salesperson uses to edit an already-booked deal's build. A quantity added or increased here
+      // was saved to the deal and pushed to event_orders.functionsDetail (what IMS's own screens
+      // read) with no corresponding update to the real stock reservation — so the item still read as
+      // under-committed system-wide, and a SEPARATE deal could be sold against the very units this
+      // one had just (for real) committed to. Confirmed live (owner report 2026-11-10): a deal's
+      // Mehendi function gained 2 Wooden Pedestals this way; Deal Check was never reopened
+      // afterward; a second, unrelated deal's draft then saw 2 phantom-free units that didn't
+      // actually exist, with no warning at all.
+      // skipAi (established pattern — see the Deal Check auto-fill effect, same call shape): plain
+      // name/id matching only, no vision-model calls — free, and deliberately does NOT consume the
+      // post-sold Deal Check run-limit counter (gated on `!skipAi` inside runDealCheckGenerate),
+      // since this must run on every single booked-deal edit, not count against that budget. A new
+      // item this run can't match by name alone stays unreserved until an actual Deal Check
+      // regenerate resolves it with AI matching — same limit as skipAi's existing use, not a new gap.
+      // silent: true — this is a background reservation sync, not something the salesperson asked to
+      // see; `pushed` above already confirms the booking update itself succeeded, and a failure here
+      // shouldn't block or alarm on a change that already saved and pushed correctly.
+      // Fire-and-forget, NOT awaited — see markSold's identical comment on why; the in-flight guard
+      // inside runDealCheckGenerate itself is what protects this from racing the deal's other
+      // existing reconcile triggers, not the await.
+      runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true })?.catch((e) => console.warn("[applyBookedChanges] inventory reconcile failed:", e?.message || e));
       showMsg(`Changes applied for ${freshClient.name}`, "green");
       return true;
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); return false; }
@@ -13122,11 +13178,38 @@ export default function StudioApp() {
       showMsg(msg, "red");
       return { ok: false, blocked: true };
     }
+    // Regression-caught (2026-11-10, reviewing the booked-deal reconcile fix below): a run that is
+    // already in flight for this client must not start a second one. reconcileSoldInventoryBlocks
+    // re-derives this event's ENTIRE blocks entry from this run's own matched cards each time it
+    // runs — two overlapping runs racing on the same upsert, built from two different intermediate
+    // states of dcCards, is the exact "two async writers sharing mutable state" class of bug every
+    // other fix today has been about. With a sold deal now reconciling from markSold, from Apply
+    // Changes, from the existing headless auto-fill, AND from the existing post-edit autosave, the
+    // same client can trigger several of these within seconds of each other.
+    // Regression-caught (second pass): a refused call used to just vanish — no rerun queued — which
+    // reopens exactly the gap this whole fix exists to close. A booked-deal edit landing while an
+    // EARLIER run for the same client is still in flight (its reconcile necessarily built from the
+    // build as it stood before this edit) would never reconcile the edit at all unless some OTHER,
+    // unrelated trigger happened to fire again later. Queue it instead: record the latest refused
+    // request per client, and the in-flight run's own `finally` kicks off exactly one more run with
+    // those args the moment it's done — so the freshest request always eventually runs, even though
+    // it was refused in the moment.
+    if (dcGenInFlightRef.current.has(activeClientId)) {
+      dcGenRerunPendingRef.current.set(activeClientId, { fnIdxFilter, opts: { skipAi, silent } });
+      return { ok: false, blocked: true, reason: "already-running" };
+    }
+    dcGenInFlightRef.current.add(activeClientId);
+    try {
     setDcGenerating(true);
     setDcGenStatus("Loading IMS inventory…");
     const firstDate = (cli.functions?.[0]?.date) || cli.eventDate || clientDate || "";
     const ims = await fetchIMSData(firstDate);
-    if (!ims || !Array.isArray(ims.inventory)) {
+    // Regression-caught: fetchRawIMS swallows a failed inventory download into an EMPTY array, not
+    // null (`fetchAll("inventory").catch(() => [])`) — so a transient network failure used to sail
+    // past this check, every card then matched nothing, and reconcileSoldInventoryBlocks released
+    // EVERY reservation this event held, for a sold deal, because of a blip that had nothing to do
+    // with its actual stock. Treat an empty inventory the same as a missing one.
+    if (!ims || !Array.isArray(ims.inventory) || ims.inventory.length === 0) {
       setDcGenerating(false); setDcGenStatus("");
       if (!silent) showMsg("IMS unreachable — try again", "red");
       return { ok: false, error: "ims-unreachable" };
@@ -13362,6 +13445,30 @@ export default function StudioApp() {
       ? `Deal Check ready · ${cardsUnmatched} item${cardsUnmatched === 1 ? "" : "s"} couldn't be matched to IMS — please check`
       : "Deal Check ready", "green");
     return { ok: true, summary: { zonesProcessed, cardsResolved, cardsAi, cardsNameMatch, cardsUnmatched } };
+    } finally {
+      dcGenInFlightRef.current.delete(activeClientId);
+      // Replay the latest request that got refused while this run was in flight, if any — see the
+      // guard's own comment above for why this must not just drop it. Fire-and-forget: this finally
+      // belongs to the run that's ending, not to whatever request queued behind it, so the rerun's
+      // own promise is deliberately not awaited or returned here.
+      // runDealCheckGenerateRef.current, NOT the bare `runDealCheckGenerate` name (regression-caught,
+      // third pass): a direct self-call closes over THIS run's own closure — clientLedger, dcCards,
+      // collectAllFunctionData, etc. — frozen as of whenever THIS run started, which is exactly the
+      // stale state the refused request was trying to get away from. The ref is kept pointing at the
+      // latest render's function (useEffect right below this one), so going through it is what
+      // actually lets the replay see the edit that got it queued in the first place. Also check
+      // activeClientIdRef — the live ref, not this call's own frozen `activeClientId` — hasn't moved
+      // on to a different client in the meantime; a replay for a client the user has since left would
+      // reconcile the wrong deal's state under the wrong one. Dropping it in that case is fine: the
+      // headless auto-fill already re-reconciles whenever that client becomes active again.
+      const pending = dcGenRerunPendingRef.current.get(activeClientId);
+      if (pending) {
+        dcGenRerunPendingRef.current.delete(activeClientId);
+        if (activeClientIdRef.current === activeClientId) {
+          runDealCheckGenerateRef.current?.(pending.fnIdxFilter, pending.opts)?.catch((e) => console.warn("[runDealCheckGenerate] queued rerun failed:", e?.message || e));
+        }
+      }
+    }
   }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, dcKitEdits, floralHardPropMap, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, reconcileSoldInventoryBlocks]);
   useEffect(() => { runDealCheckGenerateRef.current = runDealCheckGenerate; });
 
