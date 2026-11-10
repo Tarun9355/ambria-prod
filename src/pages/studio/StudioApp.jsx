@@ -1589,6 +1589,14 @@ export default function StudioApp() {
   const lmsDebounceRef = useRef(null);
   const lmsAbortRef = useRef(null);
   const lmsPollRef = useRef(null);
+  // Which query the CURRENT lmsLeads actually belong to (lowercased, matching cacheKey below) — the
+  // IMS deep-link effect's auto-load (further down) only fires once lmsLeads is non-empty, and while
+  // it's gated on the ledger, someone can type a completely different name into Guest Name in the
+  // meantime (realistic: the error banner is up, they're waiting on Retry and search for someone
+  // else). Without this, that effect would happily auto-load whatever lmsLeads happens to hold the
+  // moment the gate opens — a different guest's lead — the instant lmsLeads.length === 1 for THAT
+  // query. Checked there against the deep link's own req.name before acting.
+  const lmsLeadsQueryRef = useRef("");
 
   // ═══ §25 LMS lead search — debounced lookup on clientName (faithful port) ═══
   // Real backend: the cached lms_contracts table via searchLmsLeads. Since the cache
@@ -1598,15 +1606,24 @@ export default function StudioApp() {
     if (lmsPollRef.current) clearTimeout(lmsPollRef.current);
     const query = (clientName || "").trim();
     if (query.length < 2) {
+      lmsLeadsQueryRef.current = query.toLowerCase();
       setLmsLeads([]); setLmsLoading(false); setLmsError(false); setLmsFilling(false);
       return;
     }
     const cacheKey = query.toLowerCase();
     if (lmsCacheRef.current.has(cacheKey)) {
+      lmsLeadsQueryRef.current = cacheKey;
       const cached = lmsCacheRef.current.get(cacheKey);
       setLmsLeads(cached.leads || []); setLmsError(!!cached.error); setLmsLoading(false); setLmsFilling(false);
       return;
     }
+    // In flight: an UNCACHED search takes a 400ms debounce plus a real round trip, during which
+    // lmsLeads still holds whatever the PREVIOUS query returned — setting the ref to this query right
+    // now (before the search has actually landed) would make it look like those stale results already
+    // belong to this one, during exactly the window a deep-link auto-load effect checks it against.
+    // null so the "does this match what's currently in lmsLeads" check elsewhere always fails while
+    // nothing has landed yet, rather than fail OPEN here.
+    lmsLeadsQueryRef.current = null;
     const runSearch = async () => {
       const abort = new AbortController();
       lmsAbortRef.current = abort;
@@ -1620,6 +1637,7 @@ export default function StudioApp() {
         lmsCacheRef.current.set(cacheKey, { leads: result.leads, error: !result.ok });
       }
       setLmsLeads(result.leads || []);
+      lmsLeadsQueryRef.current = cacheKey; // NOW lmsLeads actually corresponds to this query
       setLmsError(!result.ok);
       setLmsLoading(false);
       const stillFilling = !result.complete && result.ok;
@@ -2971,6 +2989,10 @@ export default function StudioApp() {
           }
           const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
           clientJsonRef.current = seed;
+          // Set alongside the state, not left to the passive sync effect a render later (same fix as
+          // the other ledger-replacing write, ~line 3969) — a timer landing in that one-render gap
+          // would see ledgerReady true but clientLedgerRef.current still the pre-load value.
+          clientLedgerRef.current = list;
           setClientLedger(list);
           if (!cancelled) setLedgerLoadError(false);
         }
@@ -8557,6 +8579,17 @@ export default function StudioApp() {
       if (byPhone) {
         client = byPhone;
         setActiveClientId(byPhone.id);
+      } else if (!ledgerReady || ledgerLoadError) {
+        // Same gap StudioEventInfo.jsx's Continue button closes, for the same reason (see its own
+        // comment on this): minting here would search a client_ledger that hasn't finished its
+        // initial load yet — a real existing client for this exact phone could simply not have
+        // arrived, not be genuinely absent. ledgerReady alone doesn't cover a fetch that failed
+        // outright (it's set true either way — "we asked", not "we found work") — ledgerLoadError
+        // is the real "did it actually land" signal. Skip this tick entirely rather than fork a
+        // duplicate; this branch only runs when there was no active client to begin with, so
+        // nothing is lost — the next genuine edit's autosave (or the dirty-pill's own retry) tries
+        // again once the ledger has actually loaded.
+        return;
       } else {
         client = { id: "CLI_" + Date.now().toString(36), name: clientName.trim(), phone: clientPhone.trim(), sessions: [], createdAt: Date.now(), status: "ongoing", createdBy: authUser?.name || "—", bookedAt: null, bookedBy: null, finalSession: null };
         updated.push(client);
@@ -8785,7 +8818,7 @@ export default function StudioApp() {
     // pricingReady for free — but "usually" is not a guarantee: a deal whose seed-default total
     // happens to equal its real one would leave this callback holding pricingReady=false forever,
     // and then no total would be written at all. That is a worse failure than the one being fixed.
-    pricingReady, buildElementPriceSnapshot, persistBuildLayoutSnapshot, canStudio]);
+    pricingReady, buildElementPriceSnapshot, persistBuildLayoutSnapshot, canStudio, ledgerReady, ledgerLoadError]);
 
   // ── Build auto-save (robust) ──────────────────────────────────────────────
   // The build (zone photos, Silver/Gold tab, elements, dims, carpet) previously persisted ONLY on a
@@ -9739,27 +9772,46 @@ export default function StudioApp() {
       }
       const seed = {}; list.forEach((c) => { if (c && c.id) seed[c.id] = JSON.stringify(c); });
       clientJsonRef.current = seed;
+      clientLedgerRef.current = list; // see the matching comment on the mount load's own setClientLedger
       setClientLedger(list);
       setLedgerLoadError(false);
       setLedgerReady(true);
     } catch {
       setLedgerLoadError(true);
+      // ledgerLoadError was ALREADY true going into this retry (that's the only way retryLedgerLoad
+      // gets called), so setting it to true again is a no-op React bails out on — the auto-retry
+      // effect below never re-runs off that alone, and clientLedger.length doesn't change on a
+      // failure either, so a failed retry silently stopped the whole chain after one attempt
+      // regardless of the ">= 3" cap. ledgerRetryTick is a plain counter with no other meaning;
+      // bumping it on every failed attempt forces that effect to re-run so the backoff actually
+      // continues, same as if the error value had genuinely changed.
+      setLedgerRetryTick((t) => t + 1);
     }
   }, []);
   // Auto-retry a couple of times on its own before asking the user to click anything — most blips
-  // clear within a few seconds. Only engages while there's actually a deal to restore (a `savedId`
-  // in sessionStorage) and the ledger hasn't already loaded; a genuinely fresh session with no saved
-  // deal and a failed reference-data fetch elsewhere has nothing here worth retrying for.
+  // clear within a few seconds. Engages for ANY ledger-load failure, not only when there's a deal to
+  // restore — a brand-new session needs its client_ledger loaded just as much, to actually match
+  // against before minting a client (every duplicate-client guard depends on this, see ledgerLoadError
+  // in ctx), so "nothing here worth retrying for" stopped being true the moment those guards started
+  // failing CLOSED on a load error instead of silently proceeding.
   const ledgerRetryCountRef = useRef(0);
+  const [ledgerRetryTick, setLedgerRetryTick] = useState(0);
   useEffect(() => {
     if (!ledgerLoadError) { ledgerRetryCountRef.current = 0; return; }
-    if (clientLedger.length > 0) return; // a later successful load already arrived
-    if (!restoreRef.current?.id) return; // nothing was open — no urgency to retry automatically
+    // Deliberately NOT also checking clientLedger.length here (a prior version returned early once
+    // it was non-empty, reasoning "a later successful load already arrived"). That's wrong: the
+    // realtime client_ledger subscription can append a row (another salesperson's save) at any time,
+    // completely independent of whether OUR OWN failed fetch has actually recovered — that alone
+    // flipped clientLedger.length from 0 to 1 while ledgerLoadError was still true, silently killing
+    // the retry chain (the effect's own cleanup cleared the pending timer) with the banner still
+    // claiming "Retrying automatically…" forever after. A genuinely successful retry already sets
+    // ledgerLoadError to false itself, which this first line already catches — that's the only
+    // "arrived" signal that actually matters here.
     if (ledgerRetryCountRef.current >= 3) return; // give up automatically; the banner's button remains
     ledgerRetryCountRef.current += 1;
     const t = setTimeout(() => { retryLedgerLoad(); }, 2000 * ledgerRetryCountRef.current);
     return () => clearTimeout(t);
-  }, [ledgerLoadError, clientLedger.length, retryLedgerLoad]);
+  }, [ledgerLoadError, retryLedgerLoad, ledgerRetryTick]);
 
   // ── setFilterMood / setFilterPalette ARE NOT setSelectedMoods / setSelectedPalettes ── (BUG-20)
   // Two similarly named pairs, and this reset cleared only the wrong one. selectedMoods/
@@ -9930,6 +9982,14 @@ export default function StudioApp() {
   // ── Load LMS lead — VERBATIM ──
   const loadLmsLead = useCallback((lead) => {
     if (!lead) return;
+    // Guard lives HERE, not just at each caller — this function has three call sites (the manual
+    // "Load →" button, the IMS deep-link effect, the LMS search-results auto-load effect) and the
+    // button's own results list was only ever gated on `lmsLoading || !ledgerReady` (StudioEventInfo.jsx),
+    // never on ledgerLoadError. ledgerReady is set true whether the client_ledger fetch SUCCEEDED or
+    // FAILED ("we asked", not "we found work" — see its own comment) — a genuinely failed fetch left
+    // clientLedger empty, so phoneMatches below found nothing and this minted a duplicate regardless
+    // of which of the three paths called it. One check here covers all three at once.
+    if (!ledgerReady || ledgerLoadError) { showMsg?.("Still loading existing clients — wait a moment and try again", "red"); return; }
     // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab — this creates or
     // links a client record from an inbound lead, the same kind of write as starting a new deal.
     if (!canDesignEditRef.current) { showMsg?.("View only — your access to Design Studio doesn't include editing", "red"); return; }
@@ -10109,7 +10169,7 @@ export default function StudioApp() {
     } else {
       showMsg(`Loaded LMS lead #${lead.entryNo} (${lead.dept === "venue" ? "Venue" : "Decor"})`, "green");
     }
-  }, [clientLedger, saveClientLedger, authUser, allInhouseVenues, allOutdoorDB, loadClientSession, customProperties, customInhouse]);
+  }, [clientLedger, saveClientLedger, authUser, allInhouseVenues, allOutdoorDB, loadClientSession, customProperties, customInhouse, ledgerReady, ledgerLoadError]);
 
   // ── §25b DEEP LINK FROM IMS: "Build this deal in Studio" ──
   // IMS Dept Ops links here when a calendar lead has no Studio deal behind it yet, as
@@ -10123,6 +10183,16 @@ export default function StudioApp() {
   // Placed AFTER loadLmsLead rather than beside the search effect: the dependency array is
   // evaluated during render, so naming loadLmsLead before its own `const` would throw on the
   // temporal dead zone rather than simply reading stale.
+  // loadLmsLead itself depends on clientLedger (its own useCallback deps), so it's a fresh closure
+  // every render the ledger changes on — but the effect below fires with an EMPTY dependency array
+  // (one-shot by design: a deep link should only ever be actioned once per page load), which closes
+  // over whatever loadLmsLead WAS on the FIRST render — clientLedger=[], nothing loaded yet — FOREVER.
+  // Confirmed: every #/studio?client=...&lmsRef=... deep link from IMS's calendar always minted a
+  // duplicate client, never finding a phone match, regardless of how long the ledger had actually been
+  // loaded by the time the effect fired. A ref kept current every render (same pattern saveSessionRef,
+  // ~line 8811, already uses) lets the one-shot effect call whatever loadLmsLead CURRENTLY is.
+  const loadLmsLeadRef = useRef(loadLmsLead);
+  useLayoutEffect(() => { loadLmsLeadRef.current = loadLmsLead; });
   const pendingLmsEntryRef = useRef(undefined);
   if (pendingLmsEntryRef.current === undefined) {
     // Read once, during the first render, before anything can type into clientName.
@@ -10149,6 +10219,13 @@ export default function StudioApp() {
   useEffect(() => {
     const req = pendingLmsEntryRef.current;
     if (!req || req.applied) return;
+    // Wait for the ledger too — a fresh closure alone is pointless if clientLedger is still empty
+    // (still loading, or a failed fetch — ledgerReady is set true in BOTH cases, "we asked" not "we
+    // found work", hence checking ledgerLoadError separately) when this actually runs: loadLmsLead
+    // would genuinely find no phone match against an empty list and mint a duplicate anyway, the same
+    // root cause as every other guard in this file. This effect now re-runs as those two flip rather
+    // than firing exactly once on mount, but `req.applied` still makes sure it only ever ACTS once.
+    if (!ledgerReady || ledgerLoadError) return;
     req.applied = true;
     setClientName(req.name);
     // Strip the query so a refresh does not re-fill over work already in progress.
@@ -10162,13 +10239,26 @@ export default function StudioApp() {
       const lead = await fetchLmsLeadByEntry(req.dept, req.entry);
       if (cancelled || !lead) return;   // not found → leave the ref set so the search path can try
       pendingLmsEntryRef.current = null; // and stop it from firing a second fill on top of this one
-      loadLmsLead(lead);
+      loadLmsLeadRef.current(lead);
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [ledgerReady, ledgerLoadError]);
   useEffect(() => {
     const req = pendingLmsEntryRef.current;
     if (!req || lmsLoading || !lmsLeads.length) return;
+    // lmsLeads has to actually BE a search for req.name, not just non-empty — while the ledger gate
+    // above holds this effect back, nothing stops someone typing a DIFFERENT name into Guest Name
+    // (the error banner is up, they're searching for someone else while waiting on Retry). Once the
+    // gate opens, lmsLeads could hold that other person's results, and with no entry-number match,
+    // `lmsLeads.length === 1` would auto-load THEIR lead under this deep link's name instead.
+    // lmsLeadsQueryRef is set synchronously every time the search effect (re)fires, so it always
+    // names whichever query the CURRENT lmsLeads actually belongs to.
+    if (lmsLeadsQueryRef.current !== String(req.name || "").trim().toLowerCase()) return;
+    // loadLmsLead itself now refuses to run while the ledger isn't ready/failed (its own first check),
+    // so this isn't strictly needed for safety any more — kept so this effect WAITS and retries
+    // instead of firing once, getting silently rejected, and never trying again (same reasoning as
+    // the deep-link effect above, which needs this for exactly that reason, not just as a safety net).
+    if (!ledgerReady || ledgerLoadError) return;
     // Prefer the exact contract the link names. But the entry number often will NOT be here:
     // searchLmsLeads deliberately queries decor records only (see its own comment — Studio is the
     // décor tool and loadLmsLead has nothing to pull from a venue contract), while the IMS
@@ -10183,7 +10273,7 @@ export default function StudioApp() {
     // One-shot: clear BEFORE loading, or loadLmsLead's own state changes would re-enter here.
     pendingLmsEntryRef.current = null;
     loadLmsLead(hit);
-  }, [lmsLeads, lmsLoading, loadLmsLead]);
+  }, [lmsLeads, lmsLoading, loadLmsLead, ledgerReady, ledgerLoadError]);
 
   // ── Resume saved session (per-pill) — VERBATIM ──
   // `targetFnIdx` says WHICH pill to restore into. Without it the caller could only ever resume
@@ -13371,12 +13461,23 @@ export default function StudioApp() {
     // pill nav has always read `fnPending ?? activeFnIdx`; Deal Check never received it, so it had
     // nothing to render from but the deferred value (BUG-11).
     fnPending,
-    // True only while there WAS an in-progress deal (sessionStorage remembers one) that hasn't been
-    // restored yet AND the last client_ledger fetch actually failed — not "still loading", a real
-    // error. StudioEventInfo shows a "couldn't reach the server" banner instead of silently looking
+    // True whenever the last client_ledger fetch actually failed (not "still loading", a real
+    // error) and no deal is open yet — whether or not there was an in-progress deal to restore.
+    // Originally scoped to the restore case only ("showLedgerRestoreWarning"); broadened because
+    // ledgerReady alone can't be trusted to mean "safe to create/match a client" — see ledgerLoadError
+    // below — so a brand-new session with nothing to restore needs this same banner and retry path,
+    // or it's simply stuck unable to start any deal while the ledger stays empty for the rest of the
+    // session. StudioEventInfo shows a "couldn't reach the server" banner instead of silently looking
     // like a fresh, empty deal while a retry runs in the background (retryLedgerLoad).
-    showLedgerRestoreWarning: ledgerLoadError && !activeClientId && !!restoreRef.current?.id,
+    showLedgerRestoreWarning: ledgerLoadError && !activeClientId,
     retryLedgerLoad,
+    // Whether the ledger genuinely finished loading vs. gave up and left clientLedger empty.
+    // ledgerReady alone is set true in BOTH cases ("we asked", not "we found work" — see its own
+    // comment) — every duplicate-client guard (doSaveClient's Continue check, saveSession's own
+    // phone-match-before-mint fallback) has to fail CLOSED on a real fetch failure too, not just
+    // while the fetch is still in flight, or a network blip that fails outright still mints a
+    // duplicate against the empty ledger it left behind — exactly the bug being fixed here.
+    ledgerLoadError,
     deleteSessionRows: designDeleteSessionRows,
     showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger: designSaveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
