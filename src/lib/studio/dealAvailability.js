@@ -147,11 +147,34 @@ export function allocateRowAvailability(invId, fns, imsInventory, target, target
 // sibling row into shortage instead — that is the one thing this cap exists to prevent.) Used to stop a
 // quantity being typed or stepped past what an item that can't be produced can supply. targetVenue —
 // see allocateRowAvailability's own comment.
-export function maxQtyForRow(invId, fns, imsInventory, target, targetDate, otherEventsAvail, targetVenue) {
+//
+// crossFnSiblingsFree (optional, trailing, only meaningful alongside targetVenue — every existing caller
+// omits it and keeps the exact old behaviour, every other row counts as competing demand regardless of
+// which function it belongs to): when true, a row belonging to a DIFFERENT function (r.fnIdx !== target's)
+// is excluded from othersQty entirely, instead of being subtracted. Once targetVenue is given, every row
+// itemRowsFor returns is already same-date AND same-venue as the target — which is exactly this deal's own
+// cross-function reuse rule (findCrossFnReuseSource, lib/studio/crossFnReuse.js: same calendar date, same
+// venue, within this one deal = reuse-eligible). A sibling FUNCTION's units at that same date+venue were
+// never really "someone else's" demand to subtract — they're this deal's own stock already standing there,
+// reusable for this row too — so the correct ceiling simply never counts them, rather than subtracting them
+// and crediting an equal amount back separately. Two earlier attempts at that subtract-then-credit-back
+// shape (owner report 2026-11-10) were both caught on regression review before shipping: this function's own
+// Math.max(0, ...) clamp below discards whatever went negative, so once siblings already used more than the
+// naive pool, a bonus added back AFTER that clamp created headroom with no basis in physical stock — reachable
+// by a brand-new row with no short/warning flag at all. Not subtracting those rows in the first place has no
+// such clamp to go wrong in, needs no separate pool, and is immune to element render order. A row within the
+// SAME function (a different zone/elIdx, same fnIdx) is NOT a cross-function sibling — it's still genuine,
+// separate, simultaneous demand on this exact function's own build, so it keeps counting as before regardless
+// of this flag.
+export function maxQtyForRow(invId, fns, imsInventory, target, targetDate, otherEventsAvail, targetVenue, crossFnSiblingsFree) {
   const pool = Math.max(0, Math.floor(Number(otherEventsAvail) || 0));
   if (!invId) return pool;
+  // targetVenue required here too (not just documented as a precondition) — without it, itemRowsFor
+  // doesn't filter by venue at all, so a same-date row at a genuinely DIFFERENT venue would wrongly
+  // be excluded as if it were a reuse-eligible sibling.
   const othersQty = itemRowsFor(invId, fns, imsInventory, targetDate, targetVenue)
     .filter((r) => !(r.fnIdx === target.fnIdx && r.zk === target.zoneKey && r.elIdx === target.elIdx))
+    .filter((r) => !(crossFnSiblingsFree && targetVenue && r.fnIdx !== target.fnIdx))
     .reduce((s, r) => s + r.qty, 0);
   return Math.max(0, pool - othersQty);
 }

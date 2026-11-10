@@ -523,11 +523,20 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                             const rawRate = looseUseNew ? looseRates[meta.rateKeyNew] : looseRates[meta.rateKey];
                             const rate = Number((rawRate===undefined||rawRate===null||rawRate==="") ? looseRates[meta.rateKey] : rawRate) || 0;
                             const rowCost = (Number(row.qty)||0) * rate;
-                            return <div key={i} style={{display:"grid",gridTemplateColumns:"74px 1fr 46px auto",gap:5,alignItems:"center",padding:"5px 6px",borderRadius:6,background:isDark?"rgba(255,255,255,0.04)":"#fff",border:`1px solid ${border}`}}>
-                              <select value={row.kind} onChange={e=>updLooseRow(i,{kind:e.target.value, colour:""})} style={selStyle}>
+                            // flex + wrap, not a 4-col grid — a grid's fixed-width tracks (kind/qty/
+                            // unit+cost+delete) never give back space under pressure, so on a narrow
+                            // viewport (iPad width and below) every pixel of squeeze landed on the
+                            // colour button alone, crushing "Ivory" down to an unreadable "I…" while
+                            // the kind select's own "🎀 Curtain" still clipped to "Curtai" (no room for
+                            // even that). Wrapping lets the colour button keep a sane minimum width and
+                            // drop to its own line instead.
+                            return <div key={i} style={{display:"flex",flexWrap:"wrap",gap:5,alignItems:"center",padding:"5px 6px",borderRadius:6,background:isDark?"rgba(255,255,255,0.04)":"#fff",border:`1px solid ${border}`}}>
+                              {/* 96px, not 88 — iOS Safari's own select chrome (its arrow area) eats
+                                  more width than desktop's, and "🎀 Curtain" is the longest label. */}
+                              <select value={row.kind} onChange={e=>updLooseRow(i,{kind:e.target.value, colour:""})} style={{...selStyle,width:96,flex:"0 0 96px"}}>
                                 {LOOSE_FABRIC_KINDS.map(x=><option key={x.key} value={x.key}>{x.emoji} {x.label}</option>)}
                               </select>
-                              <div style={{position:"relative"}}>
+                              <div style={{position:"relative",flex:"1 1 110px",minWidth:110}}>
                                 <button type="button" onClick={()=>setLooseColourMenu(m=>m===i?null:i)}
                                   style={{...selStyle, display:"flex", alignItems:"center", gap:5, cursor:"pointer", color:row.colour?accent:textS, borderColor:row.colour?accent:border}}>
                                   {(() => { const sel = colourOpts.find(c => c.name === row.colour); return sel?.photo
@@ -565,8 +574,8 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                                 </>}
                               </div>
                               <NumField min={0} value={row.qty||""} onCommit={n=>updLooseRow(i,{qty:n})} blankCommit commitOn="blur" placeholder="0"
-                                style={{...S.input,width:"100%",padding:"5px 4px",fontSize:11.5,fontWeight:600,textAlign:"center"}} />
-                              <div style={{display:"flex",alignItems:"center",gap:7,justifySelf:"end"}}>
+                                style={{...S.input,width:46,flex:"0 0 46px",padding:"5px 4px",fontSize:11.5,fontWeight:600,textAlign:"center"}} />
+                              <div style={{display:"flex",alignItems:"center",gap:7,marginLeft:"auto"}}>
                                 <span style={{fontSize:9.5,color:textS}}>{meta.unit}</span>
                                 {showCosts && <span style={{fontSize:10.5,fontWeight:600,color:textP,minWidth:38,textAlign:"right"}}>{fmt(rowCost)}</span>}
                                 <span onClick={()=>delLooseRow(i)} title="Remove" style={{cursor:"pointer",color:"#E11D48",fontSize:13,fontWeight:700,lineHeight:1}}>✕</span>
@@ -825,7 +834,7 @@ export function PrintRefPhoto({ value, onChange, S, textS, border, accent }) {
   );
 }
 
-export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1 }) {
+export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1, guestDiscPct = 0 }) {
   // The picked carpet can only cover so many sqft: a width/depth that would take this floor past
   // what is left of its free stock (minus the other floors using the same carpet) is not saved.
   const [cpLimit, setCpLimit] = useState("");
@@ -876,7 +885,19 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   // (scaleStruct); this per-row card computed straight off platformRowCost and never got it, same
   // Rate-vs-Amount mismatch as the Truss card above.
   const rowCost = guestPriceMultiplier === 1 ? rowCostRaw : Object.fromEntries(Object.entries(rowCostRaw).map(([k2, v]) => [k2, typeof v === "number" ? v * guestPriceMultiplier : v]));
+  // Fixed-Venue/Repeat discount (calcStructCost's applyDiscount, GROUP_KEYS.platform = [platform,
+  // carpet], each rounded independently) — the Platform/Carpet SECTION TILE already takes this off
+  // (structDiscountFor(zc,aVenue).platform, folded into `st` above), but this per-row card showed
+  // the pre-discount platform/carpet amounts straight off platformRowCost, so a zone's section chip
+  // (discounted) and this card's own figures (not) stopped agreeing the moment a Fixed Venue or
+  // Repeat discount applied — the exact "₹22,500 + ₹6,300 ≠ ₹21,600" confusion reported.
+  const platformShown = guestDiscPct > 0 ? Math.round(rowCost.platform * (1 - guestDiscPct / 100)) : rowCost.platform;
+  const carpetShown = guestDiscPct > 0 ? Math.round(rowCost.carpet * (1 - guestDiscPct / 100)) : rowCost.carpet;
   // Guest rate = the material; the picked carpet's own rental is shown beside it (Ambria's cost).
+  // Stays at the undiscounted list rate (only guestPriceMultiplier-scaled) on purpose — same
+  // convention TrussCard's own rate caption follows (its ₹/sqft figure never takes the Fixed-Venue/
+  // Repeat cut either) and what the cost sheet/exports quote. Only the AMOUNT (carpetShown below)
+  // takes the discount; the rate caption states what a sqft is listed at.
   const carpetBilledRaw = carpetPricingFor(zc.cpT, imsCarpetMaterials);
   const carpetBilled = { ...carpetBilledRaw, rate: Math.round((carpetBilledRaw.rate || 0) * guestPriceMultiplier * 100) / 100 };
   const isNewCarpet = /new/i.test(carpetBilled.label || "");
@@ -953,7 +974,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                       left every added platform with no price against it at all, and made the first
                       card's figure look like it belonged to that card alone. Each card now states
                       what it costs; the zone total is in the zone header and the Live Estimate. */}
-                  </div>{showCosts&&<span style={{fontWeight:600,color:textP}}>{fmt(rowCost.platform)}</span>}
+                  </div>{showCosts&&<span title={guestDiscPct>0?"Discount applied":undefined} style={{fontWeight:600,color:guestDiscPct>0?"#10B981":textP}}>{fmt(platformShown)}</span>}
                 </div>
               </div>
               {/* Carpet sits with the floor dimensions, to the right of depth — it is priced on the
@@ -1062,7 +1083,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     </div>
                   )}
                 </div>
-                {showCosts&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,whiteSpace:"nowrap"}}>Carpet <span style={{fontWeight:600,color:textP}}>{fmt(rowCost.carpet)}</span></div>}
+                {showCosts&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,whiteSpace:"nowrap"}}>Carpet <span title={guestDiscPct>0?"Discount applied":undefined} style={{fontWeight:600,color:guestDiscPct>0?"#10B981":textP}}>{fmt(carpetShown)}</span></div>}
               </div>
               {cpLimit&&<div style={{fontSize:11.5,color:"#EF4444",fontWeight:700,lineHeight:1.3,marginBottom:4}}>⚠ {cpLimit}</div>}
               <div style={{fontSize:11.5,color:textS,lineHeight:1.3,marginBottom:4}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft${(zc.plQty||1)>1?` × ${zc.plQty}`:""}`:"No floor size set — priced at 0 sqft until you enter one below"}</div>
@@ -1077,12 +1098,12 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
 //
 // platformRowCost already runs per row over zc.extraPlatformRows and buildPlatformPlan draws one
 // ops entry each, so the cost and the plan were ready long before there was a way to add one.
-export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1 }) {
+export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1, guestDiscPct = 0 }) {
   const rows = zc.extraPlatformRows || [];
   const write = (next) => sZ({ extraPlatformRows: next });
   // accent rides in `shared`, so both the first floor and every added row get it from one place —
   // FloorCard needs it for the platform-height control's selected fill.
-  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier };
+  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier, guestDiscPct };
   return (<>
     <FloorCard {...shared} zc={zc} sZ={sZ} sFD={sFD} fd={fd} title={rows.length ? "Floor 1" : "Floor"} />
     {rows.map((row, ri) => {
@@ -5591,7 +5612,18 @@ undefined
                   const sqft=(Number(p.areaW)||0)*(Number(p.areaD)||0);
                   const rate=mat?.ratePerSqft||0;
                   const qty=Math.max(1,Math.round(Number(p.qty)||1));
+                  // Raw — stays undiscounted/unscaled on purpose. calcStructCost's own r.print (what
+                  // the Print chip and the transport truck-fill classifier, printJobPrice in
+                  // truckPrint.js, both key off) is this same raw sqft×rate×qty; smallJob below must
+                  // match that classification exactly or a print could cross the SMALL_PRINT_LIMIT
+                  // line here but not there.
                   const cost=sqft*rate*qty;
+                  // Same Fixed-Venue/Repeat discount + guestPriceMultiplier the Print chip already
+                  // takes (calcStructCost's GROUP_KEYS.print, then scaleStruct) — this per-row figure
+                  // was reading the raw `cost` straight, so it showed the stale pre-discount/pre-markup
+                  // amount next to an already-discounted chip (the same bug as Platform/Carpet).
+                  const printDiscPct = structDiscountFor(zoneConfig[k],aVenue)?.print ? 25 : 0;
+                  const costShown = guestPriceMultiplier * (printDiscPct > 0 ? Math.round(cost * (1 - printDiscPct / 100)) : cost);
                   // the function's flat transport for small prints is shown on ONE job (the first small one), since it is charged once
                   const smallJob=rate>0&&sqft>0&&Math.round(cost)<SMALL_PRINT_LIMIT;
                   const _fsp=smallJob&&!isPhantom?firstSmallPrint(zoneConfig,enabledEls,imsPrintMaterials):null;
@@ -5618,7 +5650,7 @@ undefined
                         const s=zoneScaleVal(k);
                         setPrint({qty:nextQty, qtyBase: s>1?nextQty/s:nextQty});
                       }} title="Qty — how many copies of this same print. Scale By rescales this the same way it rescales elements, Truss Qty and Platform Qty." style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}} />
-                      {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto",whiteSpace:"nowrap"}}>{rate>0?(carriesFlat?`${fmt(cost)} + ${fmt(SMALL_PRINT_CHARGE)}`:fmt(cost)):"— pick material"}</span>}
+                      {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto",whiteSpace:"nowrap"}}>{rate>0?(carriesFlat?`${fmt(costShown)} + ${fmt(SMALL_PRINT_CHARGE)}`:fmt(costShown)):"— pick material"}</span>}
                       {!isPhantom&&<span onClick={removePrint} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5}}>×</span>}
                     </div>
                     {/* A print under ₹2,000 does not fill a truck, so the function is charged one flat amount for its small prints instead
@@ -5734,7 +5766,7 @@ undefined
                 customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(zc,"truss")||!!structDiscountFor(zc,aVenue)?.truss} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseNow()} guestPriceMultiplier={guestPriceMultiplier} />}
+                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseNow()} guestPriceMultiplier={guestPriceMultiplier} guestDiscPct={structDiscountFor(zc,aVenue)?.platform?25:0} />}
             </div>);
           })()}
           </Fragment>}
@@ -5751,7 +5783,7 @@ undefined
                   <div key={ci.id} style={{padding:"10px 14px",borderRadius:10,border:`1px solid ${ciColor}30`,background:isDark?`${ciColor}08`:`${ciColor}06`,marginBottom:6,display:"flex",alignItems:"center",gap:10}}>
                     <span style={{display:"flex"}}>{ciIcon}</span>
                     <div style={{flex:1}}>
-                      <div style={{fontSize:12.5,fontWeight:600,color:textP}}>{ci.subCat} <span style={{fontSize:11,padding:"1px 6px",borderRadius:4,background:`${ciColor}15`,color:ciColor,fontWeight:700}}>{isP?"PRODUCTION":"BUYING"}</span></div>
+                      <div style={{fontSize:12.5,fontWeight:600,color:textP}}>{ci.subCat || ci.name || "Custom"} <span style={{fontSize:11,padding:"1px 6px",borderRadius:4,background:`${ciColor}15`,color:ciColor,fontWeight:700}}>{isP?"PRODUCTION":"BUYING"}</span></div>
                       <div style={{fontSize:11.5,color:textS,marginTop:2}}>× {ci.qty}{ci.dims.l?` · ${ci.dims.w}W × ${ci.dims.l}D × ${ci.dims.h}H ft`:""}{ci.notes?` · ${ci.notes}`:""}</div>
                     </div>
                     <div style={{textAlign:"right"}}>
@@ -6248,7 +6280,7 @@ undefined
                     isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
                     customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(cfgCur,"truss")||!!structDiscountFor(cfgCur,aVenue)?.truss} />
                   <FloorStack S={S} zc={cfgCur} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                    isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} guestPriceMultiplier={guestPriceMultiplier} />
+                    isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} guestPriceMultiplier={guestPriceMultiplier} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.platform?25:0} />
                 </div>
                 <div style={sectionBox}>
                   {secHead(<IconClipboard size={14}/>,"Element Breakdown","#7C3AED",
@@ -6303,6 +6335,11 @@ undefined
                         const sqft=(Number(p.areaW)||0)*(Number(p.areaD)||0);
                         const rate=mat?.ratePerSqft||0;
                         const pq=Math.max(1,Math.round(Number(p.qty)||1));
+                        // Same Fixed-Venue/Repeat discount + guestPriceMultiplier fix as the build
+                        // card's own Print row above — this draft view showed the raw, undiscounted
+                        // figure too.
+                        const printDiscPct = structDiscountFor(cfgCur,aVenue)?.print ? 25 : 0;
+                        const pCostShown = guestPriceMultiplier * (printDiscPct > 0 ? Math.round(sqft * rate * pq * (1 - printDiscPct / 100)) : sqft * rate * pq);
                         return <div key={p.id||pi} style={{padding:"8px 10px",borderRadius:8,background:isDark?"rgba(14,165,233,0.06)":"rgba(14,165,233,0.05)",border:"1px solid rgba(14,165,233,0.25)"}}>
                           <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                             <select value={p.material||""} onChange={e=>setPrint(pi,{material:e.target.value})} style={{...S.select,fontSize:11.5,padding:"3px 6px",width:"auto"}}>
@@ -6314,7 +6351,7 @@ undefined
                             <NumField min={0} value={p.areaD||""} onCommit={n=>setPrint(pi,{areaD:n})} placeholder="D ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}}/>
                             <span style={{fontSize:11.5,color:textS}}>ft = {sqft?sqft.toFixed(1):0} sqft ×</span>
                             <NumField min={1} allowDecimal={false} value={p.qty??1} onCommit={rawQty=>{const nq=Math.max(1,Math.round(rawQty||1));const s=scaleFor;setPrint(pi,{qty:nq,qtyBase:s>1?nq/s:nq});}} style={{...S.input,fontSize:11.5,padding:"3px 6px",width:44,marginBottom:0,textAlign:"center"}}/>
-                            {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(sqft*rate*pq):"— pick material"}</span>}
+                            {showCosts&&<span style={{fontSize:12,fontWeight:700,color:"#0EA5E9",marginLeft:"auto"}}>{rate>0?fmt(pCostShown):"— pick material"}</span>}
                             <span onClick={()=>removePrint(pi)} style={{cursor:"pointer",color:"#E11D48",fontWeight:700,fontSize:12.5,marginLeft:showCosts?0:"auto"}}>×</span>
                           </div>
                           <PrintRefPhoto value={p.refImageUrl} onChange={url=>setPrint(pi,{refImageUrl:url})} S={S} textS={textS} border={border} accent={accent} />

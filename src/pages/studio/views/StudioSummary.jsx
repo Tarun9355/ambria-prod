@@ -3126,7 +3126,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                                   return (
                                     <div key={ci.id} style={{display:"flex",justifyContent:"space-between",padding:"4px 0",fontSize:12,alignItems:"center"}}>
                                       <span style={{color:ciColor,display:"flex",alignItems:"center",gap:4}}>
-                                        {isP?"🏭":"🛒"} {ci.subCat} ×{ci.qty}
+                                        {isP?"🏭":"🛒"} {ci.subCat || ci.name || "Custom"} ×{ci.qty}
                                         <span style={{fontSize:8,padding:"1px 4px",borderRadius:3,background:`${ciColor}15`,color:ciColor,fontWeight:700}}>{isP?"PROD":"BUY"}</span>
                                       </span>
                                       <span style={{fontWeight:600,color:ciColor}}>{fmt(unitCost * (Number(ci.qty)||1))}</span>

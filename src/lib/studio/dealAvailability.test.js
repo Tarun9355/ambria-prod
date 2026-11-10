@@ -38,6 +38,75 @@ describe("maxQtyForRow — the most one row can ask for and still be fully cover
   });
 });
 
+// Regression coverage (owner report 2026-11-10): a same-day, same-venue SIBLING FUNCTION's units
+// are reuse-eligible (findCrossFnReuseSource's own rule — same calendar date, same venue, within
+// this one deal) and must not count as competing demand against this row's ceiling, when the
+// caller opts in via crossFnSiblingsFree. Two earlier attempts fixed this by subtracting the
+// sibling then crediting an equal "bonus" back separately — both were caught by regression review:
+// once siblings already used more than the naive pool, maxQtyForRow's own Math.max(0, ...) clamp
+// discarded the negative, so the bonus added after that clamp created headroom with no basis in
+// real stock (reachable by a brand-new row, with no short/warning flag at all). Simply never
+// subtracting a cross-function sibling's row in the first place has no clamp to go wrong in.
+describe("maxQtyForRow — crossFnSiblingsFree (cross-function reuse, same date + venue)", () => {
+  // multi-function helper: each row is [fnIdx, venue, zoneKey, qty] on the one shared date.
+  const multiFn = (rows, date = "2027-04-02") => {
+    const byFn = new Map();
+    rows.forEach(([fnIdx, venue, zk, qty]) => {
+      if (!byFn.has(fnIdx)) byFn.set(fnIdx, { fnDate: date, fnVenue: venue, zoneElements: {} });
+      const fn = byFn.get(fnIdx);
+      fn.zoneElements[zk] = [...(fn.zoneElements[zk] || []), { invId: "pod", qty }];
+    });
+    return [...byFn.entries()].sort((a, b) => a[0] - b[0]).map(([, fn]) => fn);
+  };
+
+  it("without the flag, a same-day sibling FUNCTION still competes as before (unchanged default)", () => {
+    // Mehendi (fnIdx 0) growing its own row; Wedding (fnIdx 1) already holds 10 of the pool of 12.
+    const fns = multiFn([[0, "Aura", "btr", 1], [1, "Aura", "btr", 10]]);
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "btr", elIdx: 0 }, "2027-04-02", 12, "Aura")).toBe(2);
+  });
+
+  it("with the flag, a same-day sibling FUNCTION's units don't count — the full pool is free", () => {
+    const fns = multiFn([[0, "Aura", "btr", 1], [1, "Aura", "btr", 10]]);
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "btr", elIdx: 0 }, "2027-04-02", 12, "Aura", true)).toBe(12);
+  });
+
+  it("the flag still only excludes OTHER FUNCTIONS — a sibling ROW of the SAME function keeps competing", () => {
+    // Both rows are fnIdx 0 (two zones of the one function being priced) — genuinely simultaneous, separate demand.
+    const fns = multiFn([[0, "Aura", "btr", 1], [0, "Aura", "entry", 10]]);
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "btr", elIdx: 0 }, "2027-04-02", 12, "Aura", true)).toBe(2);
+  });
+
+  it("multiple same-day sibling functions are ALL excluded, however many there are — no separate merge/cap logic needed", () => {
+    // Haldi(10) + Cocktail(10) + Wedding's own new row, pool only 10 — the old pool-based "bonus"
+    // approach let this reach 20 (double-counting Haldi+Cocktail); this just never subtracts either.
+    const fns = multiFn([[0, "Aura", "z", 10], [1, "Aura", "z", 10], [2, "Aura", "z", 0]]);
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 2, zoneKey: "z", elIdx: 0 }, "2027-04-02", 10, "Aura", true)).toBe(10);
+  });
+
+  it("row order does not matter — same result whichever function is being priced", () => {
+    const fns = multiFn([[0, "Aura", "z", 10], [1, "Aura", "z", 0]]);
+    // Price fnIdx 1 (the brand-new row) first…
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 1, zoneKey: "z", elIdx: 0 }, "2027-04-02", 10, "Aura", true)).toBe(10);
+    // …then fnIdx 0 (already holding 10) — neither reading starves the other, since nothing is drawn down.
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 10, "Aura", true)).toBe(10);
+  });
+
+  it("a DIFFERENT venue's same-day function was never competing in the first place (itemRowsFor's own venue scope, unchanged by this flag)", () => {
+    // targetVenue="Aura" already drops Restro's row before the new filter ever runs, so this result
+    // (12 = nothing subtracted) is identical whether crossFnSiblingsFree is true or omitted — this
+    // test exists to confirm the flag doesn't somehow widen or defeat the EXISTING venue scope.
+    const fns = multiFn([[0, "Aura", "z", 1], [1, "Restro", "z", 10]]);
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, "Aura")).toBe(12);
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, "Aura", true)).toBe(12);
+  });
+
+  it("the flag is a no-op without a venue (prevents a different-venue row being wrongly excluded)", () => {
+    const fns = multiFn([[0, "Aura", "z", 1], [1, "Restro", "z", 10]]);
+    // No targetVenue passed — crossFnSiblingsFree must not exclude Restro's row just because it's a different function.
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, undefined, true)).toBe(2);
+  });
+});
+
 describe("a zone switched OFF in Build does not hold stock", () => {
   const fns = [{
     fnDate: "2026-10-15",

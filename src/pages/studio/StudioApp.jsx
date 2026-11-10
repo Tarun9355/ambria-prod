@@ -2349,6 +2349,21 @@ export default function StudioApp() {
   // is advanced synchronously below so a burst of clicks chains correctly instead of each one
   // starting from the same stale point.
   const activeFnIdxRef = useRef(0);
+  // activeFnIdxRef (above) is written OPTIMISTICALLY, synchronously, the instant switchActiveFn is
+  // called — before the transition it starts has actually rendered anything. committedFnIdxRef is
+  // the other half of the same guarantee activeFnIdxRef/fnBuildsRef/snapshotFnRef already promise
+  // each other ("refs are updated at commit, so curIdx/builds/snapshot always agree"): it is set in
+  // the SAME useLayoutEffect as snapshotFnRef below, so it only ever reflects whichever function's
+  // canvas is ACTUALLY on screen right now — never a switch that's merely been started.
+  // Real, regression-confirmed gap this closes (owner report 2026-11-10, Rakesh Taneja): the 3-second
+  // busy backstop a few lines down clears switchingRef even when a switch's transition never actually
+  // committed (slow device, exactly the reported iPad) — activeFnIdxRef is by then already sitting on
+  // the NEW (never-rendered) index, while the live canvas snapshotFnRef would capture still shows the
+  // OLD function. A click landing in that reopened window used to read curIdx off activeFnIdxRef and
+  // file a snapshot of the wrong (still-showing) function under the wrong (never-rendered) index —
+  // the exact "one function's build silently became a byte-for-byte copy of another's" symptom.
+  // committedFnIdxRef can't be fooled this way: it only ever advances when activeFnIdx itself commits.
+  const committedFnIdxRef = useRef(0);
   const fnBuildsRef = useRef({});
   // Same reason as activeFnIdxRef/fnBuildsRef: saveSession stamps each function's OWN type/date/
   // venue from these four (fn/clientDate/venue = function 1's own fields, extraFunctions = every
@@ -2401,7 +2416,10 @@ export default function StudioApp() {
   // Layout for the same reason as saveSessionRef below — switchActiveFn calls this one
   // SYNCHRONOUSLY on the click and files the result as the function's build, so it should be
   // reading the latest commit rather than whatever was current before the last paint.
-  useLayoutEffect(() => { snapshotFnRef.current = snapshotBuildState; });
+  // committedFnIdxRef (see its own comment, next to activeFnIdxRef) is set HERE, in the same
+  // layout effect as snapshotFnRef, deliberately — they must only ever change together, since one
+  // names which function a snapshot belongs to and the other takes the snapshot itself.
+  useLayoutEffect(() => { snapshotFnRef.current = snapshotBuildState; committedFnIdxRef.current = activeFnIdx; });
 
   // Rebuilding a function's whole canvas is heavy enough to block for a moment. Marked as a
   // transition so React keeps the page interactive while it renders and tells us it's working
@@ -2485,20 +2503,33 @@ export default function StudioApp() {
   }, [activeFnIdx]);
 
   const switchActiveFn = (newIdx) => {
-    const curIdx = activeFnIdxRef.current;
+    // Ignore any call while a switch is already in flight (started, not yet committed) — rather
+    // than letting the ref bookkeeping below sort out an overlapping switch after the fact. A rapid
+    // double-tap on the pill (far more likely on a touchscreen than a mouse click, and the pill's own
+    // visual highlight/cursor still takes a render to update) used to be handled by falling through
+    // to the snapshot-skip guard a few lines down, which settles correctly on its own in the cases
+    // traced by hand, but closing the window here outright removes the need to reason about it at
+    // all: every click while switchingRef is true just waits for the in-flight switch to land
+    // (switchingRef only clears once activeFnIdx has actually committed — the effect right after its
+    // own declaration, a few lines above this function) instead of starting a second one that has to
+    // race it.
+    if (switchingRef.current) return;
+    // committedFnIdxRef, not activeFnIdxRef — see committedFnIdxRef's own comment. activeFnIdxRef can
+    // be left pointing at a function whose switch never actually rendered (the busy backstop a few
+    // lines down clears switchingRef after 3s even then), and this guard is now the ONLY thing
+    // standing between that stale value and snapshotFnRef.current() — which always captures whatever
+    // is REALLY on screen — getting filed under the wrong function's slot.
+    const curIdx = committedFnIdxRef.current;
     if (newIdx === curIdx) { setFnPending(null); return; }
     fnSwitchStartRef.current = performance.now();
     // Urgent and first: the loading state must be on screen before any of the heavy work below.
     fnBusyStartRef.current = performance.now();
     setFnBusy(true);
-    let builds = fnBuildsRef.current;
-    // Only snapshot when a switch ISN'T already in flight. Mid-switch the live state still belongs
-    // to the function we just left — which has already been stored — so snapshotting again would
-    // file it under the function we are now leaving and destroy that one's real build.
-    if (!switchingRef.current) {
-      builds = { ...builds, [curIdx]: snapshotFnRef.current() };
-      fnBuildsRef.current = builds;
-    }
+    // switchingRef.current is guaranteed false here (the guard above returned otherwise), so this
+    // always runs — there is no longer an "already mid-switch" case to skip it for, now that
+    // overlapping switches are refused at the top rather than tolerated and reasoned about here.
+    const builds = { ...fnBuildsRef.current, [curIdx]: snapshotFnRef.current() };
+    fnBuildsRef.current = builds;
     switchingRef.current = true;
     fnSwitchNoSaveRef.current = true;
     activeFnIdxRef.current = newIdx;
@@ -3936,6 +3967,100 @@ export default function StudioApp() {
   const activeCrossFnReuseQtyRef = useRef(null);
   const activeClientIdRef = useRef(null);
   useEffect(() => { activeClientIdRef.current = activeClientId; }, [activeClientId]);
+  // ── RE-SYNC THIS DEAL'S SESSIONS WHEN THE TAB COMES BACK ──
+  // Owner report 2026-11-10 (Rakesh Taneja): Function 1's real build kept silently reverting to
+  // Function 2's, specifically on an iPad. Root cause traced to a gap, not the save/switch logic
+  // itself: the studio_sessions realtime subscription just above only delivers events while the
+  // WebSocket is connected, and iOS Safari aggressively suspends a backgrounded tab's JS and drops
+  // its socket — far more readily than a desktop tab left in the foreground. Supabase Realtime does
+  // not replay missed events on reconnect; a tab that was asleep while someone else fixed/changed
+  // this deal elsewhere comes back with no idea anything happened, and nothing anywhere in Studio
+  // ever re-fetched client_ledger/studio_sessions on becoming visible again — every visibilitychange
+  // listener in this file (the floral-data one above, the autosave-flush ones below) only acts on
+  // the tab going HIDDEN, never on it coming back. Two things made that silent staleness dangerous
+  // instead of just inert: the stale-save guard (buildSaveBaselineRef/buildConflict, saveSession)
+  // checks this SAME tab's own (stale) copy of sessions[0] to decide whether a conflict exists, so a
+  // tab that never heard about a newer save sees no conflict and happily autosaves its old build
+  // right over it; and Event Info's "Load →" button (loadClientSessionGuarded) restores from
+  // whatever `client.sessions[0]` is already in this tab's React state, with no fresh fetch first —
+  // so a stale tab's "Load →" reloads its own stale (possibly already-wrong) understanding of the
+  // deal, and the very next autosave re-persists exactly that, discarding whatever was just fixed
+  // elsewhere. This refetches ONLY `sessions` for the currently-open client — nothing else on the
+  // record (name/phone/eventDate/venue/functions, anything mid-edit on Event Info right now) is
+  // touched — whenever the tab regains visibility or focus, so the staleness guard always has fresh
+  // ground truth to check against. Throttled to once per 30s per the floral-data refresh's own
+  // reasoning (visibilitychange and focus can both fire for the same return-to-tab).
+  // { clientId, at } — keyed to the client it last refreshed, not a bare timestamp, so switching to
+  // a DIFFERENT client within the 30s window still gets its own immediate refresh instead of being
+  // silently skipped by whichever client used up the throttle first (regression caught on review).
+  const lastClientSessionsRefreshRef = useRef({ clientId: null, at: 0 });
+  useEffect(() => {
+    if (!activeClientId) return;
+    let cancelled = false;
+    const refresh = async () => {
+      if (document.visibilityState === "hidden") return;
+      const now = Date.now();
+      const last = lastClientSessionsRefreshRef.current;
+      if (last.clientId === activeClientId && now - last.at < 30000) return;
+      lastClientSessionsRefreshRef.current = { clientId: activeClientId, at: now };
+      try {
+        // A plain newest-200-rows cut, not recent_studio_sessions() (migration 029) — that RPC has
+        // no per-client filter, and calling it unscoped here would re-download every client's kept
+        // sessions just to refresh one. Noted limitation (flagged on review, not worth a new RPC for
+        // right now): unlike 029's own per-session ranking, this can disagree with it in two rare
+        // cases — a deleted function's leftover older row still existing, or a single deal with more
+        // than ~20 functions pushing a kept session's own rows past this 200-row cut. Neither has
+        // been seen in practice; if it ever matters, give 029 an optional client_id filter instead.
+        const { data: srows, error } = await supabase.from("studio_sessions").select("*")
+          .eq("client_id", activeClientId).order("saved_at", { ascending: false }).limit(200);
+        if (error || cancelled) return;
+        const freshSessions = Array.isArray(srows) && srows.length ? rowsToSessions(srows) : [];
+        // The freshest savedAt this fetch actually saw — used below to tell "this tab's own save,
+        // already written locally, just hasn't echoed back through the realtime subscription or this
+        // fetch yet" apart from "a genuinely older, now-stale local copy".
+        const freshTop = Number(freshSessions[0]?.savedAt) || 0;
+        setClientLedger((prev) => {
+          const i = prev.findIndex((c) => c.id === activeClientId);
+          if (i < 0) return prev;
+          const localSessions = prev[i].sessions || [];
+          // Keep any of THIS tab's own local sessions newer than anything the fetch saw (regression
+          // caught on review): saveSession writes the new session into local state immediately and
+          // only persists it afterward (or on a keepalive hide-flush) — a refresh landing in that
+          // narrow gap, or racing a just-created client's very first save, must not make this tab's
+          // own brand-new, not-yet-confirmed save vanish from its own sessions[0].
+          const unconfirmedLocal = localSessions.filter((s) => (Number(s?.savedAt) || 0) > freshTop);
+          // Drop any fresh entry whose id is ALSO in unconfirmedLocal (regression caught on review):
+          // collapseInPlace (this file's own autosave-collapse logic) reuses a session's id with a
+          // new savedAt rather than minting a fresh one, so a refresh landing between a local collapse
+          // and that write landing on the server can otherwise see the SAME id twice — once from
+          // unconfirmedLocal (newer), once from freshSessions (the server's still-older copy of the
+          // same row) — a duplicate that only cleared itself once a later refresh caught up.
+          const keepIds = new Set(unconfirmedLocal.map((s) => s?.id));
+          const merged = [...unconfirmedLocal, ...freshSessions.filter((s) => !keepIds.has(s?.id))].slice(0, SESSION_KEEP);
+          if (JSON.stringify(merged) === JSON.stringify(localSessions)) return prev;
+          const nextClient = { ...prev[i], sessions: merged };
+          // If this tab had no OTHER unsaved edit pending on this client (clientJsonRef holds what
+          // was last confirmed written), advance that baseline to match — otherwise this purely
+          // server-driven refresh reads as a local edit on the very next saveClientLedger, and a tab
+          // that touched nothing of its own (e.g. just sitting on a different screen entirely) would
+          // upload this client's record with no real change behind it, and with no staleness check
+          // of its own on that path (regression caught on review — see merge_client_ledger_rows,
+          // migration 034). A tab that DOES have a genuine pending edit keeps its existing baseline,
+          // so that edit still uploads normally.
+          if (clientJsonRef.current?.[activeClientId] === JSON.stringify(prev[i])) {
+            clientJsonRef.current[activeClientId] = JSON.stringify(nextClient);
+          }
+          const next = prev.map((c, ci) => (ci === i ? nextClient : c));
+          clientLedgerRef.current = next;
+          return next;
+        });
+      } catch { /* best-effort — the realtime subscription above is still the primary path; a failed refetch here just leaves the existing copy in place for next time */ }
+    };
+    refresh(); // also catch up right away — this client may already have gone stale before becoming active in this tab
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => { cancelled = true; document.removeEventListener("visibilitychange", refresh); window.removeEventListener("focus", refresh); };
+  }, [activeClientId]);
   // Serialised snapshot of every client as last written, keyed by id. The dirty check USED to hold
   // the previous client OBJECTS and compare them to the incoming ones — but callers build their new
   // ledger with `[...clientLedger]`, a shallow copy, then mutate the client in place
@@ -4207,7 +4332,13 @@ export default function StudioApp() {
       // Same guard, same reasoning, as saveSession's own copy (see its comment) — this is yet
       // another write this exact in-memory data feeds (event_orders.functionsDetail, what IMS
       // reads), and the confirmed incident (Sangeeta, 2026-11-03) could have hit this path too.
-      const unsafeFnIdxs = suspiciousDuplicateFnIdxs(allFns, activeFnIdxRef.current);
+      // committedFnIdxRef, not activeFnIdxRef (regression-caught 2026-11-10 follow-up): allFns itself
+      // comes from the committed activeFnIdx/fnBuilds state (collectAllFunctionDataRef, set in the
+      // same layout effect as committedFnIdxRef), so "which function is active" has to be read the
+      // same way or this and saveSession could disagree on which side of a detected collision to
+      // trust during a stuck switch (saveSession trusting the old function, this trusting the new,
+      // never-rendered one) — pushing a copy of the old function's content into the new one's IMS slot.
+      const unsafeFnIdxs = suspiciousDuplicateFnIdxs(allFns, committedFnIdxRef.current);
       allFns.forEach(fd => {
         if (unsafeFnIdxs.has(fd.fnIdx)) {
           console.warn(`[persistDeptSnapshot] Function ${fd.fnIdx + 1}'s decor content exactly matches another function's — refusing to push it to IMS this cycle.`);
@@ -4366,7 +4497,9 @@ export default function StudioApp() {
       // Same guard, same reasoning, as saveSession's own copy (see its comment) — this is the
       // OTHER write this exact in-memory data feeds (event_orders.functionsDetail, what IMS reads),
       // and the confirmed incident (Sangeeta, 2026-11-03) hit both within seconds of each other.
-      const unsafeFnIdxs = suspiciousDuplicateFnIdxs(allFns, activeFnIdxRef.current);
+      // committedFnIdxRef, not activeFnIdxRef — see the other call site's own comment, a few hundred
+      // lines up, for why (regression-caught 2026-11-10 follow-up).
+      const unsafeFnIdxs = suspiciousDuplicateFnIdxs(allFns, committedFnIdxRef.current);
       allFns.forEach(fd => {
         if (unsafeFnIdxs.has(fd.fnIdx)) {
           console.warn(`[persistBuildLayoutSnapshot] Function ${fd.fnIdx + 1}'s decor content exactly matches another function's — refusing to push it to IMS this cycle.`);
@@ -5130,7 +5263,14 @@ export default function StudioApp() {
         // second same-day function at a different venue competed for the SAME pool as the first,
         // exactly as if it were a completely different client's deal on that date.
         const alloc = allocateRowAvailability(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName);
-        rowMaxQty = maxQtyForRow(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName);
+        // crossFnSiblingsFree (last arg, only when a venue is known — see maxQtyForRow's own
+        // comment): a sibling FUNCTION at this exact same date+venue is, by this deal's own
+        // cross-function reuse rule (findCrossFnReuseSource, dayDiff === 0), always reuse-eligible —
+        // its units were never really "someone else's" demand, just this deal's own stock already
+        // standing here. allocateRowAvailability (ownedQty/shortQty, for pricing) is untouched —
+        // pricing's own reuse credit (crossFnTake/crossFnBonus below) already handles that
+        // separately and correctly; this only affects the typed-quantity CEILING.
+        rowMaxQty = maxQtyForRow(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName, !!opts?.venueName);
         ownedQty = alloc.ownedQty; shortQty = alloc.shortQty;
       } else {
         ownedQty = Math.min(qty, otherEventsAvail);
@@ -5171,12 +5311,24 @@ export default function StudioApp() {
       const outOfStock = shortQty > 0 && !canMakeShort;
       // maxQty: the ceiling on a quantity typed or stepped in Build — what stock can actually cover on this date,
       // for EVERY inventory item (owner ask: ask for 140 of something with 130 and it lands on 130, tagged short).
-      // A row already above it (saved earlier) keeps pricing its excess as before. Units reused from the deal's
-      // preceding function count as owned, so they raise the ceiling too. An item the studio owns NONE of (IMS qty 0 —
-      // made-to-order things like a customised ceiling) has no stock to hold a number to, so it is not capped.
-      // An item ticked "Can be made" in IMS Inventory is not capped either (owner ask 2026-11-06): production makes whatever stock
-      // does not cover, so Build takes any quantity - free or not. The part past stock is still marked short and priced at cost%.
-      const maxQty = Number(item.qty) > 0 && item.canBeMade !== true ? rowMaxQty + crossFnTake : null;
+      // A row already above it (saved earlier) keeps pricing its excess as before. A same-day sibling function's
+      // units already don't count against this ceiling — rowMaxQty itself excludes them (maxQtyForRow's
+      // crossFnSiblingsFree flag, passed above) rather than subtracting them and adding a separate "reuse bonus"
+      // back on top (plain rowMaxQty, no `+ crossFnTake` the way this line read before today). Two earlier
+      // attempts today tried exactly that subtract-then-credit-back shape (owner report 2026-11-10) and were
+      // both caught on regression review before shipping: maxQtyForRow clamps its result at 0, so once same-day
+      // siblings already used more than the naive pool, the negative was discarded and ANY bonus added after that
+      // clamp created headroom with no basis in physical stock — reachable by a brand-new row in one keystroke,
+      // with no short/warning flag at all. The ORIGINAL `rowMaxQty + crossFnTake` (before today) had this exact
+      // same overshoot bug for a day-before sibling too (crossFnTake = min(qty, pool) grows with the row's own
+      // qty, so a row typed large enough could already reach it) — this isn't a narrower fix than before, it's a
+      // strictly safer one, just scoped to same-date reuse only (day-before reuse still prices correctly via
+      // crossFnTake/crossFnBonus below, it just no longer inflates the ceiling). An item the studio owns NONE of
+      // (IMS qty 0 — made-to-order things like a customised ceiling) has no stock to hold a number to, so it is
+      // not capped. An item ticked "Can be made" in IMS Inventory is not capped either (owner ask 2026-11-06):
+      // production makes whatever stock does not cover, so Build takes any quantity - free or not. The part past
+      // stock is still marked short and priced at cost%.
+      const maxQty = Number(item.qty) > 0 && item.canBeMade !== true ? rowMaxQty : null;
       // Why it is short, for the card's "⚠ short" hover: where the stock is - kept at fixed venues, blocked in IMS, booked by
       // another event that date, or used elsewhere in this deal - so a short with no event on the calendar explains itself.
       const shortWhy = shortQty > 0 ? (() => {
@@ -8330,7 +8482,15 @@ export default function StudioApp() {
     // between a function switch's setState and the re-render that would refresh this callback.
     // Taking the index from one render and the builds from another files a snapshot under the
     // wrong function — the same class of bug switchActiveFn had.
-    const liveIdx = activeFnIdxRef.current;
+    // committedFnIdxRef, not activeFnIdxRef, for the exact same reason switchActiveFn's own curIdx
+    // now reads it (see committedFnIdxRef's own comment, next to activeFnIdxRef's declaration):
+    // activeFnIdxRef can be sitting on a function whose switch never actually rendered (manual
+    // "Save now"/booking saves, unlike the autosave/hide-flush paths, never checked switchingRef at
+    // all), while takeSnapshot() below always captures whatever committedFnIdxRef names — using
+    // activeFnIdxRef here could label that live canvas under the WRONG, not-yet-rendered function,
+    // exactly the "one function's build became a copy of another's" symptom (owner report
+    // 2026-11-10, Rakesh Taneja), just reached through a manual save instead of a timer race.
+    const liveIdx = committedFnIdxRef.current;
     const liveBuilds = fnBuildsRef.current;
     const liveMeta = fnMetaRef.current;
     // The most recent save of THIS deal, read the same way the write below reads it. Only needed so
@@ -8843,6 +9003,22 @@ export default function StudioApp() {
   // Populated once runDealCheckGenerate is declared further down (ref-sync effect right after its
   // own declaration) — autoSaveBuild needs to call it, but is declared long before it exists.
   const runDealCheckGenerateRef = useRef(null);
+  // Client ids a runDealCheckGenerate call is CURRENTLY in flight for — see runDealCheckGenerate's own
+  // in-flight guard comment. This reconcile now has four independent triggers for the same sold deal
+  // (markSold, Apply Changes, the headless auto-fill, and the post-edit autosave) that can all fire
+  // within seconds of each other; without this, two overlapping runs for the SAME client could race on
+  // that one event's `blocks` upsert, each built from a different intermediate snapshot of dcCards.
+  // A Set, not a single clientId-or-null scalar (regression-caught on review of the first version):
+  // two DIFFERENT clients legitimately running at once is fine and must not block each other, but a
+  // single scalar slot can only remember the MOST RECENTLY started client — a second client's call
+  // starting while the first is still in flight would silently overwrite the shared slot, making the
+  // first client's own still-running call invisible to a LATER same-client call that should have been
+  // refused against it. Each client gets its own entry; clearing one can never touch another's.
+  const dcGenInFlightRef = useRef(new Set());
+  // The latest refused request per client, replayed once that client's in-flight run finishes (see
+  // runDealCheckGenerate's own `finally`) — a refused call used to just vanish with nothing queued,
+  // reopening the exact "this edit never got reconciled" gap the in-flight guard exists alongside.
+  const dcGenRerunPendingRef = useRef(new Map());
   const buildHasDataRef = useRef(false);
   useEffect(() => {
     // Auto-save as soon as there's a named deal with any build data — even a BRAND-NEW deal with no
@@ -9491,6 +9667,21 @@ export default function StudioApp() {
       saveClientLedger(updated);
       const pushed = await pushEventOrderPlan(client);
       if (!pushed) return;
+      // ── RESERVE INVENTORY THE MOMENT A DEAL IS ACTUALLY SOLD ──
+      // Same gap, same fix, as applyBookedChanges's own copy (see its comment) — reconcileSoldInventoryBlocks
+      // (the only writer of real `blocks` table rows) only ever ran from inside runDealCheckGenerate, i.e.
+      // only once Deal Check was actually opened/regenerated for this deal. markSold itself never triggered
+      // it, so a freshly-booked deal could sit with NOTHING reserved in the real stock table at all until
+      // someone separately opened Deal Check — the single moment this reservation matters most (confirming
+      // a booking is exactly when another deal must stop being able to oversell the same stock).
+      // Fire-and-forget, NOT awaited (regression-caught): this call downloads the full IMS inventory +
+      // blocks tables and does per-zone name matching, realistically 1-4s — awaiting it held up the
+      // confetti/success toast for work that's silent anyway (skipAi, silent) and can't change the
+      // outcome shown to the salesperson. The in-flight guard inside runDealCheckGenerate itself
+      // (dcGenInFlightRef) is what actually protects this from racing the deal's other three existing
+      // reconcile triggers (Apply Changes, the headless auto-fill, the post-edit autosave) — not the
+      // await, which this never relied on for correctness.
+      runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true })?.catch((e) => console.warn("[markSold] inventory reconcile failed:", e?.message || e));
       setShowSoldConfetti(true);
       setTimeout(() => setShowSoldConfetti(false), 4000);
       showMsg("🎉 Booking confirmed for " + client.name, "green");
@@ -9534,6 +9725,31 @@ export default function StudioApp() {
       }
       const pushed = await pushEventOrderPlan(freshClient, { skipDupeConfirm: true, activityVerb: "Booking updated", activityEmoji: "✏️" });
       if (!pushed) return false;
+      // ── RE-RESERVE INVENTORY FOR THIS EDIT, NOT JUST ON A DEAL CHECK REGENERATE ──
+      // reconcileSoldInventoryBlocks (the ONLY writer of real `blocks` table rows for a sold deal)
+      // only ever ran from inside runDealCheckGenerate — i.e. only when Deal Check itself was
+      // (re)opened/regenerated for this deal, never from this, the actual everyday path a
+      // salesperson uses to edit an already-booked deal's build. A quantity added or increased here
+      // was saved to the deal and pushed to event_orders.functionsDetail (what IMS's own screens
+      // read) with no corresponding update to the real stock reservation — so the item still read as
+      // under-committed system-wide, and a SEPARATE deal could be sold against the very units this
+      // one had just (for real) committed to. Confirmed live (owner report 2026-11-10): a deal's
+      // Mehendi function gained 2 Wooden Pedestals this way; Deal Check was never reopened
+      // afterward; a second, unrelated deal's draft then saw 2 phantom-free units that didn't
+      // actually exist, with no warning at all.
+      // skipAi (established pattern — see the Deal Check auto-fill effect, same call shape): plain
+      // name/id matching only, no vision-model calls — free, and deliberately does NOT consume the
+      // post-sold Deal Check run-limit counter (gated on `!skipAi` inside runDealCheckGenerate),
+      // since this must run on every single booked-deal edit, not count against that budget. A new
+      // item this run can't match by name alone stays unreserved until an actual Deal Check
+      // regenerate resolves it with AI matching — same limit as skipAi's existing use, not a new gap.
+      // silent: true — this is a background reservation sync, not something the salesperson asked to
+      // see; `pushed` above already confirms the booking update itself succeeded, and a failure here
+      // shouldn't block or alarm on a change that already saved and pushed correctly.
+      // Fire-and-forget, NOT awaited — see markSold's identical comment on why; the in-flight guard
+      // inside runDealCheckGenerate itself is what protects this from racing the deal's other
+      // existing reconcile triggers, not the await.
+      runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true })?.catch((e) => console.warn("[applyBookedChanges] inventory reconcile failed:", e?.message || e));
       showMsg(`Changes applied for ${freshClient.name}`, "green");
       return true;
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); return false; }
@@ -11559,20 +11775,34 @@ export default function StudioApp() {
       // One row PER print job (not one lumped "Print (N jobs)" row) — each job can be a different
       // material/size/qty, so a single combined row had nothing sensible to put in Size/Qty/Rate
       // and left them blank in the cost sheet even though the money (zl.print) was already correct.
+      //
+      // Each row's total is this job's SHARE of zl.print (already Fixed-Venue/Repeat-discounted and
+      // guestPriceMultiplier-scaled by calcStructCost/scaleStruct), not its own raw dims×rate×qty —
+      // same pattern the Platform/Carpet rows just above already use (_platRaw/_platRawSumP/_platRawSumC
+      // → `zl.platform * share`). A row priced straight off raw dims×rate missed BOTH the multiplier
+      // (the chip/zone total already had it) and the discount (a Fixed-Venue/Repeat print job's row
+      // total ran ~33% over what the zone actually charges, and the rows no longer summed to zl.total).
+      // zl.printFlat (the flat ₹400 small-print transport charge, never discounted/scaled — see
+      // withPrintFlat) is subtracted out first since it isn't a per-job amount to share; it gets its
+      // own flat line just below.
+      const _printRawSum = (zc.prints || []).reduce((s, p) => {
+        const m = (structRates.printMaterials || []).find((x) => x.id === p.material);
+        const pw = Number(p.areaW) || 0, pd = Number(p.areaD) || 0;
+        const pq = Math.max(1, Math.round(Number(p.qty) || 1));
+        return s + pw * pd * (m?.ratePerSqft || 0) * pq;
+      }, 0);
+      const _printGuestTotal = Math.max(0, (zl.print || 0) - (zl.printFlat || 0));
       (zc.prints || []).forEach((p) => {
         const m = (structRates.printMaterials || []).find((x) => x.id === p.material);
         const pw = Number(p.areaW) || 0, pd = Number(p.areaD) || 0;
         const pq = Math.max(1, Math.round(Number(p.qty) || 1));
         const pRate = m?.ratePerSqft || 0;
-        // guestPriceMultiplier — every other guest-facing cost on this page folds it in (scaleStruct,
-        // getElPriceForFn, truck/genset); this one row computed straight from raw dims×rate and never
-        // did, so a Print line item understated itself next to a zone/function total (zl.total, via
-        // scaleStruct) that already had the multiplier baked in — the line items could never be summed
-        // back up to match the total they supposedly made up.
-        const pTotal = pw * pd * pRate * pq * guestPriceMultiplier;
-        if (pTotal <= 0) return;
-        // Same fold for the displayed rate as pTotal just above it, so Rate × Qty still reads as
-        // Amount on the sheet instead of a stale pre-markup number next to an already-scaled total.
+        const pRaw = pw * pd * pRate * pq;
+        if (pRaw <= 0) return;
+        const share = _printRawSum > 0 ? pRaw / _printRawSum : 0;
+        const pTotal = _printGuestTotal * share;
+        // guestPriceMultiplier only — the rate caption deliberately stays at the undiscounted list
+        // rate, same convention the Truss/Platform/Carpet rate captions on this sheet already follow.
         const pRateShown = Math.round(pRate * guestPriceMultiplier * 100) / 100;
         structItems.push({
           name: "🖨 Print — " + (m?.name || "material") + " ₹" + pRateShown + "/sqft" + (pq > 1 ? " ×" + pq : ""),
@@ -11586,7 +11816,7 @@ export default function StudioApp() {
         const isP = ci.type === "production";
         const unitCost = ci.manualPrice || ci.refPrice || 0;
         const lineCost = unitCost * (Number(ci.qty) || 1);
-        if (lineCost > 0) items.push({ name: (isP ? "🏭 " : "🛒 ") + (ci.subCat || ci.cat || "Custom"), size: "", qty: Number(ci.qty) || 1, unit: "pc", rate: unitCost, total: lineCost, isCustom: true, customType: ci.type });
+        if (lineCost > 0) items.push({ name: (isP ? "🏭 " : "🛒 ") + (ci.subCat || ci.name || ci.cat || "Custom"), size: "", qty: Number(ci.qty) || 1, unit: "pc", rate: unitCost, total: lineCost, isCustom: true, customType: ci.type });
       });
       const ic = items.reduce((s, i) => s + i.total, 0);
       return { k, label: el.label, icon: el.icon, tier: t, items, structItems, structTotal: zl.total, itemTotal: ic, zoneTotal: ic + zl.total, roundAdj, note: fElNotes[k] || "", dims, dimLabel, photo: fElSelectedPhoto[k]?.src || null, photoName: fElSelectedPhoto[k]?.eventName || "" };
@@ -13009,11 +13239,38 @@ export default function StudioApp() {
       showMsg(msg, "red");
       return { ok: false, blocked: true };
     }
+    // Regression-caught (2026-11-10, reviewing the booked-deal reconcile fix below): a run that is
+    // already in flight for this client must not start a second one. reconcileSoldInventoryBlocks
+    // re-derives this event's ENTIRE blocks entry from this run's own matched cards each time it
+    // runs — two overlapping runs racing on the same upsert, built from two different intermediate
+    // states of dcCards, is the exact "two async writers sharing mutable state" class of bug every
+    // other fix today has been about. With a sold deal now reconciling from markSold, from Apply
+    // Changes, from the existing headless auto-fill, AND from the existing post-edit autosave, the
+    // same client can trigger several of these within seconds of each other.
+    // Regression-caught (second pass): a refused call used to just vanish — no rerun queued — which
+    // reopens exactly the gap this whole fix exists to close. A booked-deal edit landing while an
+    // EARLIER run for the same client is still in flight (its reconcile necessarily built from the
+    // build as it stood before this edit) would never reconcile the edit at all unless some OTHER,
+    // unrelated trigger happened to fire again later. Queue it instead: record the latest refused
+    // request per client, and the in-flight run's own `finally` kicks off exactly one more run with
+    // those args the moment it's done — so the freshest request always eventually runs, even though
+    // it was refused in the moment.
+    if (dcGenInFlightRef.current.has(activeClientId)) {
+      dcGenRerunPendingRef.current.set(activeClientId, { fnIdxFilter, opts: { skipAi, silent } });
+      return { ok: false, blocked: true, reason: "already-running" };
+    }
+    dcGenInFlightRef.current.add(activeClientId);
+    try {
     setDcGenerating(true);
     setDcGenStatus("Loading IMS inventory…");
     const firstDate = (cli.functions?.[0]?.date) || cli.eventDate || clientDate || "";
     const ims = await fetchIMSData(firstDate);
-    if (!ims || !Array.isArray(ims.inventory)) {
+    // Regression-caught: fetchRawIMS swallows a failed inventory download into an EMPTY array, not
+    // null (`fetchAll("inventory").catch(() => [])`) — so a transient network failure used to sail
+    // past this check, every card then matched nothing, and reconcileSoldInventoryBlocks released
+    // EVERY reservation this event held, for a sold deal, because of a blip that had nothing to do
+    // with its actual stock. Treat an empty inventory the same as a missing one.
+    if (!ims || !Array.isArray(ims.inventory) || ims.inventory.length === 0) {
       setDcGenerating(false); setDcGenStatus("");
       if (!silent) showMsg("IMS unreachable — try again", "red");
       return { ok: false, error: "ims-unreachable" };
@@ -13249,6 +13506,30 @@ export default function StudioApp() {
       ? `Deal Check ready · ${cardsUnmatched} item${cardsUnmatched === 1 ? "" : "s"} couldn't be matched to IMS — please check`
       : "Deal Check ready", "green");
     return { ok: true, summary: { zonesProcessed, cardsResolved, cardsAi, cardsNameMatch, cardsUnmatched } };
+    } finally {
+      dcGenInFlightRef.current.delete(activeClientId);
+      // Replay the latest request that got refused while this run was in flight, if any — see the
+      // guard's own comment above for why this must not just drop it. Fire-and-forget: this finally
+      // belongs to the run that's ending, not to whatever request queued behind it, so the rerun's
+      // own promise is deliberately not awaited or returned here.
+      // runDealCheckGenerateRef.current, NOT the bare `runDealCheckGenerate` name (regression-caught,
+      // third pass): a direct self-call closes over THIS run's own closure — clientLedger, dcCards,
+      // collectAllFunctionData, etc. — frozen as of whenever THIS run started, which is exactly the
+      // stale state the refused request was trying to get away from. The ref is kept pointing at the
+      // latest render's function (useEffect right below this one), so going through it is what
+      // actually lets the replay see the edit that got it queued in the first place. Also check
+      // activeClientIdRef — the live ref, not this call's own frozen `activeClientId` — hasn't moved
+      // on to a different client in the meantime; a replay for a client the user has since left would
+      // reconcile the wrong deal's state under the wrong one. Dropping it in that case is fine: the
+      // headless auto-fill already re-reconciles whenever that client becomes active again.
+      const pending = dcGenRerunPendingRef.current.get(activeClientId);
+      if (pending) {
+        dcGenRerunPendingRef.current.delete(activeClientId);
+        if (activeClientIdRef.current === activeClientId) {
+          runDealCheckGenerateRef.current?.(pending.fnIdxFilter, pending.opts)?.catch((e) => console.warn("[runDealCheckGenerate] queued rerun failed:", e?.message || e));
+        }
+      }
+    }
   }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, dcKitEdits, floralHardPropMap, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, reconcileSoldInventoryBlocks]);
   useEffect(() => { runDealCheckGenerateRef.current = runDealCheckGenerate; });
 
