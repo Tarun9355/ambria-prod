@@ -2348,6 +2348,21 @@ export default function StudioApp() {
   // is advanced synchronously below so a burst of clicks chains correctly instead of each one
   // starting from the same stale point.
   const activeFnIdxRef = useRef(0);
+  // activeFnIdxRef (above) is written OPTIMISTICALLY, synchronously, the instant switchActiveFn is
+  // called — before the transition it starts has actually rendered anything. committedFnIdxRef is
+  // the other half of the same guarantee activeFnIdxRef/fnBuildsRef/snapshotFnRef already promise
+  // each other ("refs are updated at commit, so curIdx/builds/snapshot always agree"): it is set in
+  // the SAME useLayoutEffect as snapshotFnRef below, so it only ever reflects whichever function's
+  // canvas is ACTUALLY on screen right now — never a switch that's merely been started.
+  // Real, regression-confirmed gap this closes (owner report 2026-11-10, Rakesh Taneja): the 3-second
+  // busy backstop a few lines down clears switchingRef even when a switch's transition never actually
+  // committed (slow device, exactly the reported iPad) — activeFnIdxRef is by then already sitting on
+  // the NEW (never-rendered) index, while the live canvas snapshotFnRef would capture still shows the
+  // OLD function. A click landing in that reopened window used to read curIdx off activeFnIdxRef and
+  // file a snapshot of the wrong (still-showing) function under the wrong (never-rendered) index —
+  // the exact "one function's build silently became a byte-for-byte copy of another's" symptom.
+  // committedFnIdxRef can't be fooled this way: it only ever advances when activeFnIdx itself commits.
+  const committedFnIdxRef = useRef(0);
   const fnBuildsRef = useRef({});
   // Same reason as activeFnIdxRef/fnBuildsRef: saveSession stamps each function's OWN type/date/
   // venue from these four (fn/clientDate/venue = function 1's own fields, extraFunctions = every
@@ -2400,7 +2415,10 @@ export default function StudioApp() {
   // Layout for the same reason as saveSessionRef below — switchActiveFn calls this one
   // SYNCHRONOUSLY on the click and files the result as the function's build, so it should be
   // reading the latest commit rather than whatever was current before the last paint.
-  useLayoutEffect(() => { snapshotFnRef.current = snapshotBuildState; });
+  // committedFnIdxRef (see its own comment, next to activeFnIdxRef) is set HERE, in the same
+  // layout effect as snapshotFnRef, deliberately — they must only ever change together, since one
+  // names which function a snapshot belongs to and the other takes the snapshot itself.
+  useLayoutEffect(() => { snapshotFnRef.current = snapshotBuildState; committedFnIdxRef.current = activeFnIdx; });
 
   // Rebuilding a function's whole canvas is heavy enough to block for a moment. Marked as a
   // transition so React keeps the page interactive while it renders and tells us it's working
@@ -2484,20 +2502,33 @@ export default function StudioApp() {
   }, [activeFnIdx]);
 
   const switchActiveFn = (newIdx) => {
-    const curIdx = activeFnIdxRef.current;
+    // Ignore any call while a switch is already in flight (started, not yet committed) — rather
+    // than letting the ref bookkeeping below sort out an overlapping switch after the fact. A rapid
+    // double-tap on the pill (far more likely on a touchscreen than a mouse click, and the pill's own
+    // visual highlight/cursor still takes a render to update) used to be handled by falling through
+    // to the snapshot-skip guard a few lines down, which settles correctly on its own in the cases
+    // traced by hand, but closing the window here outright removes the need to reason about it at
+    // all: every click while switchingRef is true just waits for the in-flight switch to land
+    // (switchingRef only clears once activeFnIdx has actually committed — the effect right after its
+    // own declaration, a few lines above this function) instead of starting a second one that has to
+    // race it.
+    if (switchingRef.current) return;
+    // committedFnIdxRef, not activeFnIdxRef — see committedFnIdxRef's own comment. activeFnIdxRef can
+    // be left pointing at a function whose switch never actually rendered (the busy backstop a few
+    // lines down clears switchingRef after 3s even then), and this guard is now the ONLY thing
+    // standing between that stale value and snapshotFnRef.current() — which always captures whatever
+    // is REALLY on screen — getting filed under the wrong function's slot.
+    const curIdx = committedFnIdxRef.current;
     if (newIdx === curIdx) { setFnPending(null); return; }
     fnSwitchStartRef.current = performance.now();
     // Urgent and first: the loading state must be on screen before any of the heavy work below.
     fnBusyStartRef.current = performance.now();
     setFnBusy(true);
-    let builds = fnBuildsRef.current;
-    // Only snapshot when a switch ISN'T already in flight. Mid-switch the live state still belongs
-    // to the function we just left — which has already been stored — so snapshotting again would
-    // file it under the function we are now leaving and destroy that one's real build.
-    if (!switchingRef.current) {
-      builds = { ...builds, [curIdx]: snapshotFnRef.current() };
-      fnBuildsRef.current = builds;
-    }
+    // switchingRef.current is guaranteed false here (the guard above returned otherwise), so this
+    // always runs — there is no longer an "already mid-switch" case to skip it for, now that
+    // overlapping switches are refused at the top rather than tolerated and reasoned about here.
+    const builds = { ...fnBuildsRef.current, [curIdx]: snapshotFnRef.current() };
+    fnBuildsRef.current = builds;
     switchingRef.current = true;
     fnSwitchNoSaveRef.current = true;
     activeFnIdxRef.current = newIdx;
@@ -3935,6 +3966,100 @@ export default function StudioApp() {
   const activeCrossFnReuseQtyRef = useRef(null);
   const activeClientIdRef = useRef(null);
   useEffect(() => { activeClientIdRef.current = activeClientId; }, [activeClientId]);
+  // ── RE-SYNC THIS DEAL'S SESSIONS WHEN THE TAB COMES BACK ──
+  // Owner report 2026-11-10 (Rakesh Taneja): Function 1's real build kept silently reverting to
+  // Function 2's, specifically on an iPad. Root cause traced to a gap, not the save/switch logic
+  // itself: the studio_sessions realtime subscription just above only delivers events while the
+  // WebSocket is connected, and iOS Safari aggressively suspends a backgrounded tab's JS and drops
+  // its socket — far more readily than a desktop tab left in the foreground. Supabase Realtime does
+  // not replay missed events on reconnect; a tab that was asleep while someone else fixed/changed
+  // this deal elsewhere comes back with no idea anything happened, and nothing anywhere in Studio
+  // ever re-fetched client_ledger/studio_sessions on becoming visible again — every visibilitychange
+  // listener in this file (the floral-data one above, the autosave-flush ones below) only acts on
+  // the tab going HIDDEN, never on it coming back. Two things made that silent staleness dangerous
+  // instead of just inert: the stale-save guard (buildSaveBaselineRef/buildConflict, saveSession)
+  // checks this SAME tab's own (stale) copy of sessions[0] to decide whether a conflict exists, so a
+  // tab that never heard about a newer save sees no conflict and happily autosaves its old build
+  // right over it; and Event Info's "Load →" button (loadClientSessionGuarded) restores from
+  // whatever `client.sessions[0]` is already in this tab's React state, with no fresh fetch first —
+  // so a stale tab's "Load →" reloads its own stale (possibly already-wrong) understanding of the
+  // deal, and the very next autosave re-persists exactly that, discarding whatever was just fixed
+  // elsewhere. This refetches ONLY `sessions` for the currently-open client — nothing else on the
+  // record (name/phone/eventDate/venue/functions, anything mid-edit on Event Info right now) is
+  // touched — whenever the tab regains visibility or focus, so the staleness guard always has fresh
+  // ground truth to check against. Throttled to once per 30s per the floral-data refresh's own
+  // reasoning (visibilitychange and focus can both fire for the same return-to-tab).
+  // { clientId, at } — keyed to the client it last refreshed, not a bare timestamp, so switching to
+  // a DIFFERENT client within the 30s window still gets its own immediate refresh instead of being
+  // silently skipped by whichever client used up the throttle first (regression caught on review).
+  const lastClientSessionsRefreshRef = useRef({ clientId: null, at: 0 });
+  useEffect(() => {
+    if (!activeClientId) return;
+    let cancelled = false;
+    const refresh = async () => {
+      if (document.visibilityState === "hidden") return;
+      const now = Date.now();
+      const last = lastClientSessionsRefreshRef.current;
+      if (last.clientId === activeClientId && now - last.at < 30000) return;
+      lastClientSessionsRefreshRef.current = { clientId: activeClientId, at: now };
+      try {
+        // A plain newest-200-rows cut, not recent_studio_sessions() (migration 029) — that RPC has
+        // no per-client filter, and calling it unscoped here would re-download every client's kept
+        // sessions just to refresh one. Noted limitation (flagged on review, not worth a new RPC for
+        // right now): unlike 029's own per-session ranking, this can disagree with it in two rare
+        // cases — a deleted function's leftover older row still existing, or a single deal with more
+        // than ~20 functions pushing a kept session's own rows past this 200-row cut. Neither has
+        // been seen in practice; if it ever matters, give 029 an optional client_id filter instead.
+        const { data: srows, error } = await supabase.from("studio_sessions").select("*")
+          .eq("client_id", activeClientId).order("saved_at", { ascending: false }).limit(200);
+        if (error || cancelled) return;
+        const freshSessions = Array.isArray(srows) && srows.length ? rowsToSessions(srows) : [];
+        // The freshest savedAt this fetch actually saw — used below to tell "this tab's own save,
+        // already written locally, just hasn't echoed back through the realtime subscription or this
+        // fetch yet" apart from "a genuinely older, now-stale local copy".
+        const freshTop = Number(freshSessions[0]?.savedAt) || 0;
+        setClientLedger((prev) => {
+          const i = prev.findIndex((c) => c.id === activeClientId);
+          if (i < 0) return prev;
+          const localSessions = prev[i].sessions || [];
+          // Keep any of THIS tab's own local sessions newer than anything the fetch saw (regression
+          // caught on review): saveSession writes the new session into local state immediately and
+          // only persists it afterward (or on a keepalive hide-flush) — a refresh landing in that
+          // narrow gap, or racing a just-created client's very first save, must not make this tab's
+          // own brand-new, not-yet-confirmed save vanish from its own sessions[0].
+          const unconfirmedLocal = localSessions.filter((s) => (Number(s?.savedAt) || 0) > freshTop);
+          // Drop any fresh entry whose id is ALSO in unconfirmedLocal (regression caught on review):
+          // collapseInPlace (this file's own autosave-collapse logic) reuses a session's id with a
+          // new savedAt rather than minting a fresh one, so a refresh landing between a local collapse
+          // and that write landing on the server can otherwise see the SAME id twice — once from
+          // unconfirmedLocal (newer), once from freshSessions (the server's still-older copy of the
+          // same row) — a duplicate that only cleared itself once a later refresh caught up.
+          const keepIds = new Set(unconfirmedLocal.map((s) => s?.id));
+          const merged = [...unconfirmedLocal, ...freshSessions.filter((s) => !keepIds.has(s?.id))].slice(0, SESSION_KEEP);
+          if (JSON.stringify(merged) === JSON.stringify(localSessions)) return prev;
+          const nextClient = { ...prev[i], sessions: merged };
+          // If this tab had no OTHER unsaved edit pending on this client (clientJsonRef holds what
+          // was last confirmed written), advance that baseline to match — otherwise this purely
+          // server-driven refresh reads as a local edit on the very next saveClientLedger, and a tab
+          // that touched nothing of its own (e.g. just sitting on a different screen entirely) would
+          // upload this client's record with no real change behind it, and with no staleness check
+          // of its own on that path (regression caught on review — see merge_client_ledger_rows,
+          // migration 034). A tab that DOES have a genuine pending edit keeps its existing baseline,
+          // so that edit still uploads normally.
+          if (clientJsonRef.current?.[activeClientId] === JSON.stringify(prev[i])) {
+            clientJsonRef.current[activeClientId] = JSON.stringify(nextClient);
+          }
+          const next = prev.map((c, ci) => (ci === i ? nextClient : c));
+          clientLedgerRef.current = next;
+          return next;
+        });
+      } catch { /* best-effort — the realtime subscription above is still the primary path; a failed refetch here just leaves the existing copy in place for next time */ }
+    };
+    refresh(); // also catch up right away — this client may already have gone stale before becoming active in this tab
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => { cancelled = true; document.removeEventListener("visibilitychange", refresh); window.removeEventListener("focus", refresh); };
+  }, [activeClientId]);
   // Serialised snapshot of every client as last written, keyed by id. The dirty check USED to hold
   // the previous client OBJECTS and compare them to the incoming ones — but callers build their new
   // ledger with `[...clientLedger]`, a shallow copy, then mutate the client in place
@@ -4206,7 +4331,13 @@ export default function StudioApp() {
       // Same guard, same reasoning, as saveSession's own copy (see its comment) — this is yet
       // another write this exact in-memory data feeds (event_orders.functionsDetail, what IMS
       // reads), and the confirmed incident (Sangeeta, 2026-11-03) could have hit this path too.
-      const unsafeFnIdxs = suspiciousDuplicateFnIdxs(allFns, activeFnIdxRef.current);
+      // committedFnIdxRef, not activeFnIdxRef (regression-caught 2026-11-10 follow-up): allFns itself
+      // comes from the committed activeFnIdx/fnBuilds state (collectAllFunctionDataRef, set in the
+      // same layout effect as committedFnIdxRef), so "which function is active" has to be read the
+      // same way or this and saveSession could disagree on which side of a detected collision to
+      // trust during a stuck switch (saveSession trusting the old function, this trusting the new,
+      // never-rendered one) — pushing a copy of the old function's content into the new one's IMS slot.
+      const unsafeFnIdxs = suspiciousDuplicateFnIdxs(allFns, committedFnIdxRef.current);
       allFns.forEach(fd => {
         if (unsafeFnIdxs.has(fd.fnIdx)) {
           console.warn(`[persistDeptSnapshot] Function ${fd.fnIdx + 1}'s decor content exactly matches another function's — refusing to push it to IMS this cycle.`);
@@ -4365,7 +4496,9 @@ export default function StudioApp() {
       // Same guard, same reasoning, as saveSession's own copy (see its comment) — this is the
       // OTHER write this exact in-memory data feeds (event_orders.functionsDetail, what IMS reads),
       // and the confirmed incident (Sangeeta, 2026-11-03) hit both within seconds of each other.
-      const unsafeFnIdxs = suspiciousDuplicateFnIdxs(allFns, activeFnIdxRef.current);
+      // committedFnIdxRef, not activeFnIdxRef — see the other call site's own comment, a few hundred
+      // lines up, for why (regression-caught 2026-11-10 follow-up).
+      const unsafeFnIdxs = suspiciousDuplicateFnIdxs(allFns, committedFnIdxRef.current);
       allFns.forEach(fd => {
         if (unsafeFnIdxs.has(fd.fnIdx)) {
           console.warn(`[persistBuildLayoutSnapshot] Function ${fd.fnIdx + 1}'s decor content exactly matches another function's — refusing to push it to IMS this cycle.`);
@@ -8348,7 +8481,15 @@ export default function StudioApp() {
     // between a function switch's setState and the re-render that would refresh this callback.
     // Taking the index from one render and the builds from another files a snapshot under the
     // wrong function — the same class of bug switchActiveFn had.
-    const liveIdx = activeFnIdxRef.current;
+    // committedFnIdxRef, not activeFnIdxRef, for the exact same reason switchActiveFn's own curIdx
+    // now reads it (see committedFnIdxRef's own comment, next to activeFnIdxRef's declaration):
+    // activeFnIdxRef can be sitting on a function whose switch never actually rendered (manual
+    // "Save now"/booking saves, unlike the autosave/hide-flush paths, never checked switchingRef at
+    // all), while takeSnapshot() below always captures whatever committedFnIdxRef names — using
+    // activeFnIdxRef here could label that live canvas under the WRONG, not-yet-rendered function,
+    // exactly the "one function's build became a copy of another's" symptom (owner report
+    // 2026-11-10, Rakesh Taneja), just reached through a manual save instead of a timer race.
+    const liveIdx = committedFnIdxRef.current;
     const liveBuilds = fnBuildsRef.current;
     const liveMeta = fnMetaRef.current;
     // The most recent save of THIS deal, read the same way the write below reads it. Only needed so
