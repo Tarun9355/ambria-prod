@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo, useEffect } from "react";
 import { supabase, fetchAll } from "../../lib/supabase";
-import { DEFAULT_KIT_ID, normKitParts } from "../../lib/studio/kitVariants";
+import { DEFAULT_KIT_ID, normKitParts, kitPool } from "../../lib/studio/kitVariants";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { Badge, TypeBadge, Modal, useConfirm } from "../../components/ui";
 import { fmt } from "../../lib/format";
@@ -180,6 +180,8 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
 
   // ── Edit Item state ──────────────────────────────────────────────────────
   const [editModal, setEditModal] = useState(null); // item id being edited, or null
+  // The edit form as it was opened - to tell whether there is anything unsaved before jumping to another item's kit
+  const editFormAtOpenRef = useRef("");
   const [editForm, setEditForm] = useState({});
   // The Fixed Venues - the `fixed_venues` TABLE (migration 038), loaded live, as Dept Ops does. The LOCATION column read IMS's
   // settings.fixedVenues, the old copy nothing writes any more, so a standing-stock change made in the Fixed Venues editor never
@@ -522,11 +524,16 @@ Rules:
   }
 
   // ── Edit handlers ────────────────────────────────────────────────────────
-  function openEdit(itemId) {
+  // kitIdx: open straight on that kit's tab (the sub-category's kit list below the tabs jumps here).
+  function openEdit(itemId, kitIdx = 0) {
     const it = inventory.find((i) => i.id === itemId);
     if (!it) return;
+    const ownParts = Array.isArray(it.subItems) ? it.subItems.map((s) => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1 } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : [];
+    const kitsAll = [{ id: DEFAULT_KIT_ID, name: it.kitName || "Kit 1", subItems: ownParts },
+      ...(Array.isArray(it.altKits) ? it.altKits : []).map((k) => ({ id: k.id, name: k.name || "", subItems: normKitParts(k.subItems) }))];
+    const tab = Math.max(0, Math.min(Number(kitIdx) || 0, kitsAll.length - 1));
     // Pre-populate form from item, reading BOTH legacy + new spec field names per superset schema
-    setEditForm({
+    const form = {
       id: it.id,
       name: it.name || "",
       cat: it.cat || it.category || "Floral",
@@ -556,12 +563,13 @@ Rules:
       printUnit: it.printable_LxW?.unit || "Feet",
       isKit: Array.isArray(it.subItems) && it.subItems.length > 0,
       kitBase: it.kitBase ?? 0,
-      subItems: Array.isArray(it.subItems) ? it.subItems.map((s) => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1 } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : [],
       // Every kit of the item, Kit 1 (its own subItems) first; the tab being edited is the one in subItems (kitsOf).
-      kits: [{ id: DEFAULT_KIT_ID, name: it.kitName || "Kit 1", subItems: [] },
-        ...(Array.isArray(it.altKits) ? it.altKits : []).map((k) => ({ id: k.id, name: k.name || "", subItems: normKitParts(k.subItems) }))],
-      kitTab: 0,
-    });
+      subItems: kitsAll[tab].subItems,
+      kits: kitsAll,
+      kitTab: tab,
+    };
+    setEditForm(form);
+    editFormAtOpenRef.current = editFormSig(form);
     setEditModal(itemId);
     setDetailItem(null); // close detail modal if it was open
     setKitCompSearch("");
@@ -613,6 +621,8 @@ Rules:
     const t = Math.min(Number(f.kitTab) || 0, base.length - 1);
     return base.map((k, i) => (i === t ? { ...k, subItems: f.subItems || [] } : k));
   };
+  // What the form holds, whichever kit tab is open - switching tabs is not a change.
+  const editFormSig = (f) => JSON.stringify({ ...f, kits: kitsOf(f), subItems: undefined, kitTab: undefined });
   const openKitTab = (i) => setEditForm((f) => { const kits = kitsOf(f); return { ...f, kits, kitTab: i, subItems: kits[i].subItems }; });
   // A new kit starts empty - the user builds it part by part (owner ask 2026-11-07; it used to copy the open kit). A kit left
   // empty is dropped on save.
@@ -621,6 +631,17 @@ Rules:
     const k = { id: "k" + Date.now().toString(36), name: `Kit ${kits.length + 1}`, subItems: [] };
     return { ...f, kits: [...kits, k], kitTab: kits.length, subItems: k.subItems };
   });
+  // Open another item's kit from the sub-category list. Unsaved edits here are saved first, after asking; nothing to save, it just goes.
+  const jumpToKit = async (itemId, kitId) => {
+    const other = inventory.find((x) => x.id === itemId);
+    const kitIdx = Math.max(0, [DEFAULT_KIT_ID, ...(Array.isArray(other?.altKits) ? other.altKits.map((k) => k.id) : [])].indexOf(kitId));
+    if (editFormSig(editForm) !== editFormAtOpenRef.current) {
+      const ok = await confirm({ title: `Save ${editForm.name || "this item"} first?`, body: `Your changes here are saved, then ${other?.name || "the other item"} opens.`, confirmLabel: "Save & open", danger: false });
+      if (!ok) return;
+      saveEdit();
+    }
+    openEdit(itemId, kitIdx);
+  };
   const renameKit = (i, name) => setEditForm((f) => ({ ...f, kits: kitsOf(f).map((k, j) => (j === i ? { ...k, name } : k)) }));
   const removeKit = (i) => setEditForm((f) => {
     if (!(i > 0)) return f;
@@ -1883,6 +1904,40 @@ Rules:
                       <button type="button" onClick={addKit} title="Another kit for this item - starts empty, add its parts below (an empty kit is not saved)"
                         className="px-2.5 py-1 rounded-full text-xs font-semibold border border-dashed border-indigo-300 text-indigo-700 hover:bg-indigo-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">+ Add More Kit</button>
                     </div>
+                    {/* Every other kit of this sub-category - the same list Build's Exchange Kit offers (kitPool). A click opens that
+                        item's editor on that kit, so all of a sub-category's kits are edited from here. */}
+                    {(() => {
+                      const me = inventory.find((x) => x.id === editForm.id);
+                      const others = [];
+                      kitPool(me ? { ...me, subCat: editForm.subCat } : null, inventory).forEach(({ item, kit }) => {
+                        if (item.id === editForm.id) return;
+                        const g = others[others.length - 1];
+                        if (g && g.item.id === item.id) g.kits.push(kit); else others.push({ item, kits: [kit] });
+                      });
+                      if (!others.length) return null;
+                      const total = others.reduce((s, g) => s + g.kits.length, 0) + editKits.length;
+                      return (
+                        <div className="rounded-lg border border-indigo-100 bg-white/70 p-2.5">
+                          <p className="text-[11px] font-semibold text-indigo-800 mb-2">All {editForm.subCat || "sub-category"} kits · {total} <span className="font-normal text-indigo-500">— click one to edit it</span></p>
+                          <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                            {others.map(({ item, kits }) => (
+                              <div key={item.id} className="flex items-center gap-2 flex-wrap">
+                                {item.img
+                                  ? <img src={item.img} alt="" className="w-6 h-6 rounded object-cover border border-gray-200 shrink-0" />
+                                  : <span className="w-6 h-6 rounded bg-gray-100 shrink-0 flex items-center justify-center text-[11px]">📦</span>}
+                                <span className="text-xs font-medium text-gray-700 min-w-[7rem]">{item.name}</span>
+                                {kits.map((k) => (
+                                  <button key={k.id} type="button" onClick={() => jumpToKit(item.id, k.id)} title={`Edit ${item.name} - ${k.name}`}
+                                    className="px-2 py-0.5 rounded-full text-[11px] font-semibold border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
+                                    {k.name}
+                                  </button>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {editKits.length > 1 && (
                       <div className="flex items-center gap-2">
                         <label className="text-xs text-indigo-800 font-semibold shrink-0" htmlFor="kit-name-input">Kit name</label>
