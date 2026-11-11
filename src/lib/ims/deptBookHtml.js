@@ -159,6 +159,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // A paint line ("Gold ×2, Silver ×1") with each colour through hn().
     const paintHn = (txt) => lang !== "hi" ? txt : String(txt || "").split(", ").map(part => part.replace(/^(.*) ×(\S+)$/, (m, c, q) => `${hn(c)} ×${q}`)).join(", ");
     const bookTitle = combined ? t("All departments") : t(dept);
+    // A flower piece's real / artificial split in numbers, the share that is 0 left out (owner ask 2026-11-11): "Real 100%",
+    // "Artificial 100%", else both - "Artificial 70% · Real 30%". `real` is the real share, 0-100.
+    const mixText = (real) => real >= 100 ? `${t("Real")} 100%` : real <= 0 ? `${t("Artificial")} 100%` : t("Artificial {art}% · Real {real}%", { art: 100 - real, real });
     // Anything that reaches the page goes through this first. The values are client names,
     // venues, crew types and item names typed by staff in Studio — an apostrophe or a stray
     // "<" in one of them would otherwise break the markup or inject into it.
@@ -794,8 +797,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
             const fnArt = typeof fn?.floralRatio === "number" ? fn.floralRatio : 70;
             const real = (typeof el?.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? Math.round(el.realPct)
               : subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, Math.round(100 - fnArt)));
-            // both shares always, an all-real or all-artificial piece too (owner ask 2026-11-11: "Artificial" alone said nothing of how much)
-            floralMix = t("Artificial {art}% · Real {real}%", { art: 100 - real, real });
+            floralMix = mixText(real);
             realPct = real;
             // A flower piece with no size set is priced Big (Studio's el.size || "B"), so it reads Big here too - the flowers
             // under it are for that size (owner ask 2026-11-03: S / M / B wherever a flower piece is in the book).
@@ -863,7 +865,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
             const fnArt = typeof fn?.floralRatio === "number" ? fn.floralRatio : 70;
             const real = (typeof si?.realPct === "number" && si.realPct >= 0 && si.realPct <= 100) ? Math.round(si.realPct)
               : subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, Math.round(100 - fnArt)));
-            return t("Artificial {art}% · Real {real}%", { art: 100 - real, real });
+            return mixText(real);
           };
           const liveKit = !kitInv ? [] : (Array.isArray(el?.kitOverrides) ? el.kitOverrides : kitInv.subItems).map(si => {
             if (si?.patternId) {
