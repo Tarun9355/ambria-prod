@@ -6,6 +6,7 @@ import { allocatePlatformForDate, applyPlatformOverridesToEvents, platformStockS
 import { allocateBattaForDate, applyBattaOverridesToEvents, battaStockRft, BATTA_MATERIALS, simulateBattaImpact } from "../../lib/ims/battaEngine";
 import { fetchAll, supabase } from "../../lib/supabase";
 import { Modal } from "../../components/ui";
+import { ZONE_LABELS } from "../../lib/studio/taxonomy";
 
 const MAT_LABEL = { wood: "🪵 Wood", iron: "⛓️ Iron", pole: "🪵 Pole", aluminium: "⚙️ Aluminium" };
 
@@ -84,6 +85,17 @@ export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platfo
   }, [dateEventsByDomain]);
 
   const shortageCount = mergedEvents.filter((ev) => ev.truss?.shortageBorne || ev.platform?.shortageBorne || ev.batta?.shortageBorne).length;
+
+  // eoId -> event_order, so a truss's fnIdx can be resolved to its actual function name/date
+  // (owner ask, 2026-11-11: "the expanded view doesn't tell me which zone and which function
+  // this truss is for" — buildEventAllocation already tags every truss with {fnIdx, zoneKey},
+  // it just wasn't being surfaced here).
+  const eoById = useMemo(() => Object.fromEntries((eventOrders || []).filter((eo) => eo?.id).map((eo) => [eo.id, eo])), [eventOrders]);
+  const fnLabel = (eoId, fnIdx) => {
+    const fd = eoById[eoId]?.functionsDetail;
+    const fn = Array.isArray(fd) ? (fd.find((f) => f?.fnIdx === fnIdx) ?? fd[fnIdx]) : null;
+    return fn ? `${fn.fnType || `Function ${fnIdx + 1}`}${fn.fnDate ? ` · ${fn.fnDate}` : ""}` : `Function ${fnIdx + 1}`;
+  };
 
   const trussStockBars = useMemo(() => {
     if (!trussInv) return { pillars: [], beams: [] };
@@ -290,9 +302,34 @@ export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platfo
                   {isOpen && (
                     <div className="p-3 border-t border-gray-200 space-y-3 text-xs">
                       {ev.truss && (
-                        <div className="flex items-center justify-between gap-2">
-                          <div>🏗️ <strong>Truss:</strong> {Object.entries(ev.truss.totalPillarsUsed || {}).map(([s, q]) => `${q}×${s}ft pillar`).join(", ") || "—"} · {Object.entries(ev.truss.totalBeamsUsed || {}).map(([s, q]) => `${q}×${s}ft beam`).join(", ") || "—"}{ev.truss.override?.reason && <span className="italic text-purple-700"> · override: "{ev.truss.override.reason}"</span>}</div>
-                          {ev.truss.hasOverride && canEdit && <button onClick={() => removeOverride("truss", `${ev.truss.eoId}:main`)} className="text-gray-500 hover:text-gray-800 underline shrink-0">Reset override</button>}
+                        <div className="space-y-1.5">
+                          <div className="font-semibold text-gray-700">🏗️ Truss — {totalP} pillars + {totalB} beams total</div>
+                          {Object.entries((ev.truss.trusses || []).reduce((byFn, t) => {
+                            (byFn[t.fnIdx] = byFn[t.fnIdx] || []).push(t);
+                            return byFn;
+                          }, {})).map(([fnIdx, trussesForFn]) => (
+                            <div key={fnIdx} className="pl-3 border-l-2 border-gray-200 space-y-1">
+                              <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{fnLabel(ev.eoId, Number(fnIdx))}</div>
+                              {trussesForFn.map((t) => {
+                                const zl = ZONE_LABELS[t.zoneKey];
+                                const pillars = Object.entries(t.allocation?.totals?.pillarsUsed || {});
+                                const beams = Object.entries(t.allocation?.totals?.beamsUsed || {});
+                                return (
+                                  <div key={t.zoneKey} className="flex items-center justify-between gap-2">
+                                    <div>
+                                      <strong>{zl ? `${zl.icon} ${zl.label}` : t.zoneKey}:</strong>{" "}
+                                      {pillars.map(([s, q]) => `${q}×${s}ft pillar`).join(", ") || "—"} · {beams.map(([s, q]) => `${q}×${s}ft beam`).join(", ") || "—"}
+                                      {t.shortage && <span className="ml-1 text-red-600 font-semibold">⚠ short</span>}
+                                      {t.override?.reason && <span className="italic text-purple-700"> · override: "{t.override.reason}"</span>}
+                                    </div>
+                                    {t.locked && canEdit && (
+                                      <button onClick={() => removeOverride("truss", `${ev.eoId}:${t.zoneKey}`)} className="text-gray-500 hover:text-gray-800 underline shrink-0">Reset override</button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ))}
                         </div>
                       )}
                       {ev.platform && (
