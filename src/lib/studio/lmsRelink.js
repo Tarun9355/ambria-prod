@@ -10,7 +10,10 @@
 // held lead #01488, Ambria Ops only knows it as contract #00477) — and its real on-site expenses
 // never surface in IMS Dept Ops' Actuals tab.
 //
-// This module is the pure matching/decision logic only — no Supabase calls, no writes. It is
+// This module is the pure matching/decision logic only — no Supabase calls, no writes. Its only
+// caller is the `lms-relink` Edge Function (via src/lib/studio/lmsRelinkRun.js, imported directly
+// by Deno — this file and eventOrderFor.js must stay plain JS with no non-relative, extensionless
+// imports, since that's what the edge function bundles). It is
 // deliberately NAME-BLIND: `crossReferenceContracts` (lib/ims/lms.js)'s name-based tiers ("exact"/
 // "fuzzy") are for display only and are known to mismatch (the "Taj Test Client" case, see its own
 // comment) — a silent, no-human-review write can't risk that. This matches on PHONE + FUNCTION DATE
@@ -72,8 +75,9 @@ const hasOverlap = (a, b) => { for (const x of a) if (b.has(x)) return true; ret
  *                                     on a PRIOR call — ids already seen missing before don't count
  *                                     toward the sync-incomplete trip again (a genuinely cancelled/
  *                                     renumbered LMS contract shouldn't wedge every future run
- *                                     forever). The caller persists this across runs.
- * @returns {{relinks: Array<{clientId:string,from:string,to:string}>, reapply: Array<{clientId:string,from:string,to:string}>, verify: Array<{clientId:string,id:string}>, skipped: Array<{clientId?:string,reason:string}>, tripped?: boolean, newlyMissingVerifiedIds: string[]}}
+ *                                     forever). Persisted in `lms_relink_runs` (server-side cron caller,
+ *                                     src/lib/studio/lmsRelinkRun.js) across runs.
+ * @returns {{relinks: Array<{clientId:string,from:string,to:string}>, reapply: Array<{clientId:string,from:string,to:string}>, verify: Array<{clientId:string,id:string}>, skipped: Array<{clientId?:string,reason:string}>, tripped?: boolean, withheld?: {relinks: Array, reapply: Array}, newlyMissingVerifiedIds: string[]}}
  */
 export function planLmsRelinks({ clients, decorContracts, decorLeads, knownMissingVerifiedIds }) {
   const contracts = (Array.isArray(decorContracts) ? decorContracts : []).filter((c) => c && c.entryNo);
@@ -243,7 +247,9 @@ export function planLmsRelinks({ clients, decorContracts, decorLeads, knownMissi
   combined.forEach((r) => { if (dupTargets.has(r.to)) skipped.push({ clientId: r.clientId, reason: "duplicate-target:" + r.to }); });
 
   if (finalRelinks.length + finalReapply.length > RELINK_CIRCUIT_BREAKER) {
-    return { relinks: [], reapply: [], verify: [], skipped: [{ reason: "circuit-breaker" }], tripped: true, newlyMissingVerifiedIds };
+    // The list is still handed back (never written) so a server-side caller with no console to watch
+    // can see what was withheld instead of just knowing something was.
+    return { relinks: [], reapply: [], verify: [], skipped: [{ reason: "circuit-breaker" }], tripped: true, newlyMissingVerifiedIds, withheld: { relinks: finalRelinks, reapply: finalReapply } };
   }
   return { relinks: finalRelinks, reapply: finalReapply, verify, skipped, newlyMissingVerifiedIds };
 }

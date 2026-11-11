@@ -1,3 +1,6 @@
+// Also imported directly (relative path) by the `lms-relink` Supabase Edge Function (Deno) via
+// lmsRelink.js/lmsRelinkRun.js — keep this plain JS, no non-relative or extensionless imports.
+//
 // The open deal's IMS event order. A client can carry several - a booking cancelled and booked again, a date moved and
 // re-booked - and Studio used the first one in the list, whatever its status: Test 2's Build and Deal Check went on syncing
 // into a cancelled order while IMS showed the live one, which never got the paint, the date or any change since
