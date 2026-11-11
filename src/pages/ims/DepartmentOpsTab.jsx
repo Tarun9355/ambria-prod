@@ -2533,7 +2533,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                   return (
                     <span key={ci} className="px-2 py-1 text-[12.5px] text-center border-l border-t border-gray-200 text-gray-700 whitespace-nowrap tabular-nums">
                       {rfts.length && per > 0
-                        ? <>{rfts.length > 1 ? `${rfts.join(" + ")} = ` : ""}{tr.rftTotal} ft ÷ {per} → <b className="text-gray-900">{tr.rftLabour} {tr.rftLabour === 1 ? "person" : "people"}</b></>
+                        ? <>{rfts.length > 1 ? `${rfts.join(" + ")} = ` : ""}{tr.rftTotal} ft → <b className="text-gray-900">{tr.rftLabour} {tr.rftLabour === 1 ? "person" : "people"}</b></>
                         : <span className="text-gray-300">—</span>}
                     </span>
                   );
