@@ -13,6 +13,7 @@ import { allocKeyOf, shortfallBreakdown, shortfallLine } from "../../lib/ims/sho
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
+import { fetchOpsVendors } from "../../lib/ims/opsVendors";
 import { venueWithParent } from "../../lib/ims/fixedVenues";
 import { carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
@@ -1068,6 +1069,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     return () => { cancelled = true; };
   }, [sel?.id, sel?.lmsLeadId, dept]);
   const opsExpenseTotal = opsExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  // Ops' decor-dept Casual Labour vendors (lib/ims/opsVendors.js), for the Manpower split picker
+  // below — fetched once per department (not per deal/dihari), since the list doesn't depend on
+  // which event is open. Empty for PAINT (not one of Ops' 7 decor categories) or Transport (Ops
+  // confirmed that combination has no vendors at all) — the free-text fallback still works either way.
+  const [opsVendors, setOpsVendors] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (dept === PAINT) { setOpsVendors([]); return; }
+    fetchOpsVendors(dept).then((rows) => { if (!cancelled) setOpsVendors(rows); });
+    return () => { cancelled = true; };
+  }, [dept]);
   const realMandi = deptData.realMandi || "";
   // How each short "Can be made" line's shortage is arranged: { [allocKeyOf(line)]: { make, outsource, buy } } (lib/ims/shortfallAlloc.js)
   const shortAlloc = deptData.shortAlloc && typeof deptData.shortAlloc === "object" ? deptData.shortAlloc : {};
@@ -2912,6 +2924,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                     {/* In-house/vendor split editor — only the vendor count is ever stored (effSplit's own
                         comment, lib/ims/deptCrew.js); in-house is always (shift total − vendor), so editing
                         the "In-house" box here just computes and stores the complementary vendor number. */}
+                    {/* One shared datalist per department, not per open split panel — several of this
+                        day's dihari splits can be open at once, and duplicate DOM ids would be invalid. */}
+                    <datalist id={`ops-vendor-list-${dept}`}>
+                      {opsVendors.map(v => <option key={v.id} value={v.name} />)}
+                    </datalist>
                     {ids.filter(id => splitOpen[`${r.type}|${d.date}|${id}`]).map(id => {
                       const wd = winDefs.find(w => w.id === id); const lbl = wd ? wd.label : "this shift";
                       const sp = effSplit(r, d, id); const splitKey = `${r.type}|${d.date}|${id}`;
@@ -2931,10 +2948,24 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                               className="w-11 rounded bg-white ring-1 ring-gray-200 px-1 py-0 text-[13px] font-semibold text-center text-gray-900 disabled:opacity-50" />
                           </span>
                           {sp.vendor > 0 && (
-                            <input type="text" placeholder="Vendor name" value={sp.vendorName} disabled={!canManpower || lock.locked}
-                              onChange={e => setSplit(r.type, d.date, id, { vendor: sp.vendor, vendorName: e.target.value, vendorId: sp.vendorId })}
-                              title="Free-text for now — becomes a picker once the Ops vendor list is wired up here"
-                              className="flex-1 min-w-[120px] rounded bg-white ring-1 ring-gray-200 px-2 py-0.5 text-[12.5px] text-gray-900 disabled:opacity-50" />
+                            <>
+                              <input type="text" list={`ops-vendor-list-${dept}`} placeholder="Vendor name" value={sp.vendorName} disabled={!canManpower || lock.locked}
+                                onChange={e => {
+                                  const name = e.target.value;
+                                  // A name matching an Ops vendor carries its id along; typing anything
+                                  // else (a vendor Ops doesn't have yet, or a correction) clears vendorId
+                                  // rather than keeping a stale one — id-matching against logged expenses
+                                  // is name-only on Ops' side today anyway (see opsVendors.js), so this
+                                  // doesn't lose anything real, just avoids a wrong id surviving a rename.
+                                  const match = opsVendors.find(v => v.name === name);
+                                  setSplit(r.type, d.date, id, { vendor: sp.vendor, vendorName: name, vendorId: match ? match.id : null });
+                                }}
+                                title={opsVendors.length ? "Pick from Ops' vendor list, or type a name Ops doesn't have yet" : "Free-text — Ops vendor list unavailable right now"}
+                                className="flex-1 min-w-[120px] rounded bg-white ring-1 ring-gray-200 px-2 py-0.5 text-[12.5px] text-gray-900 disabled:opacity-50" />
+                              <datalist id={`ops-vendor-list-${dept}`}>
+                                {opsVendors.map(v => <option key={v.id} value={v.name} />)}
+                              </datalist>
+                            </>
                           )}
                           <button onClick={() => setSplitOpen(o => ({ ...o, [splitKey]: false }))} className="ml-auto text-[11px] text-gray-400 hover:text-gray-600">done</button>
                         </span>
