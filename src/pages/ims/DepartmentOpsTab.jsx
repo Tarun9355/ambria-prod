@@ -2359,7 +2359,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     if (tr.kind === "pillars") return (tr.rows || []).map(r => ({ label: r.sub, value: `${r.count} pillar${r.count === 1 ? "" : "s"}` }));
     if (tr.kind === "range") return (tr.rows || []).map(r => ({ label: r.sub, value: `${Number(r.sqft || 0).toFixed(0)} ${tr.unit || ""}`.trim() }));
     // canopy is people (the zone's top area looked up in the range table), wrap is running feet - said in its unit so the two are not read as one count
-    if (tr.kind === "fabricBangali") return (tr.zones || []).map(z => ({ label: z.zone, value: [z.topLabour > 0 ? `canopy ${z.topLabour} ${z.topLabour === 1 ? "person" : "people"}` : "", z.rft > 0 ? `wrap ${z.rft} ft` : ""].filter(Boolean).join(" · ") || "—" }));
+    // the canopy is its count alone - "3 · wrap 12 ft" (owner ask 2026-11-11: no "canopy … people" words)
+    if (tr.kind === "fabricBangali") return (tr.zones || []).map(z => ({ label: z.zone, value: [z.topLabour > 0 ? String(z.topLabour) : "", z.rft > 0 ? `wrap ${z.rft} ft` : ""].filter(Boolean).join(" · ") || "—" }));
     if (tr.kind === "labours") return [
       // Venue minimum is a flat booking-wide floor, not owned by any one department's items, so
       // every department sees it. Each heavy row IS owned by whichever department its own
