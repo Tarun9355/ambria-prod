@@ -21,7 +21,7 @@ import ElementChoicePlan from "./ElementChoicePlan.jsx";
 import { elementStockFor, choiceNotesForRows, preferenceNotesForRows } from "../../lib/ims/elementPlan";
 import { loadOnDate } from "../../lib/ims/loadByDate";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
-import { dcFabricMultOf, trussInvForMaterial } from "../../lib/studio/pricing";
+import { dcFabricMultOf, trussInvForMaterial, parseFlowerPalette } from "../../lib/studio/pricing";
 import { resolveBeamSegment, resolvePillarHeight } from "../../lib/ims/trussEngine";
 import { RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_BOX } from "../../lib/studio/brand.js";
@@ -4369,6 +4369,25 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
               {dept === "Floral" && fp.artificial && ((fp.artificial.flowerBunches || 0) > 0 || (fp.artificial.greenBunches || 0) > 0) && (() => {
                 const a = fp.artificial;
                 const split = Array.isArray(a.colorSplit) ? a.colorSplit.filter(c => Number(c.qty) > 0) : [];
+                // No Color Split made in Deal Check (or no "Artificial Flower Bunch" item matched the palette): each function's artificial
+                // flower kg divided by its own Flower Palette ratio, added up by colour (owner ask 2026-11-11: kis color ka kitna kg).
+                const paletteSplit = (() => {
+                  if (split.length) return [];
+                  const fd = sel?.floralDetail && typeof sel.floralDetail === "object" ? sel.floralDetail : {};
+                  const fnsP = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+                  const by = new Map();
+                  Object.entries(fd).forEach(([k, f]) => {
+                    const fl = f?.art?.flower || {};
+                    const kg = Number(fl.kg) > 0 ? Number(fl.kg) : (Number(fl.bunches) || 0) / (Number(a.flowerBPK) || 16);
+                    if (!(kg > 0)) return;
+                    const fnD = fnsP.find((x, i) => String(x?.fnIdx ?? i) === String(k)) || fnsP[Number(k)];
+                    const pal = parseFlowerPalette(fnD?.flowerPalette || "");
+                    if (!pal.length) { by.set("", (by.get("") || 0) + kg); return; }
+                    const sum = pal.reduce((s, c) => s + (Number(c.pct) || 0), 0) || 100;
+                    pal.forEach(c => by.set(c.name, (by.get(c.name) || 0) + kg * (Number(c.pct) || 0) / sum));
+                  });
+                  return [...by].map(([name, kg]) => ({ name, kg })).filter(x => x.kg > 0).sort((x, y) => (x.name ? 0 : 1) - (y.name ? 0 : 1) || y.kg - x.kg);
+                })();
                 const kgTxt = (n) => `${Math.round((Number(n) || 0) * 100) / 100} kg`;
                 const line = (icon, label, bunches, bpk, kg) => (
                   <div className="flex items-center justify-between gap-3 px-3 py-2">
@@ -4397,6 +4416,20 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                               </div>
                             );
                           })}
+                        </div>
+                      )}
+                      {paletteSplit.length > 0 && (
+                        <div className="px-3 py-2">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-1">By colour · from the Flower Palette</div>
+                          {paletteSplit.map(c => (
+                            <div key={c.name || "-"} className="flex items-center justify-between gap-3 py-1">
+                              <span className="min-w-0 flex items-center gap-2 text-xs text-gray-700">
+                                {c.name ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full ring-1 ring-black/10 shrink-0" style={{ background: flowerPaletteHexFor(c.name) }} /> : <span className="w-3.5 h-3.5 rounded-full bg-gray-200 shrink-0" />}
+                                <span className="truncate">{c.name || "Colour not set in the palette"}</span>
+                              </span>
+                              <b className="shrink-0 text-xs text-gray-900 tabular-nums">{kgTxt(c.kg)}</b>
+                            </div>
+                          ))}
                         </div>
                       )}
                       {(a.greenBunches || 0) > 0 && line("🌿", "Artificial greens", a.greenBunches, a.greenBPK, a.greenKg)}
