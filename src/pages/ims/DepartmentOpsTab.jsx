@@ -4395,8 +4395,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                 // ₹/kg and cost moved here from Actuals (owner ask 2026-11-11): the bunches are our stock, so their value is shown with them
                 const line = (icon, label, bunches, bpk, kg, rate, cost) => (
                   <div className="flex items-center justify-between gap-3 px-3 py-2">
-                    <span className="min-w-0 text-xs font-semibold text-gray-800">{icon} {label}</span>
-                    <span className="shrink-0 text-[11px] text-gray-600 tabular-nums text-right">{bunches} bunches ÷ {bpk}/kg = <b className="text-gray-900">{kgTxt(kg)}</b>{Number(rate) > 0 && <> × {fmt(rate)}/kg = <b className="text-gray-900">{fmt(cost)}</b></>}</span>
+                    <span className="shrink-0 text-xs font-semibold text-gray-800">{icon} {label}</span>
+                    <span className="min-w-0 text-[11px] text-gray-600 tabular-nums text-right">{bunches} bunches ÷ {bpk}/kg = <b className="text-gray-900">{kgTxt(kg)}</b>{Number(rate) > 0 && <> × {fmt(rate)}/kg = <b className="text-gray-900">{fmt(cost)}</b></>}</span>
                   </div>
                 );
                 return (
