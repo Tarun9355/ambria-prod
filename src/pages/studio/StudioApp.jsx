@@ -32,7 +32,7 @@ import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, lockedAtFixedVenues, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
+import { availableAtVenue, lockedAtFixedVenues, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows, fixedVenueOverlapOnDate } from "../../lib/ims/fixedVenues";
 import { searchLmsLeads, triggerLmsSync, fetchLmsLastSync, fetchLmsLeadByEntry, fetchDecorRelinkSources } from "../../lib/ims/lms";
 import { allocateForDate, buildEventAllocation } from "../../lib/ims/trussEngine";
 import { allocatePlatformForDate, buildEventPlatformAllocation } from "../../lib/ims/platformEngine";
@@ -5340,7 +5340,8 @@ export default function StudioApp() {
       const eo = eventOrderFor(eventOrders, activeClientId, clientName);
       // the own-holds detail of the date being priced (a non-active function's own date), not the open function's
       const blocksDetailForDate = opts?.blocksDetailForDate ?? (opts?.fnDate ? blocksDetailByDate[opts.fnDate] : undefined) ?? activeBlocksDetailForDate;
-      const blocksForDate = netOwnReservedBlocksLive(rawBlocksForDate, item.id, blocksDetailForDate, [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)]);
+      const _ownIdsForAvail = [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)];
+      const blocksForDate = netOwnReservedBlocksLive(rawBlocksForDate, item.id, blocksDetailForDate, _ownIdsForAvail);
       // opts.fnIdx is the function being priced (event-level callers pass it); without it this
       // scoped allocateRowAvailability's sibling-row check to the ACTIVE function only — unchanged
       // from before, still needed below, just no longer feeding the dcReservedInventory lookup.
@@ -5359,7 +5360,11 @@ export default function StudioApp() {
       // reduction was smaller — a sold deal that already used up the entire un-locked remainder
       // still showed the full remainder as free to the next outdoor deal. See combineAvailability's
       // own comment (lib/ims/fixedVenues.js) for the worked example.
-      const otherEventsAvail = combineAvailability(Number(item?.qty ?? item?.qtyOwned) || 0, getStudioAvailable(item, blocksForDate), availableAtVenue(fvCfgForRepeat, opts?.venueName, item));
+      // overlap: the portion counted in both blocksForDate AND availableAtVenue's lock at once — a
+      // Fixed Venue using its OWN standing stock today, which combineAvailability would otherwise
+      // subtract twice (confirmed bug, 2026-11-11 — see combineAvailability's own comment).
+      const _fvOverlap = fixedVenueOverlapOnDate(fvCfgForRepeat, opts?.venueName, item, blocksDetailForDate?.[item.id], eventOrders, { excludeEventIds: _ownIdsForAvail, date: opts?.fnDate || activeFnMeta?.date || clientDate });
+      const otherEventsAvail = combineAvailability(Number(item?.qty ?? item?.qtyOwned) || 0, getStudioAvailable(item, blocksForDate), availableAtVenue(fvCfgForRepeat, opts?.venueName, item), _fvOverlap);
       // otherEventsAvail alone still isn't "available for THIS card": it says nothing about a
       // SIBLING zone/function in this SAME unsaved build already drawing on the same item — e.g.
       // 3 used in zone A, then adding 1 more in zone B. dcReservedInventory only reflects the last
@@ -5513,8 +5518,10 @@ export default function StudioApp() {
     const venueName = opts.venueName ?? activeFnMeta?.venue;
     const fns = collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [];
     const target = opts.zoneKey != null && opts.elIdx != null ? { fnIdx: opts.fnIdx ?? activeFnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx } : null;
+    const ownIds = [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)];
     const freeFor = (part) => combineAvailability(Number(part?.qty ?? part?.qtyOwned) || 0,
-      getStudioAvailable(part, netOwnReservedBlocksLive(rawBlocks, part.id, detail, [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)])), availableAtVenue(fvCfgForRepeat, venueName, part));
+      getStudioAvailable(part, netOwnReservedBlocksLive(rawBlocks, part.id, detail, ownIds)), availableAtVenue(fvCfgForRepeat, venueName, part),
+      fixedVenueOverlapOnDate(fvCfgForRepeat, venueName, part, detail?.[part.id], eventOrders, { excludeEventIds: ownIds, date: fnDate }));
     return kitPartShortfalls(item, Number(el.qty) || 0, el.kitOverrides, fns, imsInventory, target, fnDate, freeFor, opts.reusePool, venueName)
       .map((p) => ({ ...p, canMake: canFulfillShortfall((imsInventory || []).find((i) => i.id === p.id), fnDate, el?.addedAt || undefined) }));
   }, [imsInventory, activeFnMeta, clientDate, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, eventOrders, activeClientId, clientName, activeFnIdx, fvCfgForRepeat]);
@@ -5555,7 +5562,8 @@ export default function StudioApp() {
     const netted = netOwnReservedBlocksLive(activeBlocksForDate, it.id, activeBlocksDetailForDate, ownIds);
     const venueName = activeFnMeta?.venue || venue || "";
     const total = Number(it.qty ?? it.qtyOwned) || 0;
-    const free = combineAvailability(total, getStudioAvailable(it, netted), availableAtVenue(fvCfgForRepeat, venueName, it));
+    const _fvOverlap = fixedVenueOverlapOnDate(fvCfgForRepeat, venueName, it, activeBlocksDetailForDate?.[it.id], eventOrders, { excludeEventIds: ownIds, date: activeFnMeta?.date || clientDate });
+    const free = combineAvailability(total, getStudioAvailable(it, netted), availableAtVenue(fvCfgForRepeat, venueName, it), _fvOverlap);
     const own = new Set(ownIds);
     const fixed = lockedAtFixedVenues(fvCfgForRepeat, venueName, it);
     const holders = (activeBlocksDetailForDate?.[it.id] || []).filter((b) => b && !own.has(b.eventId) && Number(b.qty) > 0)
@@ -5569,7 +5577,7 @@ export default function StudioApp() {
     // reason: the short line Build prints under a 0-free item - who holds it, without hovering
     const reason = [holders.length ? `Booked by ${holders.join(", ")}` : "", fixed.length ? `Kept at ${fixed.map((f) => `${f.name} ${f.qty}`).join(", ")}` : "", imsBlocked > 0 ? `${imsBlocked} blocked in IMS` : "", total <= 0 ? "No stock in IMS" : ""].filter(Boolean).join(" · ");
     return { free, why, reason };
-  }, [eventOrders, activeClientId, clientName, activeBlocksForDate, activeBlocksDetailForDate, activeFnMeta, venue, fvCfgForRepeat]);
+  }, [eventOrders, activeClientId, clientName, activeBlocksForDate, activeBlocksDetailForDate, activeFnMeta, venue, fvCfgForRepeat, clientDate]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
@@ -12421,10 +12429,14 @@ export default function StudioApp() {
           // OTHER venues' stock ("1 at MKT, 4 at AR") was listed read as "my own venue's stock
           // vanished," when it was actually just quietly counted rather than named.
           const _ownStanding = standingQty(fvCfgForRepeat, pickerVenue, it.id);
-          const netBlocksForDate = netOwnReservedBlocksLive(blocksForDate, it.id, blocksDetailForDate, [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)]);
+          const _ownIdsPicker = [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)];
+          const netBlocksForDate = netOwnReservedBlocksLive(blocksForDate, it.id, blocksDetailForDate, _ownIdsPicker);
           // combineAvailability, not Math.min — see StudioApp.jsx's other getStudioAvailable/
-          // availableAtVenue composition for the worked example this closes.
-          const free = Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getStudioAvailable(it, netBlocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
+          // availableAtVenue composition for the worked example this closes. overlap corrects for a
+          // Fixed Venue's own same-date use of its own standing stock being counted in BOTH
+          // netBlocksForDate and availableAtVenue's lock at once (confirmed bug, 2026-11-11).
+          const _fvOverlap = fixedVenueOverlapOnDate(fvCfgForRepeat, pickerVenue, it, blocksDetailForDate?.[it.id], eventOrders, { excludeEventIds: _ownIdsPicker, date });
+          const free = Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getStudioAvailable(it, netBlocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it), _fvOverlap) - (usedQty[it.id] || 0));
           return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, reuse: carpetReuseOf(it), usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, ownStanding: _ownStanding, ownVenueName: _ownStanding > 0 ? (fixedVenueFor(fvCfgForRepeat, pickerVenue)?.name || pickerVenue) : null, unit: it.unit || "", photos: Array.isArray(it.photoUrls) ? it.photoUrls : [],
             // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox,
             // or not enough production lead time left before `date`) — genuinely unpickable here,
