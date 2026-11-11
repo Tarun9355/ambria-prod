@@ -116,6 +116,11 @@ export function platformRateFor(key, platformRates) {
  * A deleted height stays resolvable in platformRateFor above on purpose — a zone saved against it
  * keeps pricing at the seeded rate instead of silently dropping to ₹0. Deleting removes it from
  * the menu going forward; it does not rewrite priced history.
+ *
+ * Since migration 059, a deleted height's snapshot (deleted_catalogue, merged into `platformRates`
+ * by withDeletedRates before this ever runs) carries its last admin-set rate forward instead of the
+ * hardcoded seed above — only the two originally-seeded heights ("4in"/"1ft") still fall back to
+ * DEFAULT_PLATFORM_RATES when no snapshot exists at all (e.g. deleted before 059 ever ran).
  */
 export function platformOptions(platformRates) {
   const list = (Array.isArray(platformRates) && platformRates.length) ? platformRates : DEFAULT_PLATFORM_RATES;
@@ -346,7 +351,7 @@ export function carpetPricingFor(cpT, carpetMaterials) {
     const want = cpT === "old" ? "carpet old" : "carpet new";
     mat = list.find((m) => String(m.name || "").trim().toLowerCase() === want);
   }
-  if (mat) return { rate: Number(mat.ratePerSqft) || 0, label: mat.name };
+  if (mat) return { rate: Number(mat.ratePerSqft) || 0, label: mat.name, catalogueDeleted: !!mat.catalogueDeleted, catalogueDeletedAt: mat.catalogueDeletedAt || null };
   const fallbackRate = cpT === "old" ? 7 : cpT === "new" ? 15 : 0;
   return { rate: fallbackRate, label: cpT === "old" ? "Old" : cpT === "new" ? "New" : cpT };
 }
@@ -364,9 +369,11 @@ export const carpetTakesStockPick = (label) => /old/i.test(label || "");
 // writes CARPET_OFF, which is the one value this never overrides.
 export function defaultCarpetMatId(carpetMaterials) {
   const list = carpetMaterials || [];
-  const exact = list.find((m) => String(m.name || "").trim().toLowerCase() === "carpet old");
+  // Skip a deleted material (migration 059's snapshot, merged in by withDeletedRates) — a floor
+  // nobody explicitly set should never silently default onto a material IMS no longer offers.
+  const exact = list.find((m) => !m.catalogueDeleted && String(m.name || "").trim().toLowerCase() === "carpet old");
   if (exact) return exact.id;
-  const anyCarpet = list.find((m) => String(m.name || "").toLowerCase().includes("carpet"));
+  const anyCarpet = list.find((m) => !m.catalogueDeleted && String(m.name || "").toLowerCase().includes("carpet"));
   return anyCarpet ? anyCarpet.id : null;
 }
 export const ZONE_PRESETS={

@@ -54,6 +54,7 @@ import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSibli
 import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows, effectiveColorPrefRows } from "../../lib/studio/floralCost";
 import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements, tentingZoneUsage, fabricBangaliZone } from "../../lib/studio/manpowerCount";
 import { rowToClient } from "../../lib/studio/clientRow";
+import { DELETED_CATALOGUE_TABLE, EMPTY_DELETED_CATALOGUE, assembleDeletedCatalogue, withDeletedRates, withDeletedInventory, deletedKitParts } from "../../lib/studio/deletedCatalogue";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
 // The header used to mix 8/9/10/11/12/13px in a single row. It now has exactly two tiers:
@@ -1764,6 +1765,11 @@ export default function StudioApp() {
   // IMS Admin → Settings → 🪵 Platform Rates (settings.platformRates) — falls back to
   // DEFAULT_PLATFORM_RATES via platformRateFor until an admin edits one.
   const [imsPlatformRates, setImsPlatformRates] = useState([]);
+  // Migration 059: a snapshot of every inventory item / flower recipe / carpet / print material /
+  // platform height ever DELETED in IMS, so a live quote still referencing one keeps pricing at its
+  // last known rate (with a ⚠ warning in Build) instead of silently dropping to ₹0. Consulted only
+  // as a FALLBACK when a live lookup misses — see invForPricing/structRates below.
+  const [deletedCatalogue, setDeletedCatalogue] = useState(EMPTY_DELETED_CATALOGUE);
   // Bundled live rate settings passed to calcStructCost everywhere — one object instead of a
   // growing list of positional args as more of these settings-driven rates get added.
   // Save colour + palette catalogues to Studio-owned PALETTE_SK
@@ -3304,6 +3310,11 @@ export default function StudioApp() {
         (async () => { try { const rows = await fetchAll("masking_rates"); if (!cancelled) setImsMaskingRates(assembleMaskingRatesFromRows(rows)); } catch {} })(),
         (async () => { try { const fmv = await kvGet("fabricMultiplier"); if (fmv != null && !cancelled) setImsFabricMultiplier(parse(fmv)); } catch {} })(),
         (async () => { try { const rows = await fetchAll("platform_rates"); if (!cancelled) setImsPlatformRates(assemblePlatformRatesFromRows(rows)); } catch {} })(),
+        // Deleted-catalogue snapshot (migration 059) — must land before pricingReady flips true,
+        // since getElPriceFromInventory/getElPriceFromPattern (which pricingReady gates downstream
+        // sweep/pricing logic on) both consult it as a fallback. Non-fatal on failure: an empty
+        // snapshot just means a deleted row prices at ₹0 exactly as it did before this feature.
+        (async () => { try { const rows = await fetchAll(DELETED_CATALOGUE_TABLE); if (!cancelled) setDeletedCatalogue(assembleDeletedCatalogue(rows)); } catch {} })(),
       ]);
       // Every input the estimate reads has now landed: the rate card and its scaling factors,
       // inventory, the transport settings, and all five structure-rate tables above. Anything loaded
@@ -3515,6 +3526,7 @@ export default function StudioApp() {
       ["masking_rates", () => fetchAll("masking_rates").then((rows) => setImsMaskingRates(assembleMaskingRatesFromRows(rows)))],
       ["platform_rates", () => fetchAll("platform_rates").then((rows) => setImsPlatformRates(assemblePlatformRatesFromRows(rows)))],
       ["synonym_groups", () => fetchAll("synonym_groups").then((rows) => setImsSynonymDictionary(assembleSynonymDictionaryFromRows(rows)))],
+      [DELETED_CATALOGUE_TABLE, () => fetchAll(DELETED_CATALOGUE_TABLE).then((rows) => setDeletedCatalogue(assembleDeletedCatalogue(rows)))],
     ];
     const channels = specs.map(([table, reload]) => subscribeTable(table, () => { reload().catch(() => {}); }));
     return () => { channels.forEach((ch) => { try { supabase.removeChannel(ch); } catch { /* ignore */ } }); };
@@ -4721,6 +4733,11 @@ export default function StudioApp() {
     return (typeof f === "number" && isFinite(f) && f > 0) ? f : 1;
   }, [rcFactorByKey]);
   const rcScalingFactor = useCallback((rc) => rcScalingFactorForSub(itemImsSubcat(rc)), [rcScalingFactorForSub]);
+  // imsInventory + the deleted-catalogue snapshot's own inventory, for PRICE-LOOKUP-BY-ID ONLY (a
+  // deleted item's last known rental/kit price still needs to resolve for a quote already using it —
+  // migration 059). Never iterate this for a picker/search/kitPool — a deleted item would reappear
+  // as pickable. Live rows always win (withDeletedInventory), so a ref-reused id resolves live again.
+  const invForPricing = useMemo(() => withDeletedInventory(imsInventory, deletedCatalogue.inventoryById), [imsInventory, deletedCatalogue]);
   // Bundled settings-driven rates passed to calcStructCost everywhere — imsInventory/rcFactorByKey
   // ride along so trussRowCost can price a "custom ceiling/masking" inventory item (rental × its
   // sub-category's scaling factor) the same way any other IMS-sourced element prices.
@@ -4728,7 +4745,16 @@ export default function StudioApp() {
   // sharedFloralSettings itself reads — can't use sharedFloralSettings here, it's declared further
   // down) so calcStructCost can price a true Liza/masking/curtain fabric shortfall into the guest
   // build itself, not just Deal Check's internal cost tracking (see calcFabricAllocCost's own note).
-  const structRates = useMemo(() => ({ printMaterials: imsPrintMaterials, carpetMaterials: imsCarpetMaterials, trussRates: imsTrussRates, maskingRates: imsMaskingRates, fabricMultiplier: imsFabricMultiplier, platformRates: imsPlatformRates, imsInventory, rcFactorByKey, trussInv: studioFloralData?.trussInv ?? dealCheckData?.trussInv }), [imsPrintMaterials, imsCarpetMaterials, imsTrussRates, imsMaskingRates, imsFabricMultiplier, imsPlatformRates, imsInventory, rcFactorByKey, studioFloralData, dealCheckData]);
+  // print/carpet/platform merge in the deleted-catalogue snapshot (migration 059) so a now-deleted
+  // material still resolves to its last known label/rate instead of falling back to ₹0; imsInventory
+  // here becomes invForPricing for the same reason.
+  const structRates = useMemo(() => ({
+    printMaterials: withDeletedRates(imsPrintMaterials, deletedCatalogue.printMaterials, "id"),
+    carpetMaterials: withDeletedRates(imsCarpetMaterials, deletedCatalogue.carpetMaterials, "id"),
+    trussRates: imsTrussRates, maskingRates: imsMaskingRates, fabricMultiplier: imsFabricMultiplier,
+    platformRates: withDeletedRates(imsPlatformRates, deletedCatalogue.platformRates, "key"),
+    imsInventory: invForPricing, rcFactorByKey, trussInv: studioFloralData?.trussInv ?? dealCheckData?.trussInv,
+  }), [imsPrintMaterials, imsCarpetMaterials, imsTrussRates, imsMaskingRates, imsFabricMultiplier, imsPlatformRates, deletedCatalogue, invForPricing, rcFactorByKey, studioFloralData, dealCheckData]);
 
   // Cost% for pricing an inventory-sourced element's shortfall (qty beyond what's free in stock
   // for the active date) — same rate_card_categories row as the scaling factor, same join key.
@@ -4833,6 +4859,16 @@ export default function StudioApp() {
       .map((p) => ({ id: p.id, name: p.name, sub: p.sub || "", unit: p.unit || "pc" }));
   }, [dealCheckData, studioFloralData]);
 
+  // A flower-recipe pattern by id, live-first with a fallback to the deleted-catalogue snapshot
+  // (migration 059) — so a quote element still pointing at a since-deleted recipe keeps resolving
+  // to its last known rates instead of silently pricing at ₹0. getElPriceFromPattern and a kit's
+  // attached-recipe add-ons both resolve through this rather than a plain live-only `.find`.
+  const patternById = useCallback((id) => {
+    if (!id) return null;
+    const live = (sharedFloralSettings.flowerPatterns || []).find((p) => p.id === id);
+    return live || deletedCatalogue.patternsById.get(id) || null;
+  }, [sharedFloralSettings, deletedCatalogue]);
+
   // The colour a function's real flowers are priced at (owner decision 2026-11-02: the price follows the colour, in Build, Deal
   // Check and Planning alike): the flower's own 🎨 pick in Deal Check, else the variant its Flower Palette's main colour is tagged to
   // (lib/studio/floralCost's effectiveColorPrefRows - the same row Deal Check's Florals tab costs the flower at). A flower with
@@ -4860,19 +4896,23 @@ export default function StudioApp() {
   const getElPriceFromPattern = useCallback((el, fnRatio, fnIdx) => {
     const fnFloralRatio = typeof fnRatio === "number" ? fnRatio : floralRatio;
     const floralSrc = sharedFloralSettings;
-    const pattern = (floralSrc.flowerPatterns || []).find((p) => p.id === el.patternId);
-    if (!pattern) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
+    const pattern = patternById(el.patternId);
+    if (!pattern) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null, catalogueDeleted: null };
+    // Migration 059: a recipe found only via the deleted-catalogue fallback still prices at its last
+    // known rates below (patternById doesn't distinguish) — this is the one flag the caller needs to
+    // show Build's own ⚠ warning instead of a stock-shortfall badge.
+    const deletedInfo = pattern.catalogueDeleted ? { self: true, kind: "recipe", name: pattern.name, deletedAt: pattern.catalogueDeletedAt || null, parts: [] } : null;
     const qty = el.qty || 0;
     const sizeKey = sizeClassToPatternKey(normalizeSizeClass(el.size || "B"));
-    const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory, rcFactorByKey, flowerRateForFn(fnIdx));
-    if (!rates) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
+    const rates = floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, invForPricing, rcFactorByKey, flowerRateForFn(fnIdx));
+    if (!rates) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null, catalogueDeleted: deletedInfo };
     const subKey = squeezeKey(pattern.sub);
     const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
     const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - fnFloralRatio));
     const realPct = (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? el.realPct : modeDefault;
     const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
-    return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
-  }, [dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, imsInventory, rcFactorByKey, flowerRateForFn]);
+    return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb", catalogueDeleted: deletedInfo };
+  }, [dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, patternById, invForPricing, rcFactorByKey, flowerRateForFn]);
 
   // Price an element sourced directly from a raw mandi commodity (el.mandiId, sibling to
   // el.patternId's getElPriceFromPattern) — e.g. "Loose Petals" added straight to a zone by the kg,
@@ -5056,12 +5096,15 @@ export default function StudioApp() {
     const isRepeat = typeof repeatOverride === "boolean" ? repeatOverride : repeatCatFor(zc, "elements");
     // Only the discount-eligible bucket (Fixed Venue's "disc qty", not its "full qty" — see
     // FixedVenuesEditor.jsx) counts as eligible here, so the client never sees a Repeat markdown on
-    // units the venue specifically designated to bill at full rate.
+    // units the venue specifically designated to bill at full rate. rentalSplit's own `inventory` arg
+    // stays on the LIVE list — it's a stock/standing-allocation check, not a price lookup.
     const { discUnits } = isRepeat ? { discUnits: 0 } : rentalSplit(fvCfgForRepeat, venueName, item.id, qty, imsInventory);
     return guestRepeatLineCost({
       qty, unitRate,
-      // a kit with switched-off components: their share of the kit's price is never discounted
-      flaggedUnitRate: flaggedUnitRate(item, (it, ov) => priceForInvItem(it, rcFactorByKey, imsInventory, ov), imsInventory, kitOverrides),
+      // a kit with switched-off components: their share of the kit's price is never discounted.
+      // invForPricing (not imsInventory) — this walks the kit to find each component's PRICE, so a
+      // deleted nested component still resolves to its last known rate (migration 059).
+      flaggedUnitRate: flaggedUnitRate(item, (it, ov) => priceForInvItem(it, rcFactorByKey, invForPricing, ov), invForPricing, kitOverrides),
       noDiscount: item.noRepeatDiscount === true, hidden: hideDiscountFromClient,
       isRepeat, standingUnits: discUnits, crossFnReuseQty, dateFactor, pct: GUEST_DISCOUNT_PCT,
     });
@@ -5093,9 +5136,12 @@ export default function StudioApp() {
   // exactly as before — no availability context exists there (no event date to check against).
   // opts.zc (a zone's zoneConfig, carrying .repeat) + opts.venueName turn on the Repeat discount
   // above; both are optional and default to nothing (full price), same reasoning as checkAvailability.
-  const getElPriceFromInventory = useCallback((el, opts) => {
-    const item = imsInventory.find((i) => i.id === el.invId);
-    if (!item) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null };
+  // Migration 059: `item` is live-first, deleted-catalogue-fallback (liveItem is the raw live
+  // lookup, passed through separately so the availability branch below can tell the two apart — a
+  // deleted item has no real stock to check against, so it skips that branch entirely rather than
+  // showing a false "short"/"out of stock" badge). This is the CORE pricing body; the thin outer
+  // `getElPriceFromInventory` wrapper below resolves liveItem/item and attaches `catalogueDeleted`.
+  const getElPriceFromInventoryCore = useCallback((el, opts, liveItem, item) => {
     const qty = el.qty || 0;
     // opts.crossFnReusePool (optional, a mutable Map<invId, remainingQty> built once per function
     // by calcFunctionCost/calcFunctionBreakdown from the matching prior function — see
@@ -5152,7 +5198,7 @@ export default function StudioApp() {
       const recipeCost = (pattern, subKey, recipeQty = 1, override) => {
         if (!pattern) return 0;
         const szKey = override?.size || sizeKey;
-        const rates = floralPatternUnitRates(pattern, szKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory, rcFactorByKey, flowerRateForFn(opts?.fnIdx));
+        const rates = floralPatternUnitRates(pattern, szKey, floralSrc.mandiCatalogue || [], floralSrc, invForPricing, rcFactorByKey, flowerRateForFn(opts?.fnIdx));
         if (!rates) return 0;
         const sk = String(subKey || pattern.sub || "").trim().toLowerCase();
         const subMode = sk ? rcFloralModeByKey[sk] : undefined;
@@ -5167,7 +5213,9 @@ export default function StudioApp() {
       const effectiveSubItems = Array.isArray(el.kitOverrides) ? el.kitOverrides : (item.subItems || []);
       const attachedPatterns = effectiveSubItems
         .filter((si) => si.patternId)
-        .map((si) => ({ pattern: (floralSrc.flowerPatterns || []).find((p) => p.id === si.patternId), qty: si.qty, si }))
+        // patternById, not a plain live-only find — a since-deleted attached recipe still resolves
+        // to its last known rates via the deleted-catalogue fallback (migration 059).
+        .map((si) => ({ pattern: patternById(si.patternId), qty: si.qty, si }))
         .filter((x) => x.pattern);
       // (3) a plain component that is ITSELF a floral item — its own sub-category's recipe. Only its
       //     flat rental reaches priceForInvItem, so the recipe money is topped up here. This was
@@ -5175,7 +5223,7 @@ export default function StudioApp() {
       //     charged price did not, so a console kit billed ₹3,746 against a ₹7,715 breakdown. Same
       //     shared helper both sides now call, so they cannot disagree again.
       const compDelta = kitFloralCompDelta({
-        comps: effectiveSubItems, inventory: imsInventory, flowerPatterns: floralSrc.flowerPatterns || [],
+        comps: effectiveSubItems, inventory: invForPricing, flowerPatterns: floralSrc.flowerPatterns || [],
         mandiCatalogue: floralSrc.mandiCatalogue || [], floralSettings: floralSrc,
         rcFloralModeByKey, floralRatio: fnFloralRatio, elSize: el.size, rcFactorByKey,
       });
@@ -5183,7 +5231,7 @@ export default function StudioApp() {
       // carrying a sub-category recipe or any add-on of its own.
       if (subCatPattern || attachedPatterns.length || compDelta > 0) {
         const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty, x.si), 0) + compDelta;
-        const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides) + flowerCost;
+        const unitPrice = priceForInvItem(item, rcFactorByKey, invForPricing, el.kitOverrides) + flowerCost;
         const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
         return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
       }
@@ -5199,7 +5247,7 @@ export default function StudioApp() {
     if (isFloral && !isKit) {
       const pattern = matchFlowerPattern(item, floralSrc.flowerPatterns || []);
       const sizeKey = pattern ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : null;
-      const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, imsInventory, rcFactorByKey, flowerRateForFn(opts?.fnIdx)) : null;
+      const rates = pattern ? floralPatternUnitRates(pattern, sizeKey, floralSrc.mandiCatalogue || [], floralSrc, invForPricing, rcFactorByKey, flowerRateForFn(opts?.fnIdx)) : null;
       if (rates) {
         const subKey = String(item.subCat || item.subcategory || "").trim().toLowerCase();
         const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
@@ -5208,12 +5256,15 @@ export default function StudioApp() {
         // Flower cost blends by real/artificial %; the pot/container itself doesn't — this specific
         // item's own rental (× its sub-category's scaling factor) is always added on top, alongside
         // the recipe's own generic "extra (pot/base)" figure.
-        const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey, imsInventory);
+        const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey, invForPricing);
         return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
       }
     }
 
-    if (opts?.checkAvailability) {
+    if (opts?.checkAvailability && liveItem) {
+      // liveItem, not just item — a catalogue-deleted item (migration 059) has no real stock to
+      // check against, so it skips this whole branch and falls through to the plain price-only
+      // path at the bottom (no availability cap, no false "short"/"out of stock" badge).
       // blocksForDate lets a caller price a NON-active function's shortfall against ITS OWN date
       // (see getElPriceForFn) — falls back to the single active-function cache for every existing
       // Build-view caller, which never passes it and keeps working exactly as before.
@@ -5309,7 +5360,7 @@ export default function StudioApp() {
       const crossFnBonus = Math.max(0, Math.min(shortQty, crossFnTake));
       ownedQty += crossFnBonus;
       shortQty -= crossFnBonus;
-      const ownedRate = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
+      const ownedRate = priceForInvItem(item, rcFactorByKey, invForPricing, el.kitOverrides);
       // fnDate/asOfDate feed the production lead-time gate inside canFulfillShortfall/oosCostPctFor
       // (lib/rateCard.js): fnDate is this row's own function date (same resolution already used for
       // the allocation check above); asOfDate is el.addedAt when present — frozen to the sold date
@@ -5386,9 +5437,30 @@ export default function StudioApp() {
         // short (owner ask 2026-11-06); it is still priced at cost% for the part past stock, and Planning still sees it to be made.
         madeToOrder: shortQty > 0 && canMakeShort };
     }
-    const unitPrice = priceForInvItem(item, rcFactorByKey, imsInventory, el.kitOverrides);
+    const unitPrice = priceForInvItem(item, rcFactorByKey, invForPricing, el.kitOverrides);
     return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null };
-  }, [imsInventory, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate, flowerRateForFn]);
+  }, [imsInventory, invForPricing, patternById, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate, flowerRateForFn]);
+
+  // Thin outer wrapper: resolves live-vs-deleted `item` once, calls the core pricing body, then
+  // attaches `catalogueDeleted` (migration 059) — a SEPARATE field from `warning` (stock-shortfall
+  // only, untouched) so Build can show its own ⚠ badge without mislabeling a deleted-catalogue item
+  // as merely short on stock.
+  const getElPriceFromInventory = useCallback((el, opts) => {
+    const liveItem = imsInventory.find((i) => i.id === el.invId);
+    const item = liveItem || deletedCatalogue.inventoryById.get(el.invId);
+    // Truly never existed anywhere, including the snapshot (e.g. deleted before audit_log existed,
+    // or a typo'd id) — out of scope for this fix, same ₹0 early-return as before.
+    if (!item) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null, catalogueDeleted: null };
+    const core = getElPriceFromInventoryCore(el, opts, liveItem, item);
+    let catalogueDeleted = null;
+    if (!liveItem) {
+      catalogueDeleted = { self: true, kind: "inventory", name: item.name, deletedAt: item.catalogueDeletedAt || null, parts: [] };
+    } else {
+      const parts = deletedKitParts(item, invForPricing, el.kitOverrides, patternById);
+      if (parts.length) catalogueDeleted = { self: false, kind: "kit", name: item.name, deletedAt: null, parts };
+    }
+    return { ...core, catalogueDeleted };
+  }, [imsInventory, deletedCatalogue, invForPricing, patternById, getElPriceFromInventoryCore]);
 
   // ── A KIT'S SHORT PARTS ──
   // getElPriceFromInventory checks a kit row against the KIT's own stock only - a part inside it (a cushion cover, a pot)
@@ -12189,7 +12261,10 @@ export default function StudioApp() {
   // (the Add Production/Buying Item modal lives in StudioModals.jsx, a sibling of Build) instead of
   // being duplicated. Behaviour is unchanged — same subcat resolution, same free-sorted item list.
   const openAvailModal = useCallback(async (zoneKey, idx, el, rc, onPick, opts) => {
-    const invItem = el?.invId ? (imsInventory || []).find(i => i.id === el.invId) : null;
+    // Deleted-catalogue fallback (migration 059) — so the 📦 swap-item picker for an element whose
+    // own item was since deleted from IMS still opens scoped to the right sub-category, instead of
+    // reading as "no item at all".
+    const invItem = el?.invId ? ((imsInventory || []).find(i => i.id === el.invId) || deletedCatalogue.inventoryById.get(el.invId) || null) : null;
     const subcat = (invItem ? (invItem.subCat || invItem.subcategory) : "") || (rc ? itemImsSubcat(rc) : "") || rc?.sub || "";
     const date = activeFnMeta?.date || clientDate || "";
     // splitQty / onSplit let a caller that isn't the zoneElements path still offer Split.
@@ -12357,7 +12432,7 @@ export default function StudioApp() {
       prefetchImages(items.map(i => i.photo && thumbUrl(i.photo, AVAIL_THUMB)), { concurrency: 8 });
       setAvailModal(m => (m && m.reqId === reqId && m.zoneKey === zoneKey && m.idx === idx) ? { ...m, loading: false, items } : m);
     } catch { setAvailModal(m => (m && m.reqId === reqId) ? { ...m, loading: false } : m); }
-  }, [imsInventory, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData, collectAllFunctionData, activeFnIdx, eventOrders, activeClientId, clientName, holdersOnDate]);
+  }, [imsInventory, deletedCatalogue, activeFnMeta, clientDate, loadAvailability, getStudioAvailable, rcFactorByKey, zoneConfig, venue, guestPriceMultiplier, hideDiscountFromClient, fvCfgForRepeat, dealCheckData, studioFloralData, collectAllFunctionData, activeFnIdx, eventOrders, activeClientId, clientName, holdersOnDate]);
   // Opens the availability picker straight from the pre-Sold out-of-stock gate (StudioModals.jsx's
   // oosGateModal), for a flagged row {fnIdx, zoneKey, idx, invId, name} — instead of the old "Go
   // fix" that only switched tabs and left the salesperson to find the element by hand.
@@ -13907,6 +13982,9 @@ export default function StudioApp() {
     TC_UNITS, RC_CATS_DEFAULT,
     // IMS inventory — Library "+Add element" sources from here now, not the Rate Card
     imsInventory, getElPriceFromInventory,
+    // Deleted-catalogue snapshot (migration 059) — Build's ⚠ badge, KitComponentsEditor's merged
+    // price lookups, and Summary's carpet-label resolution all read this.
+    deletedCatalogue,
     // Print material rates (IMS Admin → Settings → 🖨️ Print Materials) — Library's per-element Print section
     imsPrintMaterials, imsCarpetMaterials,
     // Truss & masking rates (IMS Admin → Settings → 🏗️ Truss & Masking Rates) + the bundled object

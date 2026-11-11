@@ -17,6 +17,7 @@ import {
   maskingOptions, platformOptions, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
   platformRowCost, liveAreaElementOptions, carpetPricingFor, carpetTakesStockPick,
 } from "../../../lib/studio/taxonomy";
+import { catalogueDeletedLabel, catalogueDeletedTitle } from "../../../lib/studio/deletedCatalogue";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
@@ -878,7 +879,13 @@ export function PrintRefPhoto({ value, onChange, S, textS, border, accent }) {
   );
 }
 
-export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1, guestDiscPct = 0 }) {
+export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsCarpetMaterialsPriced, imsPlatformRatesPriced, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1, guestDiscPct = 0 }) {
+  // imsCarpetMaterials/imsPlatformRates stay LIVE-only (the picker's own choices — a deleted
+  // material must never be newly pickable); the …Priced fallbacks (migration 059, default to the
+  // live list when the caller hasn't passed the merged one) are for PRICE/LABEL lookups only, so a
+  // floor already pointed at a since-deleted material keeps resolving its last known label/rate.
+  const carpetMaterialsPriced = imsCarpetMaterialsPriced || imsCarpetMaterials;
+  const platformRatesPriced = imsPlatformRatesPriced || imsPlatformRates;
   // The picked carpet can only cover so many sqft: a width/depth that would take this floor past
   // what is left of its free stock (minus the other floors using the same carpet) is not saved.
   const [cpLimit, setCpLimit] = useState("");
@@ -923,7 +930,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   const rowDims = zc.floorDims || {};
   const rowCostRaw = platformRowCost(
     { plH: zc.plH, floorDims: rowDims, cpT: zc.cpT, plQty: zc.plQty, cpInvId: zc.cpInvId },
-    { platformRates: imsPlatformRates, carpetMaterials: imsCarpetMaterials, imsInventory },
+    { platformRates: platformRatesPriced, carpetMaterials: carpetMaterialsPriced, imsInventory },
   );
   // guestPriceMultiplier — the Platform/Carpet SECTION TILE total already folds this in
   // (scaleStruct); this per-row card computed straight off platformRowCost and never got it, same
@@ -942,7 +949,14 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   // convention TrussCard's own rate caption follows (its ₹/sqft figure never takes the Fixed-Venue/
   // Repeat cut either) and what the cost sheet/exports quote. Only the AMOUNT (carpetShown below)
   // takes the discount; the rate caption states what a sqft is listed at.
-  const carpetBilledRaw = carpetPricingFor(zc.cpT, imsCarpetMaterials);
+  const carpetBilledRaw = carpetPricingFor(zc.cpT, carpetMaterialsPriced);
+  // The picked material isn't in the LIVE list — it's deleted (migration 059) — so the select below
+  // adds one extra, disabled option for it instead of silently looking reset to "— None —".
+  const carpetMatDeleted = zc.cpT && zc.cpT !== CARPET_OFF && carpetBilledRaw.catalogueDeleted && !(imsCarpetMaterials || []).some((m) => m.id === zc.cpT);
+  // Same idea for platform height — a selected height no longer among the live buttons (deleted in
+  // IMS) still bills its last known rate; an extra disabled chip keeps it visible as chosen.
+  const plHDeleted = zc.plH && !platformOptions(imsPlatformRates).some((o) => o.id === zc.plH) && platformOptions(platformRatesPriced).some((o) => o.id === zc.plH);
+  const plHDeletedOpt = plHDeleted ? platformOptions(platformRatesPriced).find((o) => o.id === zc.plH) : null;
   const carpetBilled = { ...carpetBilledRaw, rate: Math.round((carpetBilledRaw.rate || 0) * guestPriceMultiplier * 100) / 100 };
   const isNewCarpet = /new/i.test(carpetBilled.label || "");
   const isStockCarpet = carpetTakesStockPick(carpetBilled.label);
@@ -999,6 +1013,13 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                         );
                       })}
                     </span>
+                    {/* The height on this zone was deleted from IMS Platform Rates (migration 059) — not
+                        among the live buttons above, so this non-interactive chip keeps it visible as
+                        chosen (and still billing) instead of the control looking blank. */}
+                    {plHDeletedOpt && <span title={catalogueDeletedTitle({ self: true, kind: "structural", name: plHDeletedOpt.l, deletedAt: null, parts: [] }, { rateText: `₹${plHDeletedOpt.r}/sqft` })}
+                      style={{padding:"3px 10px",borderRadius:999,border:"1px dashed #EF4444",fontSize:11.5,fontWeight:700,color:"#EF4444",whiteSpace:"nowrap"}}>
+                      ⚠ {plHDeletedOpt.l}{showCosts?` ₹${plHDeletedOpt.r}`:""}
+                    </span>}
                     {/* The "1ft-3ft" tier is a flat rate band, not one fixed height — ops still needs
                         to know exactly how tall to build the stand. Only shown once that tier is
                         picked; the exact value is purely informational (doesn't change rowCost.platform,
@@ -1075,8 +1096,13 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     showCosts&&<div style={{fontSize:10.5,color:textS,marginBottom:4}}>Billed at {carpetBilled.label} ₹{carpetBilled.rate}/sqft</div>
                   ) : (
                   <select value={zc.cpT===CARPET_OFF?"":(zc.cpT||defaultCarpetMatId(imsCarpetMaterials)||"")} onChange={e=>sZ({cpT:e.target.value||CARPET_OFF})}
+                    title={carpetMatDeleted?catalogueDeletedTitle({self:true,kind:"structural",name:carpetBilledRaw.label,deletedAt:carpetBilledRaw.catalogueDeletedAt,parts:[]},{rateText:`₹${carpetBilledRaw.rate}/sqft`}):undefined}
                     style={{width:"100%",boxSizing:"border-box",fontSize:11.5,padding:"7px 8px",borderRadius:8,border:`1px solid ${border}`,background:"#fff",color:"#111827"}}>
                     <option value="" style={{color:"#111827",background:"#fff"}}>— None —</option>
+                    {/* The live list only — a deleted material must never be newly pickable. If THIS
+                        floor's own choice was deleted, one extra disabled option keeps the select
+                        showing it as chosen instead of silently looking reset to "— None —". */}
+                    {carpetMatDeleted&&<option disabled value={zc.cpT} style={{color:"#111827",background:"#fff"}}>⚠ {carpetBilledRaw.label} (deleted{showCosts?` · ₹${carpetBilledRaw.rate}/sqft`:""})</option>}
                     {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
                   </select>
                   )}
@@ -1142,12 +1168,12 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
 //
 // platformRowCost already runs per row over zc.extraPlatformRows and buildPlatformPlan draws one
 // ops entry each, so the cost and the plan were ready long before there was a way to add one.
-export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1, guestDiscPct = 0 }) {
+export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsCarpetMaterialsPriced, imsPlatformRatesPriced, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1, guestDiscPct = 0 }) {
   const rows = zc.extraPlatformRows || [];
   const write = (next) => sZ({ extraPlatformRows: next });
   // accent rides in `shared`, so both the first floor and every added row get it from one place —
   // FloorCard needs it for the platform-height control's selected fill.
-  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier, guestDiscPct };
+  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsCarpetMaterialsPriced, imsPlatformRatesPriced, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier, guestDiscPct };
   return (<>
     <FloorCard {...shared} zc={zc} sZ={sZ} sFD={sFD} fd={fd} title={rows.length ? "Floor 1" : "Floor"} />
     {rows.map((row, ri) => {
@@ -1239,6 +1265,8 @@ export default function StudioBuild({ ctx }) {
     imsTrussRates, imsMaskingRates, structRates,
     // Platform rates (IMS Admin → Settings → 🪵 Platform Rates)
     imsPlatformRates,
+    // Deleted-catalogue snapshot (migration 059) — a deleted inventory item/recipe/kit part's ⚠ badge.
+    deletedCatalogue,
     // Genset count override, one per size — null means "follow the venue's own figure" for that
     // size. Stepped from the Build total's Genset rows; persisted with the rest of the session
     // snapshot.
@@ -1262,6 +1290,14 @@ export default function StudioBuild({ ctx }) {
     ensureLibItems,
     favPhotos, saveFavPhotos,
   } = ctx;
+  // Migration 059: the live rate lists ABOVE stay live-only wherever this file renders a picker's
+  // CHOICES (a deleted material must never be newly pickable) — these merged "…Priced" versions are
+  // for a PRICE/LABEL LOOKUP only, so a floor/zone already pointed at a since-deleted carpet/print/
+  // platform material still resolves its last known label and rate instead of falling back to a raw
+  // id or ₹0 (structRates.* already carries the deleted-catalogue snapshot — see StudioApp.jsx).
+  const imsCarpetMaterialsPriced = structRates?.carpetMaterials || imsCarpetMaterials;
+  const imsPrintMaterialsPriced = structRates?.printMaterials || imsPrintMaterials;
+  const imsPlatformRatesPriced = structRates?.platformRates || imsPlatformRates;
   // Details & pricing are always shown now (the old global toggle is gone). Each zone is instead
   // independently collapsable via zoneCollapsed — collapsed = header + total only; expanded = full body.
   const showCosts = true;
@@ -1464,7 +1500,7 @@ export default function StudioBuild({ ctx }) {
   // The function's flat small-print charge sits in the Print cost of the zone that carries it (lib/studio/truckPrint.js printFlatForZone), added after the
   // guest-price scaling like every other total that reads the zone's struct figures (StudioApp's withPrintFlat) - tile, zone header and zone total all agree.
   const withPrintFlat = (sc, k) => {
-    const flat = sc ? printFlatForZone(zoneConfig, enabledEls, imsPrintMaterials, k) : 0;
+    const flat = sc ? printFlatForZone(zoneConfig, enabledEls, imsPrintMaterialsPriced, k) : 0;
     return flat > 0 ? { ...sc, print: (sc.print || 0) + flat, total: (sc.total || 0) + flat, printFlat: flat } : sc;
   };
   const zoneSectionSub = (k, id) => {
@@ -1485,6 +1521,17 @@ export default function StudioBuild({ ctx }) {
         if (!warned && kitPartShorts) { try { warned = kitPartShorts(el, { zoneKey: k, elIdx: idx }).some((p) => !p.canMake); } catch { /* not counted */ } }
         return a + (warned ? 1 : 0);
       }, 0);
+      // Catalogue-deleted elements (migration 059) — an inventory item/kit part or flower recipe
+      // since deleted from IMS still prices at its last known rate, but is said on the tile too,
+      // same "shows without opening the card" reasoning as shortN above. Counts patternId elements
+      // too (a pure-recipe element has no stock to be short on, but its recipe can be the deleted thing).
+      const deletedN = els.reduce((a, el, idx) => {
+        if (!el?.invId && !el?.patternId) return a;
+        try {
+          const pi = getElPrice(el, zoneConfig[k], { checkAvailability: true, zoneKey: k, elIdx: idx, crossFnReusePool: pool }, aVenue);
+          return a + (pi?.catalogueDeleted ? 1 : 0);
+        } catch { return a; /* price check failed: not counted */ }
+      }, 0);
       // Overlays and cushion covers (also as parts of a kit) with no alternative designs named: said on the tile too, in red, so it shows without opening the card.
       const prefN = els.reduce((a, el) => {
         if (!el?.invId) return a;
@@ -1494,7 +1541,7 @@ export default function StudioBuild({ ctx }) {
         const parts = Array.isArray(el.kitOverrides) ? el.kitOverrides : (Array.isArray(it.subItems) ? it.subItems : []);
         return a + parts.filter(pt => { const pi = pt?.itemId ? (imsInventory || []).find(i => i.id === pt.itemId) : null; return pi && itemTakesChoices(pi) && partChoices(pt).length < 2; }).length;
       }, 0);
-      return `${n} item${n === 1 ? "" : "s"}${shortN ? ` · ⚠ ${shortN} short` : ""}${prefN ? ` · ⚠ ${prefN > 1 ? `${prefN} ` : ""}${prefN > 1 ? "not selected preference" : "Not selected preference"}` : ""}`;
+      return `${n} item${n === 1 ? "" : "s"}${shortN ? ` · ⚠ ${shortN} short` : ""}${deletedN ? ` · ⚠ ${deletedN} deleted` : ""}${prefN ? ` · ⚠ ${prefN > 1 ? `${prefN} ` : ""}${prefN > 1 ? "not selected preference" : "Not selected preference"}` : ""}`;
     }
     // Empty rather than "Not set" — the tile already reads as untouched, and the words added a
     // line of noise to every zone on first open. sectionTile skips the sub-label row when blank.
@@ -1516,14 +1563,15 @@ export default function StudioBuild({ ctx }) {
       if (!anySize) return size;
       if (allOff) return size;
       // Carpet New is bought fresh — no stock carpet to pick (a photo is attached instead).
-      const needsPick = (r) => r?.cpT !== CARPET_OFF && !r?.cpInvId && carpetTakesStockPick(carpetPricingFor(r?.cpT, imsCarpetMaterials)?.label);
+      const needsPick = (r) => r?.cpT !== CARPET_OFF && !r?.cpInvId && carpetTakesStockPick(carpetPricingFor(r?.cpT, imsCarpetMaterialsPriced)?.label);
       if (anySize && rows.some(needsPick)) return `${size || "Floor"} · carpet not picked`;
       // a stock carpet is picked but fewer than two are ranked: no preference named yet
-      if (anySize && rows.some(r => r?.cpT !== CARPET_OFF && r?.cpInvId && carpetTakesStockPick(carpetPricingFor(r?.cpT, imsCarpetMaterials)?.label) && prefsOf(r).length < 2)) return `${size || "Floor"} · ⚠ Not selected preference`;
+      if (anySize && rows.some(r => r?.cpT !== CARPET_OFF && r?.cpInvId && carpetTakesStockPick(carpetPricingFor(r?.cpT, imsCarpetMaterialsPriced)?.label) && prefsOf(r).length < 2)) return `${size || "Floor"} · ⚠ Not selected preference`;
       // No stock carpet to name (Acrylic, Flex, New…): name the material picked, so the closed tile says what is down
-      // (RC-83 - it read only the size, next to a card that clearly had Acrylic chosen).
+      // (RC-83 - it read only the size, next to a card that clearly had Acrylic chosen). imsCarpetMaterialsPriced
+      // (migration 059) so a since-deleted carpet still resolves its last known label here instead of blank.
       const matRow = rows.find(r => r?.cpT && r.cpT !== CARPET_OFF);
-      const matLabel = matRow ? carpetPricingFor(matRow.cpT, imsCarpetMaterials)?.label : "";
+      const matLabel = matRow ? carpetPricingFor(matRow.cpT, imsCarpetMaterialsPriced)?.label : "";
       return [size, picked[0] ? `📦 ${picked[0]}` : (matLabel ? `carpet: ${matLabel}` : "")].filter(Boolean).join(" · ");
     }
     const n = (zc.prints || []).length, w = printedWallsOf(k).length;
@@ -1608,7 +1656,7 @@ export default function StudioBuild({ ctx }) {
         const z = { ...(next[k] || {}) };
         // the same preferences, in the same order, on every carpeted floor — except a "Carpet New" floor, which is bought fresh and takes no stock
         // pick (its pick slots are hidden, so a pick put there could never be seen or cleared)
-        const isNewRow = (r) => !carpetTakesStockPick(carpetPricingFor(r.cpT, imsCarpetMaterials)?.label);
+        const isNewRow = (r) => !carpetTakesStockPick(carpetPricingFor(r.cpT, imsCarpetMaterialsPriced)?.label);
         const tag = (r) => (isNewRow(r) ? r : ({ ...r, ...setPrefsPatch(list.map(p => ({ id: p.id, name: p.name || "", free: Number(p.free) || 0 }))) }));
         if (ris.includes(0)) Object.assign(z, tag(z));
         if (Array.isArray(z.extraPlatformRows)) z.extraPlatformRows = z.extraPlatformRows.map((r, i) => ris.includes(i + 1) ? tag(r) : r);
@@ -2080,10 +2128,16 @@ export default function StudioBuild({ ctx }) {
     return { ...p, [k]: { ...zone, extraTrussRows: rows } };
   });
   const customCeilingField = (k, zc, dense, rowIdx) => {
-    const item = zc.customCeilingItemId ? (imsInventory || []).find(i => i.id === zc.customCeilingItemId) : null;
+    // Live-first, deleted-fallback: pricing.js already bills this id against structRates.imsInventory
+    // (which includes a deleted item's last-known rate) — this field has to resolve the SAME way, or
+    // the card would charge for a ceiling panel while showing the empty "Custom Ceiling" picker button
+    // with no way to clear it (the × below only renders when `item` resolves).
+    const liveItem = zc.customCeilingItemId ? (imsInventory || []).find(i => i.id === zc.customCeilingItemId) : null;
+    const item = liveItem || (zc.customCeilingItemId ? deletedCatalogue.inventoryById.get(zc.customCeilingItemId) : null);
     const fs = dense ? 9 : 10;
     if (item) return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 6, fontSize: fs, background: "rgba(124,58,237,0.12)", color: "#7C3AED", fontWeight: 600, marginLeft: 8 }}>
       <IconPlay size={12}/> {item.name}{Number(zc.customCeilingQty) > 0 ? ` × ${zc.customCeilingQty}` : ""}
+      {!liveItem && <span title={catalogueDeletedTitle({ self: true, kind: "inventory", name: item.name, deletedAt: item.catalogueDeletedAt, parts: [] }, {})} style={{ color: "#EF4444", fontWeight: 700 }}>⚠</span>}
       <span onClick={() => patchTrussRow(k, rowIdx, { customCeilingItemId: null, customCeilingQty: null })} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
     </span>;
     return <button onClick={() => setCustomPicker({ k, kind: "ceiling", rowIdx })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 6, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer", marginLeft: 8 }}><IconPlay size={11}/> Custom Ceiling</button>;
@@ -2093,13 +2147,18 @@ export default function StudioBuild({ ctx }) {
   // different field once an item is chosen.
   const customMaskingField = (k, zc, dense, rowIdx, wallId) => {
     const itemId = wallId ? zc.mkWallMat?.[wallId]?.customItemId : zc.customMaskingItemId;
-    const item = itemId ? (imsInventory || []).find(i => i.id === itemId) : null;
+    // Same live-first/deleted-fallback reasoning as customCeilingField above — pricing.js already
+    // bills a deleted masking item from its snapshot, so this has to resolve it too or the charge
+    // would be un-clearable here (though it could still be cleared indirectly via a masking pill).
+    const liveItem = itemId ? (imsInventory || []).find(i => i.id === itemId) : null;
+    const item = liveItem || (itemId ? deletedCatalogue.inventoryById.get(itemId) : null);
     const fs = dense ? 9 : 10;
     const clearPatch = wallId
       ? { mkWallMat: { ...(zc.mkWallMat || {}), [wallId]: { ...(zc.mkWallMat?.[wallId] || {}), customItemId: null } } }
       : { customMaskingItemId: null };
     if (item) return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 7px", borderRadius: 5, fontSize: fs, background: "rgba(124,58,237,0.12)", color: "#7C3AED", fontWeight: 600 }}>
       <IconCamera size={12}/> {item.name}
+      {!liveItem && <span title={catalogueDeletedTitle({ self: true, kind: "inventory", name: item.name, deletedAt: item.catalogueDeletedAt, parts: [] }, {})} style={{ color: "#EF4444", fontWeight: 700 }}>⚠</span>}
       <span onClick={() => patchTrussRow(k, rowIdx, clearPatch)} style={{ cursor: "pointer", color: "#E11D48", fontWeight: 700 }}>×</span>
     </span>;
     return <button onClick={() => setCustomPicker({ k, kind: "masking", rowIdx, wallId, wallMatSnapshot: zc.mkWallMat })} style={{ padding: dense ? "2px 7px" : "3px 9px", borderRadius: 5, fontSize: fs, border: `1px dashed ${border}`, background: "transparent", color: textS, cursor: "pointer" }}><IconCamera size={11}/> Custom Masking</button>;
@@ -5204,13 +5263,17 @@ undefined
                   // same or next day (findSiblingFnInvUse) — so the salesperson knows it is being reused.
                   const _siblingFns = el.invId ? activeSiblingFnInvUse[el.invId] : null;
                   const invItem = el.invId ? (imsInventory||[]).find(i=>i.id===el.invId) : null;
+                  // Thumbnail/photo resolution ONLY falls back to the deleted-catalogue snapshot
+                  // (migration 059) — invItem above stays live-only for every feature-gating use
+                  // (kit editor, choices, exchange-kit, sibling-reuse): a genuinely deleted item
+                  // must stay "off" for those, not resolve as if it were still a real, live item.
                   // Orange 📦 = NOT this same item, but a DIFFERENT item from the same sub-category is
                   // used in a sibling function (same venue, same/next day) — swapping to it would earn
                   // the same reuse discount _siblingFns already flags for an exact match. Once that
                   // swap happens this naturally stops firing (el.invId now matches exactly, so
                   // _siblingFns takes over instead) — the two never show at once for the same element.
                   const _subcatOpportunity = (!_siblingFns && invItem) ? (activeSiblingFnSubcatOpportunity[String(invItem.subCat||invItem.subcategory||"").trim().toLowerCase()] || null) : null;
-                  const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name);
+                  const thumbItem = invItem || (imsInventory||[]).find(i=>i.name===el.name) || (el.invId ? deletedCatalogue.inventoryById.get(el.invId) : null);
                   // A pure flower-recipe element (patternId, no invId) has no IMS inventory row at
                   // all, so thumbItem is always empty for it — it fell back to the generic box icon
                   // regardless of whether IMS had a reference photo for this size. Recipes now carry
@@ -5308,6 +5371,11 @@ undefined
                             deal: Manaktala stock freed up, the live cap moved, and this badge kept showing). */}
                         {el.invId&&(el.wantedQty||0)>(el.qty||0)&&priceInfo.warning&&<span title={`Asked for ${el.wantedQty}, only ${el.qty} available for this date — held at ${el.qty}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>⚠ short · {el.wantedQty} asked</span>}
                         {el.invId&&priceInfo.warning&&!priceInfo.madeToOrder&&<span title={priceInfo.shortWhy?`${priceInfo.warning}\n\n${priceInfo.shortWhy}`:priceInfo.warning} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>{priceInfo.outOfStock?"⚠ out of stock":"⚠ short"}</span>}
+                        {/* Catalogue-deleted (migration 059) — a SEPARATE field from priceInfo.warning
+                            (stock-shortfall only, unchanged above), so this never mislabels a deleted
+                            inventory item/kit part/flower recipe as merely short on stock. Not gated
+                            on el.invId — a pure-recipe element (el.patternId) gets it too. */}
+                        {priceInfo.catalogueDeleted&&<span title={catalogueDeletedTitle(priceInfo.catalogueDeleted,{rateText:showCosts&&_effUp>0?`₹${Math.round(_effUp).toLocaleString("en-IN")}/${isTrussSqft?"truss sqft":(invItem?.unit||rc?.unit||el.unit)}`:undefined})} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700}}>{catalogueDeletedLabel(priceInfo.catalogueDeleted)}</span>}
                         {kitShort.length>0&&<span title={`Short for this date inside this kit:\n${kitShort.map(p=>`${p.name}: ${p.short} of ${p.need} short${p.canMake?" (production can make it)":" (can't be made, pick another part)"}`).join("\n")}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:kitShortOut?"rgba(239,68,68,0.15)":"rgba(245,158,11,0.15)",color:kitShortOut?"#EF4444":"#B45309",fontWeight:700}}>⚠ {kitShort.length} part{kitShort.length===1?"":"s"} short</span>}
                         {(rc||el.invId)&&<span onClick={()=>((!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))||(()=>openAvailModal(k, idx, el, rc)))()} title={(!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))?`Check what is free and name up to ${ELEMENT_PREF_MAX} ${/cover/i.test(invItem?.name||"")?"cushion cover":"overlay"} designs in order of preference - Planning decides which one is used`:_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}
                         {/* Exchange Kit - when the item's sub-category has more than one kit (any Console Table's kits for a Console Table); names the kit the element is on */}
@@ -5582,6 +5650,9 @@ undefined
                         // Deal Check's "back to the kit's default" marker.
                         if(setDcKitEdits&&buildElCardKey&&el.invId){const ck=buildElCardKey(k,el.name||"",idx);const fi=activeFnIdx||0;setDcKitEdits(prev=>({...prev,[fi]:{...(prev?.[fi]||{}),[ck]:Array.isArray(next)?next:null}}));persistDcKitEditsNow?.(fi,ck,next);}}}
                       imsInventory={imsInventory}
+                      // Deleted-catalogue snapshot (migration 059) — a kit part/recipe add-on since
+                      // deleted from IMS still shows its real last-known name + rate, with a chip.
+                      deletedCatalogue={deletedCatalogue}
                       // sharedFloralSettings (StudioApp.jsx), not the raw dealCheckData||studioFloralData
                       // fallback — that older pattern prefers dealCheckData the instant Deal Check has
                       // ever been opened once, freezing the kit's recipe/markup data on that one-time
@@ -5700,7 +5771,10 @@ undefined
                   const isPhantom=p.id==="__phantom__";
                   const invItem=p.invId?(imsInventory||[]).find(i=>i.id===p.invId):null;
                   const thumbSrc=invItem?.img||invItem?.photoUrls?.[0];
-                  const mat=(imsPrintMaterials||[]).find(m=>m.id===p.material);
+                  // imsPrintMaterialsPriced (migration 059) — a since-deleted print material still
+                  // resolves its last known rate here instead of a blank/₹0 "not in IMS" read.
+                  const mat=(imsPrintMaterialsPriced||[]).find(m=>m.id===p.material);
+                  const matDeleted=mat?.catalogueDeleted&&!(imsPrintMaterials||[]).some(m=>m.id===p.material);
                   const sqft=(Number(p.areaW)||0)*(Number(p.areaD)||0);
                   const rate=mat?.ratePerSqft||0;
                   const qty=Math.max(1,Math.round(Number(p.qty)||1));
@@ -5718,7 +5792,7 @@ undefined
                   const costShown = guestPriceMultiplier * (printDiscPct > 0 ? Math.round(cost * (1 - printDiscPct / 100)) : cost);
                   // the function's flat transport for small prints is shown on ONE job (the first small one), since it is charged once
                   const smallJob=rate>0&&sqft>0&&Math.round(cost)<SMALL_PRINT_LIMIT;
-                  const _fsp=smallJob&&!isPhantom?firstSmallPrint(zoneConfig,enabledEls,imsPrintMaterials):null;
+                  const _fsp=smallJob&&!isPhantom?firstSmallPrint(zoneConfig,enabledEls,imsPrintMaterialsPriced):null;
                   const carriesFlat=!!_fsp&&_fsp.zk===k&&_fsp.index===pi;
                   const setPrint=(patch)=>{
                     if(isPhantom){setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:[{...p,...patch,id:"PR"+Date.now()+Math.floor(Math.random()*1000)}]}}));return;}
@@ -5728,8 +5802,12 @@ undefined
                   const linkQ=zonePrintSearch[p.id]||"";
                   return <div key={p.id} style={{padding:"7px 9px",borderRadius:8,background:isDark?"rgba(14,165,233,0.06)":"rgba(14,165,233,0.05)",border:"1px solid rgba(14,165,233,0.25)"}}>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                      <select value={p.material||""} onChange={e=>setPrint({material:e.target.value})} style={{...S.select,fontSize:11.5,padding:"3px 6px",width:"auto"}}>
+                      <select value={p.material||""} onChange={e=>setPrint({material:e.target.value})} title={matDeleted?catalogueDeletedTitle({self:true,kind:"structural",name:mat.name,deletedAt:mat.catalogueDeletedAt,parts:[]},{rateText:`₹${mat.ratePerSqft}/sqft`}):undefined} style={{...S.select,fontSize:11.5,padding:"3px 6px",width:"auto"}}>
                         <option value="">Material…</option>
+                        {/* The live list only — a deleted material must never be newly pickable. If the
+                            row's OWN choice was deleted, one extra disabled option keeps it visible
+                            (and the select showing it as chosen) instead of silently looking reset. */}
+                        {matDeleted&&<option disabled value={mat.id}>⚠ {mat.name} (deleted, ₹{mat.ratePerSqft}/sqft)</option>}
                         {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name} (₹{m.ratePerSqft}/sqft)</option>)}
                       </select>
                       <NumField min={0} value={p.areaW||""} onCommit={n=>setPrint({areaW:n})} placeholder="W ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}} />
@@ -5858,7 +5936,7 @@ undefined
                 customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(zc,"truss")||!!structDiscountFor(zc,aVenue)?.truss} trussReserved={trussReserved} stockDateLabel={stockDateLabel} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseNow()} guestPriceMultiplier={guestPriceMultiplier} guestDiscPct={structDiscountFor(zc,aVenue)?.platform?25:0} />}
+                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsCarpetMaterialsPriced={imsCarpetMaterialsPriced} imsPlatformRatesPriced={imsPlatformRatesPriced} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseNow()} guestPriceMultiplier={guestPriceMultiplier} guestDiscPct={structDiscountFor(zc,aVenue)?.platform?25:0} />}
             </div>);
           })()}
           </Fragment>}
@@ -6378,7 +6456,7 @@ undefined
                     isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
                     customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(cfgCur,"truss")||!!structDiscountFor(cfgCur,aVenue)?.truss} trussReserved={ownsLive?trussReserved:undefined} stockDateLabel={ownsLive?stockDateLabel:""} />
                   <FloorStack S={S} zc={cfgCur} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                    isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} guestPriceMultiplier={guestPriceMultiplier} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.platform?25:0} />
+                    isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsCarpetMaterialsPriced={imsCarpetMaterialsPriced} imsPlatformRatesPriced={imsPlatformRatesPriced} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} guestPriceMultiplier={guestPriceMultiplier} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.platform?25:0} />
                 </div>
                 <div style={sectionBox}>
                   {secHead(<IconClipboard size={14}/>,"Element Breakdown","#7C3AED",
@@ -6429,7 +6507,10 @@ undefined
                     ? <div style={{fontSize:12,color:textS,textAlign:"center",padding:"8px 0"}}>No print rows.</div>
                     : <div style={{display:"flex",flexDirection:"column",gap:8}}>
                       {prints.map((p,pi)=>{
-                        const mat=(imsPrintMaterials||[]).find(m=>m.id===p.material);
+                        // imsPrintMaterialsPriced (migration 059) — a since-deleted print material
+                        // still resolves its last known rate here instead of ₹0.
+                        const mat=(imsPrintMaterialsPriced||[]).find(m=>m.id===p.material);
+                        const matDeleted=mat?.catalogueDeleted&&!(imsPrintMaterials||[]).some(m=>m.id===p.material);
                         const sqft=(Number(p.areaW)||0)*(Number(p.areaD)||0);
                         const rate=mat?.ratePerSqft||0;
                         const pq=Math.max(1,Math.round(Number(p.qty)||1));
@@ -6440,8 +6521,9 @@ undefined
                         const pCostShown = guestPriceMultiplier * (printDiscPct > 0 ? Math.round(sqft * rate * pq * (1 - printDiscPct / 100)) : sqft * rate * pq);
                         return <div key={p.id||pi} style={{padding:"8px 10px",borderRadius:8,background:isDark?"rgba(14,165,233,0.06)":"rgba(14,165,233,0.05)",border:"1px solid rgba(14,165,233,0.25)"}}>
                           <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                            <select value={p.material||""} onChange={e=>setPrint(pi,{material:e.target.value})} style={{...S.select,fontSize:11.5,padding:"3px 6px",width:"auto"}}>
+                            <select value={p.material||""} onChange={e=>setPrint(pi,{material:e.target.value})} title={matDeleted?catalogueDeletedTitle({self:true,kind:"structural",name:mat.name,deletedAt:mat.catalogueDeletedAt,parts:[]},{rateText:`₹${mat.ratePerSqft}/sqft`}):undefined} style={{...S.select,fontSize:11.5,padding:"3px 6px",width:"auto"}}>
                               <option value="">Material…</option>
+                              {matDeleted&&<option disabled value={mat.id}>⚠ {mat.name} (deleted, ₹{mat.ratePerSqft}/sqft)</option>}
                               {(imsPrintMaterials||[]).map(m=><option key={m.id} value={m.id}>{m.name} (₹{m.ratePerSqft}/sqft)</option>)}
                             </select>
                             <NumField min={0} value={p.areaW||""} onCommit={n=>setPrint(pi,{areaW:n})} placeholder="W ft" style={{...S.input,fontSize:11.5,padding:"3px 6px",width:56,marginBottom:0,textAlign:"center"}}/>

@@ -212,6 +212,9 @@ export default function StudioSummary({ ctx }) {
     // imsTrussRates joins the other two IMS rate tables here so the truss caption below can quote
     // the real configured rate instead of a hardcoded one — see BUG-9.
     imsPrintMaterials, imsCarpetMaterials, imsTrussRates,
+    // Deleted-catalogue snapshot (migration 059), bundled here too — so a carpet since deleted from
+    // IMS still resolves its last known label below instead of a blank/₹0 fallback.
+    structRates,
     // Inventory (per-item photos for the MOODBOARD/zone-visual slides' reference grid) + colour/
     // palette catalogues (moodboard swatches, resolved from each function's picked palette name)
     imsInventory, imsColourCatalogue, imsPaletteCatalogue,
@@ -3094,7 +3097,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                                 return <div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🧱 {label}</span><span style={{fontWeight:600}}>{fmt(eb.zl.masking)}</span></div>;
                               })()}
                               {eb.zl.platform>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🏗️ Platform ({eb.zc?.plH})</span><span style={{fontWeight:600}}>{fmt(eb.zl.platform)}</span></div>}
-                              {eb.zl.carpet>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🟫 Carpet ({carpetPricingFor(eb.zc?.cpT, imsCarpetMaterials).label})</span><span style={{fontWeight:600}}>{fmt(eb.zl.carpet)}</span></div>}
+                              {eb.zl.carpet>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🟫 Carpet ({carpetPricingFor(eb.zc?.cpT, structRates?.carpetMaterials || imsCarpetMaterials).label})</span><span style={{fontWeight:600}}>{fmt(eb.zl.carpet)}</span></div>}
                               {eb.zl.arches>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🏛️ Arches ({eb.zc?.archT?.toUpperCase()} ×{eb.zc?.archQty})</span><span style={{fontWeight:600}}>{fmt(eb.zl.arches)}</span></div>}
                               {eb.zl.pillars>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>🏛️ Pillars (×{eb.zc?.pillarQty})</span><span style={{fontWeight:600}}>{fmt(eb.zl.pillars)}</span></div>}
                               {eb.zl.glass>0&&<div style={{display:"flex",justifyContent:"space-between",padding:"3px 0",fontSize:12}}><span style={{color:textS}}>💎 Glass ({eb.zc?.glassT?.toUpperCase()} ×{eb.zc?.glassQty})</span><span style={{fontWeight:600}}>{fmt(eb.zl.glass)}</span></div>}

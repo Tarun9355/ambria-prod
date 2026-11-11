@@ -2274,7 +2274,7 @@ Rules:
       <Modal open={!!deleteConfirmId} onClose={() => setDeleteConfirmId(null)} title="🗑 Delete item?">
         <div className="space-y-4">
           <p className="text-sm text-gray-700">
-            Delete <strong>"{deleteConfirmInv?.name || "this item"}"</strong> from inventory? This permanently removes it and cannot be undone.
+            Delete <strong>"{deleteConfirmInv?.name || "this item"}"</strong> from inventory? This permanently removes it and cannot be undone. A Studio quote already using it keeps its last known price and shows a ⚠ deleted warning in Build until the salesperson swaps it for a current item.
           </p>
           <div className="flex gap-2 justify-end">
             <button onClick={() => setDeleteConfirmId(null)} className="px-4 py-2 rounded-lg text-sm border text-gray-600 hover:bg-gray-50">Cancel</button>

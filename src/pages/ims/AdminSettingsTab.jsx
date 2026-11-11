@@ -1801,7 +1801,13 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
           setRecipeRenameId(null);
         };
         const deleteRecipeItem = (studioItem) => {
-          if (!window.confirm(`Delete "${studioItem.name}" and its flower recipe? This cannot be undone.`)) return;
+          // Only an element directly linked to this recipe (its own patternId, or a kit's own
+          // recipe add-on) gets the snapshot protection below — an inventory item priced by matching
+          // this recipe's sub-category/name (the far more common path) isn't tracked by id at all, so
+          // it just silently stops matching once this row is gone (falls to plain rental or whatever
+          // other recipe still matches) with no warning. The confirm says so honestly rather than
+          // promising blanket protection it can't actually give.
+          if (!window.confirm(`Delete "${studioItem.name}" and its flower recipe? This cannot be undone. A Studio element explicitly linked to this recipe keeps its last known price and shows a ⚠ deleted warning in Build until swapped. An inventory item merely priced BY matching this recipe's sub-category/name gets no such warning — it will silently stop getting this recipe's blend price.`)) return;
           deleteRow("flower_patterns", studioItem.id).catch(() => {});
         };
 
@@ -2879,7 +2885,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                     className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
                   <span className="text-xs text-gray-400">/sqft</span>
                 </div>
-                <button onClick={async () => { if (!(await confirm({ title: `Delete "${m.name}"?`, body: "Removes it from the Print Materials list. Anything already priced with it keeps its price." }))) return; deleteRow("print_materials", m.id).catch(() => {}); }}
+                <button onClick={async () => { if (!(await confirm({ title: `Delete "${m.name}"?`, body: "Removes it from the Print Materials list. Anything already priced with it keeps its price, flagged ⚠ deleted in Studio Build so the salesperson knows to swap it." }))) return; deleteRow("print_materials", m.id).catch(() => {}); }}
                   className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
               </div>
             ))}
@@ -2918,7 +2924,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                     className="w-20 border rounded-lg px-2 py-1 text-sm text-center font-semibold" />
                   <span className="text-xs text-gray-400">/sqft</span>
                 </div>
-                <button onClick={async () => { if (!(await confirm({ title: `Delete "${m.name}"?`, body: "Zones already using this carpet keep their current price — it just stops being offered." }))) return; deleteRow("carpet_materials", m.id).catch(() => {}); }}
+                <button onClick={async () => { if (!(await confirm({ title: `Delete "${m.name}"?`, body: "Zones already using this carpet keep their current price — it just stops being offered, flagged ⚠ deleted in Studio Build so the salesperson knows to swap it." }))) return; deleteRow("carpet_materials", m.id).catch(() => {}); }}
                   className="text-gray-300 hover:text-red-500 text-sm">🗑</button>
               </div>
             ))}
@@ -2976,7 +2982,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                       onClick={async () => {
                         if (!(await confirm({
                           title: `Delete "${row.name}"?`,
-                          body: "Zones already saved with this height keep their current price — it just stops being offered.",
+                          body: "Zones already saved with this height keep their current price — it just stops being offered, flagged ⚠ deleted in Studio Build so the salesperson knows to swap it.",
                         }))) return;
                         supabase.from("platform_rates").delete().eq("key", row.key).then(() => {}, () => {});
                       }}
