@@ -794,7 +794,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
             const fnArt = typeof fn?.floralRatio === "number" ? fn.floralRatio : 70;
             const real = (typeof el?.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? Math.round(el.realPct)
               : subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, Math.round(100 - fnArt)));
-            floralMix = real >= 100 ? t("Real") : real <= 0 ? t("Artificial") : t("Artificial {art}% · Real {real}%", { art: 100 - real, real });
+            // both shares always, an all-real or all-artificial piece too (owner ask 2026-11-11: "Artificial" alone said nothing of how much)
+            floralMix = t("Artificial {art}% · Real {real}%", { art: 100 - real, real });
             realPct = real;
             // A flower piece with no size set is priced Big (Studio's el.size || "B"), so it reads Big here too - the flowers
             // under it are for that size (owner ask 2026-11-03: S / M / B wherever a flower piece is in the book).
@@ -854,15 +855,26 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
             const z = String(si?.size || el?.size || "B").trim().toUpperCase()[0];
             return SMB_LABEL[z === "S" ? "S" : z === "M" ? "M" : "B"];
           };
+          // A flower part's real / artificial split (owner ask 2026-11-11: the ratio inside kits too), worked out as for a piece on its
+          // own: the part's own % (Build's kit list), else its recipe's sub-category floral mode, else the function's floral slider.
+          const kitPartMix = (pt, si) => {
+            if (!pt) return "";
+            const subMode = floralModeBySub.get(String(pt.sub ?? "").trim().replace(/\s+/g, " ").toLowerCase());
+            const fnArt = typeof fn?.floralRatio === "number" ? fn.floralRatio : 70;
+            const real = (typeof si?.realPct === "number" && si.realPct >= 0 && si.realPct <= 100) ? Math.round(si.realPct)
+              : subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, Math.round(100 - fnArt)));
+            return t("Artificial {art}% · Real {real}%", { art: 100 - real, real });
+          };
           const liveKit = !kitInv ? [] : (Array.isArray(el?.kitOverrides) ? el.kitOverrides : kitInv.subItems).map(si => {
             if (si?.patternId) {
               const pt = flowerPatterns.find(fp => fp?.id === si.patternId);
-              return pt ? { name: pt.name || t("Flower recipe"), per: Number(si.qty) || 0, unit: pt.unit || "", dept: "Floral", size: kitPartSize(pt, si) } : null;
+              return pt ? { name: pt.name || t("Flower recipe"), per: Number(si.qty) || 0, unit: pt.unit || "", dept: "Floral", size: kitPartSize(pt, si), mix: kitPartMix(pt, si) } : null;
             }
             const ci = invById.get(String(si?.itemId));
             if (!ci) return null;
+            const cpt = matchFlowerPattern(ci, flowerPatterns);
             return { name: ci.name, per: Number(si.qty) || 0, unit: String(ci.unit || "").trim(), photo: invPhoto(ci, null),
-              dept: heldByInv.has(String(ci.id)) ? dept : catToDept(ci.category || ci.cat), size: kitPartSize(matchFlowerPattern(ci, flowerPatterns), si) };
+              dept: heldByInv.has(String(ci.id)) ? dept : catToDept(ci.category || ci.cat), size: kitPartSize(cpt, si), mix: kitPartMix(cpt, si) };
           }).filter(x => x && x.per > 0);
           const statusTxt = arranged ? "" : itemStatusOf(fn, reuseSrc, zk, el, invU || inv);
           // a recipe with no inventory item shows the picture of its size, as Build does (photo below)
@@ -1231,7 +1243,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // (by name — a zone-card item only ever carries a component COUNT, not the parts themselves).
     const kitBlocksByName = new Map(kitBlocks.map(k => [String(k.name || "").trim().toLowerCase(), k]));
     const detailCols = (parts) => (parts.length >= 4 ? 2 : 1);
-    const detailLongNames = (parts, cols) => { const per = cols === 2 ? 44 : 100; return parts.filter(p => String(p.name || "").trim().length + (p.tag ? p.tag.length + 1 : 0) + (p.size ? p.size.length + 1 : 0) > per).length; };
+    const detailLongNames = (parts, cols) => { const per = cols === 2 ? 44 : 100; return parts.filter(p => String(p.name || "").trim().length + (p.tag ? p.tag.length + 1 : 0) + (p.size ? p.size.length + 1 : 0) + (p.mix ? p.mix.length + 1 : 0) > per).length; };
     const detailH = (parts) => { const cols = detailCols(parts); return 68 + (Math.ceil(parts.length / cols) + Math.ceil(detailLongNames(parts, cols) / cols)) * 24 + 14; };
     // mix: a flower piece's real / artificial make-up (zone card's "Flowers" line) - in the header, and as a tag on every
     // flower line so whoever pulls a flower knows whether it is the real one or the artificial one (owner ask).
@@ -1244,7 +1256,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         ${mix ? `<div class="kb-z kb-q"><div class="kb-zk">${t("Flowers")}</div><div class="kb-zv">${esc(mix)}</div></div>` : ""}
         ${qty ? `<div class="kb-z kb-q"><div class="kb-zk">${t("Qty")}</div><div class="kb-zv">${esc(qty)}${unit ? " " + esc(hu(unit)) : ""}</div></div>` : ""}
       </div>
-      <ul class="kb-l${cols === 1 ? " one" : ""}">${parts.map(p => `<li><i class="kb-x"></i>${p.photo ? `<i class="kb-p" style="${bgCss(p.photo, 40)}" ${bgData(p.photo, 40)}></i>` : ""}<span>${esc(hn(p.name))}${p.size ? ` <em class="kb-tg">${esc(p.size)}</em>` : ""}${p.tag ? ` <em class="kb-tg">${esc(p.tag)}</em>` : ""}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(hu(p.unit))}` : ""}</b></li>`).join("")}</ul>
+      <ul class="kb-l${cols === 1 ? " one" : ""}">${parts.map(p => `<li><i class="kb-x"></i>${p.photo ? `<i class="kb-p" style="${bgCss(p.photo, 40)}" ${bgData(p.photo, 40)}></i>` : ""}<span>${esc(hn(p.name))}${p.size ? ` <em class="kb-tg">${esc(p.size)}</em>` : ""}${p.mix ? ` <em class="kb-tg">${esc(p.mix)}</em>` : ""}${p.tag ? ` <em class="kb-tg">${esc(p.tag)}</em>` : ""}</span><i class="kb-d"></i><b>${esc(p.qty)}${p.unit ? ` ${esc(hu(p.unit))}` : ""}</b></li>`).join("")}</ul>
     </div>`; };
     // One page (or more, if a zone's own recipes+kits don't fit one sheet) per zone, built right
     // after that zone's card pages in the loop below — never bundled with any OTHER zone's.
@@ -1321,8 +1333,13 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           });
           // each flower part's S / M / B, from the kit as Build has it (Deal Check's snapshot lines carry no size)
           const sizeOf = new Map((it.liveKit || []).filter(p => p.size).map(p => [partKey(p.name), p.size]));
+          // and each flower part's real / artificial split, the same way
+          const mixOf = new Map((it.liveKit || []).filter(p => p.mix).map(p => [partKey(p.name), p.mix]));
           // (a copy - the snapshot's part objects are shared by every zone holding this kit)
-          parts.forEach((p, i) => { if (!p.size && sizeOf.has(partKey(p.name))) parts[i] = { ...p, size: sizeOf.get(partKey(p.name)) }; });
+          parts.forEach((p, i) => {
+            const k = partKey(p.name);
+            if ((!p.size && sizeOf.has(k)) || (!p.mix && mixOf.has(k))) parts[i] = { ...p, ...(!p.size && sizeOf.has(k) ? { size: sizeOf.get(k) } : null), ...(!p.mix && mixOf.has(k) ? { mix: mixOf.get(k) } : null) };
+          });
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : (kb?.qty || zq), "", parts) });
         }
       });
