@@ -1522,6 +1522,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const fp = sel?.floralPlan || {};
   const fpFlowers = Array.isArray(fp.flowers) ? fp.flowers : [];
   const artificialProj = fpFlowers.filter(f => f.artificial).reduce((s, f) => s + (Number(f.cost) || 0), 0);
+  // Floral's artificial flowers & greens are blocked stock too (shown on Inventory blocked's artificial card), so their ₹ adds to the
+  // blocked total (owner ask 2026-11-11). Whole-event figure only - Deal Check does not split it by function.
+  const artStockTotal = dept === "Floral" && fp.artificial && ((fp.artificial.flowerBunches || 0) > 0 || (fp.artificial.greenBunches || 0) > 0) ? Number(fp.artificial.total) || 0 : 0;
+  const invBlockedTotal = rentalIncome + artStockTotal;
   const seedMandi = fpFlowers.filter(f => !f.artificial && (Number(f.qty) || 0) > 0)
     .map(f => {
       // colorVariant — the salesperson's colour pick in Deal Check (ranked preference or the
@@ -4215,7 +4219,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                   const bad = rows.filter(r => r.status === "short").length;
                   return { k: "fabreq", icon: "🧵", title: "Fabric plan", sub: bad ? <span className="text-red-600 font-semibold">{bad} need{bad === 1 ? "s" : ""} attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
                 })(),
-                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(rentalIncome) },
+                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(invBlockedTotal) },
                 dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
                   const rows = carpetPlanOf().rows;
                   const decided = rows.filter(r => r.status === "decided").length;
@@ -4346,7 +4350,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                     <div className="text-[10px] text-gray-500 truncate">{invShown.length} item{invShown.length === 1 ? "" : "s"} held for {invScoped ? "this function" : "this event"}</div>
                   </div>
                 </div>
-                <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(invScoped ? invShownTotal : rentalIncome)}</div>
+                <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(invScoped ? invShownTotal : invBlockedTotal)}</div>
               </div>
               {fnChipRow(invFn, setInvFn)}
               {/* The same Department Income table Deal Check shows, opened here — this department's lines, a
