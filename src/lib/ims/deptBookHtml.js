@@ -1346,7 +1346,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       artLeft.forEach(list => {
         const parts = artLines(list);
         const q = list.reduce((t, a) => t + (Number(a.qty) || 0), 0);
-        if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", list[0].el || t("Arrangement"), q || "", "", parts, t("Artificial")) });
+        // its split as Deal Check worked it (realPct, snapshot v19) - "Artificial 100%" like every other flower card; an older
+        // snapshot without it still says just "Artificial" until the deal re-syncs
+        const rp = list.find(a => typeof a.realPct === "number")?.realPct;
+        if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", list[0].el || t("Arrangement"), q || "", "", parts, typeof rp === "number" ? mixText(rp) : t("Artificial")) });
       });
       // The truss cut list (pillars / beams / batta) is on the zone's own page now, under the truss strip (trussCard) - not repeated here.
       if (!blocks.length) return [];

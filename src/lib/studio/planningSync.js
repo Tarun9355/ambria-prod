@@ -75,8 +75,10 @@ export function planningUpcoming(eo, now = Date.now()) {
 // v18 (2026-11-11): Labours' department split takes a sub-category's department from its category when the sub-category has
 // no keyword or map entry of its own (deptClassify makeSubcatDept) - a "Console Table" filed under Floral counted in Structure's
 // crew; each usage row also records the item's own department (ownDept) for Dept Ops' department headings.
-export const PLANNING_SNAPSHOT_VERSION = 18;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-11T12:16:55Z");
+// v19 (2026-11-11): each arrangement's artificial bunches (floralDetail[fn].artZones) carry its real share (realPct), so the
+// Floral book's card for an arrangement shown only by its bunches says its split, as every other flower card does.
+export const PLANNING_SNAPSHOT_VERSION = 19;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-11T13:35:57Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // Synced before, and a planning input changed after that sync (a minute of slack: the sync's own write
