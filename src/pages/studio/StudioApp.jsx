@@ -52,7 +52,7 @@ import { withKitEdit } from "../../lib/studio/dealCheckSync";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows, effectiveColorPrefRows } from "../../lib/studio/floralCost";
-import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements, tentingZoneUsage } from "../../lib/studio/manpowerCount";
+import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements, tentingZoneUsage, fabricBangaliZone } from "../../lib/studio/manpowerCount";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
 // The header used to mix 8/9/10/11/12/13px in a single row. It now has exactly two tiers:
@@ -6821,23 +6821,11 @@ export default function StudioApp() {
         let topTotal = 0, rftTotal = 0; const zones = [];
         Object.keys(zc).forEach(zk => {
           if (!en[zk] || !zc[zk]) return; const z = zc[zk];
-          const cfg = resolveTrussConfig(z); if (!cfg || !cfg.config) return; const config = cfg.config;
-          const dL = Number(z.dims?.L) || Number(z.dims?.S) || 0, dW = Number(z.dims?.W) || Number(z.dims?.S) || 0;
-          const mw = z.mkWalls || {}, sideDepth = Number(z.trussBackDepth) || engBackDepth;
-          let zoneTop = 0, zoneRft = 0;
-          if (config === "full_box") {
-            const topSqft = dL * dW;
-            if (topSqft > 0 && fabricBangaliRanges.length > 0) { for (const r of fabricBangaliRanges) { if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; } } }
-            if (z.mkOn) { if (mw.back && dW > 0) zoneRft += dW; if (mw.left && dL > 0) zoneRft += dL; if (mw.right && dL > 0) zoneRft += dL; }
-          } else if (config === "half_box") {
-            const spanL = cfg.spanFt || dL || dW;
-            if (z.mkOn) { if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; }
-          } else if (config === "u_only") {
-            const spanL = cfg.spanFt || dL || dW;
-            if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL;
-          }
-          // no truss batta: Fabric Bangali puts up the fabric only (lib/studio/manpowerCount peopleFabricBangali)
-          if (zoneTop > 0 || zoneRft > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zones.push({ zone: zLabel, topSqft: Math.round(dL * dW), topLabour: zoneTop, rft: Math.round(zoneRft), ...zoneShapeMeta(z, config, cfg.spanFt) }); }
+          // the same per-zone rule the crew count uses (fabricBangaliZone) - masked walls, a full box's canopy, and a U / half
+          // box's span when it carries Liza or curtains; no truss batta: Fabric Bangali puts up the fabric only
+          const w = fabricBangaliZone(z, tInv, fabricBangaliRanges, engBackDepth); if (!w) return;
+          const zoneTop = w.top, zoneRft = w.rft;
+          if (zoneTop > 0 || zoneRft > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zones.push({ zone: zLabel, topSqft: Math.round(w.topSqft), topLabour: zoneTop, rft: Math.round(zoneRft), ...zoneShapeMeta(z, w.config, w.spanFt) }); }
           topTotal += zoneTop; rftTotal += zoneRft;
         });
         if (topTotal <= 0 && rftTotal <= 0) return null;

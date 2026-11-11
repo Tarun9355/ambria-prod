@@ -24,7 +24,7 @@
 // explanation stays tailored per audience/file.
 
 import { matchFlowerPattern } from "../ims/flowerHelpers";
-import { resolveTrussConfig, calcZoneTrussPreview } from "./pricing";
+import { resolveTrussConfig, calcZoneTrussPreview, calcZoneFabric } from "./pricing";
 import { heavyExtraLabour, eventTimingMultFor } from "../ims/constants";
 import { standingReductionBySubcat } from "../ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat, walkKitUnits } from "../ims/helpers";
@@ -272,33 +272,48 @@ function peopleTier3Labours(fn, ctx) {
 // across every zone FIRST, then divided by fabricRftPerWorker and ceiled ONCE — ceiling each
 // zone's own RFT independently throws away real leftover capacity. Truss batta (the wrap round
 // every pillar/beam) is NOT counted: Fabric Bangali puts up the fabric only (owner, 2026-10-31).
+// One zone's Fabric Bangali work: { config, topSqft, top (canopy labour), rft (running feet of fabric they hang), fabric
+// (the zone carries Liza / velvet curtains) }, or null for a zone with no truss. Shared by the crew count below and Studio's
+// "how" breakdown (StudioApp), so the two never disagree.
+//  - full box: the canopy (top) by the range table, plus each masked wall;
+//  - half box / U: each masked wall - and, when the truss carries Liza or velvet curtains, its back span (a half box's two
+//    sides too), as that fabric is hung along it (owner report 2026-11-11: an Entertainment Stage U with Liza and curtains
+//    but no masking counted no Fabric Bangali at all). A wall that is masked and draped counts once.
+export function fabricBangaliZone(z, trussInv, ranges, engBackDepth = 4) {
+  const cfg = z ? resolveTrussConfig(z) : null;
+  if (!cfg || !cfg.config) return null;
+  const config = cfg.config;
+  const dL = Number(z.dims?.L) || Number(z.dims?.S) || 0, dW = Number(z.dims?.W) || Number(z.dims?.S) || 0;
+  const mw = z.mkWalls || {}, sideDepth = Number(z.trussBackDepth) || engBackDepth;
+  const masked = (w) => !!(z.mkOn && mw[w]);
+  let fabric = false;
+  try { const f = calcZoneFabric(z, trussInv, z.drapeDensity); fabric = (Number(f?.lizaKg) || 0) > 0 || (Number(f?.curtainPieces) || 0) > 0; } catch { fabric = false; }
+  const topSqft = dL * dW;
+  let top = 0, rft = 0;
+  if (config === "full_box") {
+    if (topSqft > 0) for (const r of (ranges || [])) { if (topSqft <= r.upTo) { top = r.labour || 0; break; } }
+    if (masked("back") && dW > 0) rft += dW; if (masked("left") && dL > 0) rft += dL; if (masked("right") && dL > 0) rft += dL;
+  } else if (config === "half_box") {
+    const spanL = cfg.spanFt || dL || dW;
+    if ((masked("back") || fabric) && spanL > 0) rft += spanL;
+    if ((masked("left") || fabric) && sideDepth > 0) rft += sideDepth;
+    if ((masked("right") || fabric) && sideDepth > 0) rft += sideDepth;
+  } else if (config === "u_only") {
+    const spanL = cfg.spanFt || dL || dW;
+    if ((masked("back") || fabric) && spanL > 0) rft += spanL;
+  }
+  return { config, spanFt: cfg.spanFt, topSqft, top, rft, fabric };
+}
+
 function peopleFabricBangali(fn, ctx) {
   let topTotal = 0, rftTotal = 0;
   const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
   const engBackDepth = Number(ctx.trussInv?.settings?.defaultBackDepthFt) || 4;
   Object.keys(zc).forEach((zk) => {
     if (!en[zk] || !zc[zk]) return;
-    const z = zc[zk];
-    const cfg = resolveTrussConfig(z);
-    if (!cfg || !cfg.config) return;
-    const config = cfg.config;
-    const dL = Number(z.dims?.L) || Number(z.dims?.S) || 0, dW = Number(z.dims?.W) || Number(z.dims?.S) || 0;
-    const mw = z.mkWalls || {}, sideDepth = Number(z.trussBackDepth) || engBackDepth;
-    let zoneRft = 0;
-    if (config === "full_box") {
-      const topSqft = dL * dW;
-      if (topSqft > 0 && (ctx.fabricBangaliRanges || []).length > 0) {
-        for (const r of ctx.fabricBangaliRanges) { if (topSqft <= r.upTo) { topTotal += r.labour || 0; break; } }
-      }
-      if (z.mkOn) { if (mw.back && dW > 0) zoneRft += dW; if (mw.left && dL > 0) zoneRft += dL; if (mw.right && dL > 0) zoneRft += dL; }
-    } else if (config === "half_box") {
-      const spanL = cfg.spanFt || dL || dW;
-      if (z.mkOn) { if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; }
-    } else if (config === "u_only") {
-      const spanL = cfg.spanFt || dL || dW;
-      if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL;
-    }
-    rftTotal += zoneRft;
+    const w = fabricBangaliZone(zc[zk], ctx.trussInv, ctx.fabricBangaliRanges, engBackDepth);
+    if (!w) return;
+    topTotal += w.top; rftTotal += w.rft;
   });
   return topTotal + (rftTotal > 0 ? Math.ceil(rftTotal / ctx.fabricRftPerWorker) : 0);
 }
