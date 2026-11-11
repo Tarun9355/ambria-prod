@@ -41,6 +41,7 @@ export const PDF_HI = {
 
   // Sections and their tables
   "Loading & dispatch": "लोडिंग और डिस्पैच",
+  "Loading list": "लोडिंग लिस्ट",
   "Artificial flowers & greens": "आर्टिफ़िशियल फूल और ग्रीन्स",
   "Dismantle routing": "डिस्मेंटल — सामान कहाँ जाएगा",
   "Fabric required vs available": "फ़ैब्रिक — ज़रूरत और स्टॉक",

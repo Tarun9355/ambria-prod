@@ -1907,13 +1907,13 @@ ${/* Money, the priced inventory table, the crew plan and logged spend are left 
 ${gensetPage}
 ${fixedVenuePages}
 ${zoneHtml.replace(/\u0001FNCARDS:(\d+)\u0001/g, (_, fi) => fnCards(Number(fi)))}
-${combined ? "" : (truckRows.length || loadRows.length) ? sect(t("Loading & dispatch"),
-  (truckRows.length ? table(["#", t("Vehicle"), t("Driver"), t("Phone"), t("Status")], truckRows, ["12%", "26%", "24%", "20%", "18%"]) : "")
-  + (loadRows.length ? `<p class="meta">${t("Everything going to site — {items}, {pieces} in total.", { items: t("{n} item|{n} items", { n: blockedItems.length }), pieces: t("{n} piece|{n} pieces", { n: loadUnits }) })}</p>`
-    + table([t("Item"), t("Qty")], loadRows, ["80%", "20%"]) : "")) : ""}
+${/* No transport in any book (owner ask 2026-11-11): the trucks table (vehicle / driver / phone) and the Transport section below are
+     gone; what goes to site stays, as the loading list. */ ""}
+${combined ? "" : loadRows.length ? sect(t("Loading list"),
+  `<p class="meta">${t("Everything going to site — {items}, {pieces} in total.", { items: t("{n} item|{n} items", { n: blockedItems.length }), pieces: t("{n} piece|{n} pieces", { n: loadUnits }) })}</p>`
+    + table([t("Item"), t("Qty")], loadRows, ["80%", "20%"])) : ""}
 ${artRows.length ? sect(t("Artificial flowers & greens"), table([t("Item"), t("Bunches"), t("Bunches per kg"), t("Weight")], artRows, ["46%", "16%", "20%", "18%"])
   + (artColourRows.length ? `<p class="meta">${t("Pull these specific bunches")}</p>` + table([t("Colour"), t("Bunches")], artColourRows, ["80%", "20%"]) : "")) : ""}
-${!combined && trRows.length ? sect(t("Transport"), table([t("Load"), t("Quantity"), t("Fits per truck"), t("Trucks")], trRows, ["46%", "20%", "22%", "12%"]) + `<p class="note">${trNote}</p>`) : ""}
 ${!combined && moveRows.length ? sect(t("Dismantle routing"), table([t("Item"), t("Goes to"), t("Qty"), t("Logged by")], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
 ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t("Fabric · colour"), t("Required"), t("Available"), t("Status")], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
 <footer data-block>
