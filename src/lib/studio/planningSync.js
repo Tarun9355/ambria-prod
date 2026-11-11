@@ -64,8 +64,10 @@ export function planningUpcoming(eo, now = Date.now()) {
 // zone table. A flower-recipe element's name follows the recipe's (a recipe renamed in IMS). Every booked deal re-syncs.
 // RULE: any change to how a crew count, a zone breakdown or another planning figure is worked out bumps this version (and the
 // date below) in the same commit - without it, deals already synced keep the old figures until someone happens to save them.
-export const PLANNING_SNAPSHOT_VERSION = 16;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-11T08:52:22Z");
+// v17 (2026-11-11): the per-function Fabric Bangali zone table (Deal Check's manpowerDetail trace) uses the same rule as the
+// count - v16 synced the count with the new rule but the table from an old masking-only copy, so it still left the zone out.
+export const PLANNING_SNAPSHOT_VERSION = 17;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-11T09:06:08Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // Synced before, and a planning input changed after that sync (a minute of slack: the sync's own write

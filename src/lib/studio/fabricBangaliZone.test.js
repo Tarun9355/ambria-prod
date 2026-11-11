@@ -29,6 +29,13 @@ describe("fabricBangaliZone - a U or half box carrying Liza / curtains counts it
     const w = fabricBangaliZone({ dims: { L: 10, W: 10, H: 10 } }, {}, [{ upTo: 150, labour: 3 }], 4);
     expect(w).toMatchObject({ config: "full_box", top: 3, rft: 0 });
   });
+  it("says wall by wall what counts and why (the Deal Check 'how' lines)", () => {
+    fab.curtainPieces = 3;
+    expect(fabricBangaliZone(uStage, {}, [], 4).walls).toEqual([{ wall: "back", ft: 38.25, basis: "span", why: "fabric" }]);
+    const masked = fabricBangaliZone({ dims: { L: 10, W: 8, H: 10 }, mkOn: true, mkWalls: { back: true, left: true } }, {}, [], 4);
+    expect(masked.walls).toEqual([{ wall: "back", ft: 8, basis: "W", why: "masking" }, { wall: "left", ft: 10, basis: "L", why: "masking" }]);
+    expect(masked.rft).toBe(18);
+  });
   it("no truss: nothing", () => {
     expect(fabricBangaliZone({ dims: {} }, {}, [], 4)).toBeNull();
   });

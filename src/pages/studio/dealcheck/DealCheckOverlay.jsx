@@ -108,7 +108,7 @@ import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { matchKit } from "../../../lib/studio/kitVariants";
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
-import { computePeopleRaw, computePeople, situationalFactorsFor, heavySayaMultFor as sharedHeavySayaMultFor, tentingZoneUsage } from "../../../lib/studio/manpowerCount";
+import { computePeopleRaw, computePeople, situationalFactorsFor, heavySayaMultFor as sharedHeavySayaMultFor, tentingZoneUsage, fabricBangaliZone } from "../../../lib/studio/manpowerCount";
 import { dcRentalCost } from "../../../lib/studio/repeatPricing.js";
 import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
 import { kitRecipeParts } from "../../../lib/studio/kitRecipeParts";
@@ -1595,15 +1595,11 @@ export default function DealCheckOverlay({ ctx }) {
                   let topTotal = 0, rftTotal = 0; const zones = [];
                   Object.keys(zc).forEach(zk => {
                     if (!en[zk] || !zc[zk]) return; const z = zc[zk];
-                    const cfg = resolveTrussConfig(z); if (!cfg || !cfg.config) return; const config = cfg.config;
-                    const dL = Number(z.dims?.L) || Number(z.dims?.S) || 0; const dW = Number(z.dims?.W) || Number(z.dims?.S) || 0;
-                    const mw = z.mkWalls || {}; const sideDepth = Number(z.trussBackDepth) || engBackDepth;
-                    let zoneTop = 0, zoneRft = 0;
-                    if (config === "full_box") { const topSqft = dL * dW; if (topSqft > 0 && fabricBangaliRanges.length > 0) { for (const r of fabricBangaliRanges) { if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; } } } if (z.mkOn) { if (mw.back && dW > 0) zoneRft += dW; if (mw.left && dL > 0) zoneRft += dL; if (mw.right && dL > 0) zoneRft += dL; } }
-                    else if (config === "half_box") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn) { if (mw.back && spanL > 0) zoneRft += spanL; if (mw.left && sideDepth > 0) zoneRft += sideDepth; if (mw.right && sideDepth > 0) zoneRft += sideDepth; } }
-                    else if (config === "u_only") { const spanL = cfg.spanFt || dL || dW; if (z.mkOn && mw.back && spanL > 0) zoneRft += spanL; }
-                    // no truss batta: Fabric Bangali puts up the fabric only (lib/studio/manpowerCount peopleFabricBangali)
-                    if (zoneTop > 0 || zoneRft > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz2 => cz2.id === zk)?.name || zk; zones.push({ zone: zLabel, topSqft: Math.round(dL * dW), topLabour: zoneTop, rft: Math.round(zoneRft), ...zoneShapeMeta(z, config, cfg.spanFt) }); }
+                    // the one per-zone rule the crew count and Studio's breakdown use (lib/studio/manpowerCount fabricBangaliZone) - this
+                    // copy kept the old masking-only rule, so the per-function zone table left out a U / half box carrying Liza or curtains
+                    const w = fabricBangaliZone(z, tInv, fabricBangaliRanges, engBackDepth); if (!w) return;
+                    const zoneTop = w.top, zoneRft = w.rft;
+                    if (zoneTop > 0 || zoneRft > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz2 => cz2.id === zk)?.name || zk; zones.push({ zone: zLabel, topSqft: Math.round(w.topSqft), topLabour: zoneTop, rft: Math.round(zoneRft), ...zoneShapeMeta(z, w.config, w.spanFt) }); }
                     topTotal += zoneTop; rftTotal += zoneRft;
                   });
                   if (topTotal <= 0 && rftTotal <= 0) return null;

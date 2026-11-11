@@ -6,12 +6,12 @@
 // ═══════════════════════════════════════════════════════════════
 import { useEffect } from "react";
 import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP_BG, INK, INK_2, INK_3, GOLD, GOLD_SOFT, NUM } from "../../../../lib/studio/dcTokens";
-import { resolveTrussConfig, freshFnForManpower } from "../../../../lib/studio/pricing";
+import { freshFnForManpower } from "../../../../lib/studio/pricing";
 import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS, SIT_MULT_DEFAULTS } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat, walkKitUnits, aggregateEventManpower, hasAnyMpEdits } from "../../../../lib/ims/helpers";
 import { matchFlowerPattern } from "../../../../lib/ims/flowerHelpers";
-import { computePeopleRaw, computePeople, heavySayaMultFor as sharedHeavySayaMultFor, tentingZoneUsage } from "../../../../lib/studio/manpowerCount";
+import { computePeopleRaw, computePeople, heavySayaMultFor as sharedHeavySayaMultFor, tentingZoneUsage, fabricBangaliZone } from "../../../../lib/studio/manpowerCount";
 import ManpowerFactorPills from "../../../../components/shared/ManpowerFactorPills.jsx";
 import { withSetupSlot } from "../../../../lib/studio/dihariWindows.js";
 
@@ -508,44 +508,23 @@ export default function DCManpowerTab({ ctx }) {
                     Object.keys(zc).forEach(zk => {
                       if (!en[zk] || !zc[zk]) return;
                       const z = zc[zk];
-                      const cfg = resolveTrussConfig(z);
-                      if (!cfg || !cfg.config) return;
-                      const config = cfg.config;
-                      const dL = Number(z.dims?.L) || Number(z.dims?.S) || 0;
-                      const dW = Number(z.dims?.W) || Number(z.dims?.S) || 0;
-                      const mw = z.mkWalls || {};
-                      const sideDepth = Number(z.trussBackDepth) || engBackDepth;
+                      // the one per-zone rule the crew count uses (lib/studio/manpowerCount fabricBangaliZone): masked walls, a full box's
+                      // canopy, and a U / half box's walls when it carries Liza or curtains - this copy used to be masking-only
+                      const w = fabricBangaliZone(z, tInv, fabricBangaliRanges, engBackDepth);
+                      if (!w) return;
+                      const config = w.config;
                       const zLabel = (zoneMeta?.[zk]?.label) || ((fn.customZones || []).find(cz => cz.id === zk)?.name) || zk;
                       const cfgLabel = config === "u_only" ? "U Truss" : config === "half_box" ? "Half Box" : "Full Box";
-
-                      let zoneTop = 0;
-                      let zoneRft = 0;
+                      const zoneTop = w.top;
+                      const zoneRft = w.rft;
                       const parts = []; // per-zone wall lines
-
                       if (config === "full_box") {
-                        const topSqft = dL * dW;
-                        if (topSqft > 0 && fabricBangaliRanges.length > 0) {
-                          for (const r of fabricBangaliRanges) {
-                            if (topSqft <= r.upTo) { zoneTop = r.labour || 0; break; }
-                          }
-                        }
-                        parts.push({ kind: "top", label: `Top ${dL}×${dW} = ${topSqft} sqft → ${zoneTop} ppl`, workers: zoneTop });
-                        if (z.mkOn) {
-                          if (mw.back  && dW > 0) { parts.push({ kind: "rft", label: `Back RFT: ${dW}`,  rft: dW }); zoneRft += dW; }
-                          if (mw.left  && dL > 0) { parts.push({ kind: "rft", label: `Left RFT: ${dL}`,  rft: dL }); zoneRft += dL; }
-                          if (mw.right && dL > 0) { parts.push({ kind: "rft", label: `Right RFT: ${dL}`, rft: dL }); zoneRft += dL; }
-                        }
-                      } else if (config === "half_box") {
-                        const spanL = cfg.spanFt || dL || dW;
-                        if (z.mkOn) {
-                          if (mw.back  && spanL > 0)     { parts.push({ kind: "rft", label: `Back RFT: ${spanL} (L-span)`,  rft: spanL }); zoneRft += spanL; }
-                          if (mw.left  && sideDepth > 0) { parts.push({ kind: "rft", label: `Left RFT: ${sideDepth} (backDepth)`,  rft: sideDepth }); zoneRft += sideDepth; }
-                          if (mw.right && sideDepth > 0) { parts.push({ kind: "rft", label: `Right RFT: ${sideDepth} (backDepth)`, rft: sideDepth }); zoneRft += sideDepth; }
-                        }
-                      } else if (config === "u_only") {
-                        const spanL = cfg.spanFt || dL || dW;
-                        if (z.mkOn && mw.back && spanL > 0) { parts.push({ kind: "rft", label: `Back RFT: ${spanL} (L-span)`, rft: spanL }); zoneRft += spanL; }
+                        const dL = Number(z.dims?.L) || Number(z.dims?.S) || 0, dW = Number(z.dims?.W) || Number(z.dims?.S) || 0;
+                        parts.push({ kind: "top", label: `Top ${dL}×${dW} = ${w.topSqft} sqft → ${zoneTop} ppl`, workers: zoneTop });
                       }
+                      const wallName = { back: "Back", left: "Left", right: "Right" };
+                      const basisName = { span: " (L-span)", backDepth: " (backDepth)", W: "", L: "" };
+                      w.walls.forEach((wl) => parts.push({ kind: "rft", label: `${wallName[wl.wall]} RFT: ${wl.ft}${basisName[wl.basis] || ""}${wl.why === "fabric" ? " · Liza / curtains" : ""}`, rft: wl.ft }));
 
                       // Truss batta (the wrap round every pillar/beam) is not counted: Fabric Bangali puts up the
                       // fabric only (owner, 2026-10-31) - the same rule as lib/studio/manpowerCount peopleFabricBangali.

@@ -289,20 +289,25 @@ export function fabricBangaliZone(z, trussInv, ranges, engBackDepth = 4) {
   let fabric = false;
   try { const f = calcZoneFabric(z, trussInv, z.drapeDensity); fabric = (Number(f?.lizaKg) || 0) > 0 || (Number(f?.curtainPieces) || 0) > 0; } catch { fabric = false; }
   const topSqft = dL * dW;
-  let top = 0, rft = 0;
+  let top = 0;
+  // each wall that counts: { wall, ft, basis ("span" / "backDepth" / "W" / "L"), why ("masking" / "fabric") } - for the "how" lines
+  const walls = [];
+  const add = (wall, ft, basis, counts, maskedOnly = false) => {
+    if (!(ft > 0)) return;
+    if (masked(wall)) walls.push({ wall, ft, basis, why: "masking" });
+    else if (counts && !maskedOnly) walls.push({ wall, ft, basis, why: "fabric" });
+  };
   if (config === "full_box") {
     if (topSqft > 0) for (const r of (ranges || [])) { if (topSqft <= r.upTo) { top = r.labour || 0; break; } }
-    if (masked("back") && dW > 0) rft += dW; if (masked("left") && dL > 0) rft += dL; if (masked("right") && dL > 0) rft += dL;
+    add("back", dW, "W", false, true); add("left", dL, "L", false, true); add("right", dL, "L", false, true);
   } else if (config === "half_box") {
     const spanL = cfg.spanFt || dL || dW;
-    if ((masked("back") || fabric) && spanL > 0) rft += spanL;
-    if ((masked("left") || fabric) && sideDepth > 0) rft += sideDepth;
-    if ((masked("right") || fabric) && sideDepth > 0) rft += sideDepth;
+    add("back", spanL, "span", fabric); add("left", sideDepth, "backDepth", fabric); add("right", sideDepth, "backDepth", fabric);
   } else if (config === "u_only") {
-    const spanL = cfg.spanFt || dL || dW;
-    if ((masked("back") || fabric) && spanL > 0) rft += spanL;
+    add("back", cfg.spanFt || dL || dW, "span", fabric);
   }
-  return { config, spanFt: cfg.spanFt, topSqft, top, rft, fabric };
+  const rft = walls.reduce((t, w) => t + w.ft, 0);
+  return { config, spanFt: cfg.spanFt, topSqft, top, rft, fabric, walls };
 }
 
 function peopleFabricBangali(fn, ctx) {
