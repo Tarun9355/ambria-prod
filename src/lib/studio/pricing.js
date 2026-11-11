@@ -1029,20 +1029,30 @@ export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, q
   const stocks = Array.isArray(stockArray) ? stockArray.filter(s => s && s.colour) : [];
   if (stocks.length === 0) return []; // No colours configured at all
   const anchors = Array.isArray(paletteAnchors) ? paletteAnchors : [];
-  // 1. Try anchors: for each anchor, find IMS colours fuzzy-matching it; pick highest-stock match across all anchors.
-  let bestAnchorMatch = null;
+  // 1. Each anchor's stock colour: the highest-stock IMS colour fuzzy-matching it (one entry per distinct colour, in palette order).
+  const matched = [];
   for (const a of anchors) {
+    let best = null;
     for (const s of stocks) {
       if (fuzzyColourMatch(a, s.colour)) {
         const stockVal = Number(s[qtyField]) || 0;
-        if (!bestAnchorMatch || stockVal > bestAnchorMatch.stockVal) {
-          bestAnchorMatch = { colour: s.colour, stockVal };
-        }
+        if (!best || stockVal > best.stockVal) best = { colour: s.colour, stockVal };
       }
     }
+    if (best && !matched.some((m) => m.colour === best.colour)) matched.push(best);
   }
-  if (bestAnchorMatch) {
-    return [{ qty: totalQty, colour: bestAnchorMatch.colour }];
+  // Several palette colours share the fabric evenly (owner ask 2026-11-11: a "Black, Maroon" palette put every row in Maroon,
+  // the one with more stock, and Black never reached Planning). Whole units; what does not divide goes to the colours with the
+  // most stock first. One colour takes it all, as before. A palette colour this fabric has no stock row for takes no share.
+  if (matched.length === 1) return [{ qty: totalQty, colour: matched[0].colour }];
+  if (matched.length) {
+    const total = Math.max(0, Math.round(Number(totalQty) || 0));
+    const n = matched.length;
+    const base = Math.floor(total / n);
+    let extra = total - base * n;
+    const share = new Map(matched.map((m) => [m.colour, base]));
+    [...matched].sort((x, y) => y.stockVal - x.stockVal).forEach((m) => { if (extra > 0) { share.set(m.colour, share.get(m.colour) + 1); extra -= 1; } });
+    return matched.map((m) => ({ qty: share.get(m.colour), colour: m.colour })).filter((a) => a.qty > 0);
   }
   // 2. An explicit colour WAS picked (anchors non-empty) but nothing in stock matches it — surface
   // the shortfall against the colour actually wanted (e.g. "Ivory") rather than silently

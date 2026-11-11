@@ -230,7 +230,8 @@ describe("buildFabricGroups — colours worked out live from the function's Fabr
   });
   it("changing the palette changes the colours at once (Rose Gold for Velvet only)", () => {
     const e = [mk("stage", "Stage", 10)];
-    expect(build("Ivory, Rose Gold:C", e).find((x) => x.key === "curtain").colours.map((c) => c.colour)).toEqual(["Ivory"]); // Ivory has more stock than Rose Gold
+    // both colours the palette allows for Velvet share the curtains (2026-11-11 - it used to be all Ivory, the one with more stock)
+    expect(build("Ivory, Rose Gold:C", e).find((x) => x.key === "curtain").colours.map((c) => [c.colour, c.qty])).toEqual([["Ivory", 2], ["Rose Gold", 2]]);
     expect(build("Rose Gold:C", e).find((x) => x.key === "curtain").colours.map((c) => c.colour)).toEqual(["Rose Gold"]);
   });
   it("Old and New stock rows are split by the row's own tier", () => {

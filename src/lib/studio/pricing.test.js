@@ -375,6 +375,22 @@ describe("resolveFabricAllocation — the Fabric Palette decides over a leftover
     expect(resolveFabricAllocation(undefined, 10, ["Yellow"], stock, "stockKg")).toEqual([{ qty: 10, colour: "Yellow" }]);
     expect(resolveFabricAllocation([], 10, [], stock, "stockKg")).toEqual([{ qty: 10, colour: "Rose Gold dark" }]);
   });
+  it("two palette colours share the fabric evenly - the odd unit to the one with more stock (Black, Maroon)", () => {
+    const liza = [{ colour: "Black", stockKg: 10 }, { colour: "Maroon", stockKg: 60 }];
+    expect(resolveFabricAllocation(undefined, 15, ["Black", "Maroon"], liza, "stockKg")).toEqual([{ qty: 7, colour: "Black" }, { qty: 8, colour: "Maroon" }]);
+    expect(resolveFabricAllocation(undefined, 16, ["Black", "Maroon"], liza, "stockKg")).toEqual([{ qty: 8, colour: "Black" }, { qty: 8, colour: "Maroon" }]);
+    expect(resolveFabricAllocation(undefined, 1, ["Black", "Maroon"], liza, "stockKg")).toEqual([{ qty: 1, colour: "Maroon" }]);
+  });
+  it("a palette colour this fabric has no stock row for takes no share; none matching still names the wanted colour", () => {
+    const curtain = [{ colour: "Maroon", stockPieces: 20 }];
+    expect(resolveFabricAllocation(undefined, 16, ["Black", "Maroon"], curtain, "stockPieces")).toEqual([{ qty: 16, colour: "Maroon" }]);
+    expect(resolveFabricAllocation(undefined, 6, ["Black"], curtain, "stockPieces")).toEqual([{ qty: 6, colour: "Black" }]);
+  });
+  it("a colour picked by hand in Deal Check still stands while the palette allows it", () => {
+    const liza = [{ colour: "Black", stockKg: 10 }, { colour: "Maroon", stockKg: 60 }];
+    const saved = [{ colour: "Maroon", qty: 15 }];
+    expect(resolveFabricAllocation(saved, 15, ["Black", "Maroon"], liza, "stockKg")).toBe(saved);
+  });
   it("matching is the same loose matcher as auto-fill (Rose Gold covers Rose Gold dark)", () => {
     const saved = [{ colour: "Rose Gold dark", qty: 5 }];
     expect(resolveFabricAllocation(saved, 5, ["Rose Gold"], stock, "stockKg")).toBe(saved);
