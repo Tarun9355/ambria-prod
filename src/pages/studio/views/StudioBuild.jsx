@@ -55,8 +55,7 @@ import { sizeClassToPatternKey, resolveSizeKey } from "../../../lib/ims/flowerHe
 import { itemDimsText, kitDescendantIds, flowerPaletteTuplesOf } from "../../../lib/ims/helpers";
 import LazyYT from "../../../components/studio/LazyYT.jsx";
 import KitComponentsEditor from "../../../components/shared/KitComponentsEditor";
-import { kitVariants, elementWithKit, currentKitId, kitPool, markKitCustom } from "../../../lib/studio/kitVariants";
-import { elementAfterPick } from "../../../lib/studio/elementPick";
+import { kitVariants, elementWithKit, currentKit, kitPool, markKitCustom } from "../../../lib/studio/kitVariants";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb";
 import InventoryItemPickerModal from "../../../components/shared/InventoryItemPickerModal";
 import PrintedWallsModal from "../../../components/studio/PrintedWallsModal.jsx";
@@ -5219,8 +5218,8 @@ undefined
                         {kitShort.length>0&&<span title={`Short for this date inside this kit:\n${kitShort.map(p=>`${p.name}: ${p.short} of ${p.need} short${p.canMake?" (production can make it)":" (can't be made, pick another part)"}`).join("\n")}`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:kitShortOut?"rgba(239,68,68,0.15)":"rgba(245,158,11,0.15)",color:kitShortOut?"#EF4444":"#B45309",fontWeight:700}}>⚠ {kitShort.length} part{kitShort.length===1?"":"s"} short</span>}
                         {(rc||el.invId)&&<span onClick={()=>((!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))||(()=>openAvailModal(k, idx, el, rc)))()} title={(!isKit&&choiceOpenerFor(k,idx,el,rc,invItem,qtyUnit))?`Check what is free and name up to ${ELEMENT_PREF_MAX} ${/cover/i.test(invItem?.name||"")?"cushion cover":"overlay"} designs in order of preference - Planning decides which one is used`:_subcatOpportunity?`Also used in ${[...new Set(_subcatOpportunity.map(o=>o.label))].join(", ")} (${_subcatOpportunity.map(o=>o.name).join(", ")}) — swap to it for the repeat discount`:"Check stock availability & pick an item"} style={{cursor:"pointer",fontSize:12,opacity:_subcatOpportunity?1:0.5,padding:"0 1px",lineHeight:1,color:_subcatOpportunity?"#F97316":undefined}}><IconBox size={12}/></span>}
                         {/* Exchange Kit - when the item's sub-category has more than one kit (any Console Table's kits for a Console Table); names the kit the element is on */}
-                        {isKit&&kitPool(invItem,imsInventory).length>1&&(()=>{const kid=currentKitId(el,invItem);const cur=kitVariants(invItem).find(x=>x.id===kid);return(
-                          <button type="button" onClick={()=>setKitPicker({k,idx})} title={`Exchange the whole kit for another ${invItem?.subCat||"kit"} kit`}
+                        {isKit&&kitPool(invItem,imsInventory).length>1&&(()=>{const ck=currentKit(el,invItem,id=>(imsInventory||[]).find(i=>i.id===id));const cur=ck?{name:ck.item.id===invItem.id?ck.kit.name:`${ck.item.name} · ${ck.kit.name}`}:null;return(
+                          <button type="button" onClick={()=>setKitPicker({k,idx})} title={`Exchange this ${invItem?.name||"item"}'s kit (its parts) for another ${invItem?.subCat||"kit"} kit - the ${invItem?.name||"item"} itself stays`}
                             style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10.5,fontWeight:700,padding:"2px 8px",borderRadius:999,border:"1px solid rgba(99,102,241,0.45)",background:"rgba(99,102,241,0.08)",color:isDark?"#A5B4FC":"#4F46E5",cursor:"pointer",whiteSpace:"nowrap",maxWidth:150,overflow:"hidden",textOverflow:"ellipsis"}}>
                             ⇄ {cur?cur.name:"Edited kit"}</button>);})()}
                         {/* Only when the manually-pinned stock item's name actually differs from
@@ -6425,21 +6424,19 @@ undefined
       // Every kit of the sub-category (kitPool): this item's own first, then each other kit item's, by name.
       const pool=kitPool(item,imsInventory);
       if(!el||pool.length<2) return null;
-      const curId=currentKitId(el,item);
+      const curKit=currentKit(el,item,id=>(imsInventory||[]).find(i=>i.id===id));
       const close=()=>setKitPicker(null);
-      // The whole kit is replaced, never merged: the element's parts become the chosen kit's (Kit 1 clears them back to the master).
-      // A kit of ANOTHER item turns the element into that item - its name, photo, price and stock - since that is where the stock
-      // comes from. Deal Check's copy of the kit's parts follows at once, as a part swapped in the kit breakdown does.
-      const pick=(toItem,kitId)=>{
-        if(toItem.id===item.id&&kitId===curId){close();return;}
+      // Only the kit - the parts - is exchanged; the element stays its own item (owner ask 2026-11-11: picking Iron Console's kit on a
+      // Wooden Console keeps the Wooden Console and loads Iron Console's parts into it). Never merged: the parts become the chosen
+      // kit's (its own Kit 1 clears them back to the master). Deal Check's copy of the parts follows at once.
+      const pick=(fromItem,kitId)=>{
+        if(curKit&&curKit.item.id===fromItem.id&&curKit.kit.id===kitId){close();return;}
         const elems=[...(zoneElements[k]||[])]; if(!elems[idx]||elems[idx].invId!==el.invId){close();return;}
-        const base=toItem.id===item.id?elems[idx]
-          :elementAfterPick(elems[idx],toItem.id,{id:toItem.id,name:toItem.name,photo:toItem.img||(Array.isArray(toItem.photoUrls)&&toItem.photoUrls[0])||"",unit:toItem.unit},[]);
-        const next=elementWithKit(base,toItem,kitId);
+        const next=elementWithKit(elems[idx],item,kitId,fromItem);
         elems[idx]=next;
         setZoneElements(p=>({...p,[k]:elems}));
         if(setDcKitEdits&&buildElCardKey){const ck=buildElCardKey(k,next.name||"",idx);const fi=activeFnIdx||0;const ov=Array.isArray(next.kitOverrides)?next.kitOverrides:null;setDcKitEdits(prev=>({...prev,[fi]:{...(prev?.[fi]||{}),[ck]:ov}}));persistDcKitEditsNow?.(fi,ck,ov);}
-        if(toItem.id!==item.id) showMsg?.(`${item.name} → ${toItem.name}`,"green");
+        if(fromItem.id!==item.id) showMsg?.(`${item.name}: ${fromItem.name}'s ${kitVariants(fromItem).find(x=>x.id===kitId)?.name||"kit"} loaded`,"green");
         close();
       };
       const groups=[];pool.forEach(p=>{const g=groups[groups.length-1];if(g&&g.item.id===p.item.id)g.kits.push(p.kit);else groups.push({item:p.item,kits:[p.kit]});});
@@ -6450,17 +6447,17 @@ undefined
             <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
               <div style={{minWidth:0}}>
                 <div style={{fontSize:14.5,fontWeight:700,color:textP}}>⇄ Exchange kit - {item?.subCat||item?.name||"Kit"}</div>
-                <div style={{fontSize:11.5,color:textS,marginTop:3}}>{pool.length} kits. The chosen kit replaces every part of this one{curId===null?" (including your own edits to it)":""}; a kit of another item swaps the element to that item. Qty and the rest of the build stay as they are.</div>
+                <div style={{fontSize:11.5,color:textS,marginTop:3}}>{pool.length} kits. {item?.name} stays - only its parts are replaced by the chosen kit's{!curKit?" (including your own edits to them)":""}. Qty and the rest of the build stay as they are.</div>
               </div>
               <button autoFocus onClick={close} aria-label="Close" style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textP,fontSize:14.5,cursor:"pointer",flexShrink:0}}>✕</button>
             </div>
             <div style={{padding:"14px 18px",overflowY:"auto",flex:1,display:"flex",flexDirection:"column",gap:16}}>
               {groups.map(g=>(
               <div key={g.item.id}>
-                <div style={{fontSize:11,fontWeight:700,color:textS,textTransform:"uppercase",letterSpacing:0.4,marginBottom:8}}>{g.item.name}{g.item.id===item.id?" · this item":""}</div>
+                <div style={{fontSize:11,fontWeight:700,color:textS,textTransform:"uppercase",letterSpacing:0.4,marginBottom:8}}>{g.item.id===item.id?`${g.item.name}'s own kits`:`Kits from ${g.item.name}`}</div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:10}}>
               {g.kits.map(kit=>{
-                const sel=g.item.id===item.id&&kit.id===curId;
+                const sel=!!curKit&&curKit.item.id===g.item.id&&curKit.kit.id===kit.id;
                 const parts=(Array.isArray(kit.subItems)?kit.subItems:[]).filter(c=>c&&(c.itemId||c.patternId));
                 return (
                   <button type="button" key={kit.id} onClick={()=>pick(g.item,kit.id)} aria-pressed={sel}
@@ -6470,8 +6467,8 @@ undefined
                       {sel?<span style={{fontSize:10,fontWeight:700,color:"#4F46E5"}}>✓ In use</span>:kit.id==="default"?<span style={{fontSize:10,color:textS}}>default</span>:null}
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {/* the kit item itself first, then each part with its stock photo - as Build's "Kit - includes" list reads */}
-                      {[{itemId:g.item.id,qty:1,_main:true},...parts].map((c,i)=>{const pt=partOf(c);return(
+                      {/* only the parts, each with its stock photo - the console they would go on stays this element's own */}
+                      {parts.map((c,i)=>{const pt=partOf(c);return(
                         <span key={i} style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
                           {pt.photo
                             ? <img src={thumbUrl(pt.photo,64)} loading="lazy" decoding="async" alt="" style={{width:32,height:32,borderRadius:6,objectFit:"cover",flexShrink:0,background:isDark?"#1a1a2e":"#eee"}}/>

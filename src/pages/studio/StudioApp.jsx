@@ -9185,7 +9185,7 @@ export default function StudioApp() {
     const dcFn = dcKitEdits?.[fi] || {};
     const updates = []; // { zk, idx, el, ck, removed, name }
     Object.entries(zoneElements || {}).forEach(([zk, els]) => (Array.isArray(els) ? els : []).forEach((el, idx) => {
-      const r = el?.invId ? syncElementKit(el, byId.get(el.invId)) : null;
+      const r = el?.invId ? syncElementKit(el, byId.get(el.invId), (id) => byId.get(id)) : null;
       if (!r) return;
       const ck = buildElCardKey(zk, el.name || "", idx);
       const d = dcFn[ck];

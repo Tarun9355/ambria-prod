@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { kitVariants, hasKitChoice, elementWithKit, currentKitId, DEFAULT_KIT_ID, markKitCustom, syncElementKit, kitPool } from "./kitVariants";
+import { kitVariants, hasKitChoice, elementWithKit, currentKitId, DEFAULT_KIT_ID, markKitCustom, syncElementKit, kitPool, currentKit } from "./kitVariants";
 import { rowToItem, itemToRow } from "../inventory/adapter";
 
 const consoleTbl = {
@@ -128,5 +128,42 @@ describe("kitPool - every kit of the sub-category", () => {
   });
   it("no sub-category: only its own kits", () => {
     expect(kitPool({ ...consoleTbl, subCat: "" }, inv).map((p) => p.item.id)).toEqual(["c1", "c1"]);
+  });
+});
+
+describe("a kit from another item - only the parts change, the console stays (owner ask 2026-11-11)", () => {
+  const wooden = { id: "w1", name: "Wooden Console", subCat: "Console Table", subItems: [{ itemId: "pot", qty: 2 }] };
+  const iron = { id: "i1", name: "Iron Console", subCat: "Console Table", subItems: [{ itemId: "lamp", qty: 1 }, { itemId: "candle", qty: 2 }], altKits: [{ id: "ik2", name: "Royal", subItems: [{ itemId: "vase", qty: 3 }] }] };
+  const inv = [wooden, iron];
+  const lookup = (id) => inv.find((i) => i.id === id);
+  const el = { name: "Wooden Console", invId: "w1", qty: 1 };
+  it("Iron Console's Kit 1 on the Wooden Console: still the Wooden Console, Iron's parts", () => {
+    const next = elementWithKit(el, wooden, DEFAULT_KIT_ID, iron);
+    expect(next).toMatchObject({ name: "Wooden Console", invId: "w1", kitFrom: "i1", kitId: DEFAULT_KIT_ID, kitLive: true });
+    expect(next.kitOverrides).toEqual([{ itemId: "lamp", qty: 1 }, { itemId: "candle", qty: 2 }]);
+    expect(currentKit(next, wooden, lookup)).toMatchObject({ item: { id: "i1" }, kit: { id: DEFAULT_KIT_ID } });
+    expect(currentKitId(next, wooden)).toBeNull(); // not one of Wooden's own kits
+  });
+  it("back to its own Kit 1 clears the parts and the source", () => {
+    const onIron = elementWithKit(el, wooden, "ik2", iron);
+    const back = elementWithKit(onIron, wooden, DEFAULT_KIT_ID, wooden);
+    expect(back.kitOverrides).toBeUndefined();
+    expect(back.kitFrom).toBeUndefined();
+    expect(currentKit(back, wooden, lookup)).toMatchObject({ item: { id: "w1" }, kit: { id: DEFAULT_KIT_ID } });
+  });
+  it("follows Iron Console's kit in IMS, and falls back to its own Kit 1 when that kit is removed", () => {
+    const onIron = elementWithKit(el, wooden, "ik2", iron);
+    const ironEdited = { ...iron, altKits: [{ id: "ik2", name: "Royal", subItems: [{ itemId: "vase", qty: 5 }] }] };
+    const r = syncElementKit(onIron, wooden, (id) => (id === "i1" ? ironEdited : wooden));
+    expect(r.el).toMatchObject({ invId: "w1", kitFrom: "i1", kitOverrides: [{ itemId: "vase", qty: 5 }] });
+    const gone = syncElementKit(onIron, wooden, (id) => (id === "i1" ? { ...iron, altKits: [] } : wooden));
+    expect(gone.removed).toBe(true);
+    expect(gone.el.kitFrom).toBeUndefined();
+    expect(gone.el.invId).toBe("w1");
+    // Iron's own Kit 1 picked on Wooden is live too (it is not Wooden's default)
+    const onIron1 = elementWithKit(el, wooden, DEFAULT_KIT_ID, iron);
+    const r1 = syncElementKit(onIron1, wooden, (id) => (id === "i1" ? { ...iron, subItems: [{ itemId: "lamp", qty: 4 }] } : wooden));
+    expect(r1.el.kitOverrides).toEqual([{ itemId: "lamp", qty: 4 }]);
+    expect(syncElementKit(onIron, wooden)).toBeNull(); // no lookup - nothing done
   });
 });

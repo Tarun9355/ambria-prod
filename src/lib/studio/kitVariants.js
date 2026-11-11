@@ -32,24 +32,44 @@ export function hasKitChoice(item) {
 
 // The element with the chosen kit in place of whatever parts it had - never merged with them. The default kit clears the overrides,
 // so the element follows the master recipe again (later edits to Kit 1 in IMS reach it, as they always did).
-export function elementWithKit(el, item, kitId) {
-  const kit = kitVariants(item).find((k) => k.id === kitId);
+// `source` is the item the kit belongs to - another item of the sub-category (Iron Console's kit on a Wooden Console). The element
+// stays its own item (owner ask 2026-11-11: Exchange Kit swaps the parts, never the console); only its parts become that kit's, and
+// kitFrom names where they came from so live updates follow that kit.
+export function elementWithKit(el, item, kitId, source) {
+  const src = source || item;
+  const kit = kitVariants(src).find((k) => k.id === kitId);
   if (!el || !kit) return el;
-  const { kitOverrides: _ov, kitId: _id, kitCustom: _c, kitLive: _l, ...rest } = el;
-  if (kit.id === DEFAULT_KIT_ID) return rest;
+  const { kitOverrides: _ov, kitId: _id, kitCustom: _c, kitLive: _l, kitFrom: _f, ...rest } = el;
+  const own = !item || !src || src.id === item.id;
+  if (own && kit.id === DEFAULT_KIT_ID) return rest;
   // kitLive: the parts follow the kit in IMS from now on (syncElementKit)
-  return { ...rest, kitOverrides: normKitParts(kit.subItems), kitId: kit.id, kitLive: true };
+  return { ...rest, kitOverrides: normKitParts(kit.subItems), kitId: kit.id, ...(own ? null : { kitFrom: src.id }), kitLive: true };
 }
 
 // The kit an element is on: its saved kitId while that kit still exists, the default when it has no parts list of its own, else null
-// (a parts list edited by hand, or a kit since removed in IMS).
+// (a parts list edited by hand, or a kit since removed in IMS). Its own item's kits only - a kit from another item is currentKit's.
 export function currentKitId(el, item) {
   const kits = kitVariants(item);
   if (!kits.length || !el) return null;
   // No parts list of its own means the master (a reset in the kit breakdown clears the list, not the kitId).
   if (!Array.isArray(el.kitOverrides)) return DEFAULT_KIT_ID;
-  if (el.kitCustom) return null;
+  if (el.kitCustom || el.kitFrom) return null;
   return el.kitId && kits.some((k) => k.id === el.kitId) ? el.kitId : null;
+}
+
+// The kit an element is on, wherever it came from: { item (the kit's own item), kit } or null for an edited / removed kit.
+// lookup(id) finds an inventory item.
+export function currentKit(el, item, lookup) {
+  if (!el || !item) return null;
+  if (!el.kitFrom || el.kitFrom === item.id) {
+    const id = currentKitId(el, item);
+    const kit = id ? kitVariants(item).find((k) => k.id === id) : null;
+    return kit ? { item, kit } : null;
+  }
+  if (el.kitCustom || !Array.isArray(el.kitOverrides)) return null;
+  const src = typeof lookup === "function" ? lookup(el.kitFrom) : null;
+  const kit = src ? kitVariants(src).find((k) => k.id === el.kitId) : null;
+  return kit ? { item: src, kit } : null;
 }
 
 // ── Live kits (owner ask 2026-11-10) ──────────────────────────────────────────────────────────────────────────────────────────
@@ -60,7 +80,7 @@ export function currentKitId(el, item) {
 // The element marked as holding its own, hand-edited parts list. A list put back to empty (a reset) is the default kit again.
 export function markKitCustom(el) {
   if (!el) return el;
-  if (!Array.isArray(el.kitOverrides)) { const { kitId: _k, kitCustom: _c, kitLive: _l, ...rest } = el; return rest; }
+  if (!Array.isArray(el.kitOverrides)) { const { kitId: _k, kitCustom: _c, kitLive: _l, kitFrom: _f, ...rest } = el; return rest; }
   if (!el.kitId) return el;
   const { kitLive: _l, ...rest } = el;
   return { ...rest, kitCustom: true };
@@ -70,13 +90,18 @@ export function markKitCustom(el) {
 // - on a kit other than Kit 1 picked since live kits (kitLive), not edited by hand since: its parts become the kit's current parts;
 // - that kit since removed in IMS: back on Kit 1 (removed: the kit's name is lost with it, so the caller says "a kit was removed").
 // A kit picked before live kits has no kitLive: whether its parts were edited by hand cannot be told, so it is left as it is until
-// the kit is picked again. Returns { el, removed }.
-export function syncElementKit(el, item) {
-  if (!el || !item || el.kitLive !== true || !el.kitId || el.kitId === DEFAULT_KIT_ID || el.kitCustom || !Array.isArray(el.kitOverrides)) return null;
-  const kits = kitVariants(item);
-  if (!kits.length) return null; // the item is not a kit any more - leave the element as it is
+// the kit is picked again. A kit taken from another item (kitFrom) follows that item's kit; lookup(id) finds it.
+// Returns { el, removed }.
+export function syncElementKit(el, item, lookup) {
+  if (!el || !item || el.kitLive !== true || !el.kitId || el.kitCustom || !Array.isArray(el.kitOverrides)) return null;
+  const fromOther = !!el.kitFrom && el.kitFrom !== item.id;
+  if (!fromOther && el.kitId === DEFAULT_KIT_ID) return null;
+  const src = fromOther ? (typeof lookup === "function" ? lookup(el.kitFrom) : undefined) : item;
+  if (fromOther && src === undefined && typeof lookup !== "function") return null; // nothing to look it up in
+  const kits = kitVariants(src);
+  if (!fromOther && !kits.length) return null; // the item is not a kit any more - leave the element as it is
   const kit = kits.find((k) => k.id === el.kitId);
-  if (!kit) { const { kitOverrides: _o, kitId: _k, kitCustom: _c, kitLive: _l, ...rest } = el; return { el: rest, removed: true }; }
+  if (!kit) { const { kitOverrides: _o, kitId: _k, kitCustom: _c, kitLive: _l, kitFrom: _f, ...rest } = el; return { el: rest, removed: true }; }
   const parts = normKitParts(kit.subItems);
   if (JSON.stringify(parts) === JSON.stringify(el.kitOverrides)) return null;
   return { el: { ...el, kitOverrides: parts }, removed: false };

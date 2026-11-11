@@ -94,7 +94,7 @@ export function syncKitOverridesToBuild(zoneElements, parsed, comps, cardKey, ha
   // A reset is the default kit again (no kitId). A list edited by hand in Deal Check's kit editor (handEdited) is the deal's own
   // (kitCustom); any other list arriving here is Build's own pick or the IMS kit coming back round, and stays on its kit.
   if (wantsReset) {
-    const { kitOverrides, kitId, kitCustom, kitLive, ...rest } = el; // eslint-disable-line no-unused-vars
+    const { kitOverrides, kitId, kitCustom, kitLive, kitFrom, ...rest } = el; // eslint-disable-line no-unused-vars
     nextArr[parsed.idx] = { ...rest, _dcSyncedCardKey: cardKey };
   } else if (handEdited && el.kitId) {
     const { kitLive, ...rest } = el; // eslint-disable-line no-unused-vars
