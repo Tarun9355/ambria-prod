@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology, pillarCountForSpan, pillarCountForSpanRaw, nearestCleanSpans, buildPlatformPlan, trussInvForMaterial, zoneTrussStandingDiscountDetail, platformStandingDiscount } from "./pricing";
+import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology, pillarCountForSpan, pillarCountForSpanRaw, nearestCleanSpans, nearestCleanHeights, trussPillarCount, buildPlatformPlan, trussInvForMaterial, zoneTrussStandingDiscountDetail, platformStandingDiscount } from "./pricing";
 
 // §23 Phase 7 (2026-11-04, owner-confirmed worked examples): the sales team pads a zone's entered
 // width/depth themselves by a round 1ft per pillar (easy mental math) BEFORE typing it — a true
@@ -216,7 +216,101 @@ describe("nearestCleanSpans — the smart dim tip (owner ask, 2026-11-04, replac
   it("pole (owner decision, 2026-11-05): no padding — budget IS the raw typed span, not span-2", () => {
     const poleStock = { pillars: { 10: { stock: 5 } }, beams: { 15: { stock: 5 }, 12: { stock: 5 } } };
     const tip = nearestCleanSpans(14, 10, { maxSpanFt: 15, trussInv: poleStock, material: "pole" });
-    expect(tip).toEqual({ pillarCount: 2, down: { span: 12, budget: 12 }, up: { span: 15, budget: 15 } });
+    expect(tip).toEqual({ pillarCount: 2, reason: "joint", down: { span: 12, budget: 12 }, up: { span: 15, budget: 15 } });
+  });
+  it("reserved (other events' stock on this date) tightens an already-clean size into a real stock shortage — only reports if no nearby alternative exists either", () => {
+    // Isolated stock: ONLY a 12ft beam exists near this budget, so a shortage genuinely has nothing
+    // to fall back to within the 6ft search window.
+    const isolated = { pillars: { 10: { stock: 20 } }, beams: { 12: { stock: 20 } } };
+    // 14ft → budget 12ft — exactly the 12ft size. With 19 of its 20 already reserved by other events
+    // today, only 1 is free — not enough for piecesNeeded: 2 (Full Box), and nothing else is nearby.
+    const tip = nearestCleanSpans(14, 10, { ...eng, trussInv: isolated, piecesNeeded: 2, reserved: { beams: { 12: 19 } } });
+    expect(tip).toEqual({ pillarCount: 2, reason: "stock", size: 12, free: 1, needed: 2, down: null, up: null });
+    // The same reservation doesn't block a single-row axis (piecesNeeded: 1) — 1 free unit is enough.
+    expect(nearestCleanSpans(14, 10, { ...eng, trussInv: isolated, piecesNeeded: 1, reserved: { beams: { 12: 19 } } })).toBeNull();
+  });
+  it("a 'stock' tip that DOES find a nearby alternative still reports the original short size/free/needed (regression: used to come back undefined)", () => {
+    const trussInv = { pillars: { 10: { stock: 20 } }, beams: { 12: { stock: 20 }, 10: { stock: 20 } } };
+    const tip = nearestCleanSpans(14, 10, { ...eng, trussInv, piecesNeeded: 2, reserved: { beams: { 12: 19 } } });
+    expect(tip).toEqual({ pillarCount: 2, reason: "stock", size: 12, free: 1, needed: 2, down: { span: 12, budget: 10 }, up: null });
+  });
+  it("reserved also narrows the down/up search — a nearby size that's fully booked elsewhere is skipped in favour of the next real alternative", () => {
+    const trussInv = { pillars: { 10: { stock: 20 } }, beams: { 15: { stock: 10 }, 12: { stock: 10 }, 10: { stock: 10 } } };
+    // 16ft → budget 14 (needs a joint either way). Unreserved, the nearest down option is 12ft
+    // (span 14). With every 12ft beam reserved elsewhere today, the search has to keep going past it
+    // and land on 10ft (span 12) instead.
+    expect(nearestCleanSpans(16, 10, { ...eng, trussInv }).down).toEqual({ span: 14, budget: 12 });
+    const tip = nearestCleanSpans(16, 10, { ...eng, trussInv, reserved: { beams: { 12: 10 } } });
+    expect(tip.down).toEqual({ span: 12, budget: 10 });
+    expect(tip.up).toEqual({ span: 17, budget: 15 });
+  });
+});
+
+describe("nearestCleanHeights — the smart dim tip, Height axis (owner ask, 2026-11-11)", () => {
+  const trussInv = { pillars: { 10: { stock: 20 }, 12: { stock: 20 }, 15: { stock: 10 } }, beams: { 2: { stock: 20 }, 5: { stock: 20 } } };
+  it("an exact pillar size with enough stock: no tip", () => {
+    expect(nearestCleanHeights(12, { trussInv, piecesNeeded: 2 })).toBeNull();
+  });
+  it("a working ground-spacer build is left alone (owner decision, 2026-11-11) — not tipped just for needing a spacer", () => {
+    // 17 = 15 (pillar) + 2 (beam spacer), both with plenty of stock — a normal build.
+    expect(nearestCleanHeights(17, { trussInv, piecesNeeded: 2 })).toBeNull();
+  });
+  it("an exact pillar size match but not enough FREE units: reason 'stock', suggests nearby clean sizes", () => {
+    const tip = nearestCleanHeights(12, { trussInv, piecesNeeded: 2, reserved: { pillars: { 12: 19 } } });
+    expect(tip.reason).toBe("stock");
+    expect(tip.free).toBe(1);
+    expect(tip.down).toEqual({ height: 10, free: 20 });
+    expect(tip.up).toEqual({ height: 15, free: 10 });
+  });
+  it("a spacer build whose spacer BEAM is short on stock: reason 'stock'", () => {
+    const tip = nearestCleanHeights(17, { trussInv, piecesNeeded: 2, reserved: { beams: { 2: 19 } } }); // only 1 of the 2ft spacer left, need 2
+    expect(tip.reason).toBe("stock");
+    expect(tip.free).toBe(1);
+  });
+  it("a TWO-spacer build (same beam size used twice) sums the real need instead of checking each piece on its own (regression: used to silently pass)", () => {
+    // 14ft = a 10ft pillar + TWO 2ft ground beams (resolvePillarHeight's two-spacer branch) —
+    // 4 pillars need 4 × 2 = 8 of the 2ft beam, not just 4.
+    const twoSpacerInv = { pillars: { 10: { stock: 20 } }, beams: { 2: { stock: 5 } } };
+    const short = nearestCleanHeights(14, { trussInv: twoSpacerInv, piecesNeeded: 4 });
+    expect(short).toMatchObject({ reason: "stock", size: 2, free: 5, needed: 8 });
+    // With enough of the 2ft beam (10, covering the real need of 8), it's genuinely fine.
+    const enoughInv = { pillars: { 10: { stock: 20 } }, beams: { 2: { stock: 10 } } };
+    expect(nearestCleanHeights(14, { trussInv: enoughInv, piecesNeeded: 4 })).toBeNull();
+  });
+  it("a height that can't be assembled from any stock combination at all: reason 'unbuildable'", () => {
+    const sparseInv = { pillars: { 10: { stock: 20 } }, beams: { 2: { stock: 20 } } };
+    const tip = nearestCleanHeights(50, { trussInv: sparseInv, piecesNeeded: 1 });
+    expect(tip.reason).toBe("unbuildable");
+  });
+  it("no pillar stock configured at all: no tip (nothing to suggest, nothing to diagnose)", () => {
+    expect(nearestCleanHeights(12, { trussInv: { pillars: {}, beams: {} } })).toBeNull();
+  });
+  it("search window caps at 6ft, same as the span tip", () => {
+    const farInv = { pillars: { 10: { stock: 0 }, 20: { stock: 5 } }, beams: {} };
+    const tip = nearestCleanHeights(10, { trussInv: farInv, piecesNeeded: 1, reserved: { pillars: { 10: 0 } } });
+    // 10ft itself has 0 free stock (reserved matches catalog exactly) -> reason stock; 20ft is 10ft away, outside the window.
+    expect(tip.reason).toBe("stock");
+    expect(tip.up).toBeNull();
+    expect(tip.down).toBeNull();
+  });
+});
+
+describe("trussPillarCount — Height tip's piecesNeeded (owner ask, 2026-11-11)", () => {
+  const matInv = { settings: { maxSpanFt: 30, pillarWidthFt: 0.75 } };
+  it("u_only: the span's own pillar count", () => {
+    const zc = { trussType: "u_only", dims: { W: 16, H: 10 } };
+    expect(trussPillarCount(zc, matInv)).toBe(2);
+  });
+  it("half_box: front pillar count + 2 fixed back pillars", () => {
+    const zc = { trussType: "half_box", dims: { W: 16, H: 10 } };
+    expect(trussPillarCount(zc, matInv)).toBe(4);
+  });
+  it("full_box (all 3 dims): both axes combined, corners shared", () => {
+    const zc = { dims: { L: 16, W: 16, H: 10 } };
+    expect(trussPillarCount(zc, matInv)).toBe(4);
+  });
+  it("no config resolvable (no dims at all): 0", () => {
+    expect(trussPillarCount({ dims: {} }, matInv)).toBe(0);
   });
 });
 

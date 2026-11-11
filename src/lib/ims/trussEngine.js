@@ -596,6 +596,47 @@ export const computeEventTrussTotals = (trusses) => {
   return totals;
 };
 
+// Which material's pillar/beam pool a truss of `material` actually draws from — its own, or Iron's
+// when that material's skeleton isn't configured yet. Same fallback trussInvForMaterialIms (below)
+// already applies when an event's allocation was originally computed — a Pole truss resolved against
+// Iron's stock back then still needs to be counted against Iron's stock here, or a Build tip reading
+// "free Iron stock" would double-count what a Pole zone actually consumed from that same pool.
+export const skeletonMaterialKey = (trussInv, material) => {
+  const mat = String(material || "iron").toLowerCase();
+  if (mat === "iron") return "iron";
+  const m = trussInv?.materials?.[mat];
+  return (m && m.pillars && Object.keys(m.pillars).length) ? mat : "iron";
+};
+
+// Units of each pillar/beam size already reserved by OTHER events on one date — the same per-date
+// pool Studio's own markSold pre-sale check (StudioApp.jsx's scanTrussStockShortage) and IMS's
+// Planning dashboards read (truss_allocations table, loaded into studioFloralData.trussAlloc[date]).
+// `dateEntry` is that one date's row: { events: [...], ...pool }. Soft holds are already filtered out
+// before this is called (rowsToAllocMap keeps only non-"soft" events), so only sold/hard-held
+// commitments count here — a shortage tip has to be conservative about real stock, not about a
+// draft someone else is still only considering.
+// `excludeClientId` drops this SAME deal's own other functions/zones from the count — a build must
+// never read as "shorted" by its own demand on the same date.
+// Returns { [skeletonMat]: { pillars: {size: qty}, beams: {size: qty} } } — per-material, so an Iron
+// tip and a Pole tip never net against the wrong pool.
+export const reservedTrussStockOnDate = (dateEntry, { excludeClientId, trussInv } = {}) => {
+  const out = {};
+  const add = (mat, kind, sz, qty) => {
+    if (!out[mat]) out[mat] = { pillars: {}, beams: {} };
+    out[mat][kind][sz] = (out[mat][kind][sz] || 0) + qty;
+  };
+  (dateEntry?.events || []).forEach((ev) => {
+    if (ev?.eoId === "__self_check__") return;
+    if (excludeClientId && ev?.clientId === excludeClientId) return;
+    (ev?.trusses || []).forEach((t) => {
+      const mat = skeletonMaterialKey(trussInv, t?.trussMaterial);
+      Object.entries(t?.allocation?.totals?.pillarsUsed || {}).forEach(([sz, qty]) => add(mat, "pillars", sz, qty));
+      Object.entries(t?.allocation?.totals?.beamsUsed || {}).forEach(([sz, qty]) => add(mat, "beams", sz, qty));
+    });
+  });
+  return out;
+};
+
 // Mirror of pricing.js's trussInvForMaterial — duplicated, not imported, because lib/ims does not
 // depend on lib/studio (same convention as battaEngine.js's engForMaterial). Keep in sync with
 // pricing.js if either changes.
