@@ -1425,8 +1425,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         <div class="gs-g">${c.map(cardOf).join("")}</div>
       </section>`).join("");
     })();
-    // Not in the master (all-departments) book (owner ask 2026-11-11) - a department's own book still lists its standing stock.
-    const fixedVenuePages = combined ? "" : (() => {
+    // Not in any book (owner ask 2026-11-11: taken out of the all-departments book, then out of each department's own too). The
+    // builder stays, switched off, should it be wanted back. A zone card still tags an item standing at the venue (📌 Fixed).
+    const SHOW_FIXED_VENUE_PAGES = false;
+    const fixedVenuePages = !SHOW_FIXED_VENUE_PAGES || combined ? "" : (() => {
       const names = [...new Set((fns.length ? fns.map(f => f?.venue) : [sel?.venue]).filter(Boolean))];
       const seen = new Set();
       return names.flatMap(vn => {
