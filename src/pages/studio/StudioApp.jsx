@@ -9306,14 +9306,16 @@ export default function StudioApp() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // ── LIVE KITS (owner ask 2026-11-10) ── An element on a kit picked in Build (Kit 2, or another item's kit) takes that kit's parts as
   // they are in IMS now: an edit in IMS → Inventory reaches the open deal in real time (the inventory subscription), and the save that
-  // follows carries it to Deal Check, Planning and the Setup Book. A kit removed in IMS puts the element back on Kit 1. Not on a sold
-  // deal (what was sold stays as sold), not on a kit this deal edited by hand (kitCustom), and Kit 1 needs nothing - it reads the master.
+  // follows carries it to Deal Check, Planning and the Setup Book. A kit removed in IMS puts the element back on Kit 1. Sold deals too
+  // (owner ask 2026-11-11: every change reaches every deal) - their agreed price does not move with it: the deal value stays, and the
+  // build's new total only shows as a "Build change" to Apply. Not on a kit this deal edited by hand (kitCustom), and Kit 1 needs
+  // nothing - it reads the master.
   // Deal Check's copy of the parts moves with it, so its reconcile does not put the old list back. A card whose Deal Check copy differs
   // from Build's is mid-edit there and is left for that edit to land first.
   const liveKitNotedRef = useRef("");
   useEffect(() => {
     if (!activeClientId || isFnSwitching || !Array.isArray(imsInventory) || imsInventory.length === 0) return;
-    if (activeClient?.status === "booked" || !canDesignEditRef.current) return;
+    if (!canDesignEditRef.current) return;
     const byId = new Map(imsInventory.map((i) => [i.id, i]));
     const fi = activeFnIdx || 0;
     const dcFn = dcKitEdits?.[fi] || {};
@@ -9348,7 +9350,7 @@ export default function StudioApp() {
       if (removed.length) showMsg(`A kit was removed in IMS - ${[...new Set(removed.map((u) => u.name))].join(", ")} back on Kit 1`, "orange");
       else showMsg(`Kit updated from IMS - ${[...new Set(updates.map((u) => u.name))].join(", ")}`, "green");
     }
-  }, [imsInventory, zoneElements, dcKitEdits, activeFnIdx, activeClientId, activeClient?.status, isFnSwitching, persistDcKitEditsNow, showMsg]);
+  }, [imsInventory, zoneElements, dcKitEdits, activeFnIdx, activeClientId, isFnSwitching, persistDcKitEditsNow, showMsg]);
   // ── LIVE RECIPE NAMES (owner ask 2026-11-11) ── A flower-recipe element (patternId, no inventory item) carries the recipe's
   // name as it was when added, so renaming the recipe in IMS (two recipes both "Flower Bunch", one renamed "Flower Bunch filler")
   // never reached deals already holding it. It now takes the recipe's current name whenever the deal is open; the save that
@@ -10302,7 +10304,9 @@ export default function StudioApp() {
     // Tells the page that started this hidden run (IMS's "Sync planning" button) how it is going.
     // `shard` says which slice of the run this frame is (IMS's button runs several side by side).
     const shardOf = (() => { const m = /[?&]shard=(\d+)&of=(\d+)/.exec(window.location.hash); return m && Number(m[2]) > 1 ? { i: Number(m[1]), n: Number(m[2]) } : null; })();
-    const tell = (phase, extra = {}) => { try { window.parent?.postMessage({ type: "ambria-planning-sweep", phase, shard: shardOf ? shardOf.i : 0, ...extra }, window.location.origin); } catch { /* not framed */ } };
+    // `tag` (?tag=…) echoes back which run asked - IMS's automatic sync (AutoPlanningSync) and its Sync button can run at once
+    const runTag = (/[?&]tag=([^&]+)/.exec(window.location.hash) || [])[1] || "";
+    const tell = (phase, extra = {}) => { try { window.parent?.postMessage({ type: "ambria-planning-sweep", phase, shard: shardOf ? shardOf.i : 0, ...(runTag ? { tag: decodeURIComponent(runTag) } : null), ...extra }, window.location.origin); } catch { /* not framed */ } };
     // An order belongs to the slice at its place in the id-sorted list of all orders (same list in every frame).
     const allIds = (eventOrdersRef2.current || []).map(e => e.id).sort();
     const inShard = (eo) => !shardOf || allIds.indexOf(eo?.id) % shardOf.n === shardOf.i;
@@ -10375,7 +10379,7 @@ export default function StudioApp() {
     const why = restoring ? "still restoring a deal" : !authUser ? "not signed in inside the hidden frame" : !(clientLedger || []).length ? "clients not loaded yet" : !(eventOrders || []).length ? "events not loaded yet" : !buildRestoredRef.current ? "start-up restore not finished" : activeClientId ? "a deal is open" : step !== 0 ? "not on Event Info (step " + step + ")" : (clientName || clientPhone) ? "Event Info is pre-filled" : dcRun ? "Deal Check is running" : !pricingReady ? "prices not loaded yet" : "";
     if (why !== sweepWhyRef.current) {
       sweepWhyRef.current = why;
-      try { window.parent?.postMessage({ type: "ambria-planning-sweep", phase: "wait", reason: why || "starting" }, window.location.origin); } catch { /* not framed */ }
+      try { const tg = (/[?&]tag=([^&]+)/.exec(window.location.hash) || [])[1]; window.parent?.postMessage({ type: "ambria-planning-sweep", phase: "wait", reason: why || "starting", ...(tg ? { tag: decodeURIComponent(tg) } : null) }, window.location.origin); } catch { /* not framed */ }
     }
     if (why) return;
     const t = setTimeout(() => {

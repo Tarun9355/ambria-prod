@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/AuthContext";
 import { supabase, fetchAll, updateRow, deleteRow } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
+import { notePlanningInputChange } from "../../lib/planningInputBus";
+import AutoPlanningSync from "./AutoPlanningSync.jsx";
 import { computePatternSizeCost, effectiveMarkup, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
 import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDefaultWindowsByPhaseFromRows } from "../../lib/ims/labourTypes";
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
@@ -2172,6 +2174,8 @@ export default function IMS() {
       const { error: e } = await retryingDelete("inventory", id);
       if (e) setError(`Delete failed: ${e.message}`);
     }
+    // the items saved here: the booked deals using them re-sync their planning (lib/planningInputBus, AutoPlanningSync)
+    notePlanningInputChange("inventory", [...upserts.map((r) => r?.id), ...deletes]);
   }, [user]);
 
   // Faithful `setInventory(updater, deletedIds)` contract used by InventoryTab —
@@ -2721,6 +2725,8 @@ export default function IMS() {
     <div className="min-h-screen bg-slate-100 font-sans overflow-x-clip">
       {/* Drag down at the top of the page to refresh — on phones, where the browser's own gesture is often missing. */}
       <PullToRefresh />
+      {/* an item / recipe / mandi flower / fixed venue saved here re-syncs the booked deals using it, by itself */}
+      <AutoPlanningSync eventOrders={eventOrders} flowerPatterns={settings?.flowerPatterns} />
       {error && (
         <div style={{ position: "fixed", top: 8, right: 8, zIndex: 99999, background: "#dc2626", color: "#fff", padding: "12px 14px", borderRadius: 8, fontSize: 13, maxWidth: 380, boxShadow: "0 6px 20px rgba(0,0,0,0.25)", border: "1px solid #991b1b" }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>❌ {error}</div>

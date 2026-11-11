@@ -64,7 +64,8 @@ export default function PlanningSyncButton({ eventOrders, onlyOrder, force = fal
     const sumStats = () => Object.values(statsRef.current).reduce((a, s) => ({ done: a.done + (s.done || 0), total: a.total + (s.total || 0) }), { done: 0, total: 0 });
     const onMsg = (e) => {
       const d = e.data;
-      if (e.origin !== window.location.origin || !d || d.type !== "ambria-planning-sweep") return;
+      // d.tag: another run's frame (the automatic sync, AutoPlanningSync) - not this button's
+      if (e.origin !== window.location.origin || !d || d.type !== "ambria-planning-sweep" || d.tag) return;
       console.info("[planning-sync]", d);
       if (d.phase === "wait") { waitingRef.current = d.reason || ""; return; } // alive, not started yet
       const sh = Number(d.shard) || 0;

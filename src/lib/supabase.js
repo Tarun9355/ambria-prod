@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { makeRetryingFetch } from "./retryingFetch.js";
 import { writeWithRetry } from "./writeRetry.js";
+import { notePlanningInputChange } from "./planningInputBus.js";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -119,6 +120,8 @@ export const updateRow = async (table, id, changes) => {
     { target: rowTarget(table, id), label: `${table} row`, retryable: false },
   );
   if (!res.ok) throwWriteError(res);
+  // a recipe / mandi flower / fixed venue saved here: the booked deals using it re-sync their planning (lib/planningInputBus)
+  notePlanningInputChange(table, id);
   return res.data;
 };
 
