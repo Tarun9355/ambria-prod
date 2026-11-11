@@ -8,6 +8,8 @@ import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel } from "../../lib/ims/deptClassify";
 import { TabsMenu, useConfirm, Modal } from "../../components/ui";
 import ProductionRequestsCard from "./ProductionRequestsCard.jsx";
+import ShortfallAllocation from "./ShortfallAllocation.jsx";
+import { allocKeyOf, shortfallBreakdown, shortfallLine } from "../../lib/ims/shortfallAlloc";
 import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
@@ -1066,6 +1068,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   }, [sel?.id, sel?.lmsLeadId, dept]);
   const opsExpenseTotal = opsExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const realMandi = deptData.realMandi || "";
+  // How each short "Can be made" line's shortage is arranged: { [allocKeyOf(line)]: { make, outsource, buy } } (lib/ims/shortfallAlloc.js)
+  const shortAlloc = deptData.shortAlloc && typeof deptData.shortAlloc === "object" ? deptData.shortAlloc : {};
   // Manual discount the department head grants the salesperson on this deal — a goodwill/incentive
   // figure the head types in directly, unrelated to Deal Check's own venue/repeat pricing discounts
   // and not derived from anything else on this page.
@@ -1749,11 +1753,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const truckOccs = Object.fromEntries(eventTruckList.map(t => [t.id, truckOcc(t)]));
   const fullTrucks = eventTruckList.filter(t => truckOccs[t.id].used >= 0.999).length;
   const DEPT_BAR = { Furniture: "bg-amber-500", Floral: "bg-pink-500", Structure: "bg-slate-500", Tenting: "bg-emerald-500", Transport: "bg-orange-500", Lighting: "bg-yellow-400", Fabric: "bg-violet-500" };
+  // A short "Can be made" line on a challan says where its units come from - "600 = 500 in stock + 100 outsourced" - so the
+  // challan does not read as if all 600 were ours or all made in-house. Empty for every other line.
+  const challanSrcText = (it) => {
+    const base = it?.src || it;
+    if (!base || !(Number(base.shortQty) > 0) || base.outOfStock) return "";
+    return shortfallLine(shortfallBreakdown({ booked: Number(base.rentalQty ?? base.qty) || 0, short: Number(base.shortQty) || 0 }, shortAlloc[allocKeyOf(base)]));
+  };
+  const challanSrcNote = (it) => { const line = challanSrcText(it); return line ? `<div style="font-size:11px;color:#92400e;margin-top:2px">${line}</div>` : ""; };
   const printTruckChallan = (truck, n) => {
     const w = window.open("", "_blank");
     if (!w) return;
     const rows = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0)
-      .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${shownName(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("");
+      .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("");
     const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
     w.document.write(`<html><head><title>Challan — ${dept} — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
       <h2>${DEPT_ICON[dept]} Ambria — ${dept} Challan · Truck ${n}</h2>
@@ -1807,7 +1819,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck", M, y); y += 16;
       header();
       const items = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0);
-      if (items.length) items.forEach(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; row([[shownName(it), cx.name], [it.sub || "-", cx.type], [`${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}`, cx.qty, "right"]]); });
+      if (items.length) items.forEach(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; row([[shownName(it) + (challanSrcText(it) ? ` (${challanSrcText(it)})` : ""), cx.name], [it.sub || "-", cx.type], [`${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}`, cx.qty, "right"]]); });
       else row([["No items assigned to this truck", cx.name]]);
       if (deptTools.length) {
         y += 12; room(36);
@@ -1974,7 +1986,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     const w = window.open("", "_blank");
     if (!w) return;
     const rows = [
-      ...blockedItems.map(it => `<tr><td>${loaded["inv:" + it.id] ? "☑" : "☐"}</td><td>${shownName(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}</td></tr>`),
+      ...blockedItems.map(it => `<tr><td>${loaded["inv:" + it.id] ? "☑" : "☐"}</td><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}</td></tr>`),
       ...deptTools.map(t => `<tr><td>${loaded["tool:" + t.name] ? "☑" : "☐"}</td><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`),
     ].join("");
     w.document.write(`<html><head><title>Challan — ${dept}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}@media print{button{display:none}}</style></head><body>
@@ -4318,7 +4330,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                 })()}
                                 {it.shortQty > 0 && (it.outOfStock
                                   ? <div className="text-red-600 mt-0.5">{it.shortQty} out of stock — can't be made in production, pick an alternative in Build</div>
-                                  : <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — priced at cost, chase or produce</div>)}
+                                  : (() => {
+                                      // booked vs in stock vs more needed, and how the shortage is arranged (event-wide: the event's own row, also in a one-function view)
+                                      const base = it.src || it;
+                                      const key = allocKeyOf(base);
+                                      return <ShortfallAllocation booked={Number(base.rentalQty ?? base.qty) || 0} short={Number(base.shortQty) || 0}
+                                        saved={shortAlloc[key]} canEdit={canEditPlanning}
+                                        onSave={(next) => saveDept({ shortAlloc: { ...shortAlloc, [key]: next } })} />;
+                                    })())}
                                 {it.isSwapped && <div className="text-sky-600 mt-0.5">swapped in for {it.swappedFrom}</div>}
                                 {(choiceView.get(it.id)?.notes || []).map((n, ni) => <div key={ni} className={(n.tone === "wait" ? "text-amber-600" : "text-emerald-700") + " mt-0.5"}>{n.tone === "wait" ? "" : "✓ "}{n.text}</div>)}
                                 {/* sales' ranked preference (already spelled out by a "not decided yet" note above, so not twice), or red when none was selected */}
