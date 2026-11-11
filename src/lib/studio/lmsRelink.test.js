@@ -7,7 +7,7 @@ const contract = (entryNo, contactNo, dates, extra = {}) => ({
   ...extra,
 });
 // Same raw shape as a contract row (entryNo/contactNo/functions) — lms_decor_leads rows carry it
-// too (fetchDecorRelinkSources pages both tables through the same plain-object translation).
+// too (the lms-relink Edge Function pages both tables through the same plain jsonb `data` column).
 const lead = contract;
 const client = (id, patch = {}) => ({
   id, name: "Guest", phone: "9871440883", status: "booked",
@@ -122,10 +122,13 @@ describe("planLmsRelinks — ambiguity guards", () => {
       contracts.push(contract(`C${i}`, `98714408${String(i).padStart(2, "0")}`, ["2026-11-04"]));
       clients.push(client(`CLI_${i}`, { lmsLeadId: `L${i}`, phone: `98714408${String(i).padStart(2, "0")}` }));
     }
-    const { relinks, skipped, tripped } = planLmsRelinks({ clients, decorContracts: contracts });
+    const { relinks, skipped, tripped, withheld } = planLmsRelinks({ clients, decorContracts: contracts });
     expect(relinks).toEqual([]);
     expect(tripped).toBe(true);
     expect(skipped).toEqual([{ reason: "circuit-breaker" }]);
+    // Nothing is written, but a caller with no console to watch (the server-side cron runner) can
+    // still see exactly what was withheld instead of just knowing something was.
+    expect(withheld.relinks.length).toBe(RELINK_CIRCUIT_BREAKER + 1);
   });
 });
 

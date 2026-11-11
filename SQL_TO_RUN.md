@@ -149,6 +149,34 @@ No redeploy needed — this column is only read/written by the client (`src/lib/
 ## Appended automatically as the build proceeds
 (New tables/migrations for later phases are added below as they're created.)
 
+## LMS relink moved server-side (migration 056) — ⬜ pending
+The LMS lead→contract auto-relink (fixes "Sangeeta"-style cases: a booked deal stuck pointing at its
+old LMS lead number so Ambria Ops' real on-site expenses never show up in Dept Ops' Actuals tab) used
+to only run inside an open, focused Studio browser tab. Moved entirely server-side via pg_cron +
+pg_net (already enabled on this project, migration 031) — a new `lms-relink` Edge Function, called on
+a schedule, does the same matching/write logic that used to live in StudioApp.jsx (now deleted there).
+
+Steps, in order:
+1. In the SQL editor, generate a secret: `select encode(extensions.gen_random_bytes(32),'hex');` — copy it.
+2. Create the Vault secrets (SQL editor, one-time, NOT part of the migration file):
+   ```sql
+   select vault.create_secret('https://taalribntdkowoqltvqw.supabase.co', 'ambria_project_url');
+   select vault.create_secret('<your VITE_SUPABASE_ANON_KEY value>', 'ambria_anon_key');
+   select vault.create_secret('<the secret from step 1>', 'lms_relink_cron_secret');
+   ```
+3. Set the matching Edge Function secret: `supabase secrets set LMS_RELINK_CRON_SECRET=<same secret from step 1>`
+4. Deploy the new function: `supabase functions deploy lms-relink`
+   - If this errors with something like "Module not found" about a `src/...` import, tell Claude —
+     there's a documented fallback (moving the shared modules into `supabase/functions/_shared/`).
+5. Run `supabase/migrations/056_lms_relink_cron.sql` in the SQL editor.
+6. Run it once by hand instead of waiting for the schedule: `select public.trigger_lms_relink();`
+   then check `select * from lms_relink_runs order by id desc limit 1;` after ~10 seconds — `status`
+   should be `ok` (or `tripped`/`partial` if something needs a look, with the reason in that same row).
+7. Later, confirm the schedule itself is firing: `select * from cron.job_run_details order by start_time desc limit 10;`
+
+Until this is deployed, the old client-side relink is simply gone (deleted from StudioApp.jsx as part
+of this same change) — so stale LMS lead numbers will NOT self-correct until steps 1-6 above are done.
+
 ## Labour group punch (migration 033) — ✅ run 2026-10-02 (verified: all 3 tables live)
 Attendance → **Labour Punch**: a guard/supervisor punches a department's labours in and out (one
 photo each). Creates `labours`, `labour_attendance`, `labour_punch_access` (open anon policy +

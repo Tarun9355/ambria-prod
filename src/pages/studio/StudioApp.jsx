@@ -32,8 +32,8 @@ import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
-import { availableAtVenue, lockedAtFixedVenues, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
-import { searchLmsLeads, triggerLmsSync, fetchLmsLastSync, fetchLmsLeadByEntry, fetchDecorRelinkSources } from "../../lib/ims/lms";
+import { availableAtVenue, lockedAtFixedVenues, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows, fixedVenueOverlapOnDate } from "../../lib/ims/fixedVenues";
+import { searchLmsLeads, triggerLmsSync, fetchLmsLastSync, fetchLmsLeadByEntry } from "../../lib/ims/lms";
 import { allocateForDate, buildEventAllocation } from "../../lib/ims/trussEngine";
 import { allocatePlatformForDate, buildEventPlatformAllocation } from "../../lib/ims/platformEngine";
 import { allocateBattaForDate, buildEventBattaAllocation } from "../../lib/ims/battaEngine";
@@ -53,7 +53,7 @@ import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows, effectiveColorPrefRows } from "../../lib/studio/floralCost";
 import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements, tentingZoneUsage, fabricBangaliZone } from "../../lib/studio/manpowerCount";
-import { planLmsRelinks, planEventOrderLmsSync } from "../../lib/studio/lmsRelink";
+import { rowToClient } from "../../lib/studio/clientRow";
 
 // ═══ HEADER TYPE + CHIP SCALE ═══
 // The header used to mix 8/9/10/11/12/13px in a single row. It now has exactly two tiers:
@@ -1122,18 +1122,8 @@ async function loadRcRows() {
   return all;
 }
 
-// ═══ Client ledger ↔ `client_ledger` TABLE mappers (migrated off the settings blob) ═══
-// Full client object in `data`; typed columns (name/phone/email/status/budget/created_by) mirrored.
-function rowToClient(row) {
-  if (!row) return null;
-  const d = (row.data && typeof row.data === "object" && !Array.isArray(row.data) && Object.keys(row.data).length) ? row.data : null;
-  const base = d ? { ...d, id: row.id } : { id: row.id, name: row.name, phone: row.phone, email: row.email, budget: row.budget };
-  // sessions defaults to [] because the blob no longer carries them (see clientToRow) — they are
-  // filled in from studio_sessions by the loader. Without this a freshly-read client would have
-  // `sessions: undefined` between the two steps, and every `c.sessions.length` in the app would
-  // throw rather than read as "no saves yet".
-  return { sessions: [], ...base, id: row.id, status: base.status || row.status || "ongoing", createdBy: base.createdBy || row.created_by || "—" };
-}
+// rowToClient moved to lib/studio/clientRow.js (also imported directly by the lms-relink Edge
+// Function) — imported above alongside the other lib/studio imports.
 // The client-discount checkbox's value. It moved from applyDiscountToClient to guestDiscount (2026-10-31): browser tabs
 // opened before the stale-copy fix kept re-sending applyDiscountToClient with every autosave, so Pushpanjali STD kept
 // jumping back to Rs 5.79L even after the fix was live. Old code knows nothing of guestDiscount, so once the checkbox
@@ -4553,131 +4543,14 @@ export default function StudioApp() {
     } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName, canStudio]);
   // ═══ LMS LEAD → CONTRACT AUTO-RELINK ═══
-  // See lib/studio/lmsRelink.js's header comment for the full story: a booked deal's
-  // client_ledger.lmsLeadId is set once, whenever someone loaded it from LMS, and never re-synced
-  // once its LMS lead converts into a signed decor CONTRACT with a DIFFERENT entry number — the
-  // number Ambria Ops' own expense system (opsExpenses.js, via the ops-expenses Edge Function)
-  // actually keys by. A deal stuck on its lead-stage id never surfaces its real on-site expenses in
-  // IMS Dept Ops' Actuals tab (confirmed live: client_ledger held lead #01488 for a deal Ambria Ops
-  // only knows as contract #00477). Runs here, in Studio — the only place client_ledger, the field's
-  // actual source of truth, lives; a fix landing only on event_orders would be overwritten right back
-  // by the next ordinary client_ledger-driven push (pushEventOrderPlan).
-  //
-  // Deliberately NOT keyed on clientLedger/eventOrders in its dependency array — this is a slow,
-  // eventually-consistent background correction (first run ~60–90s after the ledger loads, then
-  // every 30 minutes), not something that should re-run on every keystroke or realtime echo. It
-  // reads clientLedgerRef/eventOrdersRef2 fresh at call time instead.
-  const relinkRunningRef = useRef(false);
-  useEffect(() => {
-    if (!ledgerReady || ledgerLoadError) return;
-    if (!canStudio("design", "edit")) return;
-    let cancelled = false;
-    const THROTTLE_KEY = "ambria.lmsRelink.lastRunAt";
-    const THROTTLE_MS = 25 * 60 * 1000; // under the 30-min interval below — the real guard is this, not the interval, since every open tab/session runs its own timer
-    const runOnce = async () => {
-      if (relinkRunningRef.current || cancelled) return;
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      try {
-        const lastRun = Number(localStorage.getItem(THROTTLE_KEY)) || 0;
-        if (Date.now() - lastRun < THROTTLE_MS) return;
-        localStorage.setItem(THROTTLE_KEY, String(Date.now()));
-      } catch { /* localStorage unavailable — proceed anyway; the compare-and-set RPC still makes a cross-tab race harmless, just slightly wasteful */ }
-      relinkRunningRef.current = true;
-      try {
-        let decorContracts, decorLeads;
-        try { ({ decorContracts, decorLeads } = await fetchDecorRelinkSources()); }
-        catch (e) { console.warn("[lms-relink] fetching LMS sources failed:", e?.message || e); return; }
-        if (cancelled) return;
-        const MISSING_KEY = "ambria.lmsRelink.knownMissingVerified";
-        let knownMissingVerifiedIds = [];
-        try { knownMissingVerifiedIds = JSON.parse(localStorage.getItem(MISSING_KEY) || "[]"); } catch { /* fresh start is safe — worst case, one already-seen ghost briefly recounts toward the trip threshold */ }
-        const { relinks, reapply, verify, skipped, tripped, newlyMissingVerifiedIds } = planLmsRelinks({ clients: clientLedgerRef.current, decorContracts, decorLeads, knownMissingVerifiedIds });
-        // Persisted wholesale every run — a ghost id that stops going missing (contract reappeared,
-        // or the client itself was fixed by hand) naturally drops out, no separate cleanup needed.
-        try { localStorage.setItem(MISSING_KEY, JSON.stringify(newlyMissingVerifiedIds || [])); } catch { /* non-fatal — worst case this run's findings aren't remembered for next time */ }
-        if (tripped) console.error("[lms-relink] circuit breaker tripped — too many corrections in one pass, writing nothing (policy misfire, not a real backlog):", skipped);
-        // A trip only withholds NEW corrections this pass — it says nothing about clients already
-        // settled on a verified contract id, so the event_orders sync below (keyed off client_ledger
-        // state, not this pass's plan) still runs regardless.
-        const todo = tripped ? [] : [...relinks, ...reapply];
-        const toVerify = tripped ? [] : verify;
-        let wrote = 0;
-        for (const { clientId, from, to } of todo) {
-          if (cancelled) break;
-          const patch = {
-            lmsLeadId: to, lmsDept: "decor",
-            lmsLeadEntryNo: from, lmsContractEntryNo: to, lmsContractVerifiedId: to,
-            lmsRelinkedAt: Date.now(), lmsRelinkedBy: "auto", lmsRelinkMatch: "phone+date",
-            lastSavedAt: Date.now(),
-          };
-          let ok = false;
-          try {
-            const { data, error } = await supabase.rpc("patch_client_ledger_lms", { p_id: clientId, p_expect: from, p_patch: patch });
-            if (error) throw error;
-            ok = !!data;
-          } catch (e) { console.warn("[lms-relink] client_ledger patch failed for", clientId, ":", e?.message || e); continue; }
-          if (!ok) continue; // someone else (another tab) already wrote this correction — its realtime echo brings the new value here
-          wrote++;
-          console.info("[lms-relink] relinked", clientId, from, "->", to);
-          const old = clientLedgerRef.current.find((c) => c.id === clientId);
-          if (old) {
-            const merged = { ...old, ...patch };
-            setClientLedger((prev) => prev.map((c) => (c.id === clientId ? { ...c, ...patch } : c)));
-            clientLedgerRef.current = clientLedgerRef.current.map((c) => (c.id === clientId ? { ...c, ...patch } : c));
-            // Same guard saveClientLedger's own realtime-refresh effect uses (see its comment above):
-            // only advance the dirty-check baseline when this tab had no OTHER pending local edit on
-            // this client, so a genuine unsaved edit still uploads on the next autosave tick.
-            if (clientJsonRef.current?.[clientId] === JSON.stringify(old)) clientJsonRef.current[clientId] = JSON.stringify(merged);
-          }
-        }
-        if (wrote > 0) showMsg?.(`Linked ${wrote} booked deal${wrote > 1 ? "s" : ""} to ${wrote > 1 ? "their" : "its"} LMS contract number`, "green");
-
-        // Verify-only stamps — a direct link that's already correct, confirmed by phone (planLmsRelinks'
-        // "contract-verifiable" classification). No lmsLeadId change, just records that this id has
-        // been positively checked, so a later transient sync gap can never mistake it for a bare lead
-        // number and wrongly "correct" it away (C2).
-        for (const { clientId, id } of toVerify.slice(0, 50)) {
-          if (cancelled) break;
-          try {
-            const { data, error } = await supabase.rpc("patch_client_ledger_lms", { p_id: clientId, p_expect: id, p_patch: { lmsContractVerifiedId: id } });
-            if (error) throw error;
-            if (!data) continue;
-            const old = clientLedgerRef.current.find((c) => c.id === clientId);
-            if (old) {
-              const merged = { ...old, lmsContractVerifiedId: id };
-              setClientLedger((prev) => prev.map((c) => (c.id === clientId ? { ...c, lmsContractVerifiedId: id } : c)));
-              clientLedgerRef.current = clientLedgerRef.current.map((c) => (c.id === clientId ? { ...c, lmsContractVerifiedId: id } : c));
-              if (clientJsonRef.current?.[clientId] === JSON.stringify(old)) clientJsonRef.current[clientId] = JSON.stringify(merged);
-            }
-          } catch (e) { console.warn("[lms-relink] verify stamp failed for", clientId, ":", e?.message || e); }
-        }
-
-        // event_orders side — re-derived from CURRENT client_ledger state every run (planEventOrderLmsSync
-        // reads clientLedgerRef.current fresh, not just the clientIds this pass happened to relink), so
-        // a patch that failed on an earlier run — or on a previous run of a DIFFERENT tab — still gets
-        // found and retried here instead of silently staying stale forever once client_ledger's own
-        // "already correct" no-op stops surfacing it (C6).
-        if (eoLoadStateRef.current === "ok") {
-          const { patches, skipped: eoSkipped } = planEventOrderLmsSync({ clients: clientLedgerRef.current, eventOrders: eventOrdersRef2.current });
-          if (eoSkipped.length) console.warn("[lms-relink] event_orders rows left alone (unexplained lmsLeadId):", eoSkipped);
-          for (const { eoId, expect, to } of patches) {
-            if (cancelled) break;
-            const eoPatch = { lmsLeadId: to, lmsDept: "decor", lmsRelinkedAt: Date.now(), lmsRelinkedBy: "auto" };
-            try {
-              const { data, error } = await supabase.rpc("patch_event_order_lms", { p_id: eoId, p_expect: expect, p_patch: eoPatch });
-              if (error) { console.error("[lms-relink] event_orders patch failed for", eoId, ":", error.message); continue; }
-              if (!data) console.warn("[lms-relink] event_orders patch missed for", eoId, "— changed since, will re-check next run");
-            } catch (e) { console.error("[lms-relink] event_orders patch failed for", eoId, ":", e?.message || e); }
-          }
-        }
-      } finally {
-        relinkRunningRef.current = false;
-      }
-    };
-    const kickoff = setTimeout(runOnce, 60000 + Math.random() * 30000);
-    const interval = setInterval(runOnce, 30 * 60 * 1000);
-    return () => { cancelled = true; clearTimeout(kickoff); clearInterval(interval); };
-  }, [ledgerReady, ledgerLoadError, canStudio]);
+  // Used to run here, client-side, inside an open+focused Studio tab — moved server-side (pg_cron,
+  // hourly, independent of any browser tab) because that dependency left real booked deals
+  // stuck on stale LMS lead numbers for days whenever nobody's tab happened to sit open long enough.
+  // See supabase/functions/lms-relink/index.ts (the Edge Function that now does this),
+  // supabase/migrations/056_lms_relink_cron.sql (the cron schedule + run-log table), and
+  // src/lib/studio/lmsRelinkRun.js (the shared orchestration logic, same matching code as before).
+  // Its writes reach any open Studio tab exactly as they always did — through the existing
+  // client_ledger/event_orders realtime subscriptions below, not through anything in this component.
   const savePhotoImsMap = useCallback(async (nm) => { setPhotoImsMap(nm); await reliableSave(PIMAP_SK, JSON.stringify(nm), "Photo-IMS map"); }, []);
   // Read back the dept-head ACTUALS (real mandi + on-site expenses) that IMS wrote onto the event
   // order row, so Deal Check can show exact cost. The IMS deptOps live on the event_orders TABLE.
@@ -5359,7 +5232,8 @@ export default function StudioApp() {
       const eo = eventOrderFor(eventOrders, activeClientId, clientName);
       // the own-holds detail of the date being priced (a non-active function's own date), not the open function's
       const blocksDetailForDate = opts?.blocksDetailForDate ?? (opts?.fnDate ? blocksDetailByDate[opts.fnDate] : undefined) ?? activeBlocksDetailForDate;
-      const blocksForDate = netOwnReservedBlocksLive(rawBlocksForDate, item.id, blocksDetailForDate, [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)]);
+      const _ownIdsForAvail = [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)];
+      const blocksForDate = netOwnReservedBlocksLive(rawBlocksForDate, item.id, blocksDetailForDate, _ownIdsForAvail);
       // opts.fnIdx is the function being priced (event-level callers pass it); without it this
       // scoped allocateRowAvailability's sibling-row check to the ACTIVE function only — unchanged
       // from before, still needed below, just no longer feeding the dcReservedInventory lookup.
@@ -5378,7 +5252,11 @@ export default function StudioApp() {
       // reduction was smaller — a sold deal that already used up the entire un-locked remainder
       // still showed the full remainder as free to the next outdoor deal. See combineAvailability's
       // own comment (lib/ims/fixedVenues.js) for the worked example.
-      const otherEventsAvail = combineAvailability(Number(item?.qty ?? item?.qtyOwned) || 0, getStudioAvailable(item, blocksForDate), availableAtVenue(fvCfgForRepeat, opts?.venueName, item));
+      // overlap: the portion counted in both blocksForDate AND availableAtVenue's lock at once — a
+      // Fixed Venue using its OWN standing stock today, which combineAvailability would otherwise
+      // subtract twice (confirmed bug, 2026-11-11 — see combineAvailability's own comment).
+      const _fvOverlap = fixedVenueOverlapOnDate(fvCfgForRepeat, opts?.venueName, item, blocksDetailForDate?.[item.id], eventOrders, { excludeEventIds: _ownIdsForAvail, date: opts?.fnDate || activeFnMeta?.date || clientDate });
+      const otherEventsAvail = combineAvailability(Number(item?.qty ?? item?.qtyOwned) || 0, getStudioAvailable(item, blocksForDate), availableAtVenue(fvCfgForRepeat, opts?.venueName, item), _fvOverlap);
       // otherEventsAvail alone still isn't "available for THIS card": it says nothing about a
       // SIBLING zone/function in this SAME unsaved build already drawing on the same item — e.g.
       // 3 used in zone A, then adding 1 more in zone B. dcReservedInventory only reflects the last
@@ -5532,8 +5410,10 @@ export default function StudioApp() {
     const venueName = opts.venueName ?? activeFnMeta?.venue;
     const fns = collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [];
     const target = opts.zoneKey != null && opts.elIdx != null ? { fnIdx: opts.fnIdx ?? activeFnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx } : null;
+    const ownIds = [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)];
     const freeFor = (part) => combineAvailability(Number(part?.qty ?? part?.qtyOwned) || 0,
-      getStudioAvailable(part, netOwnReservedBlocksLive(rawBlocks, part.id, detail, [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)])), availableAtVenue(fvCfgForRepeat, venueName, part));
+      getStudioAvailable(part, netOwnReservedBlocksLive(rawBlocks, part.id, detail, ownIds)), availableAtVenue(fvCfgForRepeat, venueName, part),
+      fixedVenueOverlapOnDate(fvCfgForRepeat, venueName, part, detail?.[part.id], eventOrders, { excludeEventIds: ownIds, date: fnDate }));
     return kitPartShortfalls(item, Number(el.qty) || 0, el.kitOverrides, fns, imsInventory, target, fnDate, freeFor, opts.reusePool, venueName)
       .map((p) => ({ ...p, canMake: canFulfillShortfall((imsInventory || []).find((i) => i.id === p.id), fnDate, el?.addedAt || undefined) }));
   }, [imsInventory, activeFnMeta, clientDate, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, eventOrders, activeClientId, clientName, activeFnIdx, fvCfgForRepeat]);
@@ -5574,7 +5454,8 @@ export default function StudioApp() {
     const netted = netOwnReservedBlocksLive(activeBlocksForDate, it.id, activeBlocksDetailForDate, ownIds);
     const venueName = activeFnMeta?.venue || venue || "";
     const total = Number(it.qty ?? it.qtyOwned) || 0;
-    const free = combineAvailability(total, getStudioAvailable(it, netted), availableAtVenue(fvCfgForRepeat, venueName, it));
+    const _fvOverlap = fixedVenueOverlapOnDate(fvCfgForRepeat, venueName, it, activeBlocksDetailForDate?.[it.id], eventOrders, { excludeEventIds: ownIds, date: activeFnMeta?.date || clientDate });
+    const free = combineAvailability(total, getStudioAvailable(it, netted), availableAtVenue(fvCfgForRepeat, venueName, it), _fvOverlap);
     const own = new Set(ownIds);
     const fixed = lockedAtFixedVenues(fvCfgForRepeat, venueName, it);
     const holders = (activeBlocksDetailForDate?.[it.id] || []).filter((b) => b && !own.has(b.eventId) && Number(b.qty) > 0)
@@ -5588,7 +5469,7 @@ export default function StudioApp() {
     // reason: the short line Build prints under a 0-free item - who holds it, without hovering
     const reason = [holders.length ? `Booked by ${holders.join(", ")}` : "", fixed.length ? `Kept at ${fixed.map((f) => `${f.name} ${f.qty}`).join(", ")}` : "", imsBlocked > 0 ? `${imsBlocked} blocked in IMS` : "", total <= 0 ? "No stock in IMS" : ""].filter(Boolean).join(" · ");
     return { free, why, reason };
-  }, [eventOrders, activeClientId, clientName, activeBlocksForDate, activeBlocksDetailForDate, activeFnMeta, venue, fvCfgForRepeat]);
+  }, [eventOrders, activeClientId, clientName, activeBlocksForDate, activeBlocksDetailForDate, activeFnMeta, venue, fvCfgForRepeat, clientDate]);
   // Shared SMB/flat rate resolution — the one place `getElPrice`, `getElPriceForFn`, and
   // `calcFullEventCost` all resolve a rate-card item's base rate for an element's size, now with
   // the sub-category scaling factor applied. Previously duplicated verbatim in all three
@@ -12444,10 +12325,14 @@ export default function StudioApp() {
           // OTHER venues' stock ("1 at MKT, 4 at AR") was listed read as "my own venue's stock
           // vanished," when it was actually just quietly counted rather than named.
           const _ownStanding = standingQty(fvCfgForRepeat, pickerVenue, it.id);
-          const netBlocksForDate = netOwnReservedBlocksLive(blocksForDate, it.id, blocksDetailForDate, [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)]);
+          const _ownIdsPicker = [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)];
+          const netBlocksForDate = netOwnReservedBlocksLive(blocksForDate, it.id, blocksDetailForDate, _ownIdsPicker);
           // combineAvailability, not Math.min — see StudioApp.jsx's other getStudioAvailable/
-          // availableAtVenue composition for the worked example this closes.
-          const free = Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getStudioAvailable(it, netBlocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it)) - (usedQty[it.id] || 0));
+          // availableAtVenue composition for the worked example this closes. overlap corrects for a
+          // Fixed Venue's own same-date use of its own standing stock being counted in BOTH
+          // netBlocksForDate and availableAtVenue's lock at once (confirmed bug, 2026-11-11).
+          const _fvOverlap = fixedVenueOverlapOnDate(fvCfgForRepeat, pickerVenue, it, blocksDetailForDate?.[it.id], eventOrders, { excludeEventIds: _ownIdsPicker, date });
+          const free = Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getStudioAvailable(it, netBlocksForDate), availableAtVenue(fvCfgForRepeat, pickerVenue, it), _fvOverlap) - (usedQty[it.id] || 0));
           return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, reuse: carpetReuseOf(it), usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, ownStanding: _ownStanding, ownVenueName: _ownStanding > 0 ? (fixedVenueFor(fvCfgForRepeat, pickerVenue)?.name || pickerVenue) : null, unit: it.unit || "", photos: Array.isArray(it.photoUrls) ? it.photoUrls : [],
             // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox,
             // or not enough production lead time left before `date`) — genuinely unpickable here,

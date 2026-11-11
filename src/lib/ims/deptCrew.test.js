@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildDeptCrew, actualCrewPatch, resetLinePatch, setMpPatch, mpDayPatch, eventLabourInfo, eventLabourTotalDeptOps, applyDeptOpsPatch, DEPT_MP } from "./deptCrew";
+import { buildDeptCrew, actualCrewPatch, resetLinePatch, resetMpDayPatch, removeDihariPatch, setMpPatch, mpDayPatch, shiftSplitPatch, eventLabourInfo, eventLabourTotalDeptOps, applyDeptOpsPatch, DEPT_MP } from "./deptCrew";
 import { catToDept } from "./deptClassify";
 
 // These fixtures mirror what DepartmentOpsTab.jsx has always built mpRows from (Studio's
@@ -98,6 +98,80 @@ describe("setMpPatch — planning-side count/rate edits", () => {
     const row = crew.mpRows.find(r => r.type === "Flowerists");
     const i = crew.mpRows.indexOf(row);
     expect(setMpPatch(crew, i, "rate", 650)).toEqual({ mpOverrides: { Flowerists: { rate: 650 } } });
+  });
+});
+
+describe("shiftSplitPatch / effSplit — in-house vs vendor split of one shift's headcount", () => {
+  it("an unsplit shift is entirely in-house", () => {
+    const crew = ctx(baseSel(), "Structure");
+    const row = crew.mpRows.find(r => r.type === "Labours");
+    expect(crew.effSplit(row, row.schedule[0], "w1")).toEqual({ total: 6, vendor: 0, inHouse: 6, vendorName: "", vendorId: null });
+  });
+
+  it("splitting 4 (1 in-house, 3 vendor) stores only the vendor side", () => {
+    const sel = baseSel({ deptOps: { Structure: { mpWinCount: { Labours: { "2026-12-04": { w1: 4 } } } } } });
+    const crew = ctx(sel, "Structure");
+    const patch = shiftSplitPatch(crew, "Labours", "2026-12-04", "w1", { vendor: 3, vendorName: "Sharma Tent House" });
+    expect(patch).toEqual({ mpWinSplit: { Labours: { "2026-12-04": { w1: { vendor: 3, vendorName: "Sharma Tent House", vendorId: null } } } } });
+    const eo2 = applyDeptOpsPatch(sel, "Structure", patch, "Ajay");
+    const crew2 = ctx(eo2, "Structure");
+    const row2 = crew2.mpRows.find(r => r.type === "Labours");
+    expect(crew2.effSplit(row2, row2.schedule[0], "w1")).toEqual({ total: 4, vendor: 3, inHouse: 1, vendorName: "Sharma Tent House", vendorId: null });
+  });
+
+  it("a later edit to the shift's own total re-balances in-house without touching the stored vendor count", () => {
+    const sel = baseSel({ deptOps: { Structure: {
+      mpWinCount: { Labours: { "2026-12-04": { w1: 4 } } },
+      mpWinSplit: { Labours: { "2026-12-04": { w1: { vendor: 3, vendorName: "Sharma Tent House" } } } },
+    } } });
+    const crew = ctx(sel, "Structure");
+    const row = crew.mpRows.find(r => r.type === "Labours");
+    expect(crew.effSplit(row, row.schedule[0], "w1")).toEqual({ total: 4, vendor: 3, inHouse: 1, vendorName: "Sharma Tent House", vendorId: null });
+    // Shift bumped from 4 to 6 — vendor's own 3 is untouched, in-house absorbs the difference (1 -> 3).
+    const sel2 = { ...sel, deptOps: { Structure: { ...sel.deptOps.Structure, mpWinCount: { Labours: { "2026-12-04": { w1: 6 } } } } } };
+    const crew2 = ctx(sel2, "Structure");
+    const row2 = crew2.mpRows.find(r => r.type === "Labours");
+    expect(crew2.effSplit(row2, row2.schedule[0], "w1")).toEqual({ total: 6, vendor: 3, inHouse: 3, vendorName: "Sharma Tent House", vendorId: null });
+  });
+
+  it("vendor can never exceed the shift's own total, even if stale data says otherwise", () => {
+    const sel = baseSel({ deptOps: { Structure: {
+      mpWinCount: { Labours: { "2026-12-04": { w1: 2 } } },
+      mpWinSplit: { Labours: { "2026-12-04": { w1: { vendor: 9, vendorName: "X" } } } },
+    } } });
+    const crew = ctx(sel, "Structure");
+    const row = crew.mpRows.find(r => r.type === "Labours");
+    expect(crew.effSplit(row, row.schedule[0], "w1")).toEqual({ total: 2, vendor: 2, inHouse: 0, vendorName: "X", vendorId: null });
+  });
+
+  it("clearing the vendor count (and name) drops the split entirely rather than storing a zero entry", () => {
+    const sel = baseSel({ deptOps: { Structure: { mpWinSplit: { Labours: { "2026-12-04": { w1: { vendor: 3, vendorName: "Sharma Tent House" } } } } } } });
+    const crew = ctx(sel, "Structure");
+    const patch = shiftSplitPatch(crew, "Labours", "2026-12-04", "w1", { vendor: 0, vendorName: "" });
+    expect(patch.mpWinSplit.Labours["2026-12-04"].w1).toBeUndefined();
+  });
+
+  it("removeDihariPatch drops that shift's split along with its count", () => {
+    const sel = baseSel({ deptOps: { Structure: { mpWinSplit: { Labours: { "2026-12-04": { w1: { vendor: 2, vendorName: "X" } } } } } } });
+    const crew = ctx(sel, "Structure");
+    const patch = removeDihariPatch(crew, "Labours", "2026-12-04", "w1", ["w1"]);
+    expect(patch.mpWinSplit.Labours["2026-12-04"].w1).toBeUndefined();
+  });
+
+  it("resetMpDayPatch drops that whole day's split", () => {
+    const sel = baseSel({ deptOps: { Structure: { mpWinSplit: { Labours: { "2026-12-04": { w1: { vendor: 2, vendorName: "X" } } } } } } });
+    const crew = ctx(sel, "Structure");
+    const patch = resetMpDayPatch(crew, "Labours", "2026-12-04");
+    expect(patch.mpWinSplit.Labours["2026-12-04"]).toBeUndefined();
+  });
+
+  it("resetLinePatch drops every split for that crew type", () => {
+    const sel = baseSel({ deptOps: { Structure: { mpWinSplit: { Labours: { "2026-12-04": { w1: { vendor: 2, vendorName: "X" } } }, Carpenters: { "2026-12-04": { w1: { vendor: 1, vendorName: "Y" } } } } } } });
+    const crew = ctx(sel, "Structure");
+    const row = crew.mpRows.find(r => r.type === "Labours");
+    const patch = resetLinePatch(crew, row);
+    expect(patch.mpWinSplit.Labours).toBeUndefined();
+    expect(patch.mpWinSplit.Carpenters).toEqual({ "2026-12-04": { w1: { vendor: 1, vendorName: "Y" } } }); // untouched
   });
 });
 

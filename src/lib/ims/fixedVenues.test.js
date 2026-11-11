@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { availableAtVenue, reservedByVenueToday, venueSlackFor, combineAvailability, standingQty, standingDiscQty, rentalSplit, venueWithParent, normalizedTrussCounts, standingPillarCount } from "./fixedVenues";
+import { availableAtVenue, reservedByVenueToday, venueSlackFor, combineAvailability, standingQty, standingDiscQty, rentalSplit, venueWithParent, normalizedTrussCounts, standingPillarCount, fixedVenueOverlap, fixedVenueOverlapOnDate } from "./fixedVenues";
 
 // Confirmed live bug this covers: an item with 300 total stock, 200 of it configured as standing
 // allocation across two Fixed Venues (Pushpanjali 150, Exotica 50), leaving a 100-unit outdoor pool.
@@ -59,6 +59,167 @@ describe("combineAvailability", () => {
 
   it("never goes negative when both reductions overlap past zero", () => {
     expect(combineAvailability(50, 5, 5)).toBe(0);
+  });
+
+  it("overlap defaults to 0 — an un-updated caller gets byte-for-byte the same result as before", () => {
+    expect(combineAvailability(50, 40, 10)).toBe(combineAvailability(50, 40, 10, 0));
+  });
+
+  it("an overlap that exceeds either ceiling is clamped to the old Math.min bound, never over-correcting", () => {
+    expect(combineAvailability(50, 40, 10, 999)).toBe(10); // min(dateAvailable, venueAvailable)
+  });
+
+  it("a negative overlap is clamped to 0", () => {
+    expect(combineAvailability(50, 40, 10, -5)).toBe(0);
+  });
+
+  it("the corrected result is always between the uncorrected figure and min(dateAvailable, venueAvailable)", () => {
+    for (const [t, d, v, o] of [[24, 16, 8, 8], [24, 8, 8, 16], [50, 40, 10, 25], [100, 0, 0, 50]]) {
+      const corrected = combineAvailability(t, d, v, o);
+      const uncorrected = combineAvailability(t, d, v);
+      expect(corrected).toBeGreaterThanOrEqual(uncorrected);
+      expect(corrected).toBeLessThanOrEqual(Math.min(d, v));
+    }
+  });
+});
+
+// Confirmed live bug (owner report, 2026-11-11): client "Rakesh", venue "Emerald Green" (not itself
+// a Fixed Venue), item with 24 total — 8 standing at Pushpanjali, 8 at Exotica, 8 in the general
+// pool. Pushpanjali's own event used its own 8 standing units that date, which wrote an ordinary
+// block row — ON TOP of availableAtVenue already locking Pushpanjali's and Exotica's WHOLE
+// allocations away from Emerald Green regardless of use. Without the overlap correction, that
+// double-counts those units and reports 0 free even though the 8 pool units are genuinely open.
+describe("fixedVenueOverlap / fixedVenueOverlapOnDate — the Rakesh/Emerald Green double-count", () => {
+  const rk = {
+    fixedVenues: [
+      { name: "Pushpanjali", items: [{ invId: "IWCT", qty: 8 }] },
+      { name: "Exotica", items: [{ invId: "IWCT", qty: 8 }] },
+    ],
+  };
+  const rkItem = { id: "IWCT", qty: 24 };
+  const orders = [
+    { id: "eoP", venue: "Pushpanjali" },
+    { id: "eoE", venue: "Exotica" },
+    { id: "eoL", venue: "Some Lawn" },
+    { id: "eoOwnP", venue: "Pushpanjali" },
+  ];
+
+  it("Pushpanjali using its own 8 standing units: plain-mode availability at Emerald Green is 8, not 0", () => {
+    const entries = [{ eventId: "eoP", qty: 8 }];
+    const overlap = fixedVenueOverlapOnDate(rk, "Emerald Green", rkItem, entries, orders);
+    expect(overlap).toBe(8);
+    const dateAvailable = 24 - 8; // blockedByDate = 8
+    const venueAvailable = availableAtVenue(rk, "Emerald Green", rkItem); // 24 - 8 - 8 = 8 (both WHOLE allocations locked)
+    expect(combineAvailability(24, dateAvailable, venueAvailable, overlap)).toBe(8);
+    // Without the fix (overlap omitted), this is the confirmed bug — reports 0.
+    expect(combineAvailability(24, dateAvailable, venueAvailable)).toBe(0);
+  });
+
+  it("both Fixed Venues in use on the same date: still correctly reports the 8-unit pool", () => {
+    const entries = [{ eventId: "eoP", qty: 8 }, { eventId: "eoE", qty: 8 }];
+    const overlap = fixedVenueOverlapOnDate(rk, "Emerald Green", rkItem, entries, orders);
+    expect(overlap).toBe(16);
+    expect(combineAvailability(24, 24 - 16, availableAtVenue(rk, "Emerald Green", rkItem), overlap)).toBe(8);
+  });
+
+  it("slack mode: idle standing stock at Exotica becomes real slack once Pushpanjali's own usage is netted out", () => {
+    const entries = [{ eventId: "eoP", qty: 8 }];
+    const rbv = reservedByVenueToday(entries, orders); // { pushpanjali: 8 }
+    const venueAvailable = availableAtVenue(rk, "Emerald Green", rkItem, rbv); // 24 - min(8,8) - min(8,0) = 16
+    const overlap = fixedVenueOverlap(rk, "Emerald Green", rkItem, rbv);
+    expect(overlap).toBe(8);
+    expect(combineAvailability(24, 24 - 8, venueAvailable, overlap)).toBe(16); // collapses to dateAvailable
+  });
+
+  it("usage at a venue that ISN'T a Fixed Venue still comes off the pool normally (not folded into the overlap)", () => {
+    const entries = [{ eventId: "eoL", qty: 5 }, { eventId: "eoP", qty: 8 }];
+    const overlap = fixedVenueOverlapOnDate(rk, "Emerald Green", rkItem, entries, orders);
+    expect(overlap).toBe(8); // only Pushpanjali's own usage, never the plain-lawn usage
+    expect(combineAvailability(24, 24 - 13, availableAtVenue(rk, "Emerald Green", rkItem), overlap)).toBe(3); // 8 pool - 5 lawn
+  });
+
+  it("a Fixed Venue using MORE than its own standing stock: the overlap is capped at what it actually has standing", () => {
+    const entries = [{ eventId: "eoP", qty: 12 }]; // Pushpanjali drawing 4 extra from the pool
+    const overlap = fixedVenueOverlapOnDate(rk, "Emerald Green", rkItem, entries, orders);
+    expect(overlap).toBe(8); // capped at Pushpanjali's own 8 standing, not the full 12 blocked
+    expect(combineAvailability(24, 24 - 12, availableAtVenue(rk, "Emerald Green", rkItem), overlap)).toBe(4); // 8 pool - 4 drawn from it
+  });
+
+  it("the current deal's OWN block is excluded, so it never over-reports the venue it's already using as idle", () => {
+    const entries = [{ eventId: "eoOwnP", qty: 8 }];
+    const overlap = fixedVenueOverlapOnDate(rk, "Emerald Green", rkItem, entries, orders, { excludeEventIds: ["eoOwnP"] });
+    expect(overlap).toBe(0); // excluded — this is the deal's OWN usage, not "someone else's genuine demand"
+    const dateAvailable = 24; // same reasoning — the deal's own block is netted out of dateAvailable upstream too
+    expect(combineAvailability(24, dateAvailable, availableAtVenue(rk, "Emerald Green", rkItem), overlap)).toBe(8); // not 16
+  });
+
+  it("no blocks at all, or an item with no standing stock anywhere, short-circuits to 0 with no eventOrders lookup needed", () => {
+    expect(fixedVenueOverlapOnDate(rk, "Emerald Green", rkItem, [], orders)).toBe(0);
+    expect(fixedVenueOverlapOnDate(rk, "Emerald Green", rkItem, undefined, orders)).toBe(0);
+    expect(fixedVenueOverlapOnDate(rk, "Emerald Green", { id: "NO_STANDING", qty: 10 }, [{ eventId: "eoP", qty: 5 }], orders)).toBe(0);
+  });
+
+  it("an inflated reservedByVenue can't push the overlap past what's actually configured standing", () => {
+    const bigItem = { id: "ITEM_A", qty: 300 };
+    const settings300 = {
+      fixedVenues: [
+        { name: "Pushpanjali", items: [{ invId: "ITEM_A", qty: 150 }] },
+        { name: "Exotica", items: [{ invId: "ITEM_A", qty: 50 }] },
+      ],
+    };
+    expect(fixedVenueOverlap(settings300, "Some Outdoor Lawn", bigItem, { pushpanjali: 9999, exotica: 9999 })).toBe(200);
+  });
+
+  it("in slack mode, the overlap exactly equals availableAtVenue's own lockedElsewhere, by construction", () => {
+    const bigItem = { id: "ITEM_A", qty: 300 };
+    const settings300 = {
+      fixedVenues: [
+        { name: "Pushpanjali", items: [{ invId: "ITEM_A", qty: 150 }] },
+        { name: "Exotica", items: [{ invId: "ITEM_A", qty: 50 }] },
+      ],
+    };
+    for (const rbv of [{ pushpanjali: 145, exotica: 50 }, {}, { exotica: 10 }]) {
+      const lockedElsewhere = 300 - availableAtVenue(settings300, "Pushpanjali", bigItem, rbv);
+      expect(fixedVenueOverlap(settings300, "Pushpanjali", bigItem, rbv)).toBe(lockedElsewhere);
+    }
+  });
+
+  it("standing allocations that together exceed the item's total still can't push availability below 0", () => {
+    const overAllocated = { fixedVenues: [
+      { name: "A", items: [{ invId: "X", qty: 20 }] },
+      { name: "B", items: [{ invId: "X", qty: 20 }] },
+    ] };
+    const xItem = { id: "X", qty: 24 };
+    const entries = [{ eventId: "eoA", qty: 20 }];
+    const orders2 = [{ id: "eoA", venue: "A" }];
+    const overlap = fixedVenueOverlapOnDate(overAllocated, "Emerald Green", xItem, entries, orders2);
+    expect(overlap).toBe(20);
+    const dateAvailable = 24 - 20;
+    const venueAvailable = availableAtVenue(overAllocated, "Emerald Green", xItem); // 24-20-20 clamped to 0
+    expect(combineAvailability(24, dateAvailable, venueAvailable, overlap)).toBe(0);
+  });
+});
+
+describe("reservedByVenueToday — opts", () => {
+  it("excludeEventIds drops the listed events from the breakdown", () => {
+    const eventOrders = [{ id: "eo1", venue: "Pushpanjali" }, { id: "eo2", venue: "Pushpanjali" }];
+    const blocks = [{ eventId: "eo1", qty: 10 }, { eventId: "eo2", qty: 5 }];
+    expect(reservedByVenueToday(blocks, eventOrders, { excludeEventIds: ["eo1"] })).toEqual({ pushpanjali: 5 });
+  });
+
+  it("opts.date resolves a per-function venue over the event's own top-level venue", () => {
+    const eventOrders = [{ id: "eo1", venue: "Pushpanjali", functionsDetail: [{ date: "2026-11-15", venue: "Exotica" }] }];
+    const blocks = [{ eventId: "eo1", qty: 10 }];
+    expect(reservedByVenueToday(blocks, eventOrders, { date: "2026-11-15" })).toEqual({ exotica: 10 });
+    expect(reservedByVenueToday(blocks, eventOrders)).toEqual({ pushpanjali: 10 }); // unchanged without opts.date
+  });
+
+  it("opts.settings groups a sub-venue under its parent Fixed Venue", () => {
+    const eventOrders = [{ id: "eo1", venue: "Aura" }];
+    const blocks = [{ eventId: "eo1", qty: 10 }];
+    const settingsWithParent = { fixedVenues: [{ name: "Exotica", items: [] }], venueParents: { Aura: "Exotica" } };
+    expect(reservedByVenueToday(blocks, eventOrders, { settings: settingsWithParent })).toEqual({ exotica: 10 });
+    expect(reservedByVenueToday(blocks, eventOrders)).toEqual({ aura: 10 }); // unchanged without opts.settings
   });
 });
 

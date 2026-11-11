@@ -261,11 +261,26 @@ export function availableAtVenue(settings, venueName, item, reservedByVenue) {
 // fixes this without touching getStudioAvailable/dcAvailable/availableAtVenue themselves (every
 // existing caller of those three keeps working exactly as before — this only recombines their
 // outputs at the handful of sites that compose them).
-export function combineAvailability(total, dateAvailable, venueAvailable) {
+//
+// `overlap` (optional, default 0 — every existing caller that hasn't been updated keeps its exact
+// prior behaviour): the portion counted in BOTH reductions at once — confirmed bug, 2026-11-11
+// ("Emerald Green" couldn't add an item that had real stock free): when a Fixed Venue's OWN event
+// uses its OWN standing stock on this date, that usage writes an ordinary block row (counted in
+// blockedByDate) ON TOP of the same stock already being locked away from every OTHER venue
+// regardless of use (counted in lockedAtVenue) — e.g. item has 24 total, 8 standing at Pushpanjali,
+// 8 at Exotica, 8 in the general pool; Pushpanjali's own event uses its 8 today. blockedByDate=8,
+// lockedAtVenue=16 (both venues' WHOLE allocations), summing to 24 — zeroing out the 8 pool units a
+// THIRD venue should still be able to book. `fixedVenueOverlapOnDate` computes exactly this
+// double-counted portion (Σ over each other Fixed Venue of min(its standing, what it actually has
+// blocked today) — bounded by both the item's total and this item's actual stock at that venue, so
+// it can never exceed what's really there) so it can be added back once. Clamped here so the
+// result can never exceed either ceiling alone (the old Math.min bound) nor the un-corrected total.
+export function combineAvailability(total, dateAvailable, venueAvailable, overlap = 0) {
   const t = Number(total) || 0;
   const blockedByDate = Math.max(0, t - (Number(dateAvailable) || 0));
   const lockedAtVenue = Math.max(0, t - (Number(venueAvailable) || 0));
-  return Math.max(0, t - blockedByDate - lockedAtVenue);
+  const ov = Math.min(Math.max(0, Number(overlap) || 0), blockedByDate, lockedAtVenue);
+  return Math.max(0, t - blockedByDate - lockedAtVenue + ov);
 }
 
 // Resolves each of `item`'s block entries active on the checked date back to the venue of the
@@ -275,17 +290,71 @@ export function combineAvailability(total, dateAvailable, venueAvailable) {
 // Studio's own already-loaded event_orders list — no extra fetch needed. A block whose event can't
 // be resolved (deleted, or a manual/legacy entry with no matching order) contributes nothing rather
 // than being guessed at.
-export function reservedByVenueToday(blockEntriesForItem, eventOrders) {
+//
+// `opts.excludeEventIds` (optional): skip blocks belonging to THESE events — the current deal's own
+// holds (eo.id / ownEventOrderIds), so this never counts a deal's own reservation as some OTHER
+// venue's "genuine" same-date usage (combineAvailability's `overlap` must only ever correct for
+// units blocked by SOMEONE ELSE's event, never the current deal's own — see fixedVenueOverlapOnDate).
+// `opts.date` (optional): resolve the event's PER-FUNCTION venue first (functionsDetail[].venue for
+// the matching date), falling back to the event's own top-level venue — the same fallback
+// sameVenueHolds (lib/studio/carpetReuse.js) already uses, so a multi-function event's block on a
+// date it ISN'T at its primary venue still resolves to where it actually is that day.
+// `opts.settings` (optional): resolve a sub-venue to its parent Fixed Venue (fixedVenueFor) before
+// keying the result, so a block at "Aura" groups under its parent "Exotica" the same way every other
+// Fixed-Venue lookup in this file already does — omitted, the raw (normalized) venue name is used,
+// exactly as before.
+// All three opts are additive and backward compatible: omitted, behaviour is byte-for-byte unchanged.
+export function reservedByVenueToday(blockEntriesForItem, eventOrders, opts = {}) {
   const out = {};
   if (!Array.isArray(blockEntriesForItem) || !blockEntriesForItem.length) return out;
+  const exclude = new Set((opts.excludeEventIds || []).filter(Boolean));
   const eoById = new Map((eventOrders || []).map((e) => [e.id, e]));
   blockEntriesForItem.forEach((b) => {
-    const venueName = eoById.get(b?.eventId)?.venue;
+    if (b?.eventId && exclude.has(b.eventId)) return;
+    const eo = eoById.get(b?.eventId);
+    if (!eo) return;
+    let venueName = eo.venue;
+    if (opts.date) {
+      const fd = Array.isArray(eo.functionsDetail) ? eo.functionsDetail : null;
+      const fn = fd && fd.find((f) => (f?.date || f?.fnDate) === opts.date);
+      if (fn?.venue || fn?.fnVenue) venueName = fn.venue || fn.fnVenue;
+    }
     if (!venueName) return;
+    if (opts.settings) venueName = fixedVenueFor(opts.settings, venueName)?.name || venueName;
     const key = normVenue(venueName);
     out[key] = (out[key] || 0) + (Number(b?.qty) || 0);
   });
   return out;
+}
+
+// The portion of `item`'s stock counted in BOTH a date's blocks AND another Fixed Venue's standing
+// lock at once (see combineAvailability's own comment) — Σ over each OTHER Fixed Venue of
+// min(its standing qty for this item, what `reservedByVenue` says it actually has blocked). Mirrors
+// availableAtVenue's own `reservedByVenue` loop exactly, so in that function's reservedByVenue-aware
+// mode this equals its own lockedElsewhere by construction (by design — see combineAvailability).
+export function fixedVenueOverlap(settings, venueName, item, reservedByVenue) {
+  if (!reservedByVenue) return 0;
+  const own = fixedVenueFor(settings, venueName);
+  let overlap = 0;
+  (settings?.fixedVenues || []).forEach((v) => {
+    if (own && v === own) return;
+    const it = (v.items || []).find((i) => i.invId === item?.id);
+    if (!it) return;
+    overlap += Math.min(totalQtyOf(it), Number(reservedByVenue[normVenue(v.name)]) || 0);
+  });
+  return overlap;
+}
+
+// Convenience for the PLAIN (non-slack) combineAvailability call sites: resolves a date's block
+// entries straight to the overlap number combineAvailability needs, without the caller having to
+// build the per-venue reservedByVenue map itself. Early-exits before touching eventOrders at all
+// when there's nothing to resolve (no blocks that date, or this item isn't standing at ANY Fixed
+// Venue) — the overwhelming majority of items, so this stays cheap.
+export function fixedVenueOverlapOnDate(settings, venueName, item, blockEntriesForItem, eventOrders, opts = {}) {
+  if (!Array.isArray(blockEntriesForItem) || !blockEntriesForItem.length) return 0;
+  if (!lockedAtFixedVenues(settings, venueName, item).length) return 0;
+  const reservedByVenue = reservedByVenueToday(blockEntriesForItem, eventOrders, { excludeEventIds: opts.excludeEventIds, date: opts.date, settings });
+  return fixedVenueOverlap(settings, venueName, item, reservedByVenue);
 }
 
 // The genuine cross-venue slack availableAtVenue's `reservedByVenue` param newly unlocks, broken out
