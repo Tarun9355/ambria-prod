@@ -4,6 +4,7 @@ import { IconBox } from "../icons.jsx";
 import { isHiddenSubcat } from "../../lib/rateCard";
 import { studioUnitLabel, matchFlowerPattern, floralPatternUnitRates, kitFloralCompDelta } from "../../lib/ims/flowerHelpers";
 import { kitTotalFromInventory, itemDimsText, priceForInvItem } from "../../lib/ims/helpers";
+import { withDeletedInventory, catalogueDeletedTitle } from "../../lib/studio/deletedCatalogue";
 import ItemHoverThumb from "./ItemHoverThumb";
 import { thumbUrl } from "../../lib/studio/thumb.js";
 import { itemTakesChoices, partChoices, applyPartChoicePicks, ELEMENT_PREF_LABELS } from "../../lib/studio/elementPrefs.js";
@@ -29,10 +30,19 @@ import { matchKit } from "../../lib/studio/kitVariants.js";
 // same "swap to ONE item" / "split across 2+ items" choice a top-level element already has, instead
 // of being swap-only. Omit the prop (as Library does — it has no client/event-date context to check
 // availability against) and the icon simply never renders; nothing else about the component changes.
-export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, shortParts, onCheckAvailability, onCheckChoices, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, floralRatio = 0, rcFloralModeByKey = {}, floralSettings = null, targetUnitPrice, textP, textS, border, cardBg, accent, isDark, fmt }) {
+export default function KitComponentsEditor({ item, overrides, onChange, imsInventory, flowerPatterns, qtyMultiplier = 1, dealAwareness, shortParts, onCheckAvailability, onCheckChoices, rcSubcatFactors, rcFactorByKey, mandiCatalogue = [], studioMarkup = 3, elSize, floralRatio = 0, rcFloralModeByKey = {}, floralSettings = null, targetUnitPrice, textP, textS, border, cardBg, accent, isDark, fmt, deletedCatalogue = null }) {
   // rcFactorByKey = { subcatLower: scaling_factor } — the pricing multiplier map (priceForInvItem needs
   // this, NOT the rcSubcatFactors array which is for isHiddenSubcat). Fall back to {} so pricing is 1×.
   const _factorMap = (rcFactorByKey && typeof rcFactorByKey === "object" && !Array.isArray(rcFactorByKey)) ? rcFactorByKey : {};
+  // Migration 059: a merged (live + deleted-catalogue-snapshot) inventory list, for PRICE LOOKUPS
+  // ONLY — never for the add-component search box below, which must stay live-only (a deleted item
+  // must never become newly addable to a kit). Same idea for patternLookup (flower-recipe add-ons).
+  const invForPricing = deletedCatalogue ? withDeletedInventory(imsInventory, deletedCatalogue.inventoryById) : (imsInventory || []);
+  const patternLookup = (id) => {
+    if (!id) return null;
+    const live = (flowerPatterns || []).find((p) => p.id === id);
+    return live || (deletedCatalogue ? deletedCatalogue.patternsById.get(id) : null) || null;
+  };
   // Hover-to-zoom on a component thumbnail — same fixed-position enlarged-preview pattern as the
   // Element Breakdown's own thumbnail (ManageLibrary.jsx's elHoverImg), kept local to this component
   // since every caller renders its own independent instance.
@@ -70,7 +80,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
     // Recipe Studio rate blended real/artificial by the global ratio — same as a standalone recipe
     // element (getElPrice). A sub-category floral_mode of real/artificial pins it to 100/0; else it
     // follows the deal's floralRatio. `extra` (pot/base) is added once, un-blended.
-    const rates = floralPatternUnitRates(pat, szKeyFor(override), mandiCatalogue, _floralSettings, imsInventory);
+    const rates = floralPatternUnitRates(pat, szKeyFor(override), mandiCatalogue, _floralSettings, invForPricing);
     if (!rates) return 0;
     const sk = String(subKey || pat.sub || "").trim().toLowerCase();
     const subMode = sk ? rcFloralModeByKey[sk] : undefined;
@@ -96,13 +106,13 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
     if (!cItem) return null;
     const pat = matchFlowerPattern(cItem, flowerPatterns || []);
     if (!pat) return null;
-    const rates = floralPatternUnitRates(pat, szKeyFor(override), mandiCatalogue, _floralSettings, imsInventory);
+    const rates = floralPatternUnitRates(pat, szKeyFor(override), mandiCatalogue, _floralSettings, invForPricing);
     if (!rates) return null;
     const sk = String(cItem.subCat || cItem.subcategory || pat.sub || "").trim().toLowerCase();
     const subMode = sk ? rcFloralModeByKey[sk] : undefined;
     const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - (Number(floralRatio) || 0)));
     const realPct = (typeof override?.realPct === "number" && override.realPct >= 0 && override.realPct <= 100) ? override.realPct : modeDefault;
-    const flatRental = priceForInvItem(cItem, _factorMap, imsInventory, Array.isArray(override?.subOverrides) ? override.subOverrides : undefined);
+    const flatRental = priceForInvItem(cItem, _factorMap, invForPricing, Array.isArray(override?.subOverrides) ? override.subOverrides : undefined);
     const blendedUnit = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + flatRental;
     return { pattern: pat, realPct, modeDefault, blendedUnit, flatRental, patternSMB: patHasSizes(pat) };
   };
@@ -112,18 +122,18 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // Now from the shared helper, which getElPriceFromInventory also uses — this footer and the price
   // actually charged had drifted apart precisely because each computed it on its own.
   const floralCompDelta = kitFloralCompDelta({
-    comps, inventory: imsInventory, flowerPatterns, mandiCatalogue,
+    comps, inventory: invForPricing, flowerPatterns, mandiCatalogue,
     floralSettings: _floralSettings, rcFloralModeByKey, floralRatio, elSize, rcFactorByKey: _factorMap,
   });
   // Rental part, marked up by the kit's factor (matches priceForInvItem / getElPriceFromInventory).
-  const rentalMarked = priceForInvItem(item, _factorMap, imsInventory, isEdited ? comps : undefined);
+  const rentalMarked = priceForInvItem(item, _factorMap, invForPricing, isEdited ? comps : undefined);
   const kitBaseMarked = Math.round(kitBase * kitFactor);        // the console's OWN charge (base × its factor)
   const itemsMarked = Math.max(0, rentalMarked - kitBaseMarked); // Σ components at their own multipliers
   // Flower recipe part = explicit patternId add-ons + a recipe matched to the kit's OWN sub-category
   // (same two sources getElPriceFromInventory sums), each at the recipe's Studio rate.
   const subCatPattern = matchFlowerPattern(item, flowerPatterns || []);
   const subCatRecipe = subCatPattern ? recipeRateFor(subCatPattern, item.subCat || item.subcategory) : 0;
-  const flowerTotal = subCatRecipe + comps.reduce((s, c) => { if (!c.patternId) return s; const pat = (flowerPatterns || []).find(p => p.id === c.patternId); return s + recipeRateFor(pat, pat?.sub, c) * (Number(c.qty) || 0); }, 0) + floralCompDelta;
+  const flowerTotal = subCatRecipe + comps.reduce((s, c) => { if (!c.patternId) return s; const pat = patternLookup(c.patternId); return s + recipeRateFor(pat, pat?.sub, c) * (Number(c.qty) || 0); }, 0) + floralCompDelta;
   const partsTotal = rentalMarked + flowerTotal;
   // This breakdown and the kit's own actual billed rate (the badge next to the element's name)
   // used to be two entirely independent calculations — this one never applied the guest-price dial,
@@ -212,7 +222,12 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
         )}
         {comps.map((c, ci) => {
           if (c.patternId) {
-            const pat = (flowerPatterns || []).find(p => p.id === c.patternId);
+            // patternLookup (live-first, deleted-catalogue-fallback, migration 059) — a recipe
+            // add-on since deleted from IMS still shows its real last-known name instead of
+            // "(recipe missing)", with a small "⚠ deleted" chip explaining it's still priced at
+            // its last known rate.
+            const pat = patternLookup(c.patternId);
+            const patDeleted = !!pat?.catalogueDeleted;
             const patQty = Number(c.qty) || 0;
             const sizeOpts = pat?.sizes ? Object.keys(pat.sizes) : [];
             const hasSizes = sizeOpts.length > 1;
@@ -222,6 +237,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                 <span style={{ width: 22, height: 22, borderRadius: 4, background: isDark ? "rgba(236,72,153,0.12)" : "rgba(236,72,153,0.08)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, flexShrink: 0 }}>🌸</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flexWrap: "wrap", rowGap: 4 }}>
                 <span style={{ color: pat ? textP : "#EF4444", fontWeight: 600, flex: "1 1 auto", minWidth: 104, whiteSpace: "normal", overflowWrap: "break-word" }}>{pat ? pat.name : `⚠ ${c.patternId} (recipe missing)`}</span>
+                {patDeleted && <span title={catalogueDeletedTitle({ self: true, kind: "recipe", name: pat.name, deletedAt: pat.catalogueDeletedAt, parts: [] })} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, fontWeight: 700, whiteSpace: "nowrap", background: "rgba(239,68,68,0.15)", color: "#EF4444" }}>⚠ deleted</span>}
                 <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }} title="per kit">
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: Math.max(0, patQty - 1) } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>−</span>
                   <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>{patQty}{studioUnitLabel(pat?.unit)}</span>
@@ -236,14 +252,20 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
               </div>
             );
           }
-          const cItem = (imsInventory || []).find(i => i.id === c.itemId);
+          // Live first; when the live list misses, try the deleted-catalogue snapshot (migration
+          // 059) before concluding "not in IMS" — a since-deleted part still shows its real
+          // last-known name/rate, flagged with a small "⚠ deleted" chip, instead of the generic
+          // "{itemId} not in IMS" ₹0 placeholder.
+          const liveCItem = (imsInventory || []).find(i => i.id === c.itemId);
+          const cItem = liveCItem || (deletedCatalogue ? deletedCatalogue.inventoryById.get(c.itemId) : null) || null;
+          const cItemDeleted = !liveCItem && !!cItem;
           const cItemIsKit = cItem && Array.isArray(cItem.subItems) && cItem.subItems.length > 0;
           const qtyEach = Number(c.qty) || 0;
           const cSrc = cItem?.img || cItem?.photoUrls?.[0];
           const cFloral = cItem ? compFloralInfo(cItem, c) : null;
           // Floral-matched component prices via the recipe blend (real/artificial ratio); everything
           // else keeps the plain rental × own sub-cat multiplier, honoring this instance's sub-kit edits.
-          const cRate = cFloral ? cFloral.blendedUnit : (cItem ? priceForInvItem(cItem, _factorMap, imsInventory, Array.isArray(c.subOverrides) ? c.subOverrides : undefined) : 0);
+          const cRate = cFloral ? cFloral.blendedUnit : (cItem ? priceForInvItem(cItem, _factorMap, invForPricing, Array.isArray(c.subOverrides) ? c.subOverrides : undefined) : 0);
           return (
             <Fragment key={ci}>
               <div style={rowGrid}>
@@ -272,6 +294,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flexWrap: "wrap", rowGap: 4 }}>
                 <span style={{ color: cItem ? textP : "#EF4444", fontWeight: 600, flex: "1 1 auto", minWidth: 104, whiteSpace: "normal", overflowWrap: "break-word", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                   <span style={{ whiteSpace: "normal", overflowWrap: "break-word" }}>{cItem ? cItem.name : `⚠ ${c.itemId} not in IMS`}</span>
+                  {cItemDeleted && <span title={catalogueDeletedTitle({ self: true, kind: "inventory", name: cItem.name, deletedAt: cItem.catalogueDeletedAt, parts: [] }, { rateText: cRate > 0 ? `₹${Math.round(cRate).toLocaleString("en-IN")}` : undefined })} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, fontWeight: 700, whiteSpace: "nowrap", background: "rgba(239,68,68,0.15)", color: "#EF4444" }}>⚠ deleted</span>}
                   {/* This part short on the event date (shortParts - Build's kitPartShorts for the whole kit row, so the
                       figure is the row's total for the part, across every kit of the row). Red when production can't cover it. */}
                   {(() => {
@@ -359,6 +382,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                     }))}
                     imsInventory={imsInventory}
                     flowerPatterns={flowerPatterns}
+                    deletedCatalogue={deletedCatalogue}
                     qtyMultiplier={qtyEach * qtyMultiplier}
                     onCheckAvailability={onCheckAvailability}
                     shortParts={shortParts}

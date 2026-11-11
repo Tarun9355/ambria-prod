@@ -102,9 +102,22 @@ export default function ProductionTab({ prodRequests, setProdRequests, inventory
 
   function createRequest() {
     if (!form.name.trim() || !qtyOf(form)) return;
-    // Next number after the highest PROD id - counting the list reused an existing id once a request
-    // was deleted, and the save would overwrite that row.
-    const maxNo = prodRequests.reduce((m, r) => Math.max(m, parseInt(String(r.id || "").replace(/^PROD/, ""), 10) || 0), 0);
+    // Next number after the highest PROD id. Counting only the current (live) request list still
+    // reused a number: deleting the HIGHEST-numbered request (allowed even after it was already
+    // "Added to Inventory" — the inventory item it created deliberately stays, see deleteRequest's own
+    // comment) freed that number for the next request. confirmAndAdd below derives the inventory id
+    // deterministically as "I-PROD-"+req.id, so a reused PROD number built the SAME inventory id a
+    // second time and silently overwrote the real, still-in-use item (name/qty/photo/price all reset)
+    // — every block/quote/kit reference to it now pointed at the new item instead. Also scanning
+    // `inventory` for any "I-PROD-PRODxxx" id this deleted request already left behind closes that
+    // gap with no new persisted counter: a request deleted BEFORE ever being confirmed into inventory
+    // never created such a row, so its number is genuinely free to reuse; one that WAS confirmed
+    // leaves its tombstone right here in the data that's already on hand.
+    const maxOf = (ids) => ids.reduce((m, raw) => Math.max(m, parseInt(String(raw || "").replace(/^(PROD|I-PROD-PROD)/, ""), 10) || 0), 0);
+    const maxNo = Math.max(
+      maxOf(prodRequests.map((r) => r.id)),
+      maxOf((inventory || []).filter((i) => /^I-PROD-PROD\d+$/.test(i.id)).map((i) => i.id)),
+    );
     const id = "PROD" + String(maxNo + 1).padStart(3, "0");
     setProdRequests(prev => [...prev, {
       ...form, qty: qtyOf(form), id, raisedBy: myName,
