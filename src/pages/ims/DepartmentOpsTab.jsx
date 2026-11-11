@@ -1056,23 +1056,37 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const atVenueOf = useMemo(() => {
     const fnsV = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
     const venues = [...new Set([sel?.venue, ...fnsV.map(f => f?.venue)].filter(Boolean))];
-    const repeatIds = new Set();
+    // Repeat only when EVERY use of the item is set to Repeat - one function repeating it while another needs it fresh still loads it.
+    const repeatIds = new Set(), freshIds = new Set();
+    // the venues of the functions that use each item - only their standing stock counts for it (two functions at two venues)
+    const venuesOfItem = new Map();
     fnsV.forEach(f => Object.values(f?.elements || {}).forEach(list => (Array.isArray(list) ? list : []).forEach(el => {
       const id = el?.invId || el?.imsId;
-      if (id && el?.repeatOverride === true) repeatIds.add(String(id));
+      if (!id) return;
+      (el?.repeatOverride === true ? repeatIds : freshIds).add(String(id));
+      const v = f?.venue || sel?.venue;
+      if (v) (venuesOfItem.get(String(id)) || venuesOfItem.set(String(id), new Set()).get(String(id))).add(v);
+      // a kit's parts (their own lines in the blocked list) go with the kit: repeated with it, or fresh with it
+      const kitItem = (inventory || []).find(i => String(i.id) === String(id));
+      const parts = Array.isArray(el?.kitOverrides) ? el.kitOverrides : (Array.isArray(kitItem?.subItems) ? kitItem.subItems : []);
+      parts.forEach(p => { if (p?.itemId) (el?.repeatOverride === true ? repeatIds : freshIds).add(String(p.itemId)); });
     })));
     const memo = new Map();
     return (it) => {
       if (!it) return { fixed: 0, repeat: false, load: 0 };
-      if (memo.has(it.id)) return memo.get(it.id);
+      // keyed by the qty too: the same line can be read at the whole event's qty and at one function's
+      const mk = `${it.id}|${it.invId}|${it.qty}`;
+      if (memo.has(mk)) return memo.get(mk);
       const qty = Number(it.qty) || 0;
-      const fixed = it.invId ? Math.min(qty, Math.max(0, ...venues.map(v => standingQty(fvSettings, v, it.invId)))) : 0;
-      const repeat = !!it.invId && repeatIds.has(String(it.invId));
+      // a kit part is not an element of its own: it falls back to every venue of the event
+      const vs = it.invId ? [...(venuesOfItem.get(String(it.invId)) || venues)] : [];
+      const fixed = it.invId ? Math.min(qty, Math.max(0, ...vs.map(v => standingQty(fvSettings, v, it.invId)))) : 0;
+      const repeat = !!it.invId && repeatIds.has(String(it.invId)) && !freshIds.has(String(it.invId));
       const r = { fixed, repeat, load: repeat ? 0 : Math.max(0, qty - fixed) };
-      memo.set(it.id, r);
+      memo.set(mk, r);
       return r;
     };
-  }, [sel, fvSettings]);
+  }, [sel, fvSettings, inventory]);
   // What actually goes on a truck: each line at the qty still to load; lines with nothing to load are the "at the venue" list.
   const loadItems = useMemo(() => blockedItems.map(it => { const a = atVenueOf(it); return a.load === (Number(it.qty) || 0) ? it : { ...it, qty: a.load, fullQty: it.qty }; }).filter(it => (Number(it.qty) || 0) > 0), [blockedItems, atVenueOf]);
   const atVenueItems = useMemo(() => blockedItems.filter(it => { const a = atVenueOf(it); return a.repeat || a.fixed > 0; }), [blockedItems, atVenueOf]);
