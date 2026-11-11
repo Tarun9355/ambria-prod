@@ -1841,7 +1841,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     ${ornament}
     <div class="cv-facts">
       <div><div class="k">${t("Venue")}</div><div class="v">${esc(hn(venue))}</div></div>
-      <div><div class="k">${t("Prepared by")}</div><div class="v">${esc(hn(preparedBy || authUser?.name) || "—")}</div></div>
+      ${/* always who sold the deal (owner ask 2026-11-11) - not the plan's last editor nor whoever downloads the book; those only
+           when the order has no salesperson recorded */ ""}
+      <div><div class="k">${t("Prepared by")}</div><div class="v">${esc(hn(String(sel?.salesperson || "").trim() || preparedBy || authUser?.name) || "—")}</div></div>
     </div>
     ${sessions.length ? `<div class="cv-sec">${sessions.length === 1 ? t("The event") : t("{n} sessions", { n: sessions.length })}</div>
     <div class="cv-sessions${sessions.length > 4 || (anyPalette && sessions.length > 2) ? " many dense" : (sessions.length > 2 || (anyPalette && sessions.length === 2)) ? " many" : ""}">${sessions.map((s, i) => `<div class="cv-ses t-${sesTone(s.type, i)}">

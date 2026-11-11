@@ -3113,9 +3113,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     blockedItemsGrouped, blockedItems, trucks, movements, fabricReqRows,
     trussPlanOf, fabricEntriesOf, fabricPalettesOf, carpetPlanOf, elementPlanOf, zoneLabelFor,
     zoneAdminOrder, dealCheckMode: !!pdfAllCarpetsRef.current,
-    // "Prepared by" names whoever last edited the dept's own plan — meaningless on the combined
-    // book (every zone page there spans every department, so the OPEN tab's editor is not any
-    // more "the preparer" than any other dept's), where it falls back to the exporting user.
+    // "Prepared by" is always the salesperson who sold the deal (deptBookHtml reads sel.salesperson) - this is only the fallback
+    // for an order with none recorded: the dept plan's last editor, else (combined book) the exporting user.
     preparedBy: opts?.combined ? null : (deptData.updatedBy || null),
   }, zoneLabels, logos, opts);
 
