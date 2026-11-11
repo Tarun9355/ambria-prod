@@ -627,7 +627,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // calendar, and clicking an event there lands here with that event already selected. Its
   // date-filter state went with it; the search box still narrows the list.
   const [mandiQuery, setMandiQuery] = useState(""); // autocomplete text for adding a mandi flower
-  const [artHowOpen, setArtHowOpen] = useState(false); // expand the artificial-flower "how derived" box
   const [mandiHowOpen, setMandiHowOpen] = useState(null); // the shopping-list flower whose "how" breakdown is open (one at a time)
   const [newTool, setNewTool] = useState(""); // text for adding an essential tool to the template
   // The activity log opens from the bell in the event header. It is a notification, not a
@@ -1559,10 +1558,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // shopping" numbers can look fully filled in even though nobody has been to the mandi yet.
   const mandiShopped = Array.isArray(deptData.mandiLines);
   const mandiActualReal = mandiRows.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0);
-  const mandiActualTotal = mandiActualReal + artificialProj; // artificial carried over (not re-shopped at mandi)
+  // Real flowers only (owner ask 2026-11-11): artificial bunches come out of our own stock, so they are not an actual spend - they
+  // show, with their kg and ₹, under Inventory blocked instead. (Was real + the artificial projection.)
+  const mandiActualTotal = mandiActualReal;
   const projMandiReal = mandiRows.reduce((s, r) => s + (Number(r.projCost) || 0), 0);
   // Persist the list AND the headline actual (realMandi) so Studio's P&L reflection picks it up.
-  const saveMandi = (next) => saveDept({ mandiLines: next, realMandi: next.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0) + artificialProj });
+  const saveMandi = (next) => saveDept({ mandiLines: next, realMandi: next.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0) }); // real only - artificial is stock, not spend
   const setMandi = (i, key, val) => saveMandi(mandiRows.map((r, j) => j === i ? { ...r, [key]: val } : r));
   // Deleting a swap's replacement row undoes the swap on its original too, so the original is not
   // left at qty 0 still claiming it was swapped.
@@ -1974,10 +1975,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       pdf.text([sel.clientName || "Event", selDateStr || "", venueOf(sel)].filter(Boolean).join("  |  "), M, y); y += 24;
       pdf.setFontSize(9.5);
       if (dept === "Floral") {
-        const artTot = fp.artificial ? fp.artificial.total : artificialProj;
+        // artificial flowers/greens are our own stock - shown under Inventory blocked, not an actual spend (owner ask 2026-11-11)
         row([["Floral cost to source", M + 6], [rs(mandiActualTotal), W - M - 6, "right"]], { bold: true, fill: [236, 253, 245] });
         row([["Real flowers (mandi)", M + 6], [rs(mandiActualReal), W - M - 6, "right"]]);
-        row([["Artificial flowers", M + 6], [rs(artTot), W - M - 6, "right"]]);
         if (fp.season && fp.season.mult && fp.season.mult !== 1) row([[`${fp.season.label} date - mandi flower prices x${fp.season.mult}`, M + 6]]);
         y += 10;
         const cx = { name: M + 6, plan: M + 230, proj: M + 320, qty: M + 375, rate: M + 440, tot: W - M - 6 };
@@ -1986,7 +1986,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
           const line = (Number(r.qty) || 0) * (Number(r.price) || 0);
           row([[r.swapFor ? `${r.name} (bought for ${r.swapFor})` : r.swappedTo ? `${r.name} (not in mandi -> ${r.swappedTo})` : r.name, cx.name], [r.projQty > 0 ? `${r.projQty} ${r.unit || ""}`.trim() : "", cx.plan, "right"], [r.projCost > 0 ? rs(r.projCost) : "extra", cx.proj, "right"], [Number(r.qty) || 0, cx.qty, "right"], [Number(r.price) || 0, cx.rate, "right"], [rs(line), cx.tot, "right"]]);
         });
-        if (fp.artificial || artificialProj > 0) row([["Artificial flowers / greens (not mandi-shopped)", cx.name], [rs(artTot), cx.proj, "right"], [rs(artTot), cx.tot, "right"]]);
         row([["Total", cx.name], [rs(Number(fp.projected) || 0), cx.proj, "right"], [rs(mandiActualTotal), cx.tot, "right"]], { bold: true, fill: [236, 253, 245] });
         y += 14;
       }
@@ -4389,17 +4388,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                   return [...by].map(([name, kg]) => ({ name, kg })).filter(x => x.kg > 0).sort((x, y) => (x.name ? 0 : 1) - (y.name ? 0 : 1) || y.kg - x.kg);
                 })();
                 const kgTxt = (n) => `${Math.round((Number(n) || 0) * 100) / 100} kg`;
-                const line = (icon, label, bunches, bpk, kg) => (
+                // ₹/kg and cost moved here from Actuals (owner ask 2026-11-11): the bunches are our stock, so their value is shown with them
+                const line = (icon, label, bunches, bpk, kg, rate, cost) => (
                   <div className="flex items-center justify-between gap-3 px-3 py-2">
                     <span className="min-w-0 text-xs font-semibold text-gray-800">{icon} {label}</span>
-                    <span className="shrink-0 text-[11px] text-gray-600 tabular-nums">{bunches} bunches ÷ {bpk}/kg = <b className="text-gray-900">{kgTxt(kg)}</b></span>
+                    <span className="shrink-0 text-[11px] text-gray-600 tabular-nums text-right">{bunches} bunches ÷ {bpk}/kg = <b className="text-gray-900">{kgTxt(kg)}</b>{Number(rate) > 0 && <> × {fmt(rate)}/kg = <b className="text-gray-900">{fmt(cost)}</b></>}</span>
                   </div>
                 );
                 return (
                   <div className="m-2.5 mb-0 rounded-xl bg-pink-50/60 ring-1 ring-pink-100 overflow-hidden">
                     <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-pink-700">Artificial flowers &amp; greens{invScoped ? " · whole event" : ""}</div>
                     <div className="divide-y divide-pink-100/70">
-                      {(a.flowerBunches || 0) > 0 && line("🌸", "Artificial flowers", a.flowerBunches, a.flowerBPK, a.flowerKg)}
+                      {(a.flowerBunches || 0) > 0 && line("🌸", "Artificial flowers", a.flowerBunches, a.flowerBPK, a.flowerKg, a.flowerRate, a.flowerCost)}
                       {split.length > 0 && (
                         <div className="px-3 py-2">
                           <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-1">By colour</div>
@@ -4435,7 +4435,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                           ))}
                         </div>
                       )}
-                      {(a.greenBunches || 0) > 0 && line("🌿", "Artificial greens", a.greenBunches, a.greenBPK, a.greenKg)}
+                      {(a.greenBunches || 0) > 0 && line("🌿", "Artificial greens", a.greenBunches, a.greenBPK, a.greenKg, a.greenRate, a.greenCost)}
+                      {Number(a.total) > 0 && (
+                        <div className="flex items-center justify-between gap-3 px-3 py-2 bg-pink-50">
+                          <span className="text-xs font-semibold text-gray-800">Total artificial <span className="font-normal text-[10px] text-gray-400">· from our stock, not an actual spend</span></span>
+                          <b className="shrink-0 text-xs text-gray-900 tabular-nums">{fmt(a.total)}</b>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -5126,34 +5132,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                         <div className="px-3 py-2 bg-emerald-50 font-semibold text-emerald-900 flex justify-between"><span>🌸 Floral cost to source</span><span>{fmt(mandiActualTotal)}</span></div>
                         <div className="">
                           <div className="flex justify-between px-3 py-1.5"><span className="text-gray-600">🌿 Real flowers (mandi) <span className="text-[10px] text-gray-400">— see shopping list below</span></span><span className="font-medium text-gray-800">{fmt(mandiActualReal)}</span></div>
-                          <div>
-                            <div className="flex justify-between px-3 py-1.5 items-center">
-                              <span className="text-gray-600 flex items-center gap-1.5">🌸 Artificial flowers {fp.artificial && <button onClick={() => setArtHowOpen(o => !o)} className="text-[10px] font-semibold text-blue-500 hover:text-blue-700 border border-blue-200 rounded px-1 leading-tight" title="How the artificial cost is derived">{artHowOpen ? "▾" : "▸"} how</button>}</span>
-                              <span className="font-medium text-gray-800">{fmt(fp.artificial ? fp.artificial.total : artificialProj)}</span>
-                            </div>
-                            {fp.artificial && artHowOpen && (
-                              <div className="px-3 pb-2">
-                                <div className="bg-gray-50 border rounded-lg p-2 text-[10px] text-gray-600 space-y-1">
-                                  {fp.artificial.flowerBunches > 0 && <div>🌸 Flowers: <b>{fp.artificial.flowerBunches}</b> bunches ÷ {fp.artificial.flowerBPK}/kg = <b>{fp.artificial.flowerKg} kg</b> × {fmt(fp.artificial.flowerRate)}/kg = <b className="text-gray-900">{fmt(fp.artificial.flowerCost)}</b></div>}
-                                  {fp.artificial.greenBunches > 0 && <div>🌿 Greens: <b>{fp.artificial.greenBunches}</b> bunches ÷ {fp.artificial.greenBPK}/kg = <b>{fp.artificial.greenKg} kg</b> × {fmt(fp.artificial.greenRate)}/kg = <b className="text-gray-900">{fmt(fp.artificial.greenCost)}</b></div>}
-                                  {fp.artificial.flowerBunches <= 0 && fp.artificial.greenBunches <= 0 && <div className="text-gray-400 italic">No artificial bunches captured — set "Art Bunches/Unit" on flowers in the Mandi tab.</div>}
-                                  <div className="pt-1 text-right">Total artificial = <b className="text-gray-900">{fmt(fp.artificial.total)}</b></div>
-                                </div>
-                                {/* The salesperson's own Color Split (Deal Check's Florals tab) — WHICH
-                                    specific artificial-bunch colour(s) to pull, not just a bare bunch
-                                    count. Without this, the figures above said "47 bunches" with no
-                                    way to tell Maroon from White; now it's the exact IMS items to pick. */}
-                                {Array.isArray(fp.artificial.colorSplit) && fp.artificial.colorSplit.length > 0 && (
-                                  <div className="mt-1.5 bg-gray-50 border rounded-lg p-2 text-[10px] text-gray-600">
-                                    <div className="font-semibold text-gray-700 mb-1">🎨 Pull these specific bunches</div>
-                                    {fp.artificial.colorSplit.map(c => (
-                                      <div key={c.imsId} className="flex justify-between py-0.5"><span>{c.name || "Artificial bunch"}</span><b className="text-gray-900">{c.qty}</b></div>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
+                          {/* Artificial flowers & greens are our own stock, not bought: they moved to Inventory blocked (bunches, kg, ₹/kg and
+                              by colour) and are not an actual spend any more (owner ask 2026-11-11). */}
+                          {(fp.artificial || artificialProj > 0) && <div className="px-3 pb-1.5 text-[10px] text-gray-400">Artificial flowers &amp; greens come from our stock — see Inventory blocked.</div>}
                         </div>
                       </div>
                       {fp.season && fp.season.mult && fp.season.mult !== 1 && <div className="px-3 py-1.5 rounded-lg text-[10px] text-emerald-700 bg-emerald-100/50 border border-emerald-100">📅 {fp.season.label} date — mandi flower prices ×{fp.season.mult} (e.g. a ₹1000 flower bills at ₹{Math.round(1000 * fp.season.mult)})</div>}
