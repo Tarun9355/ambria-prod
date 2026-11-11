@@ -4363,6 +4363,47 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
               {invWholeOnly > 0 && (
                 <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-gray-50 text-[11px] text-gray-500">{invWholeOnly} item{invWholeOnly === 1 ? " is" : "s are"} not in any of this function's zones (production, fabric and the like) — see All functions.</div>
               )}
+              {/* ── ARTIFICIAL FLOWERS & GREENS ── (owner ask 2026-11-11) Floral's held stock includes the artificial bunches Deal Check
+                  worked out (floralPlan.artificial): flowers and greens in bunches and kg, and the flowers by colour - how many kg of each
+                  colour's bunches to pull (the Color Split, from the Flower Palette). The whole event's, as Deal Check gives it. */}
+              {dept === "Floral" && fp.artificial && ((fp.artificial.flowerBunches || 0) > 0 || (fp.artificial.greenBunches || 0) > 0) && (() => {
+                const a = fp.artificial;
+                const split = Array.isArray(a.colorSplit) ? a.colorSplit.filter(c => Number(c.qty) > 0) : [];
+                const kgTxt = (n) => `${Math.round((Number(n) || 0) * 100) / 100} kg`;
+                const line = (icon, label, bunches, bpk, kg) => (
+                  <div className="flex items-center justify-between gap-3 px-3 py-2">
+                    <span className="min-w-0 text-xs font-semibold text-gray-800">{icon} {label}</span>
+                    <span className="shrink-0 text-[11px] text-gray-600 tabular-nums">{bunches} bunches ÷ {bpk}/kg = <b className="text-gray-900">{kgTxt(kg)}</b></span>
+                  </div>
+                );
+                return (
+                  <div className="m-2.5 mb-0 rounded-xl bg-pink-50/60 ring-1 ring-pink-100 overflow-hidden">
+                    <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-pink-700">Artificial flowers &amp; greens{invScoped ? " · whole event" : ""}</div>
+                    <div className="divide-y divide-pink-100/70">
+                      {(a.flowerBunches || 0) > 0 && line("🌸", "Artificial flowers", a.flowerBunches, a.flowerBPK, a.flowerKg)}
+                      {split.length > 0 && (
+                        <div className="px-3 py-2">
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-1">By colour</div>
+                          {split.map(c => {
+                            const inv = (inventory || []).find(i => String(i.id) === String(c.imsId));
+                            const ph = inv ? (inv.img || (Array.isArray(inv.photoUrls) && inv.photoUrls[0]) || "") : "";
+                            return (
+                              <div key={c.imsId || c.name} className="flex items-center justify-between gap-3 py-1">
+                                <span className="min-w-0 flex items-center gap-2 text-xs text-gray-700">
+                                  {ph ? <img src={thumbUrl(ph, 24)} alt="" className="w-6 h-6 rounded object-cover shrink-0 cursor-zoom-in" onClick={() => setZoomImg(ph)} /> : <span className="w-6 h-6 rounded bg-white ring-1 ring-pink-100 shrink-0" />}
+                                  <span className="truncate" title={c.name}>{c.name || "Artificial bunch"}</span>
+                                </span>
+                                <b className="shrink-0 text-xs text-gray-900 tabular-nums">{kgTxt(c.qty)}</b>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {(a.greenBunches || 0) > 0 && line("🌿", "Artificial greens", a.greenBunches, a.greenBPK, a.greenKg)}
+                    </div>
+                  </div>
+                );
+              })()}
               {/* Print jobs, read from the build's zone layout (pushed to IMS on every Build save),
                   so they show without Deal Check — which only ever sends a count of them. */}
               {dept === "Structure" && invFinish.prints.length > 0 && (
