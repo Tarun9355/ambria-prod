@@ -4919,6 +4919,25 @@ export default function StudioApp() {
     mandiPriceMultipliers: dealCheckData?.mandiPriceMultipliers,
     seasonMap: dealCheckData?.seasonMap,
   }), [studioFloralData, dealCheckData, dealFeePct]);
+  // ── RECIPES LIVE IN DEAL CHECK TOO (owner ask 2026-11-11) ── Build reads recipes and mandi flowers from studioFloralData, which
+  // the flower_patterns / mandi_flowers realtime keeps current; Deal Check reads its own copy (dealCheckData), fetched when it
+  // opens - so a recipe edited in IMS while Deal Check was open (or opened earlier this session) reached Build but not Deal Check.
+  // When the live copy changes, Deal Check's takes it (same assemble functions, same shape). Runs only on a live change, never
+  // when Deal Check's own fresh fetch lands.
+  const liveFlowerPatterns = studioFloralData?.flowerPatterns, liveMandiCatalogue = studioFloralData?.mandiCatalogue;
+  useEffect(() => {
+    if (!Array.isArray(liveFlowerPatterns) && !Array.isArray(liveMandiCatalogue)) return;
+    setDealCheckData((d) => {
+      if (!d) return d;
+      // content, not identity: the live copy is rebuilt on every realtime change of any of its 9 tables and on every return to
+      // the tab - only a real recipe / mandi change may touch Deal Check's data (and set its pricing recomputing)
+      const same = (a, b) => a === b || JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+      const fpNew = Array.isArray(liveFlowerPatterns) && !same(liveFlowerPatterns, d.flowerPatterns);
+      const mcNew = Array.isArray(liveMandiCatalogue) && !same(liveMandiCatalogue, d.mandiCatalogue);
+      if (!fpNew && !mcNew) return d;
+      return { ...d, ...(fpNew ? { flowerPatterns: liveFlowerPatterns } : null), ...(mcNew ? { mandiCatalogue: liveMandiCatalogue } : null) };
+    });
+  }, [liveFlowerPatterns, liveMandiCatalogue]);
   // Flower-recipe patterns addable as their own standalone element (name-searchable alongside
   // inventory items in every "+Add element" box), independent of whether the recipe's sub-category
   // also has real inventory backing or is tag_hidden — a recipe must always be findable/addable by

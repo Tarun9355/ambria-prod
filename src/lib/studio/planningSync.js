@@ -6,12 +6,18 @@ import { supabase } from "../supabase";
 export const PLANNING_SETTING_KEYS = ["heavyElementRanges", "categoryDepartments", "labourTiers", "dihariSchemes", "defaultWindowsByPhase", "venueMinLabour", "defaultMinLabour", "eventTypeMultipliers", "eventTimingMultipliers", "fabricBangaliRanges", "trussLabourRanges", "fabricRftPerWorker", "flowerPatterns", "mandiCatalogue", "mandiPriceMultipliers", "fixedVenues", "fixedVenueSubcatDiscount", "trussRates", "maskingRates", "fabricMultiplier", "carpetMaterials", "platformRates", "venueParents", "situationalMultipliers", "situationalMultiplierCap", "agencyFeePct", "rcCategories", "datePricing", "seasonMap", "eventTimingMultipliers"];
 
 // Newest change (ms) to any planning setting or inventory row; 0 when nothing could be read.
+// Recipes, mandi flowers and fixed venues moved out of `settings` into tables of their own (migrations 038-040), so their
+// settings keys above stopped changing - a recipe edited in IMS never made a booked deal's planning stale (owner report
+// 2026-11-11). Each table's newest row change counts now, as inventory's does.
+export const PLANNING_INPUT_TABLES = ["inventory", "flower_patterns", "mandi_flowers", "fixed_venues"];
 export async function latestPlanningInputStamp() {
-  const [{ data: srows }, { data: irow }] = await Promise.all([
+  const newest = (table) => supabase.from(table).select("updated_at").order("updated_at", { ascending: false }).limit(1);
+  const [{ data: srows }, ...tableRows] = await Promise.all([
     supabase.from("settings").select("key,updated_at").in("key", PLANNING_SETTING_KEYS),
-    supabase.from("inventory").select("updated_at").order("updated_at", { ascending: false }).limit(1),
+    // a table that cannot be read (or has no updated_at) just adds nothing - never fails the check
+    ...PLANNING_INPUT_TABLES.map((t) => newest(t).then((r) => r, () => ({ data: null }))),
   ]);
-  const stamps = [...(srows || []), ...(irow || [])].map(r => Date.parse(r.updated_at)).filter(Number.isFinite);
+  const stamps = [...(srows || []), ...tableRows.flatMap((r) => r?.data || [])].map(r => Date.parse(r.updated_at)).filter(Number.isFinite);
   return stamps.length ? Math.max(...stamps) : 0;
 }
 
