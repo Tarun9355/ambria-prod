@@ -1397,7 +1397,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         <div class="gs-g">${c.map(cardOf).join("")}</div>
       </section>`).join("");
     })();
-    const fixedVenuePages = (() => {
+    // Not in the master (all-departments) book (owner ask 2026-11-11) - a department's own book still lists its standing stock.
+    const fixedVenuePages = combined ? "" : (() => {
       const names = [...new Set((fns.length ? fns.map(f => f?.venue) : [sel?.venue]).filter(Boolean))];
       const seen = new Set();
       return names.flatMap(vn => {
