@@ -2908,7 +2908,7 @@ export default function IMS() {
             supervisors={supervisors} setSupervisors={setSupervisors}
             studio={studio} authUser={user}
             syncRecipeRatesToStudio={syncRecipeRatesToStudio} tier15LastSync={tier15LastSync} tier15Syncing={tier15Syncing}
-            inventory={items} rateCardCategories={rateCardCategories}
+            inventory={items} rateCardCategories={rateCardCategories} settingsLoaded={settingsLoaded}
           />
         ) : activeTab === "approvals" ? (
           <ApprovalsTab
