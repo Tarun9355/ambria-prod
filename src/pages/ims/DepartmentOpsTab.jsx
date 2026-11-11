@@ -14,7 +14,7 @@ import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { fetchOpsVendors } from "../../lib/ims/opsVendors";
-import { venueWithParent } from "../../lib/ims/fixedVenues";
+import { venueWithParent, standingQty } from "../../lib/ims/fixedVenues";
 import { carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import ElementChoicePlan from "./ElementChoicePlan.jsx";
@@ -973,7 +973,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       items.filter(it => it.change === "swapped").forEach(it => { if (!map.has(it.name)) map.set(it.name, { swappedFrom: it.fromName || "", at: r.requestedAt }); });
       const added = items.filter(it => it.change === "added");
       const removed = items.filter(it => it.change === "removed");
-      if (!added.length || !removed.length) continue;
+      // An older entry (before switches were recorded as one) can only be read as a switch when it is one item out, one in -
+      // with several added, every one of them read as "swapped in for" the single removed item (owner report 2026-11-11).
+      if (added.length !== 1 || removed.length !== 1) continue;
       const fromLabel = removed.length === 1 ? removed[0].name : `${removed.length} items`;
       for (const a of added) {
         if (!map.has(a.name)) map.set(a.name, { swappedFrom: fromLabel, at: r.requestedAt });
@@ -1046,6 +1048,34 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blockedItemsGrouped, dept, sel, trussInv]);
+  // ── ALREADY AT THE VENUE: FIXED OR REPEAT (owner ask 2026-11-11) ──
+  // Fixed: standing stock of the item at the event's fixed venue (Settings → Fixed Venues) - the most standing at any of its
+  // functions' venues, up to the qty. Repeat: the item set to Repeat in Build (an element's ♻ Repeat) - it stays from before.
+  // Neither is loaded: Truck planning lists them apart (to see, not to fill) and no challan carries them; an item only partly
+  // standing loads the rest.
+  const atVenueOf = useMemo(() => {
+    const fnsV = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+    const venues = [...new Set([sel?.venue, ...fnsV.map(f => f?.venue)].filter(Boolean))];
+    const repeatIds = new Set();
+    fnsV.forEach(f => Object.values(f?.elements || {}).forEach(list => (Array.isArray(list) ? list : []).forEach(el => {
+      const id = el?.invId || el?.imsId;
+      if (id && el?.repeatOverride === true) repeatIds.add(String(id));
+    })));
+    const memo = new Map();
+    return (it) => {
+      if (!it) return { fixed: 0, repeat: false, load: 0 };
+      if (memo.has(it.id)) return memo.get(it.id);
+      const qty = Number(it.qty) || 0;
+      const fixed = it.invId ? Math.min(qty, Math.max(0, ...venues.map(v => standingQty(fvSettings, v, it.invId)))) : 0;
+      const repeat = !!it.invId && repeatIds.has(String(it.invId));
+      const r = { fixed, repeat, load: repeat ? 0 : Math.max(0, qty - fixed) };
+      memo.set(it.id, r);
+      return r;
+    };
+  }, [sel, fvSettings]);
+  // What actually goes on a truck: each line at the qty still to load; lines with nothing to load are the "at the venue" list.
+  const loadItems = useMemo(() => blockedItems.map(it => { const a = atVenueOf(it); return a.load === (Number(it.qty) || 0) ? it : { ...it, qty: a.load, fullQty: it.qty }; }).filter(it => (Number(it.qty) || 0) > 0), [blockedItems, atVenueOf]);
+  const atVenueItems = useMemo(() => blockedItems.filter(it => { const a = atVenueOf(it); return a.repeat || a.fixed > 0; }), [blockedItems, atVenueOf]);
   const rentalIncome = blockedItemsGrouped.reduce((s, x) => s + x.total, 0);
 
   // ── Department-saved data on the event order ──
@@ -1612,7 +1642,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
 
   const loaded = (deptData.loaded && typeof deptData.loaded === "object") ? deptData.loaded : {};
   const toggleLoaded = (key) => saveDept({ loaded: { ...loaded, [key]: !loaded[key] } });
-  const loadKeys = [...blockedItems.map(it => "inv:" + it.id), ...deptTools.map(t => "tool:" + t.name)];
+  const loadKeys = [...loadItems.map(it => "inv:" + it.id), ...deptTools.map(t => "tool:" + t.name)]; // fixed / repeat items are not loaded
   const totalLoadItems = loadKeys.length;
   const loadedCount = loadKeys.filter(k => loaded[k]).length;
   const dispatch = deptData.dispatch || { vehicle: "", driver: "", phone: "" };
@@ -1790,7 +1820,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const printTruckChallan = (truck, n) => {
     const w = window.open("", "_blank");
     if (!w) return;
-    const rows = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0)
+    const rows = loadItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0)
       .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("");
     const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
     w.document.write(`<html><head><title>Challan — ${dept} — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
@@ -1844,7 +1874,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       pdf.setFontSize(9.5);
       pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck", M, y); y += 16;
       header();
-      const items = blockedItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0);
+      const items = loadItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0);
       if (items.length) items.forEach(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; row([[shownName(it) + (challanSrcText(it) ? ` (${challanSrcText(it)})` : ""), cx.name], [it.sub || "-", cx.type], [`${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}`, cx.qty, "right"]]); });
       else row([["No items assigned to this truck", cx.name]]);
       if (deptTools.length) {
@@ -2012,7 +2042,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     const w = window.open("", "_blank");
     if (!w) return;
     const rows = [
-      ...blockedItems.map(it => `<tr><td>${loaded["inv:" + it.id] ? "☑" : "☐"}</td><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}</td></tr>`),
+      ...loadItems.map(it => `<tr><td>${loaded["inv:" + it.id] ? "☑" : "☐"}</td><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}</td></tr>`),
       ...deptTools.map(t => `<tr><td>${loaded["tool:" + t.name] ? "☑" : "☐"}</td><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`),
     ].join("");
     w.document.write(`<html><head><title>Challan — ${dept}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}@media print{button{display:none}}</style></head><body>
@@ -4449,6 +4479,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                   : <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>)}
                                 {it.prodOrBuy && <span className={"text-[10px] px-1.5 py-0.5 rounded font-bold " + (it.prodOrBuy === "buying" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700")}>{it.prodOrBuy === "buying" ? "🛒 BUYING" : "🏭 PRODUCTION"}</span>}
                                 {it.isSwapped && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-bold">🔁 SWAPPED</span>}
+                                {/* already at the venue - not loaded (atVenueOf): set to Repeat in Build, or standing stock of the fixed venue */}
+                                {(() => {
+                                  const a = atVenueOf(it.src || it);
+                                  if (a.repeat) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-bold" title="Set to Repeat - stays from before, not loaded">♻ REPEAT</span>;
+                                  if (a.fixed > 0) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 font-bold" title="Standing stock at this fixed venue - not loaded">📌 FIXED{a.load > 0 ? ` · ${a.fixed}` : ""}</span>;
+                                  return null;
+                                })()}
                                 <button onClick={() => setKitOpen(o => ({ ...o, ["calc:" + it.id]: !o["calc:" + it.id] }))} aria-expanded={!!kitOpen["calc:" + it.id]}
                                   title="How this line's total was worked out"
                                   className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-semibold hover:bg-gray-200 transition-colors">💡 How</button>
@@ -5353,12 +5390,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                           <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className="block text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{l}</label><input value={t[k] || ""} onChange={e => setTruck(t.id, { [k]: e.target.value })} placeholder={k === "vehicle" ? "outside vehicle?" : ""} className="mt-1 w-full h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></div>
                         ))}
                       </div>
-                      {blockedItems.length > 0 ? (
+                      {loadItems.length > 0 ? (
                         /* One line per item: name over its loaded status, the "on this truck" box
                            at the right. As a flex-wrap row the status and the box broke onto
-                           lines of their own at any width under ~500px. */
+                           lines of their own at any width under ~500px. Only what is to be loaded:
+                           fixed / repeat items are listed apart below, not filled in (atVenueOf). */
                         <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
-                          {blockedItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const extraHere = Number(t.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
+                          {loadItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const extraHere = Number(t.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
                             <div key={k} className="flex items-center gap-2.5 px-2.5 py-2">
                               {(() => { const cv = choiceViewAll.get(it.id); const ph = cv?.name ? cv.photo : it.photo; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : it.hex ? <div aria-hidden="true" className="w-8 h-8 rounded-lg ring-1 ring-black/10 shrink-0" style={{ background: it.hex }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
                               <div className="min-w-0 flex-1">
@@ -5386,10 +5424,35 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                             </div>
                           ); })}
                         </div>
-                      ) : <div className="text-xs text-gray-400">No inventory blocked for this department.</div>}
+                      ) : <div className="text-xs text-gray-400">{blockedItems.length ? "Nothing to load - everything is already at the venue." : "No inventory blocked for this department."}</div>}
                       </>)}
                     </div>
                   ))}
+                </div>
+              )}
+              {/* ── ALREADY AT THE VENUE ── fixed stock standing there, or items set to Repeat: shown, not loaded - no qty to fill,
+                  and on no challan (owner ask 2026-11-11). A partly standing item shows how many stand; the rest is loaded above. */}
+              {atVenueItems.length > 0 && (
+                <div className="px-3 sm:px-4 py-3 border-t border-gray-100">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Already at the venue · not loaded</div>
+                  <div className="mt-2 rounded-lg bg-gray-50 divide-y divide-gray-100">
+                    {atVenueItems.map(it => {
+                      const a = atVenueOf(it);
+                      const nm = choiceViewAll.get(it.id)?.name || it.name;
+                      return (
+                        <div key={"av:" + it.id} className="flex items-center gap-2.5 px-2.5 py-2">
+                          {it.photo ? <img src={thumbUrl(it.photo, 32)} loading="lazy" decoding="async" alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
+                          <div className="min-w-0 flex-1">
+                            <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={nm}>{nm}</div>
+                            <div className="mt-0.5 text-[11px] text-gray-500 tabular-nums">
+                              {a.repeat ? `all ${it.qty} stay from before` : a.load > 0 ? `${a.fixed} of ${it.qty} standing here · ${a.load} loaded above` : `all ${it.qty} standing here`}
+                            </div>
+                          </div>
+                          <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (a.repeat ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700")}>{a.repeat ? "♻ REPEAT" : "📌 FIXED"}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
               {/* Essentials / tools */}
