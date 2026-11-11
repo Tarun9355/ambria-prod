@@ -2521,6 +2521,25 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
               </span>
               {cols.map((c, ci) => <span key={ci} className="px-2 py-1 bg-gray-50 text-[13px] text-center border-l border-gray-100 text-gray-900 font-semibold whitespace-nowrap">{t.kind === "labours" ? deptNeedForFn(c).toFixed(2) : c.result}</span>)}
             </div>
+            {/* Fabric Bangali: how each function's masking feet become people - every zone's feet added up first, then ÷ the feet one
+                person puts up, rounded up once (owner ask 2026-11-11) */}
+            {t.kind === "fabricBangali" && (
+              <div className="contents">
+                <span className="px-2 py-1 text-[13px] text-gray-600 border-t border-gray-200">Masking</span>
+                {cols.map((c, ci) => {
+                  const tr = c.trace;
+                  const rfts = (tr?.zones || []).filter(z => z.rft > 0).map(z => z.rft);
+                  const per = Number(tr?.rftPerWorker) || 0;
+                  return (
+                    <span key={ci} className="px-2 py-1 text-[12.5px] text-center border-l border-t border-gray-200 text-gray-700 whitespace-nowrap tabular-nums">
+                      {rfts.length && per > 0
+                        ? <>{rfts.length > 1 ? `${rfts.join(" + ")} = ` : ""}{tr.rftTotal} ft ÷ {per} → <b className="text-gray-900">{tr.rftLabour} {tr.rftLabour === 1 ? "person" : "people"}</b></>
+                        : <span className="text-gray-300">—</span>}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
           {t.kind !== "labours" && laboursHow[labHowKey] && (
             <div className="border-t px-2 py-1.5 text-[13px] text-gray-700 space-y-1">
