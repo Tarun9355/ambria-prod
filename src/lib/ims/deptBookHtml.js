@@ -136,6 +136,13 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
   const venueOf = (eo) => venueWithParent(settings, eo?.functionsDetail?.[0]?.venue || eo?.venue || "");
   const selDateStr = sel ? (sel?.functionsDetail?.[0]?.date || sel?.date || sel?.eventDate || "") : "";
     const combined = !!opts.combined;
+    // A shared book (owner ask 2026-11-11: Fabric and Tenting get ONE common PDF): opts.depts names every department in it; each section that
+    // belongs to one of them shows, and an item of any of them is "mine". A single-department book is the set of just `dept`.
+    const bookDepts = !combined && Array.isArray(opts.depts) && opts.depts.length > 1 ? opts.depts : [dept];
+    const group = bookDepts.length > 1;
+    const inBook = (d) => bookDepts.includes(d);
+    // department tags on the zone cards: the all-departments book, and a shared book (which of its departments each item is)
+    const tagDepts = combined || group;
     // The book's language (Planning's EN | हिं toggle). Every word the book prints goes through t(); data does not.
     const lang = opts.lang === "hi" ? "hi" : "en";
     const t = pdfT(lang);
@@ -158,7 +165,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     const hu = (u) => pdfUnit(lang, u);
     // A paint line ("Gold ×2, Silver ×1") with each colour through hn().
     const paintHn = (txt) => lang !== "hi" ? txt : String(txt || "").split(", ").map(part => part.replace(/^(.*) ×(\S+)$/, (m, c, q) => `${hn(c)} ×${q}`)).join(", ");
-    const bookTitle = combined ? t("All departments") : t(dept);
+    const bookTitle = combined ? t("All departments") : bookDepts.map(d => t(d)).join(" & ");
     // A flower piece's real / artificial split in numbers, the share that is 0 left out (owner ask 2026-11-11): "Real 100%",
     // "Artificial 100%", else both - "Artificial 70% · Real 30%". `real` is the real share, 0-100.
     const mixText = (real) => real >= 100 ? `${t("Real")} 100%` : real <= 0 ? `${t("Artificial")} 100%` : t("Artificial {art}% · Real {real}%", { art: 100 - real, real });
@@ -242,13 +249,13 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     const moveRows = movements.map(m =>
       `<tr><td>${esc(hn(m.name))}</td><td>${esc(m.type === "transfer" ? t("Transfer → {to}", { to: hn(m.toEventName) || t("site") }) : m.type === "damage" ? t("Damaged") : t("Back to production house"))}</td><td class="n">${esc(m.qty)}</td><td>${esc(m.by || "—")}</td></tr>`);
 
-    const fabRows = dept === "Fabric" ? fabricReqRows.flatMap(ft => ft.rows.map(r =>
+    const fabRows = inBook("Fabric") ? fabricReqRows.flatMap(ft => ft.rows.map(r =>
       `<tr><td>${esc(t(ft.label))} · ${r.colour && r.colour !== "(unassigned)" ? `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid rgba(0,0,0,.18);background:${esc(r.hex)};margin-right:5px;vertical-align:middle"></span>` : ""}${esc(r.colour === "(unassigned)" ? t("(unassigned)") : hn(r.colour))}</td><td class="n">${esc(r.required)} ${esc(hu(ft.unit))}</td><td class="n">${esc(r.avail)} ${esc(hu(ft.unit))}</td><td class="n ${r.short > 0 ? "bad" : "ok"}">${r.short > 0 ? t("short {n}", { n: `${esc(r.short)} ${esc(hu(ft.unit))}` }) : t("ok")}</td></tr>`)) : [];
 
     // ── ARTIFICIAL FLOWERS & GREENS ── the bunches the Floral book sends out, worked to kilos the way Deal Check does it (bunches ÷ bunches per kg),
     // and the specific colours to pull. Per function when the event has more than one (floralDetail), then the whole event. No rupees: this book is for the crew.
     // Floral book only: the all-departments book carries no flower sections (owner ask) - its Mandi & Kits pages list kits only.
-    const artPlan = !combined && dept === "Floral" ? sel?.floralPlan?.artificial : null;
+    const artPlan = !combined && inBook("Floral") ? sel?.floralPlan?.artificial : null;
     // Artificial flowers and greens go out in whole bunches - 10.4 is 11 to pull (owner ask 2026-10-31). Only these two are
     // rounded; the mandi flowers in a recipe keep their decimals. Rounded to 2 places first so a float like 10.000000001 stays 10.
     const artBunches = (n) => Math.ceil(Math.round((Number(n) || 0) * 100) / 100);
@@ -337,7 +344,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       if (!partsByKit.has(p)) partsByKit.set(p, []);
       partsByKit.get(p).push(b);
     });
-    const hasDeptSnapshot = Array.isArray(sel?.deptInventory?.[dept]) && sel.deptInventory[dept].length > 0;
+    const hasDeptSnapshot = bookDepts.some(d => Array.isArray(sel?.deptInventory?.[d]) && sel.deptInventory[d].length > 0);
     const invDims = (inv) => {
       if (!inv) return "";
       if (inv.size) return String(inv.size);
@@ -413,11 +420,11 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // classifier files truss/platform/carpet under Tenting, but the Structure crew builds on that
     // frame and floor too. It used to be a separate table at the back of the book; the crew reads
     // a zone page, so that is where it belongs.
-    const showStruct = combined || dept === "Tenting" || dept === "Structure";
+    const showStruct = combined || inBook("Tenting") || inBook("Structure");
     // Which department an item belongs to, for the combined book: Deal Check's per-department
     // snapshot first (it is what each department actually holds), then the category classifier.
     const deptByInvId = new Map();
-    if (combined) Object.entries(sel?.deptInventory || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach(r => { const id = r?.imsId || r?.invId; if (id && !deptByInvId.has(String(id))) deptByInvId.set(String(id), d); }));
+    if (tagDepts) Object.entries(sel?.deptInventory || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach(r => { const id = r?.imsId || r?.invId; if (id && !deptByInvId.has(String(id))) deptByInvId.set(String(id), d); }));
     const carpetName = (id) => {
       if (!id) return "";
       const m = (Array.isArray(settings?.carpetMaterials) ? settings.carpetMaterials : []).find(x => x && x.id === id);
@@ -439,7 +446,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // row under Structure, and that crew gets them printed and put up. Printing them in every other
     // department's book as well told each crew a job was theirs that was not. The combined book
     // still shows them. A row with no size is an untouched blank.
-    const printsHere = combined || dept === "Structure";
+    const printsHere = combined || inBook("Structure");
     // ── A PRINT JOB IS A CARD ON ITS OWN ZONE'S PAGE ──
     // It used to be a one-line chip in the structure strip ("Print Vinyl 9 x 3 ft"), which left
     // out what the crew needs to get it made and put up. Now each job is a card beside the zone's
@@ -456,7 +463,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         return {
           name: "🖨 " + t("Print") + " · " + (printName(p.material) || "—"), shown: "🖨 " + t("Print") + " · " + (hn(printName(p.material)) || "—"), qty: q, unit: "pc",
           photo: /^https?:\/\//i.test(ref) ? ref : "", dims: `${w} x ${d} ft`, kit: 0, recipe: [],
-          deptTag: combined ? "Structure" : "",
+          deptTag: tagDepts ? "Structure" : "",
           extra: [[t("Area"), `${area} sqft${q > 1 ? " " + t("total") : ""}`], ...(on ? [[t("On"), hn(on.name)]] : [])],
         };
       });
@@ -480,7 +487,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         const floorTxt = `${Number(fd.L) || Number(fd.S) || 0} x ${Number(fd.W) || Number(fd.S) || 0} ft${qtyTxt}`;
         if (dec?.other && !dealCheckMode) {
           // none of the stock carpets could be used: the carpet is bought or hired outside stock
-          out.push({ name: t("Carpet arranged separately"), qty: area, unit: "sqft", photo: "", dims: "", kit: 0, recipe: [], deptTag: combined ? "Tenting" : "", _role: t("To use"), _floor: floorTxt,
+          out.push({ name: t("Carpet arranged separately"), qty: area, unit: "sqft", photo: "", dims: "", kit: 0, recipe: [], deptTag: tagDepts ? "Tenting" : "", _role: t("To use"), _floor: floorTxt,
             extra: [[t("Carpet"), t("To use") + (ri === 0 ? "" : " " + t("(floor {n})", { n: ri + 1 }))], [t("Source"), t("Bought / hired outside stock")], [t("Floor"), floorTxt]] });
           return;
         }
@@ -490,7 +497,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         if (!prefs.length && !(dec?.manual && dec.id && !dealCheckMode)) {
           if (!row.cpT) return;
           out.push({ name: carpetPricingFor(row.cpT, settings?.carpetMaterials).label || carpetName(row.cpT) || t("Carpet"), qty: area, unit: "sqft", photo: row.cpPhoto || "", dims: "", kit: 0, recipe: [],
-            deptTag: combined ? "Tenting" : "", _role: t("To lay"), _floor: floorTxt, extra: [[t("Carpet"), t("To lay") + (ri === 0 ? "" : " " + t("(floor {n})", { n: ri + 1 }))], [t("Floor"), floorTxt]] });
+            deptTag: tagDepts ? "Tenting" : "", _role: t("To lay"), _floor: floorTxt, extra: [[t("Carpet"), t("To lay") + (ri === 0 ? "" : " " + t("(floor {n})", { n: ri + 1 }))], [t("Floor"), floorTxt]] });
           return;
         }
         // Planning's decided carpet once there is one; otherwise sales' 1st choice ONLY - the 2nd/3rd preferences printed as
@@ -503,7 +510,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const inv = invById.get(String(p.id));
           out.push({
             name: inv?.name || p.name || t("Carpet"), qty: area, unit: "sqft", photo: invPhoto(inv, null), dims: invDims(inv), kit: 0, recipe: [],
-            deptTag: combined ? "Tenting" : "", _role: base, _floor: floorTxt, _key: "inv:" + p.id,
+            deptTag: tagDepts ? "Tenting" : "", _role: base, _floor: floorTxt, _key: "inv:" + p.id,
             extra: [[t("Carpet"), role], [t("Floor"), floorTxt]],
           });
         });
@@ -578,7 +585,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       const dens = [...new Set(rows.map(r => String(r.drapeDensity || "moderate").toLowerCase()))].filter(d => DRAPE_LBL[d]);
       return dens.length ? [{ k: t("Drape"), html: esc(dens.map(d => t(DRAPE_LBL[d])).join(" / ")) }, ...fabric] : fabric;
     };
-    if (showStruct || dept === "Fabric") {
+    if (showStruct || inBook("Fabric")) {
       try {
         buildFabricGroups({ entries: fabricEntriesOf(), lines: [], fabricPlan: sel?.fabricPlan, stock: trussInv, fnPalettes: fabricPalettesOf() }).groups.forEach(g => {
           g.zones.forEach(z => {
@@ -639,7 +646,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // same reasoning carpetPlanOf's carpetChoice read above already follows.
     // Tenting's own book only (owner ask), not Structure's, even though the structure strip above
     // shows in both.
-    const showTrussTable = combined || dept === "Tenting";
+    const showTrussTable = combined || inBook("Tenting");
     const trussTableByZone = new Map(); // "fi|zk" -> [{ label, pillars, beams, battaRft }]
     if (showTrussTable && trussInv) {
       const tentingPlan = sel?.deptOps?.Tenting?.trussPlan || {};
@@ -723,9 +730,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const mine = combined ? true
             : held ? true
             : kitParts.length ? true
-            : isPattern ? dept === "Floral"
+            : isPattern ? inBook("Floral")
             : hasDeptSnapshot ? false
-            : inv ? catToDept(inv.category || inv.cat) === dept : false;
+            : inv ? inBook(catToDept(inv.category || inv.cat)) : false;
           if (!mine) return;
           const kitLabel = hn(String(inv?.name || el?.name || "").trim()) || t("kit");
           kitParts.forEach(p => {
@@ -764,7 +771,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
             prow.options.slice(0, 1).forEach((o, i) => {
               const ci = invById.get(String(o.id));
               merged.set(`c:${el?.pid || ei}:${i}`, { name: ci?.name || o.name || t("Design"), qty: Number(el?.qty) || 1, unit: String(el?.unit || ci?.unit || "").trim(),
-                deptTag: combined ? (deptByInvId.get(String(o.id)) || catToDept(ci?.category || ci?.cat)) : "", photo: invPhoto(ci, null), dims: invDims(ci), size: "", kit: 0, recipe: [],
+                deptTag: tagDepts ? (deptByInvId.get(String(o.id)) || catToDept(ci?.category || ci?.cat)) : "", photo: invPhoto(ci, null), dims: invDims(ci), size: "", kit: 0, recipe: [],
                 extra: [[t("Choice"), choiceLbl(i)]] });
             });
             return;
@@ -816,7 +823,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           // A flower recipe with no unit stored falls back to "pc" — the same default Studio gives a
           // recipe element when it is added (recipeOnlyPatterns in StudioApp.jsx).
           const unit = String(el?.unit || inv?.unit || held?.unit || (isPattern ? "pc" : "")).trim();
-          const deptTag = !combined ? "" : isPattern ? "Floral" : invU ? (deptByInvId.get(String(invU.id)) || catToDept(invU.category || invU.cat)) : "";
+          const deptTag = !tagDepts ? "" : isPattern ? "Floral" : invU ? (deptByInvId.get(String(invU.id)) || catToDept(invU.category || invU.cat)) : "";
           // ── WHAT GOES INTO A FLORAL ARRANGEMENT ──
           // A "Flower Reet" is a recipe of several flowers; the crew needs those, not just the
           // count. Recipe found the way Studio prices it — the element's own patternId, else the
@@ -895,14 +902,14 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const ci = invById.get(String(row.customCeilingItemId));
           if (!ci) return;
           const held = heldByInv.get(String(ci.id)) || null;
-          if (!(combined || held || catToDept(ci.category || ci.cat) === dept)) return;
+          if (!(combined || held || inBook(catToDept(ci.category || ci.cat)))) return;
           if (held) placed.add(held.id);
           const cq = Number(row.customCeilingQty) > 0 ? Number(row.customCeilingQty) : Math.max(1, Number(row.trussQty) || 1);
           const key = "ceil:" + ci.id;
           const prev = merged.get(key);
           if (prev) { prev.qty += cq; return; }
           merged.set(key, { name: ci.name, qty: cq, unit: String(ci.unit || "").trim(), photo: invPhoto(ci, held), dims: invDims(ci), size: "", kit: 0, recipe: [],
-            deptTag: combined ? (deptByInvId.get(String(ci.id)) || catToDept(ci.category || ci.cat)) : "",
+            deptTag: tagDepts ? (deptByInvId.get(String(ci.id)) || catToDept(ci.category || ci.cat)) : "",
             extra: [[t("Ceiling"), t("Custom ceiling") + (zoneRows.length > 1 ? " " + t("(truss {n})", { n: ri + 1 }) : "")]] });
         });
         const items = [...merged.values()];
@@ -934,7 +941,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         // Floral book only (not the all-departments book — owner ask), each colour as a dot with its share — the colours the florists are building in.
         // (The zone's "Floral mix" chip - the function's floral slider - is gone from the Floral book, owner ask 2026-11-11: each
         // flower piece's card carries its own real / artificial split, so the zone-wide default only confused it.)
-        if (!combined && dept === "Floral" && fn?.flowerPalette) {
+        if (!combined && inBook("Floral") && fn?.flowerPalette) {
           const cols = parseFlowerPalette(fn.flowerPalette);
           if (cols.length) zStruct.push({ k: t("Flower palette"), html: cols.map(c => `<b class="fpc"><i style="background:${esc(flowerPaletteHexFor(c.name))}"></i>${esc(hn(c.name))} ${esc(c.pct)}%</b>`).join("") });
         }
@@ -1086,9 +1093,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // a zone with only those printed "No Tenting items" right above four of them. In the
     // Structure book the strip is reference (Tenting's frame they build on), so it isn't counted.
     const zoneCountText = (pg) => {
-      const n = pg.items.length + (combined || dept === "Tenting" ? (pg.struct || []).length : 0);
+      const n = pg.items.length + (combined || inBook("Tenting") ? (pg.struct || []).length : 0);
       // No item count on the page (owner ask 2026-11-03) - only the note that this department has nothing in the zone.
-      return n ? "" : (combined ? t("No items") : t("No {dept} items", { dept: esc(t(dept)) }));
+      return n ? "" : (combined ? t("No items") : t("No {dept} items", { dept: esc(bookDepts.map(d => t(d)).join(" & ")) }));
     };
     const zoneSection = (pg, chunk, part, parts, zoneNo, offset) => {
       // A zone this department has nothing in still gets its page — the reference photo, run the
@@ -1325,7 +1332,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const partKey = (n) => String(n || "").trim().toLowerCase();
           const have = new Set(parts.map(p => partKey(p.name)));
           (it.liveKit || []).forEach(p => {
-            if (have.has(partKey(p.name)) || (!combined && p.dept !== dept)) return;
+            if (have.has(partKey(p.name)) || (!combined && !inBook(p.dept))) return;
             have.add(partKey(p.name));
             parts.push({ name: p.name, qty: Math.round(p.per * (zq || 1) * 100) / 100, unit: p.unit, photo: p.photo || "" });
           });
@@ -1405,7 +1412,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // 62.5 kVA units and the total, right after the cover. Each function's own plan from Studio (functionsDetail[].gensets),
     // else its venue's standard count. Lighting's book and the all-departments book.
     const gensetPage = (() => {
-      if (!(combined || dept === "Lighting")) return "";
+      if (!(combined || inBook("Lighting"))) return "";
       const list = (fns.length ? fns : [{ type: sel?.eventType || "", date: selDateStr, venue: sel?.venue }]).map((fn, fi) => ({ fn, fi, g: gensetsForFn(fn, trVenues) })).filter(r => r.g);
       if (!list.length) return "";
       const unit = (n, kva) => n > 0 ? `<div class="gs-u"><b>${esc(n)}</b><span>× ${kva} kVA</span></div>` : "";
@@ -1441,8 +1448,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const qty = (Number(it?.qty) || 0) + (Number(it?.fullQty) || 0);
           if (!inv || !(qty > 0)) return null;
           const d = catToDept(inv.category || inv.cat);
-          if (!combined && d !== dept) return null;
-          return { name: inv.name, qty, unit: String(inv.unit || "").trim(), photo: invPhoto(inv, null), dims: invDims(inv), deptTag: combined ? d : "", kit: 0, recipe: [] };
+          if (!combined && !inBook(d)) return null;
+          return { name: inv.name, qty, unit: String(inv.unit || "").trim(), photo: invPhoto(inv, null), dims: invDims(inv), deptTag: tagDepts ? d : "", kit: 0, recipe: [] };
         }).filter(Boolean).sort((a, b) => String(a.name).localeCompare(String(b.name)));
         return listPages(items, t("Fixed at venue"), hn(fv.name), t("Already standing here - not to be loaded"));
       }).join("");
@@ -1510,7 +1517,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     const fnCards = (fi) => {
       const s = sessions[fi], fn = fns[fi];
       if (!s) return "";
-      const g = (combined || dept === "Lighting") && fn ? gensetsForFn(fn, trVenues) : null;
+      const g = (combined || inBook("Lighting")) && fn ? gensetsForFn(fn, trVenues) : null;
       const unit = (n, kva) => n > 0 ? `<div class="gs-u"><b>${esc(n)}</b><span>× ${kva} kVA</span></div>` : "";
       const gCard = g ? `<div class="gs-c fd-gs">
           <div class="gs-h"><span>⚡ ${t("Genset")}</span>${fn?.venue ? `<i>${esc(hn(fn.venue))}</i>` : ""}</div>

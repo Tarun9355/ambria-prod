@@ -117,7 +117,10 @@ export const fixH2cTextBaseline = (reportDoc) => {
 // arguments (fetched here, same as before) and the `opts` each pass needs; the caller supplies
 // everything else (`sel`, `inventory`, department-scoped data, ...) already closed over.
 // Never throws: a failure falls back to an HTML download of the same content, same as before.
-export async function renderDeptBook({ buildHtml, lang, multi, dept, depts, sel, selDateStr, view = false, onNote }) {
+// group: a shared book - several departments in ONE book (Fabric & Tenting, owner ask 2026-11-11), built in a single pass with opts.depts.
+export async function renderDeptBook({ buildHtml, lang, multi, dept, depts, group = null, sel, selDateStr, view = false, onNote }) {
+  const shared = !multi && Array.isArray(group) && group.length > 1 ? group : null;
+  const bookLabel = multi ? "All departments" : shared ? shared.join(" & ") : null;
   // Zone names as the admin set them in Studio (e.g. "Centre Lounge"), not the raw keys. A failed
   // read just falls back to the built-in names (and to null → ZONE_META's own keys for the order).
   const zoneLabels = {};
@@ -157,21 +160,21 @@ export async function renderDeptBook({ buildHtml, lang, multi, dept, depts, sel,
     // ── ONE PASS PER DEPARTMENT, ALL INTO THE SAME FILE ──
     // "All departments" is ONE combined, zone-wise book (owner ask) — not several books back to
     // back — so it is a single pass with every department's items on each zone page.
-    const passes = multi ? ["__combined__"] : depts;
+    const passes = multi ? ["__combined__"] : shared ? ["__shared__"] : depts;
     for (let di = 0; di < passes.length; di++) {
       if (multi) onNote?.("All departments — combined");
       // Hindi: a first build only to note the names not in Devanagari yet, which are asked for (~20s cap, cached for
       // every later book), then the real build. A name that could not be done prints in English.
       if (hiNames) {
         const miss = new Set();
-        buildHtml(zoneLabels, zoneAdminOrder, logos, { combined: multi, lang, names: hiNames, collect: miss });
+        buildHtml(zoneLabels, zoneAdminOrder, logos, { combined: multi, depts: shared || undefined, lang, names: hiNames, collect: miss });
         if (miss.size) {
           onNote?.("Hindi names…");
           try { await ensureHindiNames([...miss], hiNames); } catch { /* the names stay English */ }
           onNote?.(multi ? "All departments — combined" : "");
         }
       }
-      const html = buildHtml(zoneLabels, zoneAdminOrder, logos, { combined: multi, lang, names: hiNames });
+      const html = buildHtml(zoneLabels, zoneAdminOrder, logos, { combined: multi, depts: shared || undefined, lang, names: hiNames });
       if (di > 0) { newPage(); }
       frame = document.createElement("iframe");
 
@@ -404,7 +407,7 @@ export async function renderDeptBook({ buildHtml, lang, multi, dept, depts, sel,
     // Filename carries all three identifiers — what it is called in someone's Downloads folder a
     // month later. Slashes and colons are illegal in filenames on Windows.
     const safe = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
-    const fileName = `${safe(multi ? "All departments" : depts[0])} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}${lang === "hi" ? " (Hindi)" : ""}.pdf`;
+    const fileName = `${safe(bookLabel || depts[0])} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}${lang === "hi" ? " (Hindi)" : ""}.pdf`;
     let url = null;
     if (view) { url = URL.createObjectURL(pdf.output("blob")); }
     else pdf.save(fileName);
@@ -433,12 +436,12 @@ export async function renderDeptBook({ buildHtml, lang, multi, dept, depts, sel,
     // filename says "partial" so it's never mistaken for a normal, successful export.
     try {
       const safe = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
-      const htmlDoc = buildHtml(zoneLabels, zoneAdminOrder, logos, { combined: multi, lang, names: hiNames });
+      const htmlDoc = buildHtml(zoneLabels, zoneAdminOrder, logos, { combined: multi, depts: shared || undefined, lang, names: hiNames });
       const blob = new Blob([htmlDoc], { type: "text/html;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const label = multi ? "All departments" : dept;
+      const label = bookLabel || dept;
       a.download = `${safe(`${label} (partial — export failed)`)} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}${lang === "hi" ? " (Hindi)" : ""}.html`;
       document.body.appendChild(a);
       a.click();

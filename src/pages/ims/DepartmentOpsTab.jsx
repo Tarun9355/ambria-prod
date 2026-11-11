@@ -277,6 +277,8 @@ function VoiceRecorder({ value, onSave, compact = false, label = "voice note" })
 // (real mandi cost + on-site expenses) so projected cost converts to exact cost (reflected to Studio).
 const DEPTS = SHARED_DEPTS;
 const PDF_LANG_KEY = "ims.deptOps.pdfLang";
+// Departments that share one PDF book: downloading any one of them gives the whole group's book (one crew, one file).
+const SHARED_BOOKS = [["Fabric", "Tenting"]];
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵", Paint: "🎨" };
 // DEPT_MP (primary manpower types per department) now lives in lib/ims/deptCrew.js, imported above
 // — the Site Supervisor page needs the exact same list per department, not a second copy of it.
@@ -599,6 +601,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const bookDepts = deptOptions.filter((d) => d !== PAINT);
 
   const [dept, setDept] = useState(roleDept || deptOptions[0] || "Floral");
+  // this tab's own PDF: its shared book's name when it has one ("Fabric & Tenting")
+  const deptBookName = (SHARED_BOOKS.find(g => g.includes(dept)) || [dept]).join(" & ");
   const [exportNote, setExportNote] = useState("");
   const [search, setSearch] = useState("");
   const [leadEntry, setLeadEntry] = useState(null); // LMS entry no of the lead we arrived from
@@ -961,10 +965,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // one go) — tag the newly-added item SWAPPED so ops sees at a glance this isn't extra inventory,
   // it's a substitution. Most recent qualifying row wins per item name; when a batch bundles more
   // than one removal the "from" is shown as a count rather than guessing which item paired with which.
-  const swapInfo = useMemo(() => {
+  // swapInfoOf(d): any department's (the shared Fabric & Tenting book needs the other one's too).
+  const swapInfoOf = (d) => {
     const map = new Map();
     const rows = (amendRequests || [])
-      .filter(r => r.eventOrderId === sel?.id && r.department === dept && r.status === "logged")
+      .filter(r => r.eventOrderId === sel?.id && r.department === d && r.status === "logged")
       .sort((a, b) => (b.requestedAt || 0) - (a.requestedAt || 0));
     for (const r of rows) {
       const items = r.items || [];
@@ -981,7 +986,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       }
     }
     return map;
-  }, [amendRequests, sel, dept]);
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const swapInfo = useMemo(() => swapInfoOf(dept), [amendRequests, sel, dept]);
 
   // A kit's row carries ALL of its parts, but each part belongs to a department of its own (and Deal Check already files it there as a
   // `fromKit` row). So a department's kit lists only the parts that are that department's: a part whose department cannot be told stays,
@@ -997,14 +1004,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   };
   // ── Blocked inventory: prefer the Deal Check snapshot; fall back to IMS blocks if not synced ──
   // GROUPED view (kit as one line + its components) — used for the inventory/income display.
-  const blockedItemsGrouped = useMemo(() => {
+  // blockedGroupedOf(d, swaps): any department's list - the shared Fabric & Tenting book reads both.
+  const blockedGroupedOf = (d, swaps) => {
     if (!sel) return [];
-    if (deptInvSnap && deptInvSnap.length) {
+    const snapD = (sel?.deptInventory && Array.isArray(sel.deptInventory[d])) ? sel.deptInventory[d] : null;
+    if (snapD && snapD.length) {
       // fromKit carried through from the snapshot: Deal Check splits a kit's parts across
       // departments by each part's own category, so a row can be a component of a kit owned by
       // another department. It is the only record of that parent, and the PDF needs it to avoid
       // reporting a bolted-on part as a loose item.
-      const rows = deptInvSnap.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components.filter(cp => kitPartOfDept(cp, x.name, dept)) : null, kitPartsTotal: Array.isArray(x.components) ? x.components.reduce((t, c) => t + (Number(c.total) || 0), 0) : 0, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swapInfo.has(x.name), swappedFrom: swapInfo.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null }));
+      const rows = snapD.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components.filter(cp => kitPartOfDept(cp, x.name, d)) : null, kitPartsTotal: Array.isArray(x.components) ? x.components.reduce((t, c) => t + (Number(c.total) || 0), 0) : 0, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swaps.has(x.name), swappedFrom: swaps.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null }));
       // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
       // knowing apart from what's actually reserved), then everything else — the order requested
       // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
@@ -1018,18 +1027,20 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       if (qty <= 0) return;
       const item = (inventory || []).find(i => String(i.id) === String(itemId));
       if (!item) return;
-      const d = catToDept(item.cat || item.category);
-      if (d !== dept) return;
+      if (catToDept(item.cat || item.category) !== d) return;
       const unit = Number(item.price ?? item.rentalCost) || 0;
       out.push({ id: itemId, invId: itemId, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, unit, total: unit * qty, sub: item.subCat || item.subcategory || "" });
     });
     return out.sort((a, b) => b.total - a.total);
-  }, [sel, blocks, inventory, dept, swapInfo]);
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const blockedItemsGrouped = useMemo(() => blockedGroupedOf(dept, swapInfo), [sel, blocks, inventory, dept, swapInfo]);
   // FLAT view — kits expanded into the kit shell + each component as its own physical row. Used by
   // Loading & dispatch, Receiving and Dismantle (the ops manager loads/moves each real item).
-  const blockedItems = useMemo(() => {
+  // blockedFlatOf(grouped, d): any department's flat list (the shared Fabric & Tenting book).
+  const blockedFlatOf = (grouped, d) => {
     const out = [];
-    blockedItemsGrouped.forEach(it => {
+    grouped.forEach(it => {
       if (it.isKit && Array.isArray(it.components) && it.components.length) {
         const partsSum = it.kitPartsTotal != null ? it.kitPartsTotal : it.components.reduce((s, c) => s + (Number(c.total) || 0), 0);
         out.push({ ...it, isKit: false, components: null, total: Math.max(0, (Number(it.total) || 0) - partsSum) }); // kit shell (its own base value)
@@ -1038,15 +1049,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     });
     // Fabric: the per-zone Liza / Velvet / Masking lines become one load line per fabric colour (with the colour's photo), so Truck planning, the loading
     // checklist and receiving name what is physically loaded instead of the same fabric once per zone with no photo.
-    if (dept === "Fabric" && sel) {
+    if (d === "Fabric" && sel) {
       try {
-        const g = buildFabricGroups({ entries: fabricEntriesOf(), lines: blockedItemsGrouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: false, fnPalettes: fabricPalettesOf() }).groups;
+        const g = buildFabricGroups({ entries: fabricEntriesOf(), lines: grouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: false, fnPalettes: fabricPalettesOf() }).groups;
         return foldFabricLines(out, g);
       } catch { return out; }
     }
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blockedItemsGrouped, dept, sel, trussInv]);
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const blockedItems = useMemo(() => blockedFlatOf(blockedItemsGrouped, dept), [blockedItemsGrouped, dept, sel, trussInv]);
   // ── ALREADY AT THE VENUE: FIXED OR REPEAT (owner ask 2026-11-11) ──
   // Fixed: standing stock of the item at the event's fixed venue (Settings → Fixed Venues) - the most standing at any of its
   // functions' venues, up to the qty. Repeat: the item set to Repeat in Build (an element's ♻ Repeat) - it stays from before.
@@ -2315,7 +2327,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // own Build Old/New toggle) — compared tier-for-tier, not just combined. Plenty of New stock sitting
   // idle doesn't help an Old-stock requirement, and vice versa; same-day contention is split by tier
   // for the same reason (an Old reservation elsewhere can't eat into what THIS event needs in New).
-  const fabricReqRows = (dept === "Fabric" && sel?.fabricPlan) ? FABRIC_TYPES.map(ft => {
+  // fabricReqRowsOf(): any tab can build it (the shared Fabric & Tenting book prints it from the Tenting tab too).
+  const fabricReqRowsOf = () => sel?.fabricPlan ? FABRIC_TYPES.map(ft => {
     const req = Array.isArray(sel.fabricPlan[ft.key]) ? sel.fabricPlan[ft.key] : [];
     const rows = req.map(r => {
       const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 };
@@ -2329,6 +2342,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     });
     return { ...ft, rows };
   }).filter(f => f.rows.length) : [];
+  const fabricReqRows = dept === "Fabric" ? fabricReqRowsOf() : [];
   // ── THE FABRIC LINES, FOLDED TO THREE FABRICS ──
   // The blocked-inventory list carried one photo-less row per (zone × fabric × tier). For the Fabric department
   // they are replaced by one block: Liza / Velvet / Wall Masking with the allocated colour's photo, the total, and
@@ -3156,10 +3170,23 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // "Download PDF (all departments)" button, which needs the exact same combined book without a
   // second copy of ~2000 lines of template logic. `buildHtml` is this tab's own thin wrapper:
   // everything it reads is already a local of this component (no ctx field here is new data).
+  // A shared book (opts.depts - Fabric & Tenting): every one of its departments' blocked lists, dismantle moves and the fabric
+  // requirement, whichever of those tabs it was downloaded from, so the two tabs give the very same file.
+  const sharedBookData = (ds) => {
+    const grouped = [], flat = [], moves = [];
+    ds.forEach(d => {
+      const g = (d === dept ? blockedItemsGrouped : blockedGroupedOf(d, swapInfoOf(d))).map(x => ({ ...x, id: d + ":" + x.id }));
+      grouped.push(...g);
+      flat.push(...blockedFlatOf(g, d));
+      moves.push(...(d === dept ? movements : (Array.isArray(sel?.deptOps?.[d]?.movements) ? sel.deptOps[d].movements : [])));
+    });
+    return { blockedItemsGrouped: grouped, blockedItems: flat, movements: moves, fabricReqRows: ds.includes("Fabric") ? fabricReqRowsOf() : [] };
+  };
   const buildHtml = (zoneLabels, zoneAdminOrder, logos, opts) => buildDeptBookHtml({
     dept, sel, inventory, blocks, settings, trussInv, catToDept, authUser,
     flowerPatterns, mandiCatalogue, floralModeBySub, fvSettings, trVenues,
     blockedItemsGrouped, blockedItems, trucks, movements, fabricReqRows,
+    ...(!opts?.combined && Array.isArray(opts?.depts) && opts.depts.length > 1 ? sharedBookData(opts.depts) : null),
     trussPlanOf, fabricEntriesOf, fabricPalettesOf, carpetPlanOf, elementPlanOf, zoneLabelFor,
     zoneAdminOrder, dealCheckMode: !!pdfAllCarpetsRef.current,
     // "Prepared by" is always the salesperson who sold the deal (deptBookHtml reads sel.salesperson) - this is only the fallback
@@ -3181,13 +3208,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     // apart, and conflating them built the open tab's content under that one department's filename
     // whenever it happened to differ from the department actually asked for.
     const multi = combined != null ? combined : depts.length > 1;
+    // Fabric and Tenting share ONE book (owner ask 2026-11-11): either one's PDF is the "Fabric & Tenting" book, the same file from both tabs.
+    const shared = !multi && depts.length === 1 ? (SHARED_BOOKS.find(g => g.includes(depts[0])) || null) : null;
+    const inThisBook = shared || depts;
     // ── NO PDF UNTIL EVERY CARPET FLOOR AND EVERY OVERLAY / CUSHION COVER WITH CHOICES HAS ITS DESIGN ──
     // Carpet is Tenting's work, and overlays and cushion covers are Fabric's. The book that carries a decision (Tenting's, Fabric's, and the
     // all-departments book) tells the crew which design goes where: an unmade decision has nothing to print, so those PDFs are refused until
     // it is made. Every other department's PDF is not held up. What is missing is named so it can be fixed in the plan.
     // The PDF started from Deal Check (it lists what sales asked for) and the viewer refreshing itself are not held up by this.
-    const needCarpets = multi || depts.includes("Tenting");
-    const needItems = multi || depts.includes("Fabric");
+    const needCarpets = multi || inThisBook.includes("Tenting");
+    const needItems = multi || inThisBook.includes("Fabric");
     if (gate && !pdfAllCarpetsRef.current && (needCarpets || needItems)) {
       // Something whose function date has already passed has nothing left to plan, so history can always be downloaded.
       const today = new Date().toLocaleDateString("en-CA"); // local YYYY-MM-DD
@@ -3236,7 +3266,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     // A download is the newest build, so the next View deck must not reopen an older one.
     if (!view && deckCacheRef.current) { URL.revokeObjectURL(deckCacheRef.current.url); deckCacheRef.current = null; }
     const { ok, url, name } = await renderDeptBook({
-      buildHtml, lang: pdfLang, multi, dept, depts, sel, selDateStr, view,
+      buildHtml, lang: pdfLang, multi, dept, depts, group: shared, sel, selDateStr, view,
       onNote: setExportNote,
     });
     if (view && ok && url) {
@@ -3368,7 +3398,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
             <div role="menu" className="absolute right-0 top-full mt-2 z-40 w-56 rounded-xl bg-white border border-gray-200 shadow-[0_14px_32px_-10px_rgba(15,23,42,0.35)] p-1">
               <button role="menuitem" onClick={() => { setDlMenuOpen(false); exportDeptPdf(); }}
                 className="w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-medium text-gray-700 hover:bg-gray-50 active:bg-gray-100">
-                {DEPT_ICON[dept]} {dept} only
+                {DEPT_ICON[dept]} {deptBookName} only
               </button>
               <button role="menuitem" onClick={() => { setDlMenuOpen(false); exportDeptPdf(deptsWithWork, { combined: true }); }}
                 className="w-full text-left px-3 py-2.5 rounded-lg text-[13px] font-semibold text-blue-700 hover:bg-blue-50 active:bg-blue-100">
@@ -3385,9 +3415,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       {exporting === "download"
         ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
         : <IconDownload />}
-      <span className="sr-only">{exporting === "download" ? "Building the PDF…" : "Download this department as PDF"}</span>
+      <span className="sr-only">{exporting === "download" ? "Building the PDF…" : `Download ${deptBookName} as PDF`}</span>
       <span role="tooltip" className="pointer-events-none absolute top-full right-0 mt-2 z-20 whitespace-nowrap rounded-md bg-gray-900 px-2 py-1 text-[11px] font-medium text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-        {exporting === "download" ? "Building the PDF…" : `Download ${dept} as PDF`}
+        {exporting === "download" ? "Building the PDF…" : `Download ${deptBookName} as PDF`}
       </span>
     </button>
     {/* ── VIEW DECK ──
