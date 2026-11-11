@@ -173,13 +173,20 @@ function normalizeLeadRow(raw: any) {
   return { header, fnDetail };
 }
 
+// `failed` — true if ANY page of this fetch hit a network/LMS error. A failed page is swallowed as
+// an empty page (so one flaky page doesn't abort the whole sync and lose everything ELSE it
+// fetched), but the caller still needs to know, because an empty-looking result for a reason OTHER
+// than "LMS genuinely has nothing there" must never be read as "these rows no longer exist" —
+// pruning on a partial fetch was confirmed to silently delete real, still-live contracts out from
+// under Studio's own LMS auto-relink logic (Studio: src/lib/studio/lmsRelink.js, C2).
 async function fetchDecorLeads() {
   const map = new Map<string, any>();
   let page = 1;
+  let failed = false;
   while (page <= PAGE_CEILING) {
     const pages = Array.from({ length: BATCH }, (_, i) => page + i);
     const results = await Promise.all(pages.map((p) =>
-      lmsCall(LEAD_ENDPOINT, LEAD_REQ_BODY(p)).then((d) => ({ p, rows: d?.leadinfo || [] })).catch(() => ({ p, rows: [] }))
+      lmsCall(LEAD_ENDPOINT, LEAD_REQ_BODY(p)).then((d) => ({ p, rows: d?.leadinfo || [] })).catch(() => { failed = true; return { p, rows: [] }; })
     ));
     for (const { rows } of results.sort((a, b) => a.p - b.p)) {
       for (const raw of rows) {
@@ -201,16 +208,17 @@ async function fetchDecorLeads() {
     if (results.every((r) => r.rows.length === 0)) break;
     page += BATCH;
   }
-  return Array.from(map.values());
+  return { rows: Array.from(map.values()), failed };
 }
 
 async function fetchDept(dept: string) {
   const map = new Map<string, any>();
   let page = 1;
+  let failed = false;
   while (page <= PAGE_CEILING) {
     const pages = Array.from({ length: BATCH }, (_, i) => page + i);
     const results = await Promise.all(pages.map((p) =>
-      lmsCall(ENDPOINTS[dept], REQ_BODY[dept](p)).then((d) => ({ p, rows: d?.Contractinfo || [] })).catch(() => ({ p, rows: [] }))
+      lmsCall(ENDPOINTS[dept], REQ_BODY[dept](p)).then((d) => ({ p, rows: d?.Contractinfo || [] })).catch(() => { failed = true; return { p, rows: [] }; })
     ));
     for (const { rows } of results.sort((a, b) => a.p - b.p)) {
       for (const raw of rows) {
@@ -228,7 +236,7 @@ async function fetchDept(dept: string) {
     if (results.every((r) => r.rows.length === 0)) break;
     page += BATCH;
   }
-  return Array.from(map.values());
+  return { rows: Array.from(map.values()), failed };
 }
 
 Deno.serve(async (req) => {
@@ -242,8 +250,8 @@ Deno.serve(async (req) => {
   if (payload?.op === "sync") {
     const startedAt = new Date().toISOString();
     try {
-      const [venue, decor, decorLeads] = await Promise.all([fetchDept("venue"), fetchDept("decor"), fetchDecorLeads()]);
-      const all = [...venue, ...decor];
+      const [venueRes, decorRes, decorLeadsRes] = await Promise.all([fetchDept("venue"), fetchDept("decor"), fetchDecorLeads()]);
+      const all = [...venueRes.rows, ...decorRes.rows];
       const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
       const now = new Date().toISOString();
       const rows = all.map((c) => ({ id: c.id, dept: c.dept, entry_no: c.entryNo, guest_name: c.guestName, data: c, synced_at: now }));
@@ -251,19 +259,26 @@ Deno.serve(async (req) => {
         const { error } = await sb.from("lms_contracts").upsert(rows.slice(i, i + 500), { onConflict: "id" });
         if (error) throw new Error(error.message);
       }
-      // Prune contracts that vanished from LMS (or were cancelled) since this sync started.
-      await sb.from("lms_contracts").delete().lt("synced_at", startedAt);
+      // Prune contracts that vanished from LMS (or were cancelled) since this sync started — ONLY
+      // when both venue and decor fetched cleanly. A page that failed mid-fetch is swallowed as an
+      // empty page (fetchDept above) so it doesn't abort everything else this sync found, but that
+      // means "no rows from that page" here could mean "LMS genuinely has none" OR "we just
+      // couldn't ask" — pruning on the latter would delete real, still-live contracts. Skipping the
+      // prune on a partial fetch costs one stale sync cycle; pruning wrongly costs real data.
+      const contractsPartial = venueRes.failed || decorRes.failed;
+      if (!contractsPartial) await sb.from("lms_contracts").delete().lt("synced_at", startedAt);
 
       // Decor leads live in their own table — kept separate from lms_contracts so pre-contract
       // enquiries never get counted as booked functions in the IMS Calendar's season/demand math.
-      const leadRows = decorLeads.map((c: any) => ({ id: c.id, entry_no: c.entryNo, guest_name: c.guestName, data: c, synced_at: now }));
+      const leadRows = decorLeadsRes.rows.map((c: any) => ({ id: c.id, entry_no: c.entryNo, guest_name: c.guestName, data: c, synced_at: now }));
       for (let i = 0; i < leadRows.length; i += 500) {
         const { error } = await sb.from("lms_decor_leads").upsert(leadRows.slice(i, i + 500), { onConflict: "id" });
         if (error) throw new Error(error.message);
       }
-      await sb.from("lms_decor_leads").delete().lt("synced_at", startedAt);
+      if (!decorLeadsRes.failed) await sb.from("lms_decor_leads").delete().lt("synced_at", startedAt);
 
-      return json({ synced: rows.length, decorLeadsSynced: leadRows.length, syncedAt: now });
+      const partial = contractsPartial || decorLeadsRes.failed;
+      return json({ synced: rows.length, decorLeadsSynced: leadRows.length, syncedAt: now, ...(partial ? { partial: true } : {}) });
     } catch (e) {
       return json({ error: String((e as Error)?.message || e) }, 502);
     }

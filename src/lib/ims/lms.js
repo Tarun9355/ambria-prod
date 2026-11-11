@@ -83,6 +83,32 @@ export async function fetchLmsLastSync() {
   return data[0].synced_at ? new Date(data[0].synced_at).getTime() : 0;
 }
 
+// For the LMS lead→contract auto-relink (src/lib/studio/lmsRelink.js): DECOR ONLY (venue contracts
+// are a different business line Studio never touches — see the comment on searchLmsLeads below) —
+// every decor contract plus every still-open decor lead, each paged past PostgREST's 1000-row cap the
+// same way fetchCachedContracts already has to. Separate from fetchCachedContracts because that one
+// also pulls every venue contract (irrelevant here) and never reads lms_decor_leads at all.
+export async function fetchDecorRelinkSources() {
+  const PAGE = 1000;
+  const pageAll = async (table, filterFn) => {
+    const rows = [];
+    for (let from = 0; ; from += PAGE) {
+      let q = supabase.from(table).select("id, data").order("id", { ascending: true }).range(from, from + PAGE - 1);
+      if (filterFn) q = filterFn(q);
+      const { data, error } = await q;
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+    }
+    return rows.map((r) => r.data);
+  };
+  const [decorContracts, decorLeads] = await Promise.all([
+    pageAll("lms_contracts", (q) => q.eq("dept", "decor")),
+    pageAll("lms_decor_leads"),
+  ]);
+  return { decorContracts, decorLeads };
+}
+
 const LMS_VENUE_MAP = {
   "3": { lmsName: "Ambria Pushpanjali", internalName: "Ambria Pushpanjali" },
   "6": { lmsName: "Manaktala Farm", internalName: "Emerald Green" },
@@ -478,7 +504,7 @@ export async function searchLmsLeads(query /*, signal */) {
 
     // Dedupe an enquiry against its own contract — that pair is the same job at two stages of one
     // pipeline (decor-lead → decor-contract once it's booked).
-    const digits = (v) => String(v || "").replace(/D/g, "");
+    const digits = (v) => String(v || "").replace(/\D/g, "");
     const key = (l) => `${(l.guestName || "").trim().toLowerCase()}|${digits(l.phone)}`;
     const seen = new Set(booked.map(key));
     const leads = [

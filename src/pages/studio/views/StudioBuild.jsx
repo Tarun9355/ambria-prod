@@ -4010,7 +4010,34 @@ undefined
             const even = Math.round((100 / nextNames.length) * 10) / 10;
             setFlowerColors(nextNames.map((n, i) => ({ name: n, pct: i === nextNames.length - 1 ? Math.round((100 - even * (nextNames.length - 1)) * 10) / 10 : even })));
           };
-          const setRatio = (name, pct) => setFlowerColors(curColors.map(c => c.name === name ? { ...c, pct: Math.max(0, Number(pct) || 0) } : c));
+          // Editing one colour's own ratio used to leave every OTHER colour's pct untouched, so the
+          // stored total almost never landed on 100 — and parseFlowerPalette ALWAYS renormalizes to
+          // 100% the moment it reparses (every render reads curColors fresh from the stored string).
+          // Typing "60" for White next to Yellow's still-50 committed {White:60, Yellow:50} (110
+          // total), which reparsed as {White:54.5, Yellow:45.5} — correct arithmetic, wrong result:
+          // the owner typed 60/40, not 54.5/45.5. Redistributing the complement across the other
+          // colour(s) HERE, before it's ever stored, means the total is already 100 (up to rounding)
+          // and that later renormalize is a no-op. Two colours: the other one becomes exactly
+          // 100-newPct. Three or more: the remainder is split across the others in proportion to
+          // their OWN current relative weights, so editing one never silently flattens the ratio
+          // the other two already had between themselves.
+          const setRatio = (name, pct) => {
+            const newPct = Math.max(0, Math.min(100, Number(pct) || 0));
+            const others = curColors.filter(c => c.name !== name);
+            const remainder = Math.round((100 - newPct) * 10) / 10;
+            if (!others.length) { setFlowerColors(curColors.map(c => c.name === name ? { ...c, pct: newPct } : c)); return; }
+            const othersSum = others.reduce((s, c) => s + (Number(c.pct) || 0), 0);
+            let allocated = 0;
+            const nextOthers = others.map((c, i) => {
+              if (i === others.length - 1) return { ...c, pct: Math.round((remainder - allocated) * 10) / 10 };
+              const share = othersSum > 0
+                ? Math.round(((Number(c.pct) || 0) / othersSum) * remainder * 10) / 10
+                : Math.round((remainder / others.length) * 10) / 10;
+              allocated += share;
+              return { ...c, pct: share };
+            });
+            setFlowerColors(curColors.map(c => c.name === name ? { ...c, pct: newPct } : nextOthers.find(o => o.name === c.name)));
+          };
           const ratioSum = curColors.reduce((s, c) => s + (Number(c.pct) || 0), 0);
           const dot = (hex) => <span style={{width:10,height:10,borderRadius:"50%",background:hex,border:"1px solid rgba(0,0,0,0.18)",flexShrink:0}}/>;
           const curHex = curColors.length === 1 ? FLOWER_PALETTES.find(([n])=>n===curColors[0].name)?.[1] : null;
