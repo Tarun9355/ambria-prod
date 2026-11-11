@@ -1116,31 +1116,32 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       const sw = workbook.addWorksheet("Event Summary");
       // Widths only, no `header`: ExcelJS writes any column header into row 1, which put a stray
       // "Function" above the EVENT SUMMARY band. The real header row is added explicitly below.
+      // One total per function, no Decor / Transport split (Pratik sir's ask, 2026-11-11) - the split stays on
+      // each function's own tab. Columns: Function | Date · Venue | Function Total (column C).
       sw.columns = [
-        { key: "fn", width: 20 },
-        { key: "dv", width: 30 },
-        { key: "decor", width: 14 },
-        { key: "transport", width: 20 },
-        { key: "grand", width: 16 },
+        { key: "fn", width: 22 },
+        { key: "dv", width: 34 },
+        { key: "grand", width: 18 },
       ];
-      const swRow1 = sw.addRow(["EVENT SUMMARY", "", "", "", ""]);
-      sw.mergeCells(1, 1, 1, 5);
+      const swRow1 = sw.addRow(["EVENT SUMMARY", "", ""]);
+      sw.mergeCells(1, 1, 1, 3);
       swRow1.getCell(1).font = { bold: true, size: 13, color: { argb: white } };
       swRow1.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
       swRow1.height = 22;
-      const swHead = sw.addRow(["Function", "Date · Venue", "Decor", "Transport & Power", "Grand"]);
+      const swHead = sw.addRow(["Function", "Date · Venue", "Function Total"]);
       swHead.eachCell(c => { c.font = { bold: true, color: { argb: white } }; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: tan } }; });
+      swHead.getCell(3).alignment = { horizontal: "right" };
       // Placeholder flat values for now — swapped for cross-sheet formulas once the per-function
       // tabs (built below) exist to point at; swFnRows keeps each row so that pass can reach it.
       const swFnRows = [];
       combined.functions.forEach(fnObj => {
         const row = sw.addRow([
           fnObj.fnType || "—", `${fmtDate(fnObj.fnDate)} · ${fnObj.fnVenue || "—"}`,
-          // Grand includes this function's fee — it points at the tab's FUNCTION TOTAL WITH FEES
-          // (wired below), so the fee is carried in each function's row, not on a separate line.
-          fnObj.isEmpty ? 0 : (fnObj.decorTotal || 0), fnObj.isEmpty ? 0 : (fnObj.transportTotal || 0), fnObj.isEmpty ? 0 : ((fnObj.grand || 0) + fnFeeOf(fnObj)),
+          // The function's whole total - decor, transport and its fee - pointing at the tab's FUNCTION
+          // TOTAL WITH FEES (wired below).
+          fnObj.isEmpty ? 0 : ((fnObj.grand || 0) + fnFeeOf(fnObj)),
         ]);
-        [3, 4, 5].forEach(ci => { row.getCell(ci).numFmt = money.numFmt; row.getCell(ci).alignment = { horizontal: "right" }; });
+        row.getCell(3).numFmt = money.numFmt; row.getCell(3).alignment = { horizontal: "right" };
         swFnRows.push(row);
       });
       // Fixed-venue discount — % off the booked venue's own share of the total, when it's one of
@@ -1148,12 +1149,12 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       // when there actually is one, so a booking with no fixed-venue discount doesn't grow a ₹0 row.
       let discountRow = null;
       if ((combined.venueDiscount || 0) > 0) {
-        discountRow = sw.addRow(["FIXED-VENUE DISCOUNT", "", "", "", -combined.venueDiscount]);
-        sw.mergeCells(discountRow.number, 1, discountRow.number, 4);
+        discountRow = sw.addRow(["FIXED-VENUE DISCOUNT", "", -combined.venueDiscount]);
+        sw.mergeCells(discountRow.number, 1, discountRow.number, 2);
         discountRow.getCell(1).font = { bold: true, color: { argb: "FFB91C1C" } };
-        discountRow.getCell(5).numFmt = money.numFmt;
-        discountRow.getCell(5).alignment = { horizontal: "right" };
-        discountRow.getCell(5).font = { color: { argb: "FFB91C1C" } };
+        discountRow.getCell(3).numFmt = money.numFmt;
+        discountRow.getCell(3).alignment = { horizontal: "right" };
+        discountRow.getCell(3).font = { color: { argb: "FFB91C1C" } };
       }
       // No separate fee line here any more (by request): the Professional Design, Management &
       // Execution fee is already inside each function's Grand above, and shown as its own row on
@@ -1164,14 +1165,14 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       // cached value has to match what the formula gives, or a viewer that shows cached values
       // (WhatsApp/phone previews) prints the negotiated amount here and a ₹0 discount under it.
       const sysTotal = combined.systemGrandTotal ?? combined.eventGrandTotal ?? 0;
-      const gtRow = sw.addRow(["EVENT GRAND TOTAL", "", "", "", sysTotal]);
-      sw.mergeCells(gtRow.number, 1, gtRow.number, 4);
+      const gtRow = sw.addRow(["EVENT GRAND TOTAL", "", sysTotal]);
+      sw.mergeCells(gtRow.number, 1, gtRow.number, 2);
       gtRow.getCell(1).font = { bold: true, size: 12, color: { argb: white } };
       gtRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
-      gtRow.getCell(5).font = { bold: true, size: 13, color: { argb: gold } };
-      gtRow.getCell(5).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
-      gtRow.getCell(5).numFmt = money.numFmt;
-      gtRow.getCell(5).alignment = { horizontal: "right" };
+      gtRow.getCell(3).font = { bold: true, size: 13, color: { argb: gold } };
+      gtRow.getCell(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+      gtRow.getCell(3).numFmt = money.numFmt;
+      gtRow.getCell(3).alignment = { horizontal: "right" };
 
       // Negotiated deal amount (Summary screen) — when the salesperson has recorded one, the guest
       // sees the paper trail: the system's list-price total, the discount that got them to the
@@ -1184,27 +1185,27 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         // negative "discount" to the client.
         const isAdd = negotiatedAmount > sysTotal;
         const discount = isAdd ? negotiatedAmount - sysTotal : sysTotal - negotiatedAmount;
-        const discRow = sw.addRow([isAdd ? "ADJUSTMENT" : "DISCOUNT", "", "", "", discount]);
-        sw.mergeCells(discRow.number, 1, discRow.number, 4);
+        const discRow = sw.addRow([isAdd ? "ADJUSTMENT" : "DISCOUNT", "", discount]);
+        sw.mergeCells(discRow.number, 1, discRow.number, 2);
         discRow.getCell(1).font = { bold: true, size: 11, color: { argb: "FFB91C1C" } };
         discRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
-        discRow.getCell(5).font = { bold: true, size: 12, color: { argb: "FFB91C1C" } };
-        discRow.getCell(5).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
-        discRow.getCell(5).numFmt = money.numFmt;
-        discRow.getCell(5).alignment = { horizontal: "right" };
-        const negRow = sw.addRow(["FINAL NEGOTIATED AMOUNT", "", "", "", negotiatedAmount]);
-        sw.mergeCells(negRow.number, 1, negRow.number, 4);
+        discRow.getCell(3).font = { bold: true, size: 12, color: { argb: "FFB91C1C" } };
+        discRow.getCell(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } };
+        discRow.getCell(3).numFmt = money.numFmt;
+        discRow.getCell(3).alignment = { horizontal: "right" };
+        const negRow = sw.addRow(["FINAL NEGOTIATED AMOUNT", "", negotiatedAmount]);
+        sw.mergeCells(negRow.number, 1, negRow.number, 2);
         negRow.getCell(1).font = { bold: true, size: 12, color: { argb: white } };
         negRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
-        negRow.getCell(5).font = { bold: true, size: 13, color: { argb: gold } };
-        negRow.getCell(5).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
-        negRow.getCell(5).numFmt = money.numFmt;
-        negRow.getCell(5).alignment = { horizontal: "right" };
+        negRow.getCell(3).font = { bold: true, size: 13, color: { argb: gold } };
+        negRow.getCell(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: dark } };
+        negRow.getCell(3).numFmt = money.numFmt;
+        negRow.getCell(3).alignment = { horizontal: "right" };
         // Discount = grand total − negotiated amount, as a formula over those two cells — once the
         // pass below fills in gtRow's real formula, editing any function's numbers flows all the way
         // through to here too. FINAL NEGOTIATED AMOUNT itself stays a flat number: it's the actual
         // manual override the salesperson entered, not something derived from other cells.
-        discRow.getCell(5).value = { formula: isAdd ? `E${negRow.number}-E${gtRow.number}` : `E${gtRow.number}-E${negRow.number}`, result: discount };
+        discRow.getCell(3).value = { formula: isAdd ? `C${negRow.number}-C${gtRow.number}` : `C${gtRow.number}-C${negRow.number}`, result: discount };
       }
 
       // ═══ Per-function tabs — one worksheet per function, after the Event Summary tab above. ═══
@@ -1353,10 +1354,8 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
         const row = swFnRows[i];
         if (!ref || ref.isEmpty) return;
         const sn = qsheet(ref.sheetName);
-        if (ref.decorRows.length) row.getCell(3).value = { formula: `SUM(${ref.decorRows.map(r => `${sn}!H${r}`).join(",")})`, result: fnObj.decorTotal || 0 };
-        row.getCell(4).value = ref.transportRow ? { formula: `${sn}!H${ref.transportRow}`, result: fnObj.transportTotal || 0 } : 0;
-        // Grand = the tab's FUNCTION TOTAL WITH FEES, so each function's row already carries its fee.
-        row.getCell(5).value = { formula: `${sn}!H${ref.allInRow}`, result: (fnObj.grand || 0) + fnFeeOf(fnObj) };
+        // Function Total = the tab's FUNCTION TOTAL WITH FEES - decor, transport and the fee in one figure.
+        row.getCell(3).value = { formula: `${sn}!H${ref.allInRow}`, result: (fnObj.grand || 0) + fnFeeOf(fnObj) };
       });
       // EVENT GRAND TOTAL = the Grand column (fees included) plus the fixed-venue discount line when
       // there is one (a negative number). Summing the column on this sheet keeps it live: edit any
@@ -1364,7 +1363,7 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
       // it's a per-venue proration (see proratedVenueDiscount), not a flat %.
       if (swFnRows.length) {
         const first = swFnRows[0].number, last = swFnRows[swFnRows.length - 1].number;
-        gtRow.getCell(5).value = { formula: `SUM(E${first}:E${last})${discountRow ? `+E${discountRow.number}` : ""}`, result: sysTotal };
+        gtRow.getCell(3).value = { formula: `SUM(C${first}:C${last})${discountRow ? `+C${discountRow.number}` : ""}`, result: sysTotal };
       }
 
       // File name: guest name + the earliest function's date + venue — functions are already
