@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { SHIFT_START_HOUR } from "../../lib/studio/dihariWindows.js";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits, flowerPaletteHexFor } from "../../lib/ims/helpers";
-import { buildDeptCrew, orderWinIds as orderWinIdsShared, flowerTraceForFn as flowerTraceForFnShared, setMpPatch, addMpPatch, removeMpPatch, actualCrewPatch, resetLinePatch, mpDayPatch, resetMpDayPatch, shiftCountPatch, addDihariPatch, removeDihariPatch, eventLabourInfo, eventLabourTotalDeptOps } from "../../lib/ims/deptCrew";
+import { buildDeptCrew, orderWinIds as orderWinIdsShared, flowerTraceForFn as flowerTraceForFnShared, setMpPatch, addMpPatch, removeMpPatch, actualCrewPatch, resetLinePatch, mpDayPatch, resetMpDayPatch, shiftCountPatch, shiftSplitPatch, addDihariPatch, removeDihariPatch, eventLabourInfo, eventLabourTotalDeptOps } from "../../lib/ims/deptCrew";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel } from "../../lib/ims/deptClassify";
 import { TabsMenu, useConfirm, Modal } from "../../components/ui";
@@ -791,6 +791,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // fresh on every click from the event as it stands, so it is always the latest.
   const [deckView, setDeckView] = useState(null); // null | {url, name} — url is a blob: URL
   const [mpDayHow, setMpDayHow] = useState({}); // which per-day rows have their "how" derivation expanded
+  const [splitOpen, setSplitOpen] = useState({}); // which dihari pills (type|date|winId) have their in-house/vendor split editor expanded
   const [routeDraft, setRouteDraft] = useState({}); // dismantle routing draft per item: {qty, type, toEventId}
   const [manTruck, setManTruck] = useState({}); // confirm-time truck details per destination group: {[groupKey]:{vehicle,driver,phone}}
   const [manSel, setManSel] = useState({}); // which items load on THIS truck (transfer groups): {[groupKey::itemKey]:false} (default selected)
@@ -1049,7 +1050,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const {
     deptData, mpFns, hasMpSnapshot, mpDetailRaw,
     mpRows, mpDay, mpWin, mpWinCountRaw, mpWinCount,
-    effDay, effWinIds, effWin, effShift, lineCost, mpCost, mpPlannedCost, mpEdited,
+    effDay, effWinIds, effWin, effShift, effSplit, lineCost, mpCost, mpPlannedCost, mpEdited,
   } = crew;
   const orderWinIds = (ids, winDefs, date) => orderWinIdsShared(ids, winDefs, date, mpFns);
   const flowerTraceForFn = (fn) => flowerTraceForFnShared(fn, { inventory, invByIdMp, flowerPatterns });
@@ -1116,6 +1117,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // A cleared box (val "") drops the head's own count for that shift, so it falls back to the
   // slot's default (Deal Check's per-shift count, else the functions it serves — slotDefaults).
   const setShiftCount = (type, date, winId, val, curIds) => saveDept(shiftCountPatch(crew, type, date, winId, val, curIds));
+  // In-house vs vendor split of one shift's headcount (owner ask, 2026-11-11). The vendor select is
+  // a plain text field for now — the dedicated Ops vendor list this should read from doesn't exist
+  // yet (vendorId is already carried through the data/patch so swapping in a real picker later is a
+  // UI-only change, no data migration).
+  const setSplit = (type, date, winId, val) => saveDept(shiftSplitPatch(crew, type, date, winId, val));
   // Add another dihari (shift) to a day — the next unused scheme window, else a synthetic slot — so ops
   // can split a single day into e.g. 2 crew in the day shift + 1 in the evening (each shift billed).
   const addDihari = (r, date, curIds) => saveDept(addDihariPatch(crew, r, date, curIds));
@@ -2868,15 +2874,52 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                     3 evening). Same mpWinCount data + cost model as the on-site editor → synced. */}
                 {hasWin && editable && (
                   <span className="flex flex-wrap items-center gap-1.5 min-w-0">
-                    {ids.map((id, si) => { const wd = winDefs.find(w => w.id === id); const lbl = wd ? wd.label : `dihari ${si + 1}`; return (
+                    {ids.map((id, si) => { const wd = winDefs.find(w => w.id === id); const lbl = wd ? wd.label : `dihari ${si + 1}`;
+                      const splitKey = `${r.type}|${d.date}|${id}`; const sp = effSplit(r, d, id); return (
                       <span key={id} className="inline-flex items-center gap-1 rounded-md bg-gray-50 ring-1 ring-gray-200 pl-1.5 pr-0.5 py-0.5">
                         <span className="text-[12.5px] text-gray-500 whitespace-nowrap">{lbl}</span>
                         <input type="number" min="0" value={effShift(r, d, id)} onChange={e => setShiftCount(r.type, d.date, id, e.target.value, ids)} className="w-11 rounded bg-white ring-1 ring-gray-200 px-1 py-0 text-[13.5px] font-semibold text-center text-gray-900" />
+                        <button onClick={() => setSplitOpen(o => ({ ...o, [splitKey]: !o[splitKey] }))}
+                          title={sp.vendor > 0 ? `${sp.inHouse} in-house · ${sp.vendor} vendor${sp.vendorName ? ` (${sp.vendorName})` : ""} — click to edit` : "Split this shift's crew between in-house staff and a vendor"}
+                          className={"text-[10.5px] font-semibold rounded px-1 py-0 leading-none whitespace-nowrap " + (splitOpen[splitKey] ? "bg-indigo-600 text-white" : sp.vendor > 0 ? "bg-indigo-100 text-indigo-700" : "text-gray-300 hover:text-indigo-500")}>
+                          {sp.vendor > 0 ? `${sp.vendor}v` : "split"}
+                        </button>
                         {ids.length > 1 && <button onClick={() => removeDihari(r.type, d.date, id, ids)} className="w-4 h-4 rounded text-gray-300 hover:text-red-500 text-[13.5px] leading-none" title="remove this dihari">×</button>}
                       </span>
                     ); })}
                     <button onClick={() => addDihari(r, d.date, ids)} className="text-[12.5px] font-semibold text-blue-600 hover:bg-blue-50 rounded-md px-1.5 py-0.5" title="Add another dihari (shift) this day">+ dihari</button>
                     {dayHasEdits(r.type, d.date) && <button onClick={() => resetMpDay(r.type, d.date)} disabled={!canManpower || lock.locked} className="text-[12.5px] font-semibold text-amber-600 hover:bg-amber-50 rounded-md px-1.5 py-0.5 disabled:opacity-50" title={lock.locked ? "Actuals are locked for this event" : "Undo this day's hand edits (shifts, per-shift crew, day crew) and go back to the system plan"}>↺ reset</button>}
+                    {/* In-house/vendor split editor — only the vendor count is ever stored (effSplit's own
+                        comment, lib/ims/deptCrew.js); in-house is always (shift total − vendor), so editing
+                        the "In-house" box here just computes and stores the complementary vendor number. */}
+                    {ids.filter(id => splitOpen[`${r.type}|${d.date}|${id}`]).map(id => {
+                      const wd = winDefs.find(w => w.id === id); const lbl = wd ? wd.label : "this shift";
+                      const sp = effSplit(r, d, id); const splitKey = `${r.type}|${d.date}|${id}`;
+                      return (
+                        <span key={"split-" + id} className="basis-full flex flex-wrap items-center gap-2 mt-1 p-2 rounded-md bg-indigo-50/60 ring-1 ring-indigo-100">
+                          <span className="text-[12px] font-semibold text-indigo-700 whitespace-nowrap">Split {lbl} ({sp.total}):</span>
+                          <span className="inline-flex items-center gap-1 text-[12px] text-gray-600">
+                            In-house
+                            <input type="number" min="0" max={sp.total} value={sp.inHouse} disabled={!canManpower || lock.locked}
+                              onChange={e => setSplit(r.type, d.date, id, { vendor: Math.max(0, sp.total - (Number(e.target.value) || 0)), vendorName: sp.vendorName, vendorId: sp.vendorId })}
+                              className="w-11 rounded bg-white ring-1 ring-gray-200 px-1 py-0 text-[13px] font-semibold text-center text-gray-900 disabled:opacity-50" />
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-[12px] text-gray-600">
+                            Vendor
+                            <input type="number" min="0" max={sp.total} value={sp.vendor} disabled={!canManpower || lock.locked}
+                              onChange={e => setSplit(r.type, d.date, id, { vendor: e.target.value, vendorName: sp.vendorName, vendorId: sp.vendorId })}
+                              className="w-11 rounded bg-white ring-1 ring-gray-200 px-1 py-0 text-[13px] font-semibold text-center text-gray-900 disabled:opacity-50" />
+                          </span>
+                          {sp.vendor > 0 && (
+                            <input type="text" placeholder="Vendor name" value={sp.vendorName} disabled={!canManpower || lock.locked}
+                              onChange={e => setSplit(r.type, d.date, id, { vendor: sp.vendor, vendorName: e.target.value, vendorId: sp.vendorId })}
+                              title="Free-text for now — becomes a picker once the Ops vendor list is wired up here"
+                              className="flex-1 min-w-[120px] rounded bg-white ring-1 ring-gray-200 px-2 py-0.5 text-[12.5px] text-gray-900 disabled:opacity-50" />
+                          )}
+                          <button onClick={() => setSplitOpen(o => ({ ...o, [splitKey]: false }))} className="ml-auto text-[11px] text-gray-400 hover:text-gray-600">done</button>
+                        </span>
+                      );
+                    })}
                   </span>
                 )}
                 {hasWin && !editable && (

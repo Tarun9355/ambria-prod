@@ -187,6 +187,7 @@ export function buildDeptCrew({ sel, dept, settings, inventory, flowerPatterns, 
 
   const mpDay = (deptData.mpDay && typeof deptData.mpDay === "object") ? deptData.mpDay : {};
   const mpWin = (deptData.mpWin && typeof deptData.mpWin === "object") ? deptData.mpWin : {};
+  const mpWinSplit = (deptData.mpWinSplit && typeof deptData.mpWinSplit === "object") ? deptData.mpWinSplit : {};
   const mpWinCountRaw = (deptData.mpWinCount && typeof deptData.mpWinCount === "object") ? deptData.mpWinCount : {};
   const mpWinBasis = (deptData.mpWinBasis && typeof deptData.mpWinBasis === "object") ? deptData.mpWinBasis : {};
   const mpWinCount = Object.fromEntries(Object.entries(mpWinCountRaw).map(([type, byDate]) => [type, Object.fromEntries(Object.entries(byDate || {}).map(([date, byWin]) => {
@@ -200,6 +201,16 @@ export function buildDeptCrew({ sel, dept, settings, inventory, flowerPatterns, 
   const effWinIds = (r, d) => { const ov = mpWin[r.type]; return ov && ov[d.date] != null ? ov[d.date] : (Array.isArray(d.windowIds) ? d.windowIds : []); };
   const effWin = (r, d) => mpEffWindows(r, d, mpWin);
   const effShift = (r, d, winId) => { const wc = mpWinCount[r.type] && mpWinCount[r.type][d.date]; if (wc && wc[winId] != null) return Number(wc[winId]); const sc = d && d.winCount; if (sc && sc[winId] != null) return Number(sc[winId]); return Math.round(effDay(r, d)); };
+  // In-house vs vendor split of one shift's headcount. Only the vendor side is ever stored — the
+  // in-house side is always (shift total − vendor), so a later edit to the shift's own count (the
+  // pill above) can never leave the split summing to something other than the shift's real total;
+  // it just silently widens/narrows the in-house share instead of going stale.
+  const effSplit = (r, d, winId) => {
+    const total = effShift(r, d, winId);
+    const s = mpWinSplit[r.type] && mpWinSplit[r.type][d.date] && mpWinSplit[r.type][d.date][winId];
+    const vendor = s ? Math.min(total, Math.max(0, Number(s.vendor) || 0)) : 0;
+    return { total, vendor, inHouse: total - vendor, vendorName: s?.vendorName || "", vendorId: s?.vendorId || null };
+  };
   const lineCost = (r) => r._scoped
     ? Math.round(r.schedule.reduce((s, d) => s + mpDayCost(r, d, mpDay, mpWin, mpWinCount, Number(r.rate) || 0), 0))
     : mpLineCost(r, mpDay, mpOverrides, mpWin, mpWinCount);
@@ -209,8 +220,8 @@ export function buildDeptCrew({ sel, dept, settings, inventory, flowerPatterns, 
 
   return {
     dept, deptData, deptTypes, mpFns, dihari, hasMpSnapshot, mpDetail, mpDetailRaw, autoSlots, sysPlan,
-    mpOverrides, mpExtra, mpRows, mpDay, mpWin, mpWinCountRaw, mpWinBasis, mpWinCount,
-    effDay, effWinIds, effWin, effShift, lineCost, mpCost, mpPlannedCost, mpEdited,
+    mpOverrides, mpExtra, mpRows, mpDay, mpWin, mpWinCountRaw, mpWinBasis, mpWinCount, mpWinSplit,
+    effDay, effWinIds, effWin, effShift, effSplit, lineCost, mpCost, mpPlannedCost, mpEdited,
   };
 }
 
@@ -255,14 +266,15 @@ export function resetLinePatch(crew, r) {
   const nw = { ...crew.mpWin }; delete nw[r.type];
   const no = { ...crew.mpOverrides }; delete no[r.type];
   const wc = { ...crew.mpWinCount }; delete wc[r.type];
-  return { mpDay: nd, mpWin: nw, mpOverrides: no, mpWinCount: wc };
+  const ws = { ...crew.mpWinSplit }; delete ws[r.type];
+  return { mpDay: nd, mpWin: nw, mpOverrides: no, mpWinCount: wc, mpWinSplit: ws };
 }
 export function mpDayPatch(crew, type, date, val) {
   return { mpDay: { ...crew.mpDay, [type]: { ...(crew.mpDay[type] || {}), [date]: val } } };
 }
 export function resetMpDayPatch(crew, type, date) {
   const drop = (m) => { if (!m[type] || m[type][date] == null) return m; const t = { ...m[type] }; delete t[date]; return { ...m, [type]: t }; };
-  return { mpWin: drop(crew.mpWin), mpWinCount: drop(crew.mpWinCountRaw), mpWinBasis: drop(crew.mpWinBasis), mpDay: drop(crew.mpDay) };
+  return { mpWin: drop(crew.mpWin), mpWinCount: drop(crew.mpWinCountRaw), mpWinBasis: drop(crew.mpWinBasis), mpDay: drop(crew.mpDay), mpWinSplit: drop(crew.mpWinSplit) };
 }
 // Set the crew for ONE shift on ONE day (per-shift split). A cleared box (val "") drops the
 // head's own count for that shift, so it falls back to the slot's default.
@@ -275,6 +287,19 @@ export function shiftCountPatch(crew, type, date, winId, val, curIds) {
   if (Array.isArray(curIds) && !curIds.includes(winId)) patch.mpWin = { ...crew.mpWin, [type]: { ...(crew.mpWin[type] || {}), [date]: [...curIds, winId] } };
   return patch;
 }
+// Set ONE shift's in-house/vendor split (owner ask, 2026-11-11: split a dihari's headcount between
+// staff and a vendor's own crew). Only `vendor` (+ the vendor identity) is ever stored — see effSplit's
+// own comment for why in-house is never a separate stored number. vendor<=0 and no vendor picked
+// clears the entry entirely, so an un-split shift carries no split data at all (same "absence means
+// default" convention mpWinCount/mpWin already use).
+export function shiftSplitPatch(crew, type, date, winId, { vendor, vendorName, vendorId } = {}) {
+  const t = { ...(crew.mpWinSplit[type] || {}) };
+  t[date] = { ...(t[date] || {}) };
+  const v = Math.max(0, Number(vendor) || 0);
+  if (v <= 0 && !vendorName && !vendorId) delete t[date][winId];
+  else t[date][winId] = { vendor: v, vendorName: vendorName || "", vendorId: vendorId || null };
+  return { mpWinSplit: { ...crew.mpWinSplit, [type]: t } };
+}
 // Add another dihari (shift) to a day — the next unused scheme window, else a synthetic slot.
 export function addDihariPatch(crew, r, date, curIds) {
   const wins = (crew.dihari[r.type] && Array.isArray(crew.dihari[r.type].windows)) ? crew.dihari[r.type].windows : [];
@@ -285,7 +310,8 @@ export function addDihariPatch(crew, r, date, curIds) {
 }
 export function removeDihariPatch(crew, type, date, slotId, curIds) {
   const t = { ...(crew.mpWinCount[type] || {}) }; if (t[date]) { const dd = { ...t[date] }; delete dd[slotId]; t[date] = dd; }
-  return { mpWin: { ...crew.mpWin, [type]: { ...(crew.mpWin[type] || {}), [date]: curIds.filter(x => x !== slotId) } }, mpWinCount: { ...crew.mpWinCount, [type]: t } };
+  const ws = { ...(crew.mpWinSplit[type] || {}) }; if (ws[date]) { const dd = { ...ws[date] }; delete dd[slotId]; ws[date] = dd; }
+  return { mpWin: { ...crew.mpWin, [type]: { ...(crew.mpWin[type] || {}), [date]: curIds.filter(x => x !== slotId) } }, mpWinCount: { ...crew.mpWinCount, [type]: t }, mpWinSplit: { ...crew.mpWinSplit, [type]: ws } };
 }
 
 // Merge a single department's patch into an event order, exactly as DepartmentOpsTab.jsx's
