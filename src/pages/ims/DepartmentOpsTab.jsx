@@ -571,7 +571,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // category); a plan synced before that was recorded falls back to its sub-category.
   // a sub-category's department as Labours splits it: its map entry / keyword, else its category's (makeSubcatDept)
   const subcatDept = useMemo(() => makeSubcatDept(inventory, catDeptCfg), [inventory, settings?.categoryDepartments]); // eslint-disable-line react-hooks/exhaustive-deps
-  const usageDept = (ur) => ur?.dept || poolLabourDept(subcatDept(ur?.sub));
+  // the crew pool by the rule as it stands now (the item's own department, else its sub-category's) - not the pool an older sync
+  // recorded (ur.dept), so a Floral item is in Floral's crew and never in Structure's, re-synced or not (lib/ims/deptCrew usageDept)
+  const usageDept = (ur) => poolLabourDept(ur?.ownDept || subcatDept(ur?.sub));
   const dihari = settings?.dihariSchemes || {};
   const [confirm, confirmDialog] = useConfirm();
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";

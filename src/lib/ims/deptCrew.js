@@ -10,6 +10,7 @@ import { withSetupSlot } from "../studio/dihariWindows.js";
 import { mpDayWise, mpBaseDay, mpEffDay, mpEffWindows, mpLineCost, mpDayCost, mpDayDihari } from "./helpers";
 import { matchFlowerPattern } from "./flowerHelpers";
 import { walkKitUnits } from "./helpers";
+import { poolLabourDept, makeSubcatDept } from "./deptClassify";
 import { DEPTS } from "./deptClassify";
 
 // Primary manpower types per department (for the editable crew plan) — every department except
@@ -92,18 +93,19 @@ export const flowerTraceForFn = (fn, { inventory, invByIdMp, flowerPatterns }) =
   return { fn: fn?.type || "Function", shift: fn?.shift || "", rows, result: Math.ceil(rows.reduce((s, r) => s + r.need, 0)) };
 };
 
-// A labour usage row belongs to the department Deal Check charged it to (ur.dept — the item's own
-// category); a plan synced before that was recorded falls back to its sub-category.
-const usageDept = (ur, catToDept) => ur?.dept || catToDept(ur?.sub);
+// A labour usage row's crew pool, by the rule as it stands now - the item's own department (ownDept, recorded by Deal Check),
+// else its sub-category's (makeSubcatDept: map entry / keyword / its category's), pooled - not the pool an older sync recorded
+// (ur.dept): a Floral item (Cabinets Console) must never sit in Structure's crew, synced before the rule changed or not.
+const usageDept = (ur, subDept) => poolLabourDept(ur?.ownDept || subDept(ur?.sub));
 
-const fnCrewForDay = (s, d, { mpFns, dept, catToDept, flowerPatterns, inventory, invByIdMp }) => {
+const fnCrewForDay = (s, d, { mpFns, dept, subDept, flowerPatterns, inventory, invByIdMp }) => {
   const t = d?.trace;
   if (!t || d.phase !== "event") return null;
   const fnsToday = mpFns.filter(f => String(f?.date || "").slice(0, 10) === d.date);
   if (s.shared) {
     if (t.kind !== "labours" || !Array.isArray(t.byFn) || !t.byFn.length) return null;
     return t.byFn.map(c => {
-      const rows = Array.isArray(c?.trace?.usageRows) ? c.trace.usageRows.filter(ur => usageDept(ur, catToDept) === dept) : [];
+      const rows = Array.isArray(c?.trace?.usageRows) ? c.trace.usageRows.filter(ur => usageDept(ur, subDept) === dept) : [];
       const need = Math.round(rows.reduce((acc, ur) => acc + (Number(ur.need) || 0), 0) * 100) / 100;
       return { shift: c.shift || fnsToday.find(f => f?.type === c.fn)?.shift || "", crew: Math.ceil(need) };
     });
@@ -144,7 +146,8 @@ export function buildDeptCrew({ sel, dept, settings, inventory, flowerPatterns, 
   const mpFns = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
   const dihari = settings?.dihariSchemes || {};
   const invByIdMp = new Map((inventory || []).map(i => [i.id, i]));
-  const fcCtx = { mpFns, dept, catToDept, flowerPatterns, inventory, invByIdMp, deptData, dihari };
+  const subDept = makeSubcatDept(inventory, settings?.categoryDepartments && typeof settings.categoryDepartments === "object" ? settings.categoryDepartments : {});
+  const fcCtx = { mpFns, dept, catToDept, subDept, flowerPatterns, inventory, invByIdMp, deptData, dihari };
 
   const hasMpSnapshot = !!(sel?.manpowerDetail && typeof sel.manpowerDetail === "object" && Object.keys(sel.manpowerDetail).length);
   const mpDetailRaw = (sel?.manpowerDetail && Array.isArray(sel.manpowerDetail[dept])) ? sel.manpowerDetail[dept] : (hasMpSnapshot ? [] : null);
