@@ -26,7 +26,7 @@ import { resolveBeamSegment, resolvePillarHeight } from "./trussEngine";
 import { fitUrl } from "../studio/thumb.js";
 import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiFlower } from "./flowerHelpers";
 import { swatchHexFor } from "../studio/colours";
-import { buildFabricGroups } from "./fabricGroups";
+import { buildFabricGroups, isFabricLine } from "./fabricGroups";
 import { mandiHow } from "./floralHow";
 import { buildEventSwap, swappedRecipeFlower } from "./mandiSwap";
 import { realLineTaker } from "./floralBook";
@@ -1002,7 +1002,12 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
 
     // Deal Check's one "🖨 Print / signage" row says only how many jobs there are; it is replaced
     // below by one card per job, read from the build.
-    const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id) && b.sub !== "print").map(b => {
+    // Deal Check's whole-event fabric lines ("Liza Fabric (Old)", "Wall Masking (New)"...) and truss lines ("Truss pillar 12ft", sub
+    // "truss structure") are no zone's item, so they used to land here as "Also on site" (owner report 2026-11-11) - but each zone page
+    // already shows them (the fabric strip, the truss table) and the loading list carries the totals. Left out wherever those show.
+    const shownOnZones = (b) => (isFabricLine(b) && (showStruct || inBook("Fabric")))
+      || (String(b.sub || "").trim().toLowerCase() === "truss structure" && showTrussTable);
+    const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id) && b.sub !== "print" && !shownOnZones(b)).map(b => {
       const inv = (b.invId && invById.get(String(b.invId))) || invByName.get(String(b.name || "").trim().toLowerCase()) || null;
       const kitOf = String(b.fromKit || "").trim();
       return { name: b.name, qty: Number(b.qty) || 0, photo: invPhoto(inv, b), dims: invDims(inv), prodOrBuy: b.prodOrBuy || null, kit: b.isKit ? (Array.isArray(b.components) ? b.components.length : 0) + (Array.isArray(b.recipeParts) ? b.recipeParts.length : 0) : 0, source: b.prodOrBuy === "buying" ? t("Buying") : b.prodOrBuy === "production" ? t("Production") : kitOf ? t("Inside {kit}", { kit: hn(kitOf) }) : "" };

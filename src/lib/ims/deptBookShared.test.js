@@ -37,4 +37,13 @@ describe("shared Fabric & Tenting book", () => {
     expect(one).toContain("Ivory Liza Drape");
     expect(one).not.toContain("Hexa Truss Pillar");
   });
+  it("fabric and truss totals are not 'Also on site' cards - the zone pages and the loading list carry them", () => {
+    const lines = [
+      { id: "Fabric:l", name: "Liza Fabric (Old)", qty: 29.88, sub: "" },
+      { id: "Tenting:t", name: "Truss pillar 12ft", qty: 8, sub: "truss structure" },
+    ];
+    const html = buildDeptBookHtml(ctx("Tenting", lines), {}, {}, { depts: ["Fabric", "Tenting"] });
+    expect(html).not.toContain("Also on site");
+    expect(html).toContain("Truss pillar 12ft"); // still in the loading list
+  });
 });
