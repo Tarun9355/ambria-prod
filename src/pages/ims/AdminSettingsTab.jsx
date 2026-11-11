@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { supabase, updateRow as rawUpdateRow, deleteRow as rawDeleteRow } from "../../lib/supabase";
 import { DEFAULT_AGENCY_FEE_PCT } from "../../lib/studio/agencyFee";
@@ -122,6 +122,47 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
   const setSettings = canEdit ? setSettingsProp : () => {};
   const updateRow = canEdit ? rawUpdateRow : () => Promise.reject(new Error("View only — you don't have edit access here"));
   const deleteRow = canEdit ? rawDeleteRow : () => Promise.reject(new Error("View only — you don't have edit access here"));
+  // One-time self-heal (owner report, 2026-11-11: "changing the qty in the mandi for a flower
+  // changes its qty in the recipes"). A recipe's flower row freezes its own pieces/unit ratio
+  // (fl.gsSnap, see renderSizeColumn below) the instant it's re-saved through the Recipes panel —
+  // after that, correcting a flower's Pcs/Unit in the Mandi Catalogue (packaging/pricing reasons)
+  // can never silently reinterpret what a recipe already says it needs. The actual cost math was
+  // NEVER affected either way — computePatternSizeCost always read fl.qty (stored in the mandi
+  // flower's own unit) directly, never gattharSize — but rows saved before gsSnap existed have none
+  // yet, so their "pcs" readout still falls back to the catalogue's LIVE value, i.e. still visibly
+  // drifts whenever that flower's Pcs/Unit changes elsewhere, for exactly this reason. Stamping
+  // today's gattharSize onto every such row once (on first load, no user action needed) makes it
+  // behave as if it had already been touched, closing the gap for every recipe that predates the
+  // freeze instead of only the next one someone happens to re-open.
+  const gsBackfillRan = useRef(false);
+  useEffect(() => {
+    if (!canEdit || gsBackfillRan.current || !settingsLoaded) return;
+    const patterns = settings.flowerPatterns || [];
+    const mandi = settings.mandiCatalogue || [];
+    if (!patterns.length || !mandi.length) return;
+    gsBackfillRan.current = true;
+    patterns.forEach((p) => {
+      let patChanged = false;
+      const sizes = { ...(p.sizes || {}) };
+      Object.keys(sizes).forEach((sz) => {
+        const sd = sizes[sz];
+        if (!sd?.flowers?.length) return;
+        let sizeChanged = false;
+        const flowers = sd.flowers.map((fl) => {
+          if (!fl?.flowerId || fl.gsSnap != null) return fl;
+          const flower = resolveMandiFlower(fl.flowerId, mandi)?.parent;
+          if (!flower || flower.unit === "piece") return fl;
+          const liveGS = Number(flower.gattharSize) || 0;
+          if (liveGS <= 0) return fl;
+          sizeChanged = true;
+          return { ...fl, gsSnap: liveGS };
+        });
+        if (sizeChanged) { sizes[sz] = { ...sd, flowers }; patChanged = true; }
+      });
+      if (patChanged) updateRow("flower_patterns", p.id, flowerPatternToRow({ ...p, sizes })).catch(() => {});
+    });
+  }, [canEdit, settingsLoaded, settings.flowerPatterns, settings.mandiCatalogue, updateRow]);
+
   const canManageCategories = hasIMSPerm(authUser, "inv_categories");
   // Same live source as Build's Flower Palette picker (lib/ims/helpers.js) — a new "Artificial
   // Flower Bunch" colour added in IMS is immediately both pickable in Build AND taggable here on a
