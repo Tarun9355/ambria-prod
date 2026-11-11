@@ -619,7 +619,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // reuse from an earlier function, which marked most of a booking "Repeat" without anyone choosing it.
       if (el?.repeatOverride === true) out.push("♻ " + t("Repeat"));
       const standing = inv ? standingQty(fvSettings, fn?.venue, inv.id) : 0;
-      if (standing > 0) out.push("📌 " + t("Fixed at venue ({n} standing)", { n: standing }));
+      // short enough for one line of the card's value column (the long form wrapped and ran out of the card)
+      if (standing > 0) out.push("📌 " + t("Fixed · {n} standing", { n: standing }));
       return out.join(" · ");
     };
     // ── TRUSS BREAKDOWN TABLE (pillars/beams/batta by size), on each truss zone's own page ──
@@ -1049,7 +1050,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       }
       return lines;
     };
-    const flLines = (it) => (it.paint?.size ? 1 : 0) + (it.extra || []).length + Math.max(0, nameLines(it.name) - 2);
+    // An extra row's value (Status "♻ Repeat · 📌 Fixed · 200 standing", a choice) can wrap in the ~140px right of its label -
+    // each line it wraps to is counted too, or its second line ran out past the card (owner report 2026-11-11).
+    const valueLines = (v) => Math.max(1, Math.ceil([...String(v ?? "")].length / 24)); // ~24 characters of 11px bold a line; an emoji is one
+    const flLines = (it) => (it.paint?.size ? 1 : 0) + (it.extra || []).reduce((n, [, v]) => n + valueLines(v), 0) + Math.max(0, nameLines(it.name) - 2);
     const card = (it, zone, num) => `
       ${it.photo ? `<div class="zc-ph" style="${bgCss(it.photo, 180)}${flLines(it) ? `height:${168 - flLines(it) * 20}px` : ""}" ${bgData(it.photo, 180)}></div>` : ""}
       ${num ? `<div class="zc-no">${num}</div>` : ""}

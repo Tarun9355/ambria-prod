@@ -104,6 +104,7 @@ export const PDF_HI = {
   "Reused from {fn}": "{fn} से दोबारा इस्तेमाल",
   "the earlier function": "पिछला फंक्शन",
   "Fixed at venue ({n} standing)": "वेन्यू पर फिक्स ({n} खड़े)",
+  "Fixed · {n} standing": "फिक्स · {n} खड़े",
 
   // The zone strip
   "Truss": "ट्रस",
