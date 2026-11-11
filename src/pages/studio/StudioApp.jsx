@@ -46,6 +46,7 @@ import { dealAgencyFeePct, feePctOf, DEFAULT_AGENCY_FEE_PCT } from "../../lib/st
 import { sameVenueHolds, siblingCarpetUse } from "../../lib/studio/carpetReuse";
 import { elementAfterPick } from "../../lib/studio/elementPick";
 import { syncElementKit, markKitCustom } from "../../lib/studio/kitVariants";
+import { pairSwaps, fnLabelOf } from "../../lib/studio/changeLog";
 import { printSqftOf, smallPrintFlat, printFlatForZone, PRINT_TRUCK_SUB } from "../../lib/studio/truckPrint";
 import { zoneDimLabel } from "../../lib/studio/zoneDims";
 import { withKitEdit } from "../../lib/studio/dealCheckSync";
@@ -13235,6 +13236,15 @@ export default function StudioApp() {
       const req = requiredByFn[fnIdx] || {};
       const prev = prevByFn[fnIdx] || {};
       const ids = new Set([...Object.keys(req), ...Object.keys(prev)]);
+      // Where each item sits in this function now (its cards' zones) - for the log's "where" (owner ask 2026-11-11: full detail)
+      const fnLabel = fnLabelOf(fn);
+      const zonesOfItem = {};
+      Object.entries(newCards[fnIdx] || {}).forEach(([cardKey, c]) => {
+        const zk = String(cardKey).split("::")[1] || "";
+        if (!c?.imsId || !zk) return;
+        const zLabel = fn.zoneNames?.[zk] || (fn.customZones || []).find((cz) => cz?.id === zk)?.name || zk.replace(/[_-]+/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+        (zonesOfItem[c.imsId] || (zonesOfItem[c.imsId] = new Set())).add(zLabel);
+      });
       ids.forEach((id) => {
         const now = req[id] || 0, was = prev[id] || 0;
         if (now === was) return;
@@ -13244,7 +13254,8 @@ export default function StudioApp() {
         const dept = catToDept(item?.cat || item?.category, dealCheckData?.categoryDepartments);
         const change = now === 0 ? "removed" : was === 0 ? "added" : "qty_changed";
         if (!changesByDept[dept]) changesByDept[dept] = [];
-        changesByDept[dept].push({ name: item?.name || id, qty: now || was, change });
+        // from / to / function / zones / sub-category: the log can say "151 → 157 · Cocktail · Entry", and pair a switch (changeLog)
+        changesByDept[dept].push({ name: item?.name || id, qty: now || was, change, from: was, to: now, fn: fnLabel, zones: [...(zonesOfItem[id] || [])], sub: item?.subCat || item?.subcategory || "" });
         // A kit's own components can belong to a completely different department than the kit
         // itself (carpentry/fabric/floral sub-parts inside a Structure-filed stage kit) — those
         // departments never learned an affected deal's kit changed at all, only the kit's own
@@ -13258,7 +13269,8 @@ export default function StudioApp() {
             const compDept = catToDept(ci.cat || ci.category, dealCheckData?.categoryDepartments);
             if (compDept === dept) return; // already notified via the kit's own department above
             if (!changesByDept[compDept]) changesByDept[compDept] = [];
-            changesByDept[compDept].push({ name: `${ci.name} (in ${item?.name || id})`, qty: (now || was) * (Number(si.qty) || 1), change });
+            const per = Number(si.qty) || 1;
+            changesByDept[compDept].push({ name: `${ci.name} (in ${item?.name || id})`, qty: (now || was) * per, change, from: was * per, to: now * per, fn: fnLabel, zones: [...(zonesOfItem[id] || [])], kitOf: item?.name || id });
           });
         }
       });
@@ -13355,7 +13367,9 @@ export default function StudioApp() {
 
     // Notify department heads — one plain, terminal log entry per affected department. Never gates
     // anything: the reservation above already happened regardless of this.
-    for (const [dept, items] of Object.entries(changesByDept)) {
+    for (const [dept, rawItems] of Object.entries(changesByDept)) {
+      // an item out and another of the same sub-category in, in one function, is one switch (lib/studio/changeLog pairSwaps)
+      const items = pairSwaps(rawItems);
       const amendReq = { ...makeAmendRequest({
         eventOrderId: eo.id, clientId: cli.id, clientName: cli.name || "",
         department: dept, items, reason: "Auto-logged: items changed on a sold deal",

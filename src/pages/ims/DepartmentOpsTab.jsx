@@ -969,6 +969,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       .sort((a, b) => (b.requestedAt || 0) - (a.requestedAt || 0));
     for (const r of rows) {
       const items = r.items || [];
+      // a switch the log recorded as one (lib/studio/changeLog pairSwaps) names exactly what it replaced
+      items.filter(it => it.change === "swapped").forEach(it => { if (!map.has(it.name)) map.set(it.name, { swappedFrom: it.fromName || "", at: r.requestedAt }); });
       const added = items.filter(it => it.change === "added");
       const removed = items.filter(it => it.change === "removed");
       if (!added.length || !removed.length) continue;
@@ -3967,16 +3969,30 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                          three verbs get their own colour and their own mark — added, removed and
                          qty-changed are genuinely different events. */
                       const VERB = {
+                        swapped: { label: "Switched", mark: "⇄", tile: "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200", qty: "text-indigo-700" },
                         added: { label: "Added", mark: "+", tile: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200", qty: "text-emerald-700" },
                         removed: { label: "Removed", mark: "−", tile: "bg-rose-50 text-rose-700 ring-1 ring-rose-200", qty: "text-rose-700" },
                         qty_changed: { label: "Quantity changed", mark: "±", tile: "bg-amber-50 text-amber-700 ring-1 ring-amber-200", qty: "text-amber-700" },
                       };
                       const groups = {};
                       (r.items || []).forEach(it => {
-                        const k = it.change === "removed" ? "removed" : it.change === "qty_changed" ? "qty_changed" : "added";
+                        const k = it.change === "swapped" ? "swapped" : it.change === "removed" ? "removed" : it.change === "qty_changed" ? "qty_changed" : "added";
                         (groups[k] = groups[k] || []).push(it);
                       });
-                      const keys = ["added", "qty_changed", "removed"].filter(k => groups[k]);
+                      const keys = ["swapped", "added", "qty_changed", "removed"].filter(k => groups[k]);
+                      // What the row says on its right: the count, "151 → 157 (+6)" for a change, "×8 → ×4" for a switch. Entries logged
+                      // before from / to were recorded have only qty.
+                      const qtyText = (k, it) => {
+                        const from = Number(it.from), to = Number(it.to);
+                        const has = Number.isFinite(from) && Number.isFinite(to) && it.from != null && it.to != null;
+                        if (k === "qty_changed" && has) { const d = to - from; return `${from} → ${to} (${d > 0 ? "+" : ""}${d})`; }
+                        if (k === "swapped" && has) return `×${from} → ×${to}`;
+                        if (k === "removed" && has) return `×${from}`;
+                        if (has) return `×${to}`;
+                        return it.qty ? `×${it.qty}` : "";
+                      };
+                      // where: the function and zone(s), and the kit a part sits in
+                      const whereText = (it) => [it.fn, (Array.isArray(it.zones) ? it.zones : []).join(", ")].filter(Boolean).join(" · ");
                       // The tile takes the verb of the entry's largest group. An entry that mixes
                       // verbs still lists each one below; the tile is a glance-level mark, and a
                       // mixed entry has no single true colour — so it takes the dominant one
@@ -4007,12 +4023,21 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                               <div key={k} className="mt-2.5">
                                 {keys.length > 1 && <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{VERB[k].label}</div>}
                                 <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
-                                  {groups[k].map((it, ii) => (
-                                    <div key={ii} className="flex items-center justify-between gap-3 px-3 py-2">
-                                      <span className="min-w-0 truncate text-xs text-gray-700" title={it.name}>{it.name}</span>
-                                      {it.qty ? <span className={"shrink-0 text-xs font-semibold tabular-nums " + VERB[k].qty}>×{it.qty}</span> : null}
-                                    </div>
-                                  ))}
+                                  {groups[k].map((it, ii) => {
+                                    const where = whereText(it);
+                                    const q = qtyText(k, it);
+                                    return (
+                                      <div key={ii} className="flex items-start justify-between gap-3 px-3 py-2">
+                                        <div className="min-w-0">
+                                          {k === "swapped"
+                                            ? <div className="text-xs text-gray-700" title={`${it.fromName || "?"} → ${it.name}`}><span className="text-gray-500 line-through decoration-gray-300">{it.fromName || "?"}</span> <span aria-hidden="true" className="text-indigo-500">→</span> <span className="font-semibold text-gray-900">{it.name}</span></div>
+                                            : <div className={"truncate text-xs " + (k === "removed" ? "text-gray-500 line-through decoration-gray-300" : "text-gray-700")} title={it.name}>{it.name}</div>}
+                                          {where && <div className="mt-0.5 truncate text-[11px] text-gray-400" title={where}>{where}</div>}
+                                        </div>
+                                        {q ? <span className={"shrink-0 text-xs font-semibold tabular-nums whitespace-nowrap " + VERB[k].qty}>{q}</span> : null}
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               </div>
                             ))}
