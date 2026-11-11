@@ -191,7 +191,7 @@ export const pillarCountForSpan = (spanLen, maxSpan = 30) => Math.max(2, Math.ce
 // need its own clean size, and pillar count itself could shift too, which this doesn't attempt), the
 // pillars for this height can't be assembled from stock at all (no beam choice fixes that), or the
 // typed value already builds clean (per the tolerant check above).
-export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piecesNeeded = 1, material } = {}) {
+export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piecesNeeded = 1, material, reserved } = {}) {
   const span = Number(typedSpan) || 0;
   if (span <= 0 || !trussInv?.beams) return null;
   if (resolvePillarHeight(Number(H) || 0, trussInv).shortage) return null;
@@ -202,7 +202,13 @@ export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piec
   if (pillarCount !== 2) return null; // 2+ gaps: see comment above
   const budget = span - pillarCount * pad;
   const toSpan = (b) => b + pillarCount * pad;
-  const stockOf = (size) => Number(trussInv.beams[String(size)]?.stock) || 0;
+  // FREE stock, not the raw catalog count — `reserved` (optional; reservedTrussStockOnDate,
+  // trussEngine.js) is how many of this size OTHER events already hold on this exact date, so a tip
+  // never recommends a size that's actually spoken for elsewhere, and an "already clean" catalog
+  // match that's fully booked out on this date still surfaces as a real shortage instead of going
+  // quiet. Omitted (as every call site before this existed), it's the same raw catalog check as
+  // before.
+  const stockOf = (size) => Math.max(0, (Number(trussInv.beams[String(size)]?.stock) || 0) - (Number(reserved?.beams?.[String(size)]) || 0));
 
   // Already builds from one clean piece, so there's nothing to suggest — resolveBeamSegment's own
   // joints === 0 (the SAME resolver buildTopology/the card's own cost preview actually build from,
@@ -213,11 +219,16 @@ export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piec
   // (grouped by size) but are a real joint, so joints is the only reliable "exactly one physical
   // piece" check.
   const r = resolveBeamSegment(budget, trussInv);
-  if (!r.shortage && r.joints === 0 && stockOf(r.pieces[0]?.size) >= piecesNeeded * (r.pieces[0]?.qty || 1)) return null;
+  const cleanAlready = !r.shortage && r.joints === 0;
+  const cleanSize = cleanAlready ? r.pieces[0]?.size : null;
+  const cleanNeeded = cleanAlready ? piecesNeeded * (r.pieces[0]?.qty || 1) : 0;
+  if (cleanAlready && stockOf(cleanSize) >= cleanNeeded) return null; // clean, and genuinely enough free stock
 
-  // Suggestions DO require an EXACT (zero-gap) stock match, with real stock for every copy this axis
-  // needs — the point of nudging the typed value is landing flush on a stock size, not trading the
-  // gap it already has for a different one.
+  // Suggestions DO require an EXACT (zero-gap) stock match, with real FREE stock for every copy this
+  // axis needs — the point of nudging the typed value is landing flush on a stock size, not trading
+  // the gap it already has for a different one. Runs even for an already-clean size that's merely
+  // short on FREE stock (cleanAlready above) — the typed value's own shape is fine, so a nearby size
+  // with enough free stock is still worth suggesting, same as the "needs a joint" case.
   const MAX_SEARCH_FT = 6; // a bigger nudge stops being a "quick tip"
   let down = null;
   for (let k = 1; k <= MAX_SEARCH_FT; k++) {
@@ -234,8 +245,109 @@ export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piec
     if (countFor(upSpan) !== pillarCount) break;
     if (stockOf(b) >= piecesNeeded) { up = { span: upSpan, budget: b }; break; }
   }
-  if (!down && !up) return null;
-  return { pillarCount, down, up };
+  if (!down && !up) {
+    // Nothing within 6ft either direction. A "needs a joint" span with no alternative has nothing
+    // more to say than before (null, same as always) — but an already-clean SHAPE that's just short
+    // on free stock still deserves a message (even with no fix to offer), so the UI can at least say
+    // why, rather than going silent on a span that looks fine but genuinely isn't buildable today.
+    if (cleanAlready) return { pillarCount, reason: "stock", size: cleanSize, free: stockOf(cleanSize), needed: cleanNeeded, down: null, up: null };
+    return null;
+  }
+  // size/free/needed describe the typed value's OWN (short-on-stock) match — only meaningful for
+  // "stock"; a "joint" span never had a clean size to begin with. Included here too (not just the
+  // no-alternative branch above) so a "stock" tip that DOES have a nearby fix still explains why the
+  // typed value itself fell short, instead of the UI silently interpolating "undefined".
+  return cleanAlready
+    ? { pillarCount, reason: "stock", size: cleanSize, free: stockOf(cleanSize), needed: cleanNeeded, down, up }
+    : { pillarCount, reason: "joint", down, up };
+}
+
+// Smart dim tip, HEIGHT axis — same intent as nearestCleanSpans (suggest a NEARBY typed value that
+// lands flush on real stock) but against resolvePillarHeight's own model: a height is "clean" when
+// it matches an in-stock PILLAR SIZE EXACTLY (joints: 0, no ground-spacer needed) — a pillar is one
+// piece or it needs an extra ground-spacer joint, there's no "almost clean" middle ground the way a
+// beam segment has its 1ft gap tolerance.
+// Picks DIRECTLY from the configured pillar-size list rather than walking foot-by-foot — a pillar
+// size can be fractional (7.5ft), and the clean set here IS just that list, not a derived budget
+// target, so a 1ft-step search could both waste steps and step past a valid fractional size.
+// `piecesNeeded`: how many pillars this truss's own topology needs AT THIS HEIGHT — every pillar in
+// one truss is the same height, so this is the structure's total pillar count (trussPillarCount,
+// below), not just 1.
+// Owner decision (2026-11-11): a working ground-spacer build (joints: 1) is a normal, accepted
+// build, not nudged away from — only a genuine stock shortfall (the exact size needed, pillar or
+// spacer beam, doesn't have enough FREE units on this date) or a height that can't be assembled from
+// stock at all gets surfaced here.
+export function nearestCleanHeights(typedH, { trussInv, piecesNeeded = 1, reserved } = {}) {
+  const H = Number(typedH) || 0;
+  if (H <= 0 || !trussInv?.pillars) return null;
+  const sizes = Object.keys(trussInv.pillars).map(Number).filter((n) => !Number.isNaN(n)).sort((a, b) => a - b);
+  if (!sizes.length) return null;
+  const pFree = (s) => Math.max(0, (Number(trussInv.pillars[String(s)]?.stock) || 0) - (Number(reserved?.pillars?.[String(s)]) || 0));
+  const bFree = (s) => Math.max(0, (Number(trussInv.beams?.[String(s)]?.stock) || 0) - (Number(reserved?.beams?.[String(s)]) || 0));
+  const freeOf = (type, size) => type === "pillar" ? pFree(size) : bFree(size);
+  const build = resolvePillarHeight(H, trussInv);
+
+  let reason, size = null, free = 0, needed = 0;
+  if (build.shortage) {
+    reason = "unbuildable";
+  } else if (build.joints === 0) {
+    size = H; needed = piecesNeeded; free = pFree(H);
+    if (free >= needed) return null; // already clean, enough free stock
+    reason = "stock";
+  } else {
+    // A two-spacer combo can repeat the SAME beam size twice (e.g. 14ft = a 10ft pillar + two 2ft
+    // ground beams) — resolvePillarHeight returns that as two separate pieces entries of the same
+    // size (trussEngine.js's own §23.3 R2 two-spacer branch), so checking each entry independently
+    // asked for only piecesNeeded of that size when the real need is piecesNeeded × how many times
+    // it's actually used — the same real stock IMS's own allocateTruss draws down from, just
+    // undercounted here. Sum need PER size first, then compare each size's total need to its free
+    // stock once.
+    const neededByKey = new Map();
+    (build.pieces || []).forEach((p) => {
+      const key = `${p.type}:${p.size}`;
+      neededByKey.set(key, (neededByKey.get(key) || 0) + piecesNeeded * (p.qty || 1));
+    });
+    let worst = null; // the piece whose shortfall is biggest — the one actually blocking this build
+    neededByKey.forEach((n, key) => {
+      const [type, sizeStr] = key.split(":");
+      const f = freeOf(type, Number(sizeStr));
+      if (f < n && (!worst || (f - n) < (worst.free - worst.needed))) worst = { size: Number(sizeStr), free: f, needed: n };
+    });
+    if (!worst) return null; // a working spacer build — left alone, not a tip
+    reason = "stock";
+    ({ size, free, needed } = worst);
+  }
+
+  const MAX_SEARCH_FT = 6;
+  const ok = sizes.filter((s) => s !== H && pFree(s) >= piecesNeeded);
+  const downCandidates = ok.filter((s) => s < H && H - s <= MAX_SEARCH_FT);
+  const upCandidates = ok.filter((s) => s > H && s - H <= MAX_SEARCH_FT);
+  const downSize = downCandidates.length ? downCandidates[downCandidates.length - 1] : null; // nearest below
+  const upSize = upCandidates.length ? upCandidates[0] : null; // nearest above
+  return {
+    reason, build, size, free, needed,
+    down: downSize != null ? { height: downSize, free: pFree(downSize) } : null,
+    up: upSize != null ? { height: upSize, free: pFree(upSize) } : null,
+  };
+}
+
+// How many pillars ONE truss structure actually needs at its own typed height — every pillar in a
+// truss shares the same H, so this is what nearestCleanHeights' piecesNeeded should be (u_only: the
+// span's own pillar count; half_box: that + 2 fixed back pillars; full_box: both axes' pillar counts
+// combined, corners shared). `matInv` is the material-resolved view (trussInvForMaterial) so
+// maxSpanFt/pillarWidthFt match whichever material this truss is actually built from.
+export function trussPillarCount(zc, matInv) {
+  const cfg = resolveTrussConfig(zc);
+  if (!cfg?.config) return 0;
+  const eng = matInv?.settings || {};
+  const d = zc?.dims || {};
+  const L = Number(d.L) || 0, W = Number(d.W) || 0, H = Number(d.H) || 0;
+  const spanFt = cfg.spanFt || (cfg.config === "full_box" ? Math.max(L, W) : 0);
+  const backDepth = zc?.trussBackDepth || eng.defaultBackDepthFt || 4;
+  // trussInv passed as null — this only needs pillar COUNT, not the beam-resolved physical
+  // footprint, so skipping it avoids resolving every beam segment just to read one number.
+  const topo = buildTopology(cfg.config, L, W, H, spanFt, backDepth, eng, null, zc?.trussMaterial);
+  return topo?.pillarCount || 0;
 }
 
 // §23 Phase 7 (2026-11-04, owner-confirmed worked examples) — three steps per axis: (1) budget =

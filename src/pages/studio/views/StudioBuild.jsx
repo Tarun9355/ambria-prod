@@ -22,7 +22,8 @@ import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
 import { trussRowCost, calcZoneFabricCost, calcZoneFabric, guestFabricMultiplier, fabricRepeatDiscount, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
-import { resolveTrussConfig, trussInvForMaterial, nearestCleanSpans } from "../../../lib/studio/pricing";
+import { resolveTrussConfig, trussInvForMaterial, nearestCleanSpans, nearestCleanHeights, trussPillarCount } from "../../../lib/studio/pricing";
+import { reservedTrussStockOnDate, skeletonMaterialKey } from "../../../lib/ims/trussEngine";
 import { fabricColourOptions, dropRemovedFabricColours } from "../../../lib/studio/fabricColourOptions";
 import { qtyUsedElsewhereInBuild } from "../../../lib/studio/dealAvailability";
 import { crossedMiddle } from "../../../lib/studio/zoneDrop";
@@ -141,7 +142,7 @@ const LOOSE_FABRIC_KINDS = [
 // titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
 // rather than writing a cut-down row is what keeps an added truss genuinely equal to the first —
 // front extension, the auto Box/Single-U line, custom ceiling and its own masking all included.
-export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1, trussRepeat = false }) {
+export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1, trussRepeat = false, trussReserved, stockDateLabel = "" }) {
   // What THIS truss structure costs. Same function the cost engine sums over every row, so the
   // figure on the card and the figure in the bill cannot drift.
   // guestPriceMultiplier — the 1.0/1.1/1.2…x dial (Build's own filter-rail dots) folds into the
@@ -319,42 +320,86 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 {zc.trT&&(Number(zc.trussFrontExt)||0)>0&&<div style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}} title="Height of the front extension (can differ from box height). Defaults to box height.">Ext height (ft)</div>
                   <NumField min={0} value={zc.trussFrontExtH||""} onCommit={n=>sZ({trussFrontExtH:n})} blankCommit commitOn="blur" placeholder={String(zc.dims?.H||0)} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>}
               </div>
-              {/* Smart dim tip (owner ask, 2026-11-04) — replaces the removed "+1ft/pillar" hint with
-                  one that actually reflects §23 Phase 7's budget→built→physical formula: suggests
-                  nudging a typed span to the NEAREST value (down or up) whose beam budget resolves to
-                  one clean in-stock beam (resolveBeamSegment's own joints===0, the same resolver the
-                  card's own preview builds from) instead of needing a joint. Checked per axis (Width/
-                  Depth) since Full Box's two sides each run the budget pipeline independently —
-                  nearestCleanSpans itself decides whether a given axis is even in play (a half_box's
-                  Depth is a fixed engineering setting, not something sales types, so it naturally
-                  yields nothing here). Also folds in pillar stock for this height (nearestCleanSpans
-                  returns null outright if the pillars themselves can't be assembled from stock — no
-                  beam choice fixes that) and, for Full Box, requires 2 units of stock per size (its
-                  front+back / left+right beams reuse the same segment length, so 1 unit isn't enough). */}
+              {/* Smart dim tip (owner ask, 2026-11-04; extended to Height + real stock availability,
+                  2026-11-11) — replaces the removed "+1ft/pillar" hint with one that actually
+                  reflects §23 Phase 7's budget→built→physical formula: suggests nudging a typed span
+                  to the NEAREST value (down or up) whose beam budget resolves to one clean in-stock
+                  beam (resolveBeamSegment's own joints===0, the same resolver the card's own preview
+                  builds from) instead of needing a joint. Checked per axis (Width/Depth) since Full
+                  Box's two sides each run the budget pipeline independently — nearestCleanSpans
+                  itself decides whether a given axis is even in play (a half_box's Depth is a fixed
+                  engineering setting, not something sales types, so it naturally yields nothing
+                  here). Also folds in pillar stock for this height (nearestCleanSpans returns null
+                  outright if the pillars themselves can't be assembled from stock — no beam choice
+                  fixes that) and, for Full Box, requires 2 units of stock per size (its front+back /
+                  left+right beams reuse the same segment length, so 1 unit isn't enough) — further
+                  multiplied by Truss Qty (copies below), since more than one copy needs that many
+                  more of the same size. `reserved` (trussReserved, computed once per date in the
+                  parent) nets OTHER events' real commitments off the raw catalog count, so a
+                  suggestion is never a size that's actually spoken for elsewhere on this date, and an
+                  "already clean" size that's fully booked out still surfaces as a real shortage
+                  (nearestCleanSpans/nearestCleanHeights' "stock" reason) instead of going quiet — a
+                  0-down/0-up "stock" result is still shown (it has something real to say: there's no
+                  nearby fix, but the typed value genuinely isn't buildable from what's free today),
+                  unlike a "joint" result with nothing nearby, which stays silent as it always has.
+                  Height gets the same "nearest clean value" treatment via nearestCleanHeights, but
+                  — owner decision, 2026-11-11 — a working ground-spacer build (joints: 1, e.g. 17ft =
+                  15ft pillar + 2ft beam) is a normal, accepted build and is never nudged away from;
+                  only a genuine stock shortfall or a height that can't be assembled at all surfaces. */}
               {fabricInv && (() => {
                 const matInv = trussInvForMaterial(fabricInv, zc.trussMaterial);
                 const eng = matInv.settings || {};
                 const H = Number(zc.dims?.H) || 0;
-                const piecesNeeded = resolveTrussConfig(zc).config === "full_box" ? 2 : 1;
-                const tips = [["W", "Width"], ["L", "Depth"]].map(([d, label]) => {
+                const cfg = resolveTrussConfig(zc);
+                const copies = zc.trussQty === 0 ? 0 : Math.max(1, Number(zc.trussQty) || 1);
+                const reserved = trussReserved?.[skeletonMaterialKey(fabricInv, zc.trussMaterial)];
+                const spanPiecesNeeded = (cfg.config === "full_box" ? 2 : 1) * copies;
+                const spanTips = copies === 0 ? [] : [["W", "Width"], ["L", "Depth"]].map(([d, label]) => {
                   const val = Number(zc.dims?.[d]) || 0;
                   if (!val) return null;
-                  const tip = nearestCleanSpans(val, H, { maxSpanFt: eng.maxSpanFt, trussInv: matInv, piecesNeeded, material: zc.trussMaterial });
-                  if (!tip || (!tip.down && !tip.up)) return null;
-                  return { d, label, val, ...tip };
+                  const tip = nearestCleanSpans(val, H, { maxSpanFt: eng.maxSpanFt, trussInv: matInv, piecesNeeded: spanPiecesNeeded, material: zc.trussMaterial, reserved });
+                  if (!tip) return null;
+                  // A "needs a joint" tip with nothing nearby to suggest has nothing useful to say —
+                  // stays silent, same as always. A "stock" tip is worth showing even with nothing
+                  // nearby: it's real news (this typed value genuinely isn't buildable from what's
+                  // free today), not just "no alternative found".
+                  if (tip.reason === "joint" && !tip.down && !tip.up) return null;
+                  return { kind: "span", d, label, val, ...tip };
                 }).filter(Boolean);
+                const heightPiecesNeeded = trussPillarCount(zc, matInv) * copies;
+                const hTip = (copies > 0 && H && heightPiecesNeeded)
+                  ? nearestCleanHeights(H, { trussInv: matInv, piecesNeeded: heightPiecesNeeded, reserved })
+                  : null;
+                const tips = [...spanTips, ...(hTip ? [{ kind: "height", label: "Height", val: H, ...hTip }] : [])];
                 if (!tips.length) return null;
+                const stockLabel = stockDateLabel ? `on ${stockDateLabel}` : "in stock";
                 return (
                   <div style={{marginBottom:6,fontSize:11,color:"#EF4444",fontWeight:600,lineHeight:1.5}}>
                     {tips.map((t) => {
+                      if (t.kind === "span") {
+                        const opts = [];
+                        if (t.down) opts.push(<span key="down">try <b>{t.down.span}ft</b> ({t.down.budget}ft beam)</span>);
+                        if (t.up) opts.push(<span key="up">try <b>{t.up.span}ft</b> ({t.up.budget}ft beam)</span>);
+                        if (t.reason === "stock" && !opts.length) {
+                          return <div key={t.d}>💡 {t.label} {t.val}ft uses a {t.size}ft beam — only {t.free} free {stockLabel} ({t.needed} needed), and nothing nearby is free either.</div>;
+                        }
+                        return (
+                          <div key={t.d}>
+                            💡 {t.label} {t.val}ft {t.reason === "stock" ? `uses a ${t.size}ft beam, only ${t.free} free ${stockLabel} (${t.needed} needed) —` : "needs a joint to build —"} {opts[0]}{opts[1] ? <> or {opts[1]}</> : null} instead.
+                          </div>
+                        );
+                      }
+                      // Height — "unbuildable" or "stock" only (a working spacer build is never tipped).
                       const opts = [];
-                      if (t.down) opts.push(<span key="down">try <b>{t.down.span}ft</b> ({t.down.budget}ft beam)</span>);
-                      if (t.up) opts.push(<span key="up">try <b>{t.up.span}ft</b> ({t.up.budget}ft beam)</span>);
-                      return (
-                        <div key={t.d}>
-                          💡 {t.label} {t.val}ft needs a joint to build — {opts[0]}{opts[1] ? <> or {opts[1]}</> : null} for a clean single beam.
-                        </div>
-                      );
+                      if (t.down) opts.push(<span key="down">try <b>{t.down.height}ft</b></span>);
+                      if (t.up) opts.push(<span key="up">try <b>{t.up.height}ft</b></span>);
+                      const lead = t.reason === "unbuildable"
+                        ? `💡 ${t.label} ${t.val}ft can't be built from pillar stock`
+                        // t.size/t.needed name the ACTUAL short piece — a spacer build's ground beam
+                        // can be what's short, not the pillar itself, and needs its own qty (e.g. 2
+                        // per pillar), not just heightPiecesNeeded.
+                        : `💡 ${t.label} ${t.val}ft — its ${t.size}ft piece: only ${t.free} free ${stockLabel} (${t.needed} needed)`;
+                      return <div key="height">{lead}{opts.length ? <> — {opts[0]}{opts[1] ? <> or {opts[1]}</> : null} for a clean single pillar.</> : "."}</div>;
                     })}
                   </div>
                 );
@@ -772,10 +817,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
 //
 // calcStructCost has always summed zc.extraTrussRows, and Deal Check, the truss engine and the
 // stock reservation all read them — Build was simply the one place with no way to create one.
-export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1, trussRepeat = false }) {
+export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1, trussRepeat = false, trussReserved, stockDateLabel = "" }) {
   const rows = zc.extraTrussRows || [];
   const write = (next) => sZ({ extraTrussRows: next });
-  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale, guestDiscPct, guestFabricDiscPct, maskingColours, maskingColourOptions, guestPriceMultiplier, trussRepeat };
+  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale, guestDiscPct, guestFabricDiscPct, maskingColours, maskingColourOptions, guestPriceMultiplier, trussRepeat, trussReserved, stockDateLabel };
   return (<>
     <TrussCard {...shared} zc={zc} sZ={sZ} sD={sD} title={rows.length ? "Truss 1" : "Truss"} />
     {rows.map((row, ri) => {
@@ -1334,6 +1379,17 @@ export default function StudioBuild({ ctx }) {
   // Pricing was never affected: collectAllFunctionData resolves per-function dates independently,
   // which is why the money was right while the panel lied about which day it was for.
   const fnDate = activeFnMeta?.date || clientDate;
+  // Units of each pillar/beam size other (non-cancelled, sold) events already hold on this exact
+  // date — the Smart dim tip (TrussCard, below) nets this off the raw IMS catalog count so it never
+  // recommends a size that's actually spoken for elsewhere, and an "already clean" catalog match
+  // that's fully booked out on this date still surfaces as a real shortage instead of going quiet.
+  // studioFloralData.trussAlloc is the SAME per-date pool IMS's own Planning dashboards and
+  // StudioApp's markSold pre-sale check (scanTrussStockShortage) already read — nothing new fetched.
+  const trussReserved = useMemo(
+    () => reservedTrussStockOnDate(studioFloralData?.trussAlloc?.[fnDate], { excludeClientId: activeClientId, trussInv: structRates?.trussInv }),
+    [studioFloralData?.trussAlloc, fnDate, activeClientId, structRates?.trussInv]
+  );
+  const stockDateLabel = fnDate ? new Date(fnDate + "T00:00:00").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }) : "";
   // The ACTIVE function's venue for every price on this page. `venue` is function 1's: passing it
   // (or no venue at all, for the structure discount) priced a later function's items and truss /
   // platform at function 1's venue — so Build could quote a different figure from Summary, the
@@ -3988,7 +4044,17 @@ undefined
                   {curColors.map(c=>(
                     <div key={c.name} style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
                       <span style={{fontSize:10.5,color:textP,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
-                      <input type="number" min={0} value={c.pct} onChange={e=>setRatio(c.name,e.target.value)} onClick={e=>e.stopPropagation()}
+                      {/* commitOn="blur" — parseFlowerPalette (lib/studio/pricing.js) always
+                          normalizes every ratio to sum to 100% the moment it reparses the stored
+                          string, which happens on every render (curColors is derived fresh from it).
+                          A plain controlled input committing on every keystroke fed that round-trip
+                          back in immediately: typing "6" toward "60" committed Orange:6 next to
+                          Pastel's still-50, which renormalized on the very next render to
+                          Orange:10.7/Pastel:89.3 before a second digit could ever be typed. Keeping
+                          the typed text local until blur — same fix NumField already gives every
+                          other quantity field in this app — lets both fields finish being typed
+                          before the normalize-to-100 math ever runs. */}
+                      <NumField commitOn="blur" min={0} value={c.pct} onCommit={pct=>setRatio(c.name,pct)} onClick={e=>e.stopPropagation()}
                         style={{width:44,padding:"2px 5px",borderRadius:5,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:10.5,textAlign:"center"}}/>
                       <span style={{fontSize:10,color:textS}}>%</span>
                     </div>
@@ -5762,7 +5828,7 @@ undefined
                   DCTrussTab still shows that detailed breakdown for its own purposes, unaffected. */}
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(zc,"truss")||!!structDiscountFor(zc,aVenue)?.truss} />}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(zc,"truss")||!!structDiscountFor(zc,aVenue)?.truss} trussReserved={trussReserved} stockDateLabel={stockDateLabel} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseNow()} guestPriceMultiplier={guestPriceMultiplier} guestDiscPct={structDiscountFor(zc,aVenue)?.platform?25:0} />}
@@ -6275,9 +6341,15 @@ undefined
                 </div>}
                 <div style={sectionBox}>
                   {secHead(<IconRuler size={14}/>,"Zone Dimensions","#C9A96E")}
+                  {/* trussReserved/stockDateLabel withheld (ownsLive=false): this card edits a
+                      photo's own saved details, not necessarily this date's live build — the
+                      stock-availability tip only makes sense against THIS date's real commitments,
+                      so reusing the live zone's reservations against a photo that may be for a
+                      different date entirely would be wrong. The tip still works off the raw
+                      catalog count either way. */}
                   <TrussStack S={S} customCeilingField={ownsLive?customCeilingField:noCustomField} k={zk} zc={cfgCur} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(cfgCur,"truss")||!!structDiscountFor(cfgCur,aVenue)?.truss} />
+                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} trussRepeat={repeatCatFor(cfgCur,"truss")||!!structDiscountFor(cfgCur,aVenue)?.truss} trussReserved={ownsLive?trussReserved:undefined} stockDateLabel={ownsLive?stockDateLabel:""} />
                   <FloorStack S={S} zc={cfgCur} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} guestPriceMultiplier={guestPriceMultiplier} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.platform?25:0} />
                 </div>
