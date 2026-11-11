@@ -339,6 +339,7 @@ export default function DCManpowerTab({ ctx }) {
                     venueParents: dealCheckData?.venueParents || {}, heavyElementRanges,
                     cardsForFn: (dcCards || {})[fns.indexOf(fn)], inventory: dealCheckData?.inventory || [],
                     trussInv: dealCheckData?.trussInv, fabricBangaliRanges, fabricRftPerWorker, trussLabourRanges,
+                    categoryDepartments: dealCheckData?.categoryDepartments || {}, // Labours' department split (manpowerCount makeSubcatDept)
                   });
                   const calcPeopleForType = (fn, type) => computePeople(fn, type, mpCtxFor(fn));
 

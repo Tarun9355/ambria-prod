@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { catToDept, DEPTS, userDepartments, canSeeDept, canSeeProdDept, poolLabourDept, poolLabourDeptLabel } from "./deptClassify";
+import { catToDept, DEPTS, userDepartments, canSeeDept, canSeeProdDept, poolLabourDept, poolLabourDeptLabel, catToDeptStrict, makeSubcatDept } from "./deptClassify";
 
 // This classifier decides which department EARNS a category's income (Deal Check → Dept Income,
 // IMS → Dept Ops) as well as which heading a row files under in Deal Check → Transport. A silent
@@ -155,5 +155,33 @@ describe("canSeeProdDept", () => {
     const u = { role: "Dept Head - Furniture" };
     expect(canSeeProdDept(u, "Painter & Production")).toBe(true);
     expect(canSeeProdDept(u, "Other")).toBe(true);
+  });
+});
+
+describe("makeSubcatDept - a sub-category inherits its category's department (owner report 2026-11-11)", () => {
+  const inv = [
+    { cat: "Floral Decor", subCat: "Console Table" }, { cat: "Floral Decor", subCat: "Console Table" }, { cat: "Furniture", subCat: "Console Table" },
+    { cat: "Flooring", subCat: "Carpet" }, { cat: "Decor", subCat: "Sofa" }, { cat: "Misc", subCat: "Widget" },
+  ];
+  const dept = makeSubcatDept(inv, {});
+  it("no keyword on the sub-category: its items' commonest category decides (Cabinets Console -> Floral, not Structure)", () => {
+    expect(dept("Console Table")).toBe("Floral");
+    expect(dept("console table", "Furniture")).toBe("Furniture"); // the item's own category, when known, wins
+  });
+  it("the sub-category's own keyword still wins (Carpet in 'Flooring' -> Tenting, Sofa in 'Decor' -> Furniture)", () => {
+    expect(dept("Carpet")).toBe("Tenting");
+    expect(dept("Sofa")).toBe("Furniture");
+  });
+  it("an admin mapping of the sub-category wins over everything", () => {
+    expect(makeSubcatDept(inv, { "console table": "Furniture" })("Console Table")).toBe("Furniture");
+  });
+  it("nothing to go on: Structure, as before", () => {
+    expect(dept("Widget")).toBe("Structure");
+    expect(dept("Unknown thing")).toBe("Structure");
+  });
+  it("catToDeptStrict: null instead of the catch-all", () => {
+    expect(catToDeptStrict("Console Table", {})).toBeNull();
+    expect(catToDeptStrict("Wooden Pillar", {})).toBe("Structure");
+    expect(catToDeptStrict("Flower Bunch", {})).toBe("Floral");
   });
 });

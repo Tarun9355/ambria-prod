@@ -22,7 +22,7 @@ import DCTrussTab from "./tabs/DCTrussTab.jsx";
 import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP_BG, INK, INK_2, INK_3, GOLD, GOLD_SOFT, BAD, BAD_SOFT, GOOD, GOOD_SOFT, DC_CSS, deptAccent } from "../../../lib/studio/dcTokens";
 import { thumbUrl } from "../../../lib/studio/thumb";
 import { matchFlowerPattern } from "../../../lib/ims/flowerHelpers";
-import { DEPTS as OPS_DEPTS, catToDept as sharedCatToDept, poolLabourDept } from "../../../lib/ims/deptClassify";
+import { DEPTS as OPS_DEPTS, catToDept as sharedCatToDept, poolLabourDept, makeSubcatDept } from "../../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { newSplitGroupId, reconcileDealCheckIntoBuild } from "../../../lib/studio/dealCheckSync.js";
@@ -731,6 +731,9 @@ export default function DealCheckOverlay({ ctx }) {
           // (Settings → Departments); else keyword matching. Sub-cat already implies its category.
           const catDeptCfg = dealCheckData?.categoryDepartments || {};
           const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
+          // a SUB-category's department: its own map entry / keyword, else its category's (makeSubcatDept) - for Labours, which
+          // classifies by sub-category; a sub with no keyword ("Console Table") used to fall to Structure whatever its category
+          const subcatDept = makeSubcatDept(dcInventoryCache, catDeptCfg);
           // poolLabourDept (shared, lib/ims/deptClassify.js): every department except Floral's
           // Labours usage pools into Structure's (widened 2026-11-07 from just Furniture/Fabric,
           // owner decision — Structure/Furniture/Tenting/Fabric/Lighting/Transport are now run as one
@@ -1507,6 +1510,7 @@ export default function DealCheckOverlay({ ctx }) {
                 cardsForFn: (dcCards || {})[fns.indexOf(fn)], inventory: dealCheckData?.inventory || [],
                 trussInv: dealCheckData?.trussInv, fabricBangaliRanges,
                 fabricRftPerWorker: Number(dealCheckData?.fabricRftPerWorker) || 100, trussLabourRanges,
+                categoryDepartments: dealCheckData?.categoryDepartments || {}, // Labours' department split (manpowerCount makeSubcatDept)
               });
               const calcPplRaw = (fn, type) => computePeopleRaw(fn, type, mpCtxFor(fn));
               const calcPpl = (fn, type) => computePeople(fn, type, mpCtxFor(fn));
@@ -1679,11 +1683,12 @@ export default function DealCheckOverlay({ ctx }) {
                   // catch-all, so Tenting never got credit for it. Matches the pattern every other
                   // heavy-item dept lookup in this app already uses (usageDept, DepartmentOpsTab's
                   // heavy-rows filters) — classify by .sub, not .cat.
-                  const dp = poolLabourDept(catToDept(sub));
+                  const own = subcatDept(sub); // per sub-category, as the crew engine (manpowerCount) splits it - the two must agree
+                  const dp = poolLabourDept(own);
                   byDept[dp] = (byDept[dp] || 0) + need; total += need;
                   const key = rc.name || sub;
-                  // dept: the department Deal Check actually charged this item's labour to (by the item's own SUB-category), so Dept Ops lists the row under the same one.
-                  if (!itemAgg[key]) itemAgg[key] = { name: rc.name || sub, sub, dept: dp, qty: 0, per: b, need: 0 };
+                  // dept: the department Deal Check actually charged this item's labour to (pooled); ownDept: the item's own, for Dept Ops' department headings
+                  if (!itemAgg[key]) itemAgg[key] = { name: rc.name || sub, sub, dept: dp, ownDept: own, qty: 0, per: b, need: 0 };
                   itemAgg[key].qty += Number(qty) || 0; itemAgg[key].need += need;
                 });
                 // Truss pillar count / Platform piece count / Carpet sqft — never a zone element,
@@ -1697,9 +1702,10 @@ export default function DealCheckOverlay({ ctx }) {
                     const b = lookupBySubcat(_labBatches, sub);
                     if (!b || !(count > 0)) return;
                     const need = count / b;
-                    const dp = poolLabourDept(catToDept(sub));
+                    const own = subcatDept(sub);
+                    const dp = poolLabourDept(own);
                     byDept[dp] = (byDept[dp] || 0) + need; total += need;
-                    itemAgg[sub] = { name: sub, sub, dept: dp, qty: count, per: b, need };
+                    itemAgg[sub] = { name: sub, sub, dept: dp, ownDept: own, qty: count, per: b, need };
                   });
                 }
                 labourUsageByFn[fi] = { byDept, total, items: Object.values(itemAgg) };

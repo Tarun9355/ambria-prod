@@ -6723,6 +6723,7 @@ export default function StudioApp() {
       cardsForFn: (dcCards || {})[fn.fnIdx], inventory: d.inventory || [],
       trussInv: d.trussInv, fabricBangaliRanges,
       fabricRftPerWorker: Number(d.fabricRftPerWorker) || 100, trussLabourRanges,
+      categoryDepartments: d.categoryDepartments || {}, // Labours' department split (manpowerCount makeSubcatDept)
     });
     // Zone shape/dims/masking display — Fabric Bangali and Truss Labour both derive crew from a
     // zone's truss shape, and a dept head asked to see that shape/size/masking next to the count.

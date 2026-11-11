@@ -29,7 +29,7 @@ import { heavyExtraLabour, eventTimingMultFor } from "../ims/constants";
 import { standingReductionBySubcat } from "../ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat, walkKitUnits } from "../ims/helpers";
 import { resolveDateCategory } from "../inventory/helpers";
-import { catToDept, poolLabourDept } from "../ims/deptClassify";
+import { poolLabourDept, makeSubcatDept } from "../ims/deptClassify";
 import { CARPET_OFF } from "./taxonomy";
 import { floorSqftOf } from "./carpetPrefs";
 
@@ -256,10 +256,13 @@ function peopleTier3Labours(fn, ctx) {
   // silently disagreeing on the same function's total.
   if (labourUsageMode) {
     const byDept = {};
+    // a sub-category's department: its admin map entry / keyword, else its category's (makeSubcatDept) - the same rule Deal
+    // Check's split uses, so the two agree (a "Console Table" filed under Floral is Floral's, not the Structure catch-all)
+    const subDept = makeSubcatDept(ctx.dcInventoryCache || ctx.inventory || [], ctx.categoryDepartments);
     Object.keys(subCounts).forEach((sub) => {
       const b = lookupBySubcat(labBatches, sub);
       if (!b) return;
-      const dp = poolLabourDept(catToDept(sub));
+      const dp = poolLabourDept(subDept(sub));
       byDept[dp] = (byDept[dp] || 0) + (subCounts[sub] || 0) / b;
     });
     fnUsageTotal = Object.values(byDept).reduce((s, v) => s + Math.ceil(v), 0);

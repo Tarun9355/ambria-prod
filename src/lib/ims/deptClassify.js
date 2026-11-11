@@ -33,6 +33,39 @@ export function catToDept(cat, categoryDepartmentsCfg) {
   return "Structure"; // catch-all
 }
 
+// The department a keyword (or the admin map) gives `cat`, or null when only the Structure catch-all would - so a caller can
+// fall back to something better than the catch-all.
+export function catToDeptStrict(cat, categoryDepartmentsCfg) {
+  const s = String(cat || "").toLowerCase().trim();
+  if (!s) return null;
+  const cfg = categoryDepartmentsCfg || {};
+  if (cfg[s] && DEPTS.includes(cfg[s])) return cfg[s];
+  const KW = /floral|flower|pedestal|light|chandel|led|truss|mask|fabric|drap|ceiling|liza|curtain|platform|carpet|tent|transport|truck|logistic|furnitur|sofa|chair|couch|arch|prop|wrought|glass|struct|pillar|stage/;
+  return KW.test(s) ? catToDept(s, cfg) : null;
+}
+
+// A SUB-category's department, as IMS → Settings → Departments says ("a sub-category inherits its category's department"):
+// its own map entry, else its own keyword (Carpet -> Tenting, Sofa -> Furniture), else the department of the category its
+// items are filed under (`catHint`, else the commonest category of the inventory items carrying it), else Structure. Labours
+// used the sub-category's keyword alone, so one with no keyword ("Console Table") fell to the Structure catch-all whatever its
+// category (owner report 2026-11-11: Cabinets Console, a Floral item, counted in Structure's crew).
+export function makeSubcatDept(inventory, categoryDepartmentsCfg) {
+  const catsBySub = new Map(); // sub -> Map(cat -> count)
+  (inventory || []).forEach((it) => {
+    const sub = String(it?.subCat || it?.subcategory || "").toLowerCase().trim();
+    const cat = String(it?.cat || it?.category || "").trim();
+    if (!sub || !cat) return;
+    const m = catsBySub.get(sub) || new Map();
+    m.set(cat, (m.get(cat) || 0) + 1);
+    catsBySub.set(sub, m);
+  });
+  const commonCat = (sub) => { const m = catsBySub.get(sub); if (!m) return ""; let best = "", n = -1; m.forEach((c, k) => { if (c > n) { n = c; best = k; } }); return best; };
+  return (sub, catHint) => {
+    const s = String(sub || "").toLowerCase().trim();
+    return catToDeptStrict(s, categoryDepartmentsCfg) || catToDept(catHint || commonCat(s), categoryDepartmentsCfg);
+  };
+}
+
 // Owner ask (2026-10-27, widened 2026-11-07): every department except Floral is now run as one
 // crew pool under Structure — Furniture+Fabric+Tenting+Lighting+Transport's shared Labours crew no
 // longer splits separately per department, it pools entirely into Structure's. (Originally this

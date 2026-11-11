@@ -5,7 +5,7 @@ import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits, flowerPaletteHexFor } from "../../lib/ims/helpers";
 import { buildDeptCrew, orderWinIds as orderWinIdsShared, flowerTraceForFn as flowerTraceForFnShared, setMpPatch, addMpPatch, removeMpPatch, actualCrewPatch, resetLinePatch, mpDayPatch, resetMpDayPatch, shiftCountPatch, shiftSplitPatch, addDihariPatch, removeDihariPatch, eventLabourInfo, eventLabourTotalDeptOps } from "../../lib/ims/deptCrew";
 import { uploadAudioToStorage } from "../../lib/storage";
-import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel } from "../../lib/ims/deptClassify";
+import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel, makeSubcatDept } from "../../lib/ims/deptClassify";
 import { TabsMenu, useConfirm, Modal } from "../../components/ui";
 import ProductionRequestsCard from "./ProductionRequestsCard.jsx";
 import ShortfallAllocation from "./ShortfallAllocation.jsx";
@@ -569,7 +569,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   // A labour usage row belongs to the department Deal Check charged it to (ur.dept — the item's own
   // category); a plan synced before that was recorded falls back to its sub-category.
-  const usageDept = (ur) => ur?.dept || catToDept(ur?.sub);
+  // a sub-category's department as Labours splits it: its map entry / keyword, else its category's (makeSubcatDept)
+  const subcatDept = useMemo(() => makeSubcatDept(inventory, catDeptCfg), [inventory, settings?.categoryDepartments]); // eslint-disable-line react-hooks/exhaustive-deps
+  const usageDept = (ur) => ur?.dept || poolLabourDept(subcatDept(ur?.sub));
   const dihari = settings?.dihariSchemes || {};
   const [confirm, confirmDialog] = useConfirm();
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
@@ -2379,12 +2381,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       // crew need still counts toward Structure's total).
       ...(tr.venueMin > 0 ? [{ label: "Venue minimum", value: `${tr.venueMin}` }] : []),
       // group: the item's OWN department (Sofa -> Furniture, Carpet -> Tenting), so the pooled table reads department by department
-      ...(tr.heavyRows || []).filter(hr => poolLabourDept(catToDept(hr.sub)) === dept).map(hr => ({ label: `${hr.sub}`, value: `×${hr.count} → +${hr.extra}`, group: catToDept(hr.sub), num: Number(hr.extra) || 0 })),
+      ...(tr.heavyRows || []).filter(hr => poolLabourDept(subcatDept(hr.sub)) === dept).map(hr => ({ label: `${hr.sub}`, value: `×${hr.count} → +${hr.extra}`, group: subcatDept(hr.sub), num: Number(hr.extra) || 0 })),
       // Per-ITEM fractional usage (e.g. "Roman Fibre Pot Small" at 10 ÷ 40 = 0.25) — the items
       // behind the pooled usage floor, which heavyRows above never shows (that's an independent
       // per-sub-category floor; anything under its own perCount rounds to 0 there even though it
       // still feeds this pooled total). Same department filter as heavyRows.
-      ...(tr.usageRows || []).filter(ur => usageDept(ur) === dept).map(ur => ({ label: ur.name, value: `${ur.qty} ÷ ${ur.per} = ${ur.need.toFixed(2)}`, group: catToDept(ur.sub) || usageDept(ur), num: Number(ur.need) || 0 })),
+      ...(tr.usageRows || []).filter(ur => usageDept(ur) === dept).map(ur => ({ label: ur.name, value: `${ur.qty} ÷ ${ur.per} = ${ur.need.toFixed(2)}`, group: ur.ownDept || subcatDept(ur.sub), num: Number(ur.need) || 0 })),
     ];
     if (tr.kind === "ratio") return [{ label: tr.numLabel || "Count", value: `${tr.num}` }];
     if (tr.kind === "fixed") return [{ label: tr.note || "Fixed", value: `${tr.result}` }];
@@ -2597,7 +2599,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
               <div className="text-[12.5px] text-gray-500">How each row reads: <b className="text-gray-700">12 ÷ 40 = 0.30</b> — 12 of the item, one labourer handles 40, so it needs 0.30 of a labourer. <b className="text-gray-700">×46 → +1</b> — 46 of a heavy item add 1 extra labourer to the whole event's crew.</div>
               {cols.map((c, ci) => {
                 const need = deptNeedForFn(c);
-                const heavy = (c.trace?.heavyRows || []).filter(hr => poolLabourDept(catToDept(hr.sub)) === dept);
+                const heavy = (c.trace?.heavyRows || []).filter(hr => poolLabourDept(subcatDept(hr.sub)) === dept);
                 return (
                   <div key={ci}>
                     <b className="text-gray-900">{c.fn}</b>: {poolLabourDeptLabel(dept)}'s items add up to <b className="text-gray-900">{need.toFixed(2)}</b> labourer{need === 1 ? "" : "s"}.
@@ -2795,7 +2797,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       // itself is — see the matching filter and its own comment a little above (~line 2822). `t.result`
       // itself stays the whole event's shared headcount (unfiltered) — that number is genuinely
       // shared, only the "which items drove the heavy add-on" list is department-specific.
-      const deptHeavyRows = Array.isArray(t.heavyRows) ? t.heavyRows.filter(hr => poolLabourDept(catToDept(hr.sub)) === dept) : [];
+      const deptHeavyRows = Array.isArray(t.heavyRows) ? t.heavyRows.filter(hr => poolLabourDept(subcatDept(hr.sub)) === dept) : [];
       // Every ITEM (not just sub-category) behind the pooled usage floor — e.g. 10 "Roman Fibre
       // Pot Small" at 1-per-40 is 0.25 labour, which never shows up in deptHeavyRows above at all
       // (that's an independent per-sub-category floor; anything under its OWN perCount silently
