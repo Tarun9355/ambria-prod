@@ -4461,7 +4461,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       <div className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.total}>Total</div>
                     </div>
                   </div>}
-                  {invShown.filter(it => !fabricGroupInfo.groupedLineIds.has(it.id)).map(it => {
+                  {/* items already at the venue (📌 Fixed / ♻ Repeat, atVenueOf) go last - nothing to load for them; the rest keep their order */}
+                  {invShown.filter(it => !fabricGroupInfo.groupedLineIds.has(it.id))
+                    .map((it, i) => { const a = atVenueOf(it.src || it); return { it, i, last: a.repeat || a.fixed > 0 ? 1 : 0 }; })
+                    .sort((x, y) => x.last - y.last || x.i - y.i).map(x => x.it).map(it => {
                     // ── TWO DIFFERENT QUANTITIES, ON PURPOSE ──
                     // `qty` ("To load") is the true physical peak: the most this item is ever
                     // needed on-site at once, net of cross-function reuse (two back-to-back
