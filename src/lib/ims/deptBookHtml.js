@@ -932,12 +932,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         const zStruct = zoneStructOf(zCfg, fi, zk, fn);
         // ── THE FLOWER PALETTE ── what Build set for this function's flowers ("Maroon:60, White:40"), on every zone page of the
         // Floral book only (not the all-departments book — owner ask), each colour as a dot with its share — the colours the florists are building in.
-        // ── THE FLORAL MIX ── Build's floral slider for this function: floralRatio is the ARTIFICIAL share, real is the rest
-        // (the function's default; a single element can still be set to its own %).
-        if (!combined && dept === "Floral" && typeof fn?.floralRatio === "number") {
-          const art = Math.max(0, Math.min(100, Math.round(fn.floralRatio)));
-          zStruct.push({ k: t("Floral mix"), v: t("Real {real}% · Artificial {art}%", { real: 100 - art, art }) });
-        }
+        // (The zone's "Floral mix" chip - the function's floral slider - is gone from the Floral book, owner ask 2026-11-11: each
+        // flower piece's card carries its own real / artificial split, so the zone-wide default only confused it.)
         if (!combined && dept === "Floral" && fn?.flowerPalette) {
           const cols = parseFlowerPalette(fn.flowerPalette);
           if (cols.length) zStruct.push({ k: t("Flower palette"), html: cols.map(c => `<b class="fpc"><i style="background:${esc(flowerPaletteHexFor(c.name))}"></i>${esc(hn(c.name))} ${esc(c.pct)}%</b>`).join("") });
