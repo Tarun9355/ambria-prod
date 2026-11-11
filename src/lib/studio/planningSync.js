@@ -59,8 +59,13 @@ export function planningUpcoming(eo, now = Date.now()) {
 // fractional need is ceiled once PER POOL, merging more departments into one pool can also change the
 // total headcount/cost, not just which department's row it shows under — every manpower figure moves
 // again, same as v5.
-export const PLANNING_SNAPSHOT_VERSION = 15;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-07T05:04:21Z");
+// v16 (2026-11-11): Fabric Bangali counts a U / half-box truss's span when it carries Liza or velvet curtains, masked or not
+// (manpowerCount fabricBangaliZone) - an Entertainment Stage U with fabric but no masking was missing from the crew and its
+// zone table. A flower-recipe element's name follows the recipe's (a recipe renamed in IMS). Every booked deal re-syncs.
+// RULE: any change to how a crew count, a zone breakdown or another planning figure is worked out bumps this version (and the
+// date below) in the same commit - without it, deals already synced keep the old figures until someone happens to save them.
+export const PLANNING_SNAPSHOT_VERSION = 16;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-11T08:52:22Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // Synced before, and a planning input changed after that sync (a minute of slack: the sync's own write
