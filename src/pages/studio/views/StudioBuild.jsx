@@ -358,10 +358,6 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   const val = Number(zc.dims?.[d]) || 0;
                   if (!val) return null;
                   const tip = nearestCleanSpans(val, H, { maxSpanFt: eng.maxSpanFt, trussInv: matInv, piecesNeeded: spanPiecesNeeded, material: zc.trussMaterial, reserved });
-                  // TEMP diagnostic (owner report, 2026-11-11: Width/Depth tip not re-appearing) —
-                  // remove once confirmed. Logs every inline recompute so the exact live inputs/output
-                  // are visible in devtools without guessing at SQL dates/clients.
-                  console.log("[truss-tip-debug]", { axis: d, val, H, material: zc.trussMaterial, stockDateLabel, spanPiecesNeeded, reserved, eng, matInvBeams: matInv.beams, tip });
                   if (!tip) return null;
                   // A "needs a joint" tip with nothing nearby to suggest has nothing useful to say —
                   // stays silent, same as always. A "stock" tip is worth showing even with nothing
