@@ -1354,13 +1354,17 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // the next function's first with nothing marking the seam — easy to miss where "Haldi" ends and
     // "Wedding" begins. One plain divider page per function, inserted the first time its zones
     // start, names which function the pages after it belong to.
+    // Under the name, the function's own cover card (type, date, shift, fabric / flowers) and its genset card (owner ask 2026-11-11:
+    // the page sat empty) - filled in once those are worked out further down (FN_CARDS placeholder, replaced in the html below).
+    const FN_CARDS = (fi) => `\u0001FNCARDS:${fi}\u0001`;
     const fnDivider = (no, type, date) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
-        <div class="zh" style="text-align:center;padding:${Math.max(40, Math.round((PAGE_PX - 170) / 2))}px 14px 10px">
+        <div class="zh" style="text-align:center;padding:${Math.max(40, Math.round((PAGE_PX - 470) / 2))}px 14px 10px">
           <div class="zk">${t("Function {n}", { n: no })}</div>
           <h2 style="font-size:52px">${esc(hn(type) || t("Function {n}", { n: no }))}</h2>
           <div class="orn l" style="justify-content:center"><i></i><b></b><i></i></div>
           ${date ? `<div class="zm">${esc(date)}</div>` : ""}
         </div>
+        ${FN_CARDS(no - 1)}
       </section>`;
     const multiFn = (fns || []).length > 1;
     const zonePageHtml = [];
@@ -1469,6 +1473,31 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     const sesTone = (t, i) => SES_TONES[Object.keys(SES_TONES).find(k => String(t).toLowerCase().includes(k))] || TONE_ROT[i % TONE_ROT.length];
     // Gold line — diamond — gold line: the one ornament, reused on the cover and on every zone page.
     const ornament = `<div class="orn"><i></i><b></b><i></i></div>`;
+    // The cover's session card for one function - on the cover, and on that function's divider page.
+    const sesCard = (s, i) => `<div class="cv-ses t-${sesTone(s.type, i)}">
+      <div class="sk">${t("Event type")}</div>
+      <div class="st">${esc(hn(s.type))}</div>
+      <div class="sl"></div>
+      <div class="sg">
+        <div class="sf"><div class="k">${t("Date")}</div><div class="v">${esc(s.dateShort)}</div></div>
+        ${s.shift ? `<div class="sf"><div class="k">${t("Shift")}</div><div class="v">${esc(hn(s.shift))}</div></div>` : ""}
+        ${s.pax ? `<div class="sf"><div class="k">${t("Guests")}</div><div class="v">${esc(s.pax)}</div></div>` : ""}
+      </div>
+      ${sessionPalettes(s)}
+      ${s.place ? `<div class="sm">${esc(hn(s.place))}</div>` : ""}
+    </div>`;
+    // A function's divider page: its session card, and - in the books that carry gensets (all departments, Lighting) - its genset card.
+    const fnCards = (fi) => {
+      const s = sessions[fi], fn = fns[fi];
+      if (!s) return "";
+      const g = (combined || dept === "Lighting") && fn ? gensetsForFn(fn, trVenues) : null;
+      const unit = (n, kva) => n > 0 ? `<div class="gs-u"><b>${esc(n)}</b><span>× ${kva} kVA</span></div>` : "";
+      const gCard = g ? `<div class="gs-c fd-gs">
+          <div class="gs-h"><span>⚡ ${t("Genset")}</span>${fn?.venue ? `<i>${esc(hn(fn.venue))}</i>` : ""}</div>
+          ${!(g.kva125 > 0) && !(g.kva62 > 0) ? `<div class="gs-none">${t("No genset")}</div>` : `${unit(g.kva125, "125")}${unit(g.kva62, "62.5")}<div class="gs-t">${t("Total {n} kVA", { n: esc(totalKva(g)) })}</div>`}
+        </div>` : "";
+      return `<div class="fd-cards"><div class="cv-sessions many">${sesCard(s, fi)}</div>${gCard}</div>`;
+    };
 
     const html = `<!doctype html><html><head><meta charset="utf-8">
 <title>${esc(bookTitle)} — ${esc(hn(sel?.clientName) || t("Event"))} — Ambria</title>
@@ -1747,6 +1776,11 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
   .zpin{position:absolute;width:22px;height:22px;border-radius:50%;background:#1A1A1A;color:#F4F1EA;font-size:11px;font-weight:700;line-height:22px;text-align:center;box-shadow:0 0 0 2px rgba(255,253,248,.9),0 3px 8px rgba(0,0,0,.35)}
   .zg{display:grid;grid-template-columns:repeat(3,224px);gap:17px;justify-content:center}
   .gs-g{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  /* a function's divider page: its session card and genset card side by side under the name */
+  .fd-cards{display:flex;justify-content:center;align-items:stretch;gap:22px;margin:34px 30px 0}
+  .fd-cards .cv-sessions{width:auto;flex:0 1 330px}
+  .fd-cards .cv-sessions .cv-ses{flex:1 1 auto}
+  .fd-gs{flex:0 0 250px;display:flex;flex-direction:column;justify-content:center}
   .gs-c{box-sizing:border-box;padding:18px 20px;border:1px solid #DDD4C2;border-radius:14px;background:#FBF8F1}
   .gs-h{display:flex;flex-direction:column;gap:3px;margin-bottom:14px;font-size:14px;font-weight:700;color:#1A1A1A}
   .gs-h i{font-style:normal;font-size:11.5px;font-weight:600;color:#7A7263}
@@ -1846,18 +1880,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       <div><div class="k">${t("Prepared by")}</div><div class="v">${esc(hn(String(sel?.salesperson || "").trim() || preparedBy || authUser?.name) || "—")}</div></div>
     </div>
     ${sessions.length ? `<div class="cv-sec">${sessions.length === 1 ? t("The event") : t("{n} sessions", { n: sessions.length })}</div>
-    <div class="cv-sessions${sessions.length > 4 || (anyPalette && sessions.length > 2) ? " many dense" : (sessions.length > 2 || (anyPalette && sessions.length === 2)) ? " many" : ""}">${sessions.map((s, i) => `<div class="cv-ses t-${sesTone(s.type, i)}">
-      <div class="sk">${t("Event type")}</div>
-      <div class="st">${esc(hn(s.type))}</div>
-      <div class="sl"></div>
-      <div class="sg">
-        <div class="sf"><div class="k">${t("Date")}</div><div class="v">${esc(s.dateShort)}</div></div>
-        ${s.shift ? `<div class="sf"><div class="k">${t("Shift")}</div><div class="v">${esc(hn(s.shift))}</div></div>` : ""}
-        ${s.pax ? `<div class="sf"><div class="k">${t("Guests")}</div><div class="v">${esc(s.pax)}</div></div>` : ""}
-      </div>
-      ${sessionPalettes(s)}
-      ${s.place ? `<div class="sm">${esc(hn(s.place))}</div>` : ""}
-    </div>`).join("")}</div>` : ""}
+    <div class="cv-sessions${sessions.length > 4 || (anyPalette && sessions.length > 2) ? " many dense" : (sessions.length > 2 || (anyPalette && sessions.length === 2)) ? " many" : ""}">${sessions.map((s, i) => sesCard(s, i)).join("")}</div>` : ""}
   </div>
   <div class="cv-bottom"><span>${esc(bookTitle)} / ${esc((selDateStr || "").slice(0, 4) || new Date().getFullYear())}</span>${logos.light ? `<img class="cv-logo-l" src="${logos.light}" alt="Ambria — Design &amp; Decor">` : `<span>Ambria · Design &amp; Decor</span>`}</div>
 </header>
@@ -1866,7 +1889,7 @@ ${/* Money, the priced inventory table, the crew plan and logged spend are left 
      zone layout pages below carry every item, with photo, qty and size. */ ""}
 ${gensetPage}
 ${fixedVenuePages}
-${zoneHtml}
+${zoneHtml.replace(/\u0001FNCARDS:(\d+)\u0001/g, (_, fi) => fnCards(Number(fi)))}
 ${combined ? "" : (truckRows.length || loadRows.length) ? sect(t("Loading & dispatch"),
   (truckRows.length ? table(["#", t("Vehicle"), t("Driver"), t("Phone"), t("Status")], truckRows, ["12%", "26%", "24%", "20%", "18%"]) : "")
   + (loadRows.length ? `<p class="meta">${t("Everything going to site — {items}, {pieces} in total.", { items: t("{n} item|{n} items", { n: blockedItems.length }), pieces: t("{n} piece|{n} pieces", { n: loadUnits }) })}</p>`
