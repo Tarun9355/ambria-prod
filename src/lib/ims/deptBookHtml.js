@@ -1006,7 +1006,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // "truss structure") are no zone's item, so they used to land here as "Also on site" (owner report 2026-11-11) - but each zone page
     // already shows them (the fabric strip, the truss table) and the loading list carries the totals. Left out wherever those show.
     const shownOnZones = (b) => (isFabricLine(b) && (showStruct || inBook("Fabric")))
-      || (String(b.sub || "").trim().toLowerCase() === "truss structure" && showTrussTable);
+      || (String(b.sub || "").trim().toLowerCase() === "truss structure" && showTrussTable) // truss pillars / beams and Batta
+      // Platform (the zone's PLATFORM chip) and a carpet line (sqft, with the zones it covers - each zone's carpet card shows it)
+      || (/^platform structure/i.test(String(b.sub || "").trim()) && showStruct)
+      || (b.qtyUnit === "sqft" && Array.isArray(b.parts) && b.parts.length > 0 && showStruct);
     const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id) && b.sub !== "print" && !shownOnZones(b)).map(b => {
       const inv = (b.invId && invById.get(String(b.invId))) || invByName.get(String(b.name || "").trim().toLowerCase()) || null;
       const kitOf = String(b.fromKit || "").trim();
