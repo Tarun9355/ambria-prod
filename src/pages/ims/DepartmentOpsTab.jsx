@@ -2378,12 +2378,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       // Platform/Carpet/LED heavy rows vanished from every tab's "how?" breakdown even though their
       // crew need still counts toward Structure's total).
       ...(tr.venueMin > 0 ? [{ label: "Venue minimum", value: `${tr.venueMin}` }] : []),
-      ...(tr.heavyRows || []).filter(hr => poolLabourDept(catToDept(hr.sub)) === dept).map(hr => ({ label: `${hr.sub}`, value: `×${hr.count} → +${hr.extra}` })),
+      // group: the item's OWN department (Sofa -> Furniture, Carpet -> Tenting), so the pooled table reads department by department
+      ...(tr.heavyRows || []).filter(hr => poolLabourDept(catToDept(hr.sub)) === dept).map(hr => ({ label: `${hr.sub}`, value: `×${hr.count} → +${hr.extra}`, group: catToDept(hr.sub), num: Number(hr.extra) || 0 })),
       // Per-ITEM fractional usage (e.g. "Roman Fibre Pot Small" at 10 ÷ 40 = 0.25) — the items
       // behind the pooled usage floor, which heavyRows above never shows (that's an independent
       // per-sub-category floor; anything under its own perCount rounds to 0 there even though it
       // still feeds this pooled total). Same department filter as heavyRows.
-      ...(tr.usageRows || []).filter(ur => usageDept(ur) === dept).map(ur => ({ label: ur.name, value: `${ur.qty} ÷ ${ur.per} = ${ur.need.toFixed(2)}` })),
+      ...(tr.usageRows || []).filter(ur => usageDept(ur) === dept).map(ur => ({ label: ur.name, value: `${ur.qty} ÷ ${ur.per} = ${ur.need.toFixed(2)}`, group: catToDept(ur.sub) || usageDept(ur), num: Number(ur.need) || 0 })),
     ];
     if (tr.kind === "ratio") return [{ label: tr.numLabel || "Count", value: `${tr.num}` }];
     if (tr.kind === "fixed") return [{ label: tr.note || "Fixed", value: `${tr.result}` }];
@@ -2490,8 +2491,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     if (t.kind !== "tier2" && Array.isArray(t.byFn) && t.byFn.length) {
       const { cols, timeLabel, shiftOf } = orderFnCols(t.byFn, day);
       const labHowKey = `fn|${crewType}|${day?.date || ""}`;
-      const labels = [];
-      cols.forEach(c => traceRowsOf(c.trace).forEach(r => { if (!labels.includes(r.label)) labels.push(r.label); }));
+      let labels = [];
+      const groupOf = {};
+      cols.forEach(c => traceRowsOf(c.trace).forEach(r => { if (!labels.includes(r.label)) labels.push(r.label); if (r.group && !groupOf[r.label]) groupOf[r.label] = r.group; }));
+      // A pooled table (Labours: several departments' items in one) reads department by department, under a heading for each
+      // (owner ask 2026-11-11) - rows with no department (Venue minimum) stay on top. One department only: no headings.
+      const groupOrder = [...new Set(labels.map(lb => groupOf[lb]).filter(Boolean))];
+      const grouped = groupOrder.length > 1;
+      if (grouped) {
+        const rank = (lb) => (groupOf[lb] ? 1 + groupOrder.indexOf(groupOf[lb]) : 0);
+        labels = labels.map((lb, i) => ({ lb, i })).sort((a, b) => rank(a.lb) - rank(b.lb) || a.i - b.i).map(x => x.lb);
+      }
+      const headingBefore = (ri) => grouped && groupOf[labels[ri]] && (ri === 0 || groupOf[labels[ri - 1]] !== groupOf[labels[ri]]) ? groupOf[labels[ri]] : null;
       return (
         <div className="mb-1.5 bg-white border rounded-lg overflow-x-auto">
           <div className={"grid " + (FN_GRID[cols.length] || FN_GRID[6])}>
@@ -2501,6 +2512,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
             </div>
             {labels.map((lb, ri) => (
               <div className="contents" key={ri}>
+                {headingBefore(ri) && (() => {
+                  const g = headingBefore(ri);
+                  // that department's own total per function: its rows' needs added up (a heavy row's +N is whole people)
+                  const subOf = (c) => traceRowsOf(c.trace).filter(r => r.group === g).reduce((s, r) => s + (Number(r.num) || 0), 0);
+                  return (<>
+                    <div className="px-2 pt-2 pb-1 border-t border-gray-300 bg-indigo-50/60 text-[12px] font-bold uppercase tracking-wide text-indigo-700 whitespace-nowrap">{DEPT_ICON[g] ? `${DEPT_ICON[g]} ` : ""}{g}</div>
+                    {cols.map((c, ci) => { const s = subOf(c); return <span key={ci} className="px-2 pt-2 pb-1 border-l border-t border-gray-300 bg-indigo-50/60 text-center text-[12px] font-bold text-indigo-700 tabular-nums">{s > 0 ? s.toFixed(2) : "—"}</span>; })}
+                  </>);
+                })()}
                 <div className={"flex items-baseline gap-1.5 min-w-0 overflow-hidden px-2 py-1 text-[13px] text-gray-700 border-t border-gray-200" + (ri % 2 ? " bg-gray-50" : "")}>
                   {(() => {
                     // The item that was added / changed since the plan was last opened shows in red.
