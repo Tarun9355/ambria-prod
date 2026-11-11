@@ -7,6 +7,7 @@ import { kitTotalFromInventory, itemDimsText, priceForInvItem } from "../../lib/
 import ItemHoverThumb from "./ItemHoverThumb";
 import { thumbUrl } from "../../lib/studio/thumb.js";
 import { itemTakesChoices, partChoices, applyPartChoicePicks, ELEMENT_PREF_LABELS } from "../../lib/studio/elementPrefs.js";
+import { matchKit } from "../../lib/studio/kitVariants.js";
 
 // Shared "expand a kit element to its components, with editable per-instance counts" block —
 // used by Library's Element Breakdown (ManageLibrary.jsx) and the Build page (StudioBuild.jsx) so
@@ -43,6 +44,8 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // contributes ₹0 to the rental total below).
   const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1, realPct: s.realPct, size: s.size } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
   const isEdited = Array.isArray(overrides);
+  // a parts list that is exactly a kit picked in Exchange Kit is named, not called "edited" (lib/studio/kitVariants.js)
+  const pickedKit = isEdited ? matchKit(overrides, item, imsInventory) : null;
   const kitBase = Number(item.kitBase) || 0;
   // Kit's own sub-category scaling factor — the same multiplier priceForInvItem applies to the whole
   // kit rental, so per-component "rental × multiplier" and the footer total reflect the real charge.
@@ -186,7 +189,9 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   return (
     <div style={{ marginTop: 5, marginBottom: 4, marginLeft: 10, padding: "6px 8px", borderRadius: 7, borderLeft: "2px solid rgba(99,102,241,0.45)", background: isDark ? "rgba(99,102,241,0.06)" : "rgba(99,102,241,0.05)", border: `1px solid rgba(99,102,241,0.25)` }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: indigo, letterSpacing: 0.3, display: "inline-flex", alignItems: "center", gap: 6 }}><IconBox size={12}/>Kit — includes:{isEdited && <span style={{ color: "#F59E0B", marginLeft: 5 }}>· edited</span>}</span>
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: indigo, letterSpacing: 0.3, display: "inline-flex", alignItems: "center", gap: 6 }}><IconBox size={12}/>Kit — includes:{isEdited && (pickedKit
+          ? <span style={{ marginLeft: 5 }}>· {pickedKit.label}</span>
+          : <span style={{ color: "#F59E0B", marginLeft: 5 }}>· edited</span>)}</span>
         {isEdited && <span onClick={resetKit} style={{ fontSize: 11, color: textS, cursor: "pointer", textDecoration: "underline" }}>reset to default</span>}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>

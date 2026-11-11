@@ -106,6 +106,7 @@ import { platformAvgRatePerSqft } from "../../../lib/ims/platformEngine";
 import { carpetPricingFor, CARPET_OFF, carpetTakesStockPick } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
+import { matchKit } from "../../../lib/studio/kitVariants";
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
 import { computePeopleRaw, computePeople, situationalFactorsFor, heavySayaMultFor as sharedHeavySayaMultFor, tentingZoneUsage } from "../../../lib/studio/manpowerCount";
 import { dcRentalCost } from "../../../lib/studio/repeatPricing.js";
@@ -3897,7 +3898,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                 them. */
                                             <div style={{width:"100%",marginTop:2,padding:"9px 11px",borderRadius:9,background:"rgba(99,102,241,0.05)",border:"1px solid rgba(99,102,241,0.25)"}}>
                                               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
-                                                <span style={{fontSize:12,fontWeight:700,color:"#4338CA",letterSpacing:0.3}}>📦 Kit — blocks these together:{isEdited && <span style={{color:"#F59E0B",marginLeft:5}}>· edited</span>}</span>
+                                                <span style={{fontSize:12,fontWeight:700,color:"#4338CA",letterSpacing:0.3}}>📦 Kit — blocks these together:{isEdited && (()=>{ const pk = matchKit(comps, item, dcInventoryCache); return pk ? <span style={{marginLeft:5}}>· {pk.label}</span> : <span style={{color:"#F59E0B",marginLeft:5}}>· edited</span>; })()}</span>
                                                 {isEdited && <span onClick={resetKit} style={{fontSize:11,color:IV.ink,cursor:"pointer",textDecoration:"underline"}}>reset to default</span>}
                                               </div>
                                               <div style={{display:"flex",flexDirection:"column",gap:4}}>

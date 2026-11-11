@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { kitVariants, hasKitChoice, elementWithKit, currentKitId, DEFAULT_KIT_ID, markKitCustom, syncElementKit, kitPool, currentKit } from "./kitVariants";
+import { kitVariants, hasKitChoice, elementWithKit, currentKitId, DEFAULT_KIT_ID, markKitCustom, syncElementKit, kitPool, currentKit, matchKit } from "./kitVariants";
 import { rowToItem, itemToRow } from "../inventory/adapter";
 
 const consoleTbl = {
@@ -165,5 +165,18 @@ describe("a kit from another item - only the parts change, the console stays (ow
     const r1 = syncElementKit(onIron1, wooden, (id) => (id === "i1" ? { ...iron, subItems: [{ itemId: "lamp", qty: 4 }] } : wooden));
     expect(r1.el.kitOverrides).toEqual([{ itemId: "lamp", qty: 4 }]);
     expect(syncElementKit(onIron, wooden)).toBeNull(); // no lookup - nothing done
+  });
+});
+describe("matchKit - a picked kit is named, a hand edit is not", () => {
+  const wooden = { id: "w1", name: "Wooden Console", subCat: "Console Table", subItems: [{ itemId: "pot", qty: 2 }], altKits: [{ id: "wk2", name: "Kit 2", subItems: [{ itemId: "pot", qty: 50 }] }] };
+  const iron = { id: "i1", name: "Iron Console", subCat: "Console Table", subItems: [{ itemId: "lamp", qty: 1 }] };
+  const inv = [wooden, iron];
+  it("names another item's kit with its item, its own kit without", () => {
+    expect(matchKit([{ itemId: "lamp", qty: 1 }], wooden, inv).label).toBe("Iron Console · Kit 1");
+    expect(matchKit([{ itemId: "pot", qty: 50 }], wooden, inv).label).toBe("Kit 2");
+  });
+  it("a list no kit has is an edit", () => {
+    expect(matchKit([{ itemId: "lamp", qty: 2 }], wooden, inv)).toBeNull();
+    expect(matchKit(undefined, wooden, inv)).toBeNull();
   });
 });

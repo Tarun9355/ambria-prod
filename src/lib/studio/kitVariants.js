@@ -107,6 +107,15 @@ export function syncElementKit(el, item, lookup) {
   return { el: { ...el, kitOverrides: parts }, removed: false };
 }
 
+// The kit of the sub-category a parts list is exactly - a picked kit, not a hand edit - so the kit breakdown can name it ("Iron
+// Console · Kit 1") instead of calling it "edited". { item, kit, label } or null. label leaves out the item when it is the element's own.
+export function matchKit(parts, item, inventory) {
+  if (!Array.isArray(parts) || !item) return null;
+  const sig = JSON.stringify(normKitParts(parts));
+  const hit = kitPool(item, inventory).find((p) => JSON.stringify(normKitParts(p.kit.subItems)) === sig);
+  return hit ? { ...hit, label: hit.item.id === item.id ? hit.kit.name : `${hit.item.name} · ${hit.kit.name}` } : null;
+}
+
 // The kits Build's Exchange Kit offers for an element: every kit of every kit item in the same sub-category (one Console Table can
 // be swapped for any Console Table's kit), the element's own item first, then the others by name. [{ item, kit }].
 const subCatKey = (it) => String(it?.subCat || it?.subcategory || "").trim().toLowerCase();
