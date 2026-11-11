@@ -9203,6 +9203,25 @@ export default function StudioApp() {
       else showMsg(`Kit updated from IMS - ${[...new Set(updates.map((u) => u.name))].join(", ")}`, "green");
     }
   }, [imsInventory, zoneElements, dcKitEdits, activeFnIdx, activeClientId, activeClient?.status, isFnSwitching, persistDcKitEditsNow, showMsg]);
+  // ── LIVE RECIPE NAMES (owner ask 2026-11-11) ── A flower-recipe element (patternId, no inventory item) carries the recipe's
+  // name as it was when added, so renaming the recipe in IMS (two recipes both "Flower Bunch", one renamed "Flower Bunch filler")
+  // never reached deals already holding it. It now takes the recipe's current name whenever the deal is open; the save that
+  // follows carries it to Deal Check, Planning and the PDFs. Only the name - quantity, size and price are untouched - and only
+  // these elements: they have no Deal Check card keyed by the name (getCardSpecsForZone skips them).
+  useEffect(() => {
+    const pats = sharedFloralSettings?.flowerPatterns;
+    if (!activeClientId || isFnSwitching || !Array.isArray(pats) || !pats.length || !canDesignEditRef.current) return;
+    const nameOf = new Map(pats.filter((p) => p?.id && String(p.name || "").trim()).map((p) => [p.id, String(p.name).trim()]));
+    const stale = (el) => !!el && !!el.patternId && !el.invId && nameOf.has(el.patternId) && el.name !== nameOf.get(el.patternId);
+    if (!Object.values(zoneElements || {}).some((els) => Array.isArray(els) && els.some(stale))) return;
+    setZoneElements((p) => {
+      const out = { ...p };
+      Object.entries(p || {}).forEach(([zk, els]) => {
+        if (Array.isArray(els) && els.some(stale)) out[zk] = els.map((el) => (stale(el) ? { ...el, name: nameOf.get(el.patternId) } : el));
+      });
+      return out;
+    });
+  }, [sharedFloralSettings, zoneElements, activeClientId, isFnSwitching]);
   // 1) Debounced on edits.
   useEffect(() => {
     if (!buildHasDataRef.current) return;

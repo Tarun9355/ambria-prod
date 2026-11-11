@@ -866,7 +866,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           }).filter(x => x && x.per > 0);
           const statusTxt = arranged ? "" : itemStatusOf(fn, reuseSrc, zk, el, invU || inv);
           // a recipe with no inventory item shows the picture of its size, as Build does (photo below)
-          merged.set(key, { name: arranged ? `${el?.name || inv?.name || t("Item")} — ${t("arranged separately")}` : (invU?.name || decName || el?.name || held?.name || t("Item")),
+          // a flower recipe with no inventory item is named as the recipe is named now - renamed in IMS, it reads the new name
+          // here even in a deal not saved since (2026-11-11)
+          const recipeName = !invU && el?.patternId ? String((flowerPatterns || []).find(p => p.id === el.patternId)?.name || "").trim() : "";
+          merged.set(key, { name: arranged ? `${el?.name || inv?.name || t("Item")} — ${t("arranged separately")}` : (invU?.name || decName || recipeName || el?.name || held?.name || t("Item")),
             ...(arranged ? { shown: `${hn(el?.name || inv?.name) || t("Item")} — ${t("arranged separately")}` } : {}), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix || statusTxt) ? [...(choiceExtra || []), ...(floralMix ? [[t("Flowers"), floralMix]] : []), ...(statusTxt ? [[t("Status"), statusTxt]] : [])] : undefined, mix: floralMix, realPct, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, recipe, paint: addPaint(new Map(), paint) });
         });
         // ── CUSTOM CEILING ── not a zone element: it sits on the zone's truss rows (customCeilingItemId + its count
