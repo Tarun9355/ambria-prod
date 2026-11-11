@@ -4407,11 +4407,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                             const inv = (inventory || []).find(i => String(i.id) === String(c.imsId));
                             const ph = inv ? (inv.img || (Array.isArray(inv.photoUrls) && inv.photoUrls[0]) || "") : "";
                             return (
-                              <div key={c.imsId || c.name} className="flex items-center justify-between gap-3 py-1">
+                              <div key={c.imsId || c.name} className="flex items-center gap-2 py-1">
                                 <span className="min-w-0 flex items-center gap-2 text-xs text-gray-700">
                                   {ph ? <img src={thumbUrl(ph, 24)} alt="" className="w-6 h-6 rounded object-cover shrink-0 cursor-zoom-in" onClick={() => setZoomImg(ph)} /> : <span className="w-6 h-6 rounded bg-white ring-1 ring-pink-100 shrink-0" />}
                                   <span className="truncate" title={c.name}>{c.name || "Artificial bunch"}</span>
                                 </span>
+                                <span aria-hidden="true" className="flex-1 min-w-4 border-b border-dotted border-gray-300 mt-1" />
                                 <b className="shrink-0 text-xs text-gray-900 tabular-nums">{kgTxt(c.qty)}</b>
                               </div>
                             );
@@ -4422,11 +4423,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                         <div className="px-3 py-2">
                           <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-1">By colour · from the Flower Palette</div>
                           {paletteSplit.map(c => (
-                            <div key={c.name || "-"} className="flex items-center justify-between gap-3 py-1">
+                            <div key={c.name || "-"} className="flex items-center gap-2 py-1">
                               <span className="min-w-0 flex items-center gap-2 text-xs text-gray-700">
                                 {c.name ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full ring-1 ring-black/10 shrink-0" style={{ background: flowerPaletteHexFor(c.name) }} /> : <span className="w-3.5 h-3.5 rounded-full bg-gray-200 shrink-0" />}
                                 <span className="truncate">{c.name || "Colour not set in the palette"}</span>
                               </span>
+                              {/* a dotted leader from the colour to its kg, so the eye follows the row across */}
+                              <span aria-hidden="true" className="flex-1 min-w-4 border-b border-dotted border-gray-300 mt-1" />
                               <b className="shrink-0 text-xs text-gray-900 tabular-nums">{kgTxt(c.kg)}</b>
                             </div>
                           ))}
