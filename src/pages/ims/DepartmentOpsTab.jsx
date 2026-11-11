@@ -1070,6 +1070,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const realMandi = deptData.realMandi || "";
   // How each short "Can be made" line's shortage is arranged: { [allocKeyOf(line)]: { make, outsource, buy } } (lib/ims/shortfallAlloc.js)
   const shortAlloc = deptData.shortAlloc && typeof deptData.shortAlloc === "object" ? deptData.shortAlloc : {};
+  // Whether a line's item is ticked "Can be made" in IMS right now (the live flag, not the saved snapshot's)
+  const canBeMadeNow = (line) => { const id = line?.invId || line?.imsId; const inv = id ? (inventory || []).find(i => String(i.id) === String(id)) : null; return inv?.canBeMade === true; };
   // Manual discount the department head grants the salesperson on this deal — a goodwill/incentive
   // figure the head types in directly, unrelated to Deal Check's own venue/repeat pricing discounts
   // and not derived from anything else on this page.
@@ -1757,7 +1759,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // challan does not read as if all 600 were ours or all made in-house. Empty for every other line.
   const challanSrcText = (it) => {
     const base = it?.src || it;
-    if (!base || !(Number(base.shortQty) > 0) || base.outOfStock) return "";
+    if (!base || !(Number(base.shortQty) > 0) || base.outOfStock || !canBeMadeNow(base)) return "";
     return shortfallLine(shortfallBreakdown({ booked: Number(base.rentalQty ?? base.qty) || 0, short: Number(base.shortQty) || 0 }, shortAlloc[allocKeyOf(base)]));
   };
   const challanSrcNote = (it) => { const line = challanSrcText(it); return line ? `<div style="font-size:11px;color:#92400e;margin-top:2px">${line}</div>` : ""; };
@@ -4333,6 +4335,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                   : (() => {
                                       // booked vs in stock vs more needed, and how the shortage is arranged (event-wide: the event's own row, also in a one-function view)
                                       const base = it.src || it;
+                                      // Only an item ticked "Can be made" in IMS now - an older Deal Check save can carry outOfStock:false for an item
+                                      // nobody ticked (before 'unticked' meant 'not made'); that one keeps the plain short note.
+                                      if (!canBeMadeNow(base)) return <div className="text-amber-600 mt-0.5">{it.shortQty} short of stock — find more or pick an alternative in Build</div>;
                                       const key = allocKeyOf(base);
                                       return <ShortfallAllocation booked={Number(base.rentalQty ?? base.qty) || 0} short={Number(base.shortQty) || 0}
                                         saved={shortAlloc[key]} canEdit={canEditPlanning}
