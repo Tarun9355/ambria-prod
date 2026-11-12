@@ -1039,10 +1039,20 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const blockedFlatOf = (grouped, d) => {
     const out = [];
     grouped.forEach(it => {
-      if (it.isKit && Array.isArray(it.components) && it.components.length) {
-        const partsSum = it.kitPartsTotal != null ? it.kitPartsTotal : it.components.reduce((s, c) => s + (Number(c.total) || 0), 0);
-        out.push({ ...it, isKit: false, components: null, total: Math.max(0, (Number(it.total) || 0) - partsSum) }); // kit shell (its own base value)
-        it.components.forEach((cp, ci) => out.push({ id: it.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, photo: cp.photo || "", qty: Number(cp.qty) || 0, unit: cp.unit || 0, total: Number(cp.total) || 0, sub: cp.sub || "", kitOf: it.name }));
+      const hasComponents = it.isKit && Array.isArray(it.components) && it.components.length;
+      const hasRecipeParts = it.isKit && Array.isArray(it.recipeParts) && it.recipeParts.length;
+      if (hasComponents || hasRecipeParts) {
+        const partsSum = it.kitPartsTotal != null ? it.kitPartsTotal : (it.components || []).reduce((s, c) => s + (Number(c.total) || 0), 0);
+        out.push({ ...it, isKit: false, components: null, recipeParts: null, total: Math.max(0, (Number(it.total) || 0) - partsSum) }); // kit shell (its own base value)
+        (it.components || []).forEach((cp, ci) => out.push({ id: it.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, photo: cp.photo || "", qty: Number(cp.qty) || 0, unit: cp.unit || 0, total: Number(cp.total) || 0, sub: cp.sub || "", kitOf: it.name }));
+        // A kit's flower RECIPE parts (Tree: Flower Trail, Flower Bunch) are not inventory — no
+        // imsId, no money (priced in Build/floral cost already) — but were never split into their
+        // own row here, the only place that turns a kit into the flat list the truck-loading screen
+        // and the Dept PDF's loading/item rows actually read. The grouped-list "Kits" page already
+        // named them (it reads `recipeParts` off the grouped row directly); this flat list did not,
+        // so a kit's recipe silently never appeared on the loading checklist or the PDF's item rows
+        // (owner report, 2026-11-12 — the Tree kit's "Chandelier Tree Floral Recipe").
+        (it.recipeParts || []).forEach((rp, ri) => out.push({ id: it.id + "__r" + ri, invId: null, name: rp.name, photo: rp.photo || "", qty: Number(rp.qty) || 0, qtyUnit: rp.uom || "", unit: 0, total: 0, sub: "", kitOf: it.name, isRecipe: true }));
       } else out.push(it);
     });
     // Fabric: the per-zone Liza / Velvet / Masking lines become one load line per fabric colour (with the colour's photo), so Truck planning, the loading
