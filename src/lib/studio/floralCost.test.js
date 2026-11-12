@@ -274,6 +274,23 @@ describe("computeFnFloralCost — core per-element resolution (unaffected by the
     expect(result.elementBreakdown.some((eb) => eb.name === "Round Fibre Pot")).toBe(true);
   });
 
+  it("tags a kit-expanded recipe/component with the KIT's own name (kitParent), not its own decorated display name", () => {
+    // The Dept PDF's zone pages fold a kit's attached recipe bunches back into the kit's own card by
+    // matching THIS field against the kit's displayed name ("Tree") — not the recipe's own name
+    // ("Tree · recipe"), which never matches any real card and used to fall through to a confusing
+    // standalone card of its own (owner report, 2026-11-12).
+    const f = fn({ zoneElements: { stage: [{ name: "Tree", invId: "kit1", qty: 2 }] }, enabledEls: { stage: true } });
+    const opts = {
+      ...baseOpts([pRose]),
+      imsInventory: [{ id: "kit1", name: "Tree", cat: "tenting", subItems: [{ patternId: "p_rose", qty: 6 }, { itemId: "sub1", qty: 3 }] }, { id: "sub1", name: "Round Fibre Pot", cat: "florals", subCat: "Flower Bunch" }],
+    };
+    const result = computeFnFloralCost(f, [f], opts);
+    const recipe = result.elementBreakdown.find((eb) => /recipe/.test(eb.name));
+    const comp = result.elementBreakdown.find((eb) => eb.name === "Round Fibre Pot");
+    expect(recipe?.kitParent).toBe("Tree");
+    expect(comp?.kitParent).toBe("Tree");
+  });
+
   it("a kit's flower recipe follows the deal's EDITED parts, not only the master list", () => {
     // Master: 6 recipes per kit. The deal edited it to 10 — 2 kits must itemise 20, not 12.
     const kit = { id: "kit1", name: "Tree", cat: "tenting", subItems: [{ patternId: "p_rose", qty: 6 }] };

@@ -1296,10 +1296,15 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // A zone's artificial flowers and greens used to print as a block of their own ("Ulta Pulta Pot — flowers 10.8
       // bunches"), apart from the arrangement they go into. They now sit in that arrangement's own block, in whole bunches
       // (owner ask 2026-10-31). Matched by name; an arrangement with no recipe of its own gets a block for them.
+      // A recipe EXPANDED OUT of a kit (floralCost.js's _kitParent) is keyed here by the KIT's own
+      // name, not its own decorated "Tree · recipe" display name — so it matches the kit's `it.name`
+      // below and folds into the kit's own 📦 card, instead of never matching anything and falling
+      // through to a confusing standalone "Tree · recipe" card of its own (owner report, 2026-11-12:
+      // Tree is a kit, its recipe showed as a separate loose card instead of inside the kit's card).
       const zArt = artPlan ? (sel?.floralDetail?.[pg.fnIdx]?.artZones || []).filter(a => a.zone === pg.zk) : [];
       const artKey = (n) => String(n || "").trim().toLowerCase();
       const artLeft = new Map();
-      zArt.forEach(a => { const k = artKey(a.el); artLeft.set(k, [...(artLeft.get(k) || []), a]); });
+      zArt.forEach(a => { const k = artKey(a.kitParent || a.el); artLeft.set(k, [...(artLeft.get(k) || []), a]); });
       const artLines = (list) => {
         const fl = list.reduce((t, a) => t + artBunches(a.flower), 0), gr = list.reduce((t, a) => t + artBunches(a.green), 0);
         return [...(fl > 0 ? [{ name: t("Artificial flowers"), qty: fl, unit: t("bunches") }] : []), ...(gr > 0 ? [{ name: t("Artificial greens"), qty: gr, unit: t("bunches") }] : [])];
@@ -1359,6 +1364,12 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
             const k = partKey(p.name);
             if ((!p.size && sizeOf.has(k)) || (!p.mix && mixOf.has(k))) parts[i] = { ...p, ...(!p.size && sizeOf.has(k) ? { size: sizeOf.get(k) } : null), ...(!p.mix && mixOf.has(k) ? { mix: mixOf.get(k) } : null) };
           });
+          // This kit's own attached flower recipe (e.g. Tree's Chandelier Floral Recipe), keyed above
+          // by the kit's own name — folds its bunch breakdown in as one more line on THIS card, right
+          // alongside the kit's real inventory parts, instead of a separate standalone card. `artPlan`
+          // being null (the combined book) already leaves `zArt`/`artLeft` empty, so this is a no-op
+          // there, same as every other flower section in that book.
+          parts.push(...takeArt(it.name));
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : (kb?.qty || zq), "", parts) });
         }
       });

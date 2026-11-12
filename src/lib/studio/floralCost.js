@@ -489,7 +489,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
       if (!pattern) {
         // Floral by identity but nothing to price it by — recorded, not dropped, so the
         // money is traceable to "priced as plain rental elsewhere" instead of silently lost.
-        elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, realLines: [], size: sizeKey, artLines: [], artBunchesFlower: 0, artBunchesGreen: 0, artBunchesFlowerFull: 0, artBunchesGreenFull: 0, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern: invIsFloral, repeatZone: zoneRepeat, repeatLabel });
+        elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, realLines: [], size: sizeKey, artLines: [], artBunchesFlower: 0, artBunchesGreen: 0, artBunchesFlowerFull: 0, artBunchesGreenFull: 0, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern: invIsFloral, repeatZone: zoneRepeat, repeatLabel, kitParent: el._kitParent || null });
         return;
       }
       const sizes = pattern.sizes || {};
@@ -617,6 +617,13 @@ export function computeFnFloralCost(fn, allFns, opts) {
         flowerPerBunchRate, greenPerBunchRate,
         isInvOnlyNoPattern: false,
         repeatZone: zoneRepeat, repeatLabel,
+        // The outer kit element's own name (e.g. "Tree"), when this row is a recipe/floral component
+        // EXPANDED OUT of a kit (el._kitParent, stamped above) rather than a plain zone element on its
+        // own — carried through so a consumer can fold this row's bunches back into the KIT's own
+        // card instead of a standalone one named after the decorated "Tree · recipe" display name,
+        // which never matches any real card (owner report, 2026-11-12: Tree showed as its own loose
+        // "Tree · recipe" card instead of inside Tree's own kit card, alongside its real components).
+        kitParent: el._kitParent || null,
       });
     });
   });
