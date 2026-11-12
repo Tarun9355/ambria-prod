@@ -235,14 +235,18 @@ export function computeFnRawFlowerUsage(fn, opts) {
     (elems || []).forEach((el) => {
       expandedElems.push(el);
       const kitInvItem = findInv(el.invId);
-      if (kitInvItem && Array.isArray(kitInvItem.subItems) && kitInvItem.subItems.length > 0) {
-        const outerQty = el.qty || 0;
-        // Same rule as the Florals detail below: the deal's edited kit (el.kitOverrides) when there is one, else the master list.
-        const kitParts = Array.isArray(el.kitOverrides) && el.kitOverrides.length > 0 ? el.kitOverrides : kitInvItem.subItems;
+      // Same rule as computeFnFloralCost below (kept in sync manually — fixed together, 2026-11-12):
+      // el.kitOverrides (the deal's own edit) checked FIRST, master subItems only as fallback, gated
+      // on there being any kitParts at all rather than on the master item's own subItems being
+      // non-empty — so an edited kit whose master subItems is empty, or whose invId can't resolve
+      // here, still contributes its el.kitOverrides recipe to the preceding-function reuse credit.
+      const outerQty = el.qty || 0;
+      const kitParts = Array.isArray(el.kitOverrides) && el.kitOverrides.length > 0 ? el.kitOverrides : (kitInvItem?.subItems || []);
+      if (kitParts.length > 0) {
         kitParts.forEach((si) => {
           const siQty = (Number(si.qty) || 0) * outerQty;
           if (siQty <= 0) return;
-          if (si.patternId) { expandedElems.push({ name: `${el.name || kitInvItem.name} · recipe`, patternId: si.patternId, qty: siQty, size: el.size }); return; }
+          if (si.patternId) { expandedElems.push({ name: `${el.name || kitInvItem?.name || "Kit"} · recipe`, patternId: si.patternId, qty: siQty, size: el.size }); return; }
           const ci = findInv(si.itemId);
           if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size });
         });
@@ -406,17 +410,24 @@ export function computeFnFloralCost(fn, allFns, opts) {
     (elems || []).forEach(el => {
       expandedElems.push(el);
       const kitInvItem = findInv(el.invId);
-      if (kitInvItem && Array.isArray(kitInvItem.subItems) && kitInvItem.subItems.length > 0) {
-        const outerQty = el.qty || 0;
-        // The deal's own edit of the kit (Build's "Kit — includes" editor → el.kitOverrides) is what was priced and
-        // what gets made; the master list is only the default when nothing was edited.
-        const kitParts = Array.isArray(el.kitOverrides) && el.kitOverrides.length > 0 ? el.kitOverrides : kitInvItem.subItems;
+      // The deal's own edit of the kit (Build's "Kit — includes" editor → el.kitOverrides) is what was
+      // priced and what gets made; the master item's subItems is only the fallback when nothing was
+      // edited — checked FIRST, exactly matching Build's own pricing engine (StudioApp.jsx's
+      // effectiveSubItems). Gating entry into this block on `kitInvItem.subItems.length > 0` (fixed
+      // 2026-11-12) used to mean an edited kit whose MASTER item's own subItems was empty, or whose
+      // invId failed to resolve here at all, never even looked at el.kitOverrides — silently dropping
+      // every attached flower recipe from this engine's mandi list/artificial bunches, even though
+      // Build's own price breakdown (a separate engine, kitFloralCompDelta/attachedPatterns) already
+      // correctly counted them (owner report, 2026-11-12 — the Tree kit's Chandelier Floral Recipe).
+      const outerQty = el.qty || 0;
+      const kitParts = Array.isArray(el.kitOverrides) && el.kitOverrides.length > 0 ? el.kitOverrides : (kitInvItem?.subItems || []);
+      if (kitParts.length > 0) {
         kitParts.forEach(si => {
           const siQty = (Number(si.qty) || 0) * outerQty;
           if (siQty <= 0) return;
-          if (si.patternId) { expandedElems.push({ name: `${el.name || kitInvItem.name} · recipe`, patternId: si.patternId, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem.name }); return; }
+          if (si.patternId) { expandedElems.push({ name: `${el.name || kitInvItem?.name || "Kit"} · recipe`, patternId: si.patternId, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem?.name }); return; }
           const ci = findInv(si.itemId);
-          if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem.name });
+          if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem?.name });
         });
       }
     });

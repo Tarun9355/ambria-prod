@@ -284,6 +284,21 @@ describe("computeFnFloralCost — core per-element resolution (unaffected by the
     expect(qtyOf({ name: "Tree", invId: "kit1", qty: 2, kitOverrides: [{ patternId: "p_rose", qty: 10 }] })).toBe(20);
   });
 
+  it("a kit's recipe still itemises from el.kitOverrides even when the MASTER item's own subItems is empty (bug fixed 2026-11-12)", () => {
+    // The master catalogue item has no subItems at all (e.g. cleared, or never set) — only this
+    // one deal's own edit (el.kitOverrides) carries the attached flower recipe. Gating kit-expansion
+    // on the master's subItems.length used to mean this recipe was silently dropped here even though
+    // Build's own separate pricing engine (kitFloralCompDelta/attachedPatterns) already counted it.
+    const kit = { id: "kit1", name: "Tree", cat: "tenting", subItems: [] };
+    const opts = { ...baseOpts([pRose]), imsInventory: [kit] };
+    const result = computeFnFloralCost(
+      fn({ zoneElements: { stage: [{ name: "Tree", invId: "kit1", qty: 2, kitOverrides: [{ patternId: "p_rose", qty: 10 }] }] }, enabledEls: { stage: true } }),
+      [], opts,
+    );
+    const recipe = result.elementBreakdown.find((eb) => /recipe/.test(eb.name));
+    expect(recipe?.qty).toBe(20);
+  });
+
   it("surfaces an unresolvable floral-looking element as uncosted instead of silently dropping it", () => {
     const f = fn({ zoneElements: { stage: [{ name: "Unknown Thing", qty: 1 }] }, enabledEls: { stage: true } });
     const result = computeFnFloralCost(f, [f], baseOpts([]));
