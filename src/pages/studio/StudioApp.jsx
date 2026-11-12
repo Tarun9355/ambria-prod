@@ -12009,6 +12009,39 @@ export default function StudioApp() {
       }
     }
     if (cfg) {
+      // Scale By has to reach the incoming photo's truss/platform/print quantities the same way it
+      // already reaches elements (curScale/finalEls above), or picking ANY new photo on a scaled zone
+      // silently reset Truss Qty/Platform Qty/print qty back to that photo's own un-scaled recipe —
+      // confirmed live (2026-11-12): "Scale By only scales the elements tab, not truss/platform/
+      // carpet/print" (carpet rides on Platform Qty — platformRowCost bills carpet area as
+      // floorArea × plQty, so scaling plQty already scales carpet too). An explicit 0 is Truss/
+      // Platform Qty's own "no rental, dims/colour only" placeholder and must stay 0 regardless of
+      // scale; everything else floors at 1 — same convention setZoneScale/rescaleQty (StudioBuild.jsx)
+      // already uses when the scale FIELD itself changes; this applies the identical rule at
+      // photo-pick time instead, and stamps the same *Base fields so a LATER scale-field change
+      // composes from the true base rather than re-multiplying an already-scaled number.
+      const scaleQtyForPick = (q) => {
+        // q != null/"" guards the explicit-0 check specifically — Number(null) and Number("") are
+        // both 0 too, but neither writer of these fields ever stores null/"" (NumField commits real
+        // numbers, buildZoneConfig normalises), and every OTHER reader (rescaleQty, trussRowCost's
+        // own `row.trussQty === 0` check) treats null/undefined as "unset" (→ floor of 1), never as
+        // the explicit placeholder — so this must match that, not silently unbill a legacy null.
+        if (q != null && q !== "" && Number(q) === 0) return { base: 0, qty: 0 };
+        const n = Number(q);
+        const base = Number.isFinite(n) && n > 0 ? n : 1;
+        return { base, qty: curScale > 1 ? Math.max(1, Math.round(base * curScale)) : base };
+      };
+      const scaleRowForPick = (row) => {
+        if (!row) return row;
+        const t = scaleQtyForPick(row.trussQty); const p2 = scaleQtyForPick(row.plQty);
+        return { ...row, trussQty: t.qty, trussQtyBase: t.base, plQty: p2.qty, plQtyBase: p2.base };
+      };
+      cfg = scaleRowForPick(cfg);
+      if (Array.isArray(cfg.extraTrussRows) && cfg.extraTrussRows.length) cfg.extraTrussRows = cfg.extraTrussRows.map(scaleRowForPick);
+      if (Array.isArray(cfg.extraPlatformRows) && cfg.extraPlatformRows.length) cfg.extraPlatformRows = cfg.extraPlatformRows.map(scaleRowForPick);
+      if (Array.isArray(cfg.prints) && cfg.prints.length) {
+        cfg.prints = cfg.prints.map((pr) => { const r = scaleQtyForPick(pr.qty); return { ...pr, qty: r.qty, qtyBase: r.base }; });
+      }
       // Same reason as above — scale/repeat are live deal choices, not part of what a reference
       // photo's config describes. Preserve them across the replace instead of losing them.
       // repeatCats rides alongside repeat — the per-chip (Elements/Truss & Masking/Platform/Print)
@@ -14275,11 +14308,22 @@ export default function StudioApp() {
     // again right after would just be redundant friction.
     selectElPhoto(r.elKey, photo, { skipConfirm: true });
     if (r.dims) {
-      const cfg = buildZoneConfig(r.elKey, r.dims);
-      if (cfg) {
-        setZoneConfig(p => ({ ...p, [r.elKey]: { ...cfg, prints: r.prints || [] } }));
-        setEnabledEls(p => ({ ...p, [r.elKey]: true }));
-      }
+      // Merge into whatever selectElPhoto just built above instead of wholesale-replacing it. This
+      // used to re-derive buildZoneConfig(r.elKey, r.dims) again — the exact same dims selectElPhoto
+      // itself builds from (photo.dims === libImg.dims === r.dims) — and overwrite selectElPhoto's
+      // result with that redundant copy, silently dropping scale/repeat/repeatCats/photoStash and
+      // resetting Truss Qty/Platform Qty back to ×1 on an already-scaled zone (confirmed live,
+      // 2026-11-12 — the same Scale By gap just fixed in selectElPhoto, reached a second way here).
+      // The only thing this block actually needs to add is the review modal's own picked prints,
+      // scaled by the same Scale By multiplier every other print-qty path already uses.
+      const curScale = Math.max(1, Math.round(Number(zoneConfig[r.elKey]?.scale) || 1));
+      const scaledPrints = (r.prints || []).map((pr) => {
+        const n = Number(pr.qty);
+        const base = Number.isFinite(n) && n > 0 ? n : 1;
+        return { ...pr, qty: curScale > 1 ? Math.max(1, Math.round(base * curScale)) : base, qtyBase: base };
+      });
+      setZoneConfig(p => (p[r.elKey] ? { ...p, [r.elKey]: { ...p[r.elKey], prints: scaledPrints } } : p));
+      setEnabledEls(p => ({ ...p, [r.elKey]: true }));
     }
     showMsg("✓ Applied to " + (zoneLabelsD[r.elKey]?.label || r.elKey) + " with " + r.elements.length + " elements", "green");
     setZoneUploadReview(null);
