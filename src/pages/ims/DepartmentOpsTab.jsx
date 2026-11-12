@@ -770,8 +770,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const [mpFn, setMpFn] = useState("all");
   // Inventory blocked scope, the same way: "all", or one function's index.
   const [invFn, setInvFn] = useState("all");
-  // Whole-event crew row whose "how" modal is open (its crew type), or null.
-  const [mpHowType, setMpHowType] = useState(null);
   // Fabric colour swatch shown large ({name, hex}), or null.
   const [swatchView, setSwatchView] = useState(null);
   // 🔁 Mandi swap on the Floral real-shopping list — { i, q, toName, qty, price, note } while open.
@@ -921,7 +919,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   };
   // A PDF open for one event must not carry over when the picker moves to another.
   useEffect(() => { setDeckView(null); }, [selId]);
-  useEffect(() => { setMpFn("all"); setMpHowType(null); setInvFn("all"); }, [selId]);
+  useEffect(() => { setMpFn("all"); setInvFn("all"); }, [selId]);
   // The last PDF View deck built, keyed by department + the event's full data. Opening it again
   // with nothing changed reuses it instantly instead of rebuilding; any edit to the event changes
   // the key, so what opens is still always the latest. Its blob: URL is freed when replaced.
@@ -4858,12 +4856,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
               {fnChipRow(mpFn, setMpFn)}
               {mpEventOpen && hasMpSnapshot && (() => {
                 const ev = eventManpower();
-                const lab = ev.types.find(t => t.type === "Labours");
-                const tile = (label, value, sub) => <div className="rounded-xl bg-white ring-1 ring-gray-200 px-3 py-2 min-w-0">
-                  <div className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold">{label}</div>
-                  <div className="text-[18px] font-bold text-gray-900 tabular-nums leading-tight">{value}</div>
-                  {sub && <div className="text-[11.5px] text-gray-500 truncate">{sub}</div>}
-                </div>;
                 return (
                   <div className="m-2.5 mb-0 rounded-xl bg-slate-50 ring-1 ring-slate-200 p-3 space-y-3 text-[13px] text-gray-700">
                     <div className="flex items-center gap-2">
@@ -4871,112 +4863,26 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       <span className="text-[11.5px] text-gray-400">all departments · with each dept's edits</span>
                       <button onClick={() => setMpEventOpen(false)} className="ml-auto text-gray-400 hover:text-gray-700 text-[16px] leading-none" title="Close">×</button>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {tile("Labours", lab ? `${lab.peak} peak` : "—", lab ? `${Math.round(lab.dihari)} dihari across the event` : "no labour on this booking")}
-                      {tile("Total dihari", Math.round(ev.totalDihari), "every crew type")}
-                      {tile("Manpower cost", fmt(ev.total), `${ev.depts.length} department${ev.depts.length === 1 ? "" : "s"}`)}
-                    </div>
-                    {ev.labDays.length > 0 && (
-                      <div>
-                        <div className="text-[11.5px] font-semibold text-gray-500 mb-1.5">Labours on site, by day</div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {ev.labDays.map((d, i) => <span key={i} className="inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 py-1"><span className="text-gray-500">{d.label}</span><b className="text-gray-900 tabular-nums">{d.count}</b></span>)}
-                        </div>
-                      </div>
-                    )}
                     <div className="grid gap-3 md:grid-cols-2">
                       <div className="rounded-xl bg-white ring-1 ring-gray-200 overflow-hidden">
-                        <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Crew</span><span className="w-14 text-right">Peak</span><span className="w-14 text-right">Dihari</span><span className="w-20 text-right">Cost</span><span className="w-10" /></div>
-                        {ev.types.map(t => <div key={t.type} className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-100 items-center">
-                          <span className="truncate font-medium text-gray-900">{crewIcon(t.type)} {t.type}{t.shared && <span className="ml-1.5 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold align-middle">SHARED</span>}</span>
-                          <span className="w-14 text-right tabular-nums">{t.peak}</span>
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Crew</span><span className="w-14 text-right">Dihari</span><span className="w-20 text-right">Cost</span></div>
+                        {ev.types.map(t => <div key={t.type} className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-100 items-center">
+                          <span className="truncate font-medium text-gray-900">{crewIcon(t.type)} {t.type}</span>
                           <span className="w-14 text-right tabular-nums">{Math.round(t.dihari)}</span>
                           <span className="w-20 text-right tabular-nums font-semibold text-gray-900">{fmt(t.cost)}</span>
-                          <button onClick={() => setMpHowType(t.type)} title={`How ${t.type} adds up`}
-                            className="w-10 rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 px-1.5 py-0.5 text-[11px] font-semibold cursor-pointer">how</button>
                         </div>)}
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-200 bg-gray-50 font-semibold text-gray-900"><span>Total</span><span className="w-14 text-right tabular-nums">{Math.round(ev.totalDihari)}</span><span className="w-20 text-right tabular-nums">{fmt(ev.total)}</span></div>
                       </div>
                       <div className="rounded-xl bg-white ring-1 ring-gray-200 overflow-hidden">
-                        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Department</span><span className="w-16 text-right">Labour dih.</span><span className="w-14 text-right">Dihari</span><span className="w-20 text-right">Cost</span></div>
-                        {ev.depts.map(d => <div key={d.dept} className={"grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-100 items-center " + (d.dept === dept ? "bg-blue-50/60" : "")}>
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Department</span><span className="w-14 text-right">Dihari</span><span className="w-20 text-right">Cost</span></div>
+                        {ev.depts.map(d => <div key={d.dept} className={"grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-100 items-center " + (d.dept === dept ? "bg-blue-50/60" : "")}>
                           <span className="truncate font-medium text-gray-900">{d.dept}{d.dept === dept && <span className="ml-1.5 text-[10px] text-blue-600 font-bold">THIS</span>}</span>
-                          <span className="w-16 text-right tabular-nums">{d.labDihari ? (Math.round(d.labDihari * 10) / 10) : "—"}</span>
                           <span className="w-14 text-right tabular-nums">{Math.round(d.dihari * 10) / 10}</span>
                           <span className="w-20 text-right tabular-nums font-semibold text-gray-900">{fmt(d.cost)}</span>
                         </div>)}
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-200 bg-gray-50 font-semibold text-gray-900"><span>Total</span><span className="w-14 text-right tabular-nums">{Math.round(ev.totalDihari)}</span><span className="w-20 text-right tabular-nums">{fmt(ev.total)}</span></div>
                       </div>
                     </div>
-                    {/* ── HOW A CREW ROW ADDS UP ──
-                        Every department's share of this crew type, with each department's own edits,
-                        plus how the count was derived and the days it works. Read-only: edits stay in
-                        each department's own Manpower plan. */}
-                    {(() => {
-                      const t = mpHowType && ev.types.find(x => x.type === mpHowType);
-                      if (!t) return null;
-                      const src = t.rows.find(x => x.trace) || t.rows[0];
-                      // Shared crew is ONE event-wide team: its days come from the schedule's own
-                      // headcount, not from any one department's share of it.
-                      const days = t.shared
-                        ? (Array.isArray(src?.schedule) ? src.schedule.map(day => ({ label: phaseLbl(day), crew: Number(day.count) || 0, shifts: Array.isArray(day.windowIds) ? day.windowIds.length : (Number(day.windows) || 0) })) : [])
-                        : null;
-                      return createPortal(
-                        <div data-hi-scope onClick={() => setMpHowType(null)} className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4">
-                          <div onClick={e => e.stopPropagation()} className="w-full max-w-xl max-h-[85vh] overflow-y-auto rounded-2xl bg-white shadow-2xl p-4 space-y-3 text-[13px] text-gray-700">
-                            <div className="flex items-center gap-2">
-                              <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm leading-none">{crewIcon(t.type)}</span>
-                              <span className="text-[15px] font-semibold text-gray-900">How {t.type} adds up</span>
-                              {t.shared && <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold">SHARED</span>}
-                              <button onClick={() => setMpHowType(null)} className="ml-auto text-gray-400 hover:text-gray-700 text-[18px] leading-none cursor-pointer" title="Close">×</button>
-                            </div>
-                            <div className="grid grid-cols-3 gap-2">
-                              {tile("Peak", t.peak, t.shared ? "one team, whole event" : "summed across departments")}
-                              {tile("Dihari", Math.round(t.dihari), "crew × shifts, all days")}
-                              {tile("Cost", fmt(t.cost), `${t.rows.length} department${t.rows.length === 1 ? "" : "s"}`)}
-                            </div>
-                            {t.shared && <div className="rounded-lg bg-slate-50 ring-1 ring-slate-200 px-2.5 py-2 text-[12px] text-gray-600">One event-wide team, split across departments by their usage or income share. Each department's figure below is its share, with its own edits.</div>}
-                            {src?.trace && (
-                              <div>
-                                <div className="text-[11.5px] font-semibold text-gray-500 mb-1.5">How the count was worked out</div>
-                                {renderMpTrace(src.trace)}
-                              </div>
-                            )}
-                            {days && days.length > 0 && (
-                              <div>
-                                <div className="text-[11.5px] font-semibold text-gray-500 mb-1.5">On site, by day</div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {days.map((d, i) => <span key={i} className="inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 py-1" title="Crew × shift count is a rough guide — when a day's shifts carry different crew, the dihari figure is the real total."><span className="text-gray-500">{d.label}</span><b className="text-gray-900 tabular-nums">{d.crew}</b><span className="text-gray-400">× {d.shifts} shift{d.shifts === 1 ? "" : "s"} = {d.dihari} dihari</span></span>)}
-                                </div>
-                              </div>
-                            )}
-                            <div className="rounded-xl ring-1 ring-gray-200 overflow-hidden">
-                              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Department</span><span className="w-14 text-right">Dihari</span><span className="w-16 text-right">₹/day</span><span className="w-20 text-right">Cost</span></div>
-                              {t.rows.map(x => (
-                                <div key={x.dept} className={"px-3 py-1.5 border-t border-gray-100 " + (x.dept === dept ? "bg-blue-50/60" : "")}>
-                                  <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center">
-                                    <span className="truncate font-medium text-gray-900">{x.dept}{x.dept === dept && <span className="ml-1.5 text-[10px] text-blue-600 font-bold">THIS</span>}</span>
-                                    <span className="w-14 text-right tabular-nums">{Math.round(x.dihari * 10) / 10}</span>
-                                    <span className="w-16 text-right tabular-nums">{fmt(x.rate)}</span>
-                                    <span className="w-20 text-right tabular-nums font-semibold text-gray-900">{fmt(x.cost)}</span>
-                                  </div>
-                                  {!t.shared && x.days.length > 0 && (
-                                    <div className="mt-1 flex flex-wrap gap-1 text-[11.5px] text-gray-500">
-                                      {x.days.map((d, i) => <span key={i} className="rounded bg-gray-100 px-1.5 py-0.5">{d.label} · {d.crew} × {d.shifts}</span>)}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-200 bg-gray-50 font-semibold text-gray-900">
-                                <span>Total</span>
-                                <span className="w-14 text-right tabular-nums">{Math.round(t.dihari)}</span>
-                                <span className="w-16" />
-                                <span className="w-20 text-right tabular-nums">{fmt(t.cost)}</span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>,
-                        document.body
-                      );
-                    })()}
                   </div>
                 );
               })()}
