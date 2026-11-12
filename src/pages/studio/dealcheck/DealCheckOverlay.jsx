@@ -2182,14 +2182,15 @@ export default function DealCheckOverlay({ ctx }) {
             // (both genuinely 0 here) and its "💡 How" popup, instead of showing a confusing
             // "Rate ₹0 × 974 … synced before the breakdown existed" that reads as a bug it isn't
             // (review finding, 2026-11-12).
-            // Rounded to 2 places before ceiling (same float-noise guard deptBookHtml.js's own
-            // artBunches uses) — a sum that lands on 974.0000000000001 from plain float arithmetic
-            // must still ceil to 974, not 975.
-            const bunchQty = (n) => Math.ceil(Math.round((Number(n) || 0) * 100) / 100);
+            // qty is in KG (owner ask, 2026-11-13 — truck planning reads kg, not bunches, same unit
+            // the Deal Check breakdown panel's own kg figure already uses). qtyUnit carries the label
+            // through for any card that reads it, matching artificial.flowerKg/greenKg exactly (both
+            // already rounded to 2dp there) — no separate rounding/ceiling needed here the way the
+            // whole-bunch count used to (a kg amount doesn't round up to a "whole bunch" unit).
             if (artificial) {
               const rows = [];
-              if (afBunches > 0) rows.push({ name: "Artificial flowers", photo: "", qty: bunchQty(afBunches), unit: 0, total: 0, sub: "Artificial Flowers", stockOnly: true });
-              if (agBunches > 0) rows.push({ name: "Artificial greens", photo: "", qty: bunchQty(agBunches), unit: 0, total: 0, sub: "Artificial Flowers", stockOnly: true });
+              if (artificial.flowerKg > 0) rows.push({ name: "Artificial flowers", photo: "", qty: artificial.flowerKg, qtyUnit: "kg", unit: 0, total: 0, sub: "Artificial Flowers", stockOnly: true });
+              if (artificial.greenKg > 0) rows.push({ name: "Artificial greens", photo: "", qty: artificial.greenKg, qtyUnit: "kg", unit: 0, total: 0, sub: "Artificial Flowers", stockOnly: true });
               if (rows.length) floralArtificialExtra = rows;
             }
           } catch {}

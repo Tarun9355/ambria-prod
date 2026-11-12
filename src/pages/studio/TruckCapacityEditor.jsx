@@ -24,8 +24,7 @@ export default function TruckCapacityEditor({ ctx }) {
   // Fabric Allocation pseudo-sub, so sqft would be wrong.
   const guessUnit = (sub) => {
     const s = String(sub || "").toLowerCase().trim();
-    if (s === "liza" || s === "real flowers") return "kg";
-    if (s === "artificial flowers") return "bunch";
+    if (s === "liza" || s === "real flowers" || s === "artificial flowers") return "kg";
     if (/truss|platform|carpet|fabric|batta|ceiling/.test(s)) return "sqft";
     if (s === "print") return "sqft"; // print jobs are trucked by area (exact match: "PRINTED WALLS" are counted in pieces)
     return "pc";
