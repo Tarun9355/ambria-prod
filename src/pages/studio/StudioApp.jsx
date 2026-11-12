@@ -10700,6 +10700,17 @@ export default function StudioApp() {
   }, []);
   const resumeSavedSession = useCallback((session, targetFnIdx) => {
     if (!session) return;
+    // Same guard switchActiveFn opens with: a pill switch's transition can still be in flight
+    // (committedFnIdxRef not yet advanced) when this fires from Event Info, which has no
+    // isFnSwitching gate of its own. Racing restoreBuildState's urgent update against a pending
+    // transition's queued setActiveFnIdx left the screen labelled as one function while actually
+    // showing another's content — refusing outright while a switch is still committing is simpler
+    // than reasoning about which update lands last. Both flags, not just switchingRef: the 3s
+    // fnBusy backstop (~line 2477) clears switchingRef even while the transition it was guarding is
+    // still pending, so switchingRef alone reopens this window on a slow device before the switch
+    // has actually landed — the same combined check already used elsewhere in this file (~9152,
+    // ~9424) for exactly this reason.
+    if (switchingRef.current || fnSwitchingRef.current) return;
     // Same baseline capture loadClientSession does (~line 8035) — this is the OTHER door into a
     // build (Browse's "Resume"/"Continue build", used far more often than a fresh Load), and it was
     // the one door that never set buildSaveBaselineRef at all. A tab that only ever arrives here
@@ -10720,30 +10731,72 @@ export default function StudioApp() {
     const curTop = (clientLedgerRef.current || clientLedger).find(c => c.id === activeClientIdRef.current)?.sessions?.[0] || null;
     buildSaveBaselineRef.current = { savedAt: Number(curTop?.savedAt) || 0, savedBy: curTop?.savedBy || null };
     const idx = Number.isInteger(targetFnIdx) ? targetFnIdx : activeFnIdx;
+    // A history row's target index comes from an OLDER session's own numbering
+    // (bestFnIdxForSession/findLatestBuild), which can point past the deal's current function
+    // count after a function was removed since that session was saved. Silently letting
+    // setActiveFnIdx clamp it would land the old build under whatever function the clamp lands
+    // on instead, mislabeling it — refuse instead of guessing.
+    const totalFns = 1 + (extraFunctions || []).length;
+    if (idx < 0 || idx >= totalFns) { showMsg("That function no longer exists in this deal", "red"); return; }
+    // ── CAPTURE THE OUTGOING FUNCTION'S LIVE BUILD BEFORE TOUCHING ANYTHING ──
+    // The exact failure switchActiveFn's own top comment documents ("the outgoing snapshot was filed
+    // under the stale index, so it could overwrite a DIFFERENT function's build with this one's"),
+    // except this door into function-switching never got the fix at all: it went straight to
+    // restoreBuildState/setFnBuilds without ever snapshotting whatever was live on screen for the
+    // function being LEFT (committedFnIdxRef.current — see that ref's own comment for why it, not
+    // activeFnIdx, is the one that agrees with what's actually rendered). Confirmed live (Rakesh
+    // Taneja, 2026-11-12): Function 1's real content was clobbered by Function 2's saved session the
+    // moment Browse's "Continue build" jumped to Function 2 — because fnBuilds[curIdx] still held
+    // whatever was last committed there (stale, or nothing), and the merge below then overwrote it
+    // outright with this session's OWN (unrelated) snapshot for that same index.
+    const curIdx = committedFnIdxRef.current;
+    const outgoingSnap = curIdx !== idx ? snapshotFnRef.current() : null;
     if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
       const activeSnap = session.fnSnapshots[idx] || session.fnSnapshots[String(idx)] || null;
       if (idx !== activeFnIdx) setActiveFnIdx(idx);
       restoreBuildState(activeSnap);
-      // MERGE onto the current fnBuilds, never replace it outright. This session's own fnSnapshots
-      // only cover the functions that existed AT THE TIME it was saved — a function added to the
-      // deal since then has no entry here at all, and replacing the whole map silently blanked it
-      // (its only copy of its build was the live one in fnBuilds, which this just threw away). Each
-      // OTHER function this session DOES carry a snapshot for is still restored to that past state,
-      // same as before — only a function this session never touched now survives untouched instead
-      // of vanishing.
-      setFnBuilds(prev => {
-        const next = { ...prev };
-        Object.entries(session.fnSnapshots).forEach(([k, v]) => {
-          const i = parseInt(k);
-          if (!isNaN(i) && i !== idx && v) next[i] = v;
-        });
-        return next;
-      });
+      // ── TOUCH ONLY idx (the function being entered) AND curIdx (the one being left) ──
+      // This used to also MERGE every OTHER function this session carried a snapshot for onto
+      // fnBuilds, on the theory that it was only ever filling in a function added to the deal
+      // after this session was saved — but such a function has no key in session.fnSnapshots at
+      // all, so that merge never actually served that purpose. What it really did: overwrote a
+      // SIBLING function's already-real content with whatever this unrelated, often-older session
+      // happened to record for that same index. Confirmed live (Rakesh Taneja, 2026-11-12) on the
+      // single most common path in the app — Browse's main "Continue build" card, which always
+      // targets the function ALREADY on screen (bannerSaved only ever badges a card with
+      // activeFnIdx, "THIS PILL ONLY" — see its own comment) — so idx === curIdx there every time,
+      // outgoingSnap is null, and this merge was the ONLY thing touching any other function; it had
+      // nothing to do with resuming Fn X yet silently rewrote a sibling elsewhere in the deal. An
+      // attempted "only backfill if currently empty" compromise still had real failure modes (a
+      // deliberately-cleared function getting its old content silently restored; index drift after
+      // removeFunction stamping a deleted function's build onto whatever function now holds that
+      // number) with no actual benefit — a function this session never touched is already correct
+      // sitting untouched in fnBuilds, same as it was a moment ago.
+      setFnBuilds(prev => (outgoingSnap ? { ...prev, [curIdx]: outgoingSnap } : prev));
       setStep(2);
       showMsg("Resumed Fn" + (idx + 1) + " from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
       return;
     }
-    if (idx !== 0) setActiveFnIdx(0);   // legacy sessions are flat — their data belongs to Fn1
+    // legacy sessions are flat — their data belongs to Fn1. Tested against curIdx (what's actually
+    // committed/on screen right now), not idx: every caller already passes idx=0 for a legacy
+    // session regardless of which function is active, so checking idx here never actually caught
+    // the case that matters — Fn2 (say) was active, this still skipped setActiveFnIdx, and the
+    // legacy build loaded into the raw state while the UI stayed labelled Fn2.
+    // Same capture as the fnSnapshots branch above: the function actually being left behind is
+    // whatever was committed just before this call (curIdx). Without this, switching to a legacy
+    // session from any other function silently drops that function's live, uncommitted content.
+    if (curIdx !== 0) {
+      setActiveFnIdx(0);
+      const legacyOutgoing = snapshotFnRef.current();
+      setFnBuilds(prev => ({ ...prev, [curIdx]: legacyOutgoing }));
+    }
+    // Blank every raw-state field first, THEN apply the legacy session's own flat fields below.
+    // A legacy session predates itemQty/itemGrades/customMode/activeZones/zoneOrder/customZones/
+    // elInspo/elCostOpen/savedInsps/customGensets/genset62/customTripRate entirely, so without this
+    // reset, switching INTO a legacy session from a non-zero function left all of those holding the
+    // OUTGOING function's own values — which then feed pricing (allFunctionData) and autosave right
+    // back out under Fn1's identity.
+    restoreBuildState(null);
     setEnabledEls(session.enabledEls || {});
     setElTiers(session.elTiers || {});
     setZoneConfig(session.zoneConfig || {});
