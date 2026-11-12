@@ -10354,6 +10354,31 @@ export default function StudioApp() {
   useEffect(() => () => {
     if (dealPresenceRef.current) { try { supabase.removeChannel(dealPresenceRef.current.channel); } catch { /* ignore */ } dealPresenceRef.current = null; }
   }, []);
+  // Also release on pagehide, not just unmount — a real tab close/refresh tears the page down before
+  // React ever gets to run the unmount cleanup above (confirmed: "You already have this deal open"
+  // firing against your OWN just-closed tab after a refresh). Explicitly untracking here gives the
+  // presence leave a chance to reach the server before the socket drops, instead of leaving this
+  // entry to clear only via the server's own disconnect-timeout detection, which the comment on
+  // claimDealPresence already documents as sometimes lagging well past a few seconds.
+  // pagehide ONLY, not beforeunload: every beforeunload listener on the page (Build's own unsaved-
+  // edit prompt, saveHealth's failed-write prompt) fires regardless of what the user picks on the
+  // native "Leave site?" dialog — releasing here on beforeunload would drop the lock the instant
+  // that prompt appears, even if the salesperson then clicks Stay and keeps editing with no claim
+  // held, letting a second device in. pagehide only fires once the unload is actually going ahead.
+  // Nulling the ref after releasing keeps it consistent with the other two cleanup paths above — a
+  // tab restored from the back/forward cache after this fires starts with no stale claim, same as
+  // today's refresh-restore path (which never re-claims at all; see loadClientSessionGuarded above).
+  useEffect(() => {
+    const onHide = () => {
+      const p = dealPresenceRef.current;
+      if (!p) return;
+      try { p.channel.untrack(); } catch { /* best-effort */ }
+      try { supabase.removeChannel(p.channel); } catch { /* best-effort */ }
+      dealPresenceRef.current = null;
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, []);
   // Wraps loadClientSession for Event Info's "Load →" button only — the one place this was asked
   // for. Every OTHER caller of loadClientSession still calls it directly, unguarded, on purpose:
   // the automated planning-sync sweep is a system process re-opening a booked deal headlessly, not
@@ -10365,7 +10390,14 @@ export default function StudioApp() {
   // restructuring that function, which this deliberately does not do.
   const loadClientSessionGuarded = useCallback(async (client, session, landingStep, opts) => {
     if (dealPresenceRef.current) {
-      try { supabase.removeChannel(dealPresenceRef.current.channel); } catch { /* ignore */ }
+      // Awaited, not fire-and-forget: claimDealPresence immediately below opens a channel on the
+      // SAME topic (`realtime:presence:client:${clientId}`) whenever this re-claims the deal it was
+      // already holding (e.g. clicking Load → again on the deal already open in this tab) — the
+      // realtime client dedupes channels by topic and only drops the old one once the server has
+      // acknowledged the leave, so an unawaited remove here could hand the new claim back the OLD,
+      // still-leaving channel, whose subscribe is then a no-op and whose presence state still shows
+      // this tab's own now-superseded entry — a same-tab false "You already have this deal open".
+      try { await supabase.removeChannel(dealPresenceRef.current.channel); } catch { /* ignore */ }
       dealPresenceRef.current = null;
     }
     if (!client?.id || !authUser?.id) { loadClientSession(client, session, landingStep, opts); return; }
