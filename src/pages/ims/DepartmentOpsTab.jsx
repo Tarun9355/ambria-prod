@@ -14,7 +14,7 @@ import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { fetchOpsVendors } from "../../lib/ims/opsVendors";
-import { venueWithParent, standingQty } from "../../lib/ims/fixedVenues";
+import { venueWithParent, standingQty, venueCalendarColor } from "../../lib/ims/fixedVenues";
 import { carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import ElementChoicePlan from "./ElementChoicePlan.jsx";
@@ -3750,28 +3750,31 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                             <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-gray-100 text-gray-500 tabular-nums">{dayEvs.length} event{dayEvs.length === 1 ? "" : "s"}</span>
                           </div>
                           <div className="space-y-2.5">
-                            {dayEvs.map(eo => (
-                              <button key={eo.id} onClick={() => setSelId(eo.id)}
-                                className="w-full text-left rounded-xl bg-gray-50 ring-1 ring-gray-100 hover:bg-blue-50 hover:ring-blue-100 active:bg-blue-100 px-4 py-3.5 flex items-center gap-3.5 cursor-pointer transition-colors">
-                                <span aria-hidden="true" className="shrink-0 w-2 h-2 rounded-full bg-blue-500 ring-4 ring-blue-100" />
-                                <span className="min-w-0 flex-1">
-                                  <span className="block text-[15px] font-semibold text-gray-900 leading-snug truncate">{eo.clientName || "Event"}</span>
-                                  {/* Venue and shift, because that is what an event_order actually
-                                      carries — there are no start/end times on one to show. */}
-                                  <span className="mt-0.5 block text-xs text-gray-500 truncate">
-                                    {venueOf(eo) || "—"}
-                                    {eo.functionsDetail?.[0]?.shift ? ` · ${eo.functionsDetail[0].shift}` : ""}
+                            {dayEvs.map(eo => {
+                              const vc = venueCalendarColor(settings, eo.functionsDetail?.[0]?.venue || eo.venue || "");
+                              return (
+                                <button key={eo.id} onClick={() => setSelId(eo.id)}
+                                  className="w-full text-left rounded-xl bg-gray-50 ring-1 ring-gray-100 hover:bg-blue-50 hover:ring-blue-100 active:bg-blue-100 px-4 py-3.5 flex items-center gap-3.5 cursor-pointer transition-colors">
+                                  <span aria-hidden="true" className={`shrink-0 w-2 h-2 rounded-full ring-4 ring-opacity-30 ${vc.dot} ${vc.ring}`} />
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block text-[15px] font-semibold text-gray-900 leading-snug truncate">{eo.clientName || "Event"}</span>
+                                    {/* Venue and shift, because that is what an event_order actually
+                                        carries — there are no start/end times on one to show. */}
+                                    <span className="mt-0.5 block text-xs text-gray-500 truncate">
+                                      {venueOf(eo) || "—"}
+                                      {eo.functionsDetail?.[0]?.shift ? ` · ${eo.functionsDetail[0].shift}` : ""}
+                                    </span>
+                                    {/* Own line, not tacked onto venue/shift above — that span already
+                                        truncates, and venue+shift alone was often long enough to push
+                                        "booked by {name}" past the ellipsis before it ever rendered. */}
+                                    {eo.salesperson && <span className="block text-xs text-gray-400 truncate">Booked by {eo.salesperson}</span>}
                                   </span>
-                                  {/* Own line, not tacked onto venue/shift above — that span already
-                                      truncates, and venue+shift alone was often long enough to push
-                                      "booked by {name}" past the ellipsis before it ever rendered. */}
-                                  {eo.salesperson && <span className="block text-xs text-gray-400 truncate">Booked by {eo.salesperson}</span>}
-                                </span>
-                                <span aria-hidden="true" className="shrink-0 text-gray-400">
-                                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L9 7 L5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                                </span>
-                              </button>
-                            ))}
+                                  <span aria-hidden="true" className="shrink-0 text-gray-400">
+                                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L9 7 L5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                  </span>
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       );
@@ -3797,12 +3800,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                           <div className="space-y-1">
                             {/* Each event is its own button — clicking a DAY would be ambiguous on
                                 a date carrying two events, and this page can only show one. */}
-                            {evs.map(eo => (
-                              <button key={eo.id} onClick={() => setSelId(eo.id)} title={`Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""}`}
-                                className="w-full text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md truncate border-l-[3px] border-blue-500 bg-blue-50/80 text-blue-900 hover:bg-blue-100 transition-colors">
-                                {eo.clientName || "Event"}
-                              </button>
-                            ))}
+                            {evs.map(eo => {
+                              // Same color legend as the separate Ambria Calendar app: one of
+                              // Ambria's own venues gets that venue's color, a client's own outdoor
+                              // venue gets "ADD"'s color (lib/ims/fixedVenues.js's venueCalendarColor).
+                              const vc = venueCalendarColor(settings, eo.functionsDetail?.[0]?.venue || eo.venue || "");
+                              return (
+                                <button key={eo.id} onClick={() => setSelId(eo.id)} title={`Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""}`}
+                                  className={`w-full text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md truncate border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
+                                  {eo.clientName || "Event"}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       );
