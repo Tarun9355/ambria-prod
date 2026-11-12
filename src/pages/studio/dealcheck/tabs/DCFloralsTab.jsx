@@ -736,16 +736,16 @@ export default function DCFloralsTab({ ctx }) {
                           // their cost is still folded into totalReal/totalArtificial above, just not
                           // shown again here as a "no pattern" row (there was never a pattern to have).
                           if (eb.isInvOnlyNoPattern) return;
-                          // A kit's attached recipe/floral component is internally named after itself
-                          // ("Tree · recipe" — its own decorated label, not the kit's name), so it used
-                          // to merge into its OWN row here, reading as if "Tree · recipe" were a floral
-                          // element in its own right rather than the recipe attached to the Tree kit
-                          // (owner report, 2026-11-13: "my tree is no longer a recipe, its a kit that
-                          // contains a recipe"). Grouping by the kit's own name (eb.kitParent) when one
-                          // is set folds it back under "Tree" — same name Build and the kit's own card
-                          // already use for it.
+                          // Grouped by the KIT's own name (eb.kitParent) when a kit is involved, so the
+                          // SAME recipe/component showing up across several zones of the same kit still
+                          // merges into one row (same reason plain same-named elements already merge
+                          // across zones) — but DISPLAYED by its own name (the recipe's real name, e.g.
+                          // "Chandelier Tree Floral Recipe", or the component's own name), never the
+                          // kit's name. Showing "Tree" here read as if the kit itself were a flower
+                          // (owner feedback, 2026-11-13: "why show it as tree, thats confusing" — the
+                          // row IS the recipe, grouped under the kit only so repeats merge).
                           const groupName = eb.kitParent || eb.name;
-                          if (!byName[groupName]) { byName[groupName] = { name: groupName, zones: [], totalQty: 0, realPct: eb.realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, invCost: 0, entries: [] }; merged.push(byName[groupName]); }
+                          if (!byName[groupName]) { byName[groupName] = { name: eb.name, zones: [], totalQty: 0, realPct: eb.realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, invCost: 0, entries: [] }; merged.push(byName[groupName]); }
                           const g = byName[groupName];
                           g.zones.push(eb.zoneKey);
                           g.totalQty += (eb.qty || 0);
