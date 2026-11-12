@@ -366,6 +366,65 @@ describe("computeFnFloralCost — core per-element resolution (unaffected by the
   });
 });
 
+describe("computeFnFloralCost — a raw mandi commodity added directly (el.mandiId, e.g. Jaimala/Loose Petals, no recipe/pattern at all)", () => {
+  // Jaimala — a real mandi item, directly addable in Build the same way "Loose Petals" is (an
+  // IMS "Markup %" set on the mandi row, no flower pattern involved). Bug fixed 2026-11-13:
+  // computeFnFloralCost had NO handling for this element shape at all — it never resolved
+  // el.mandiId, so a direct mandi add silently never reached flowerAgg (the mandi list every
+  // actuals screen reads), even though Build's own getElPriceFromMandi priced it correctly.
+  // `.name`, not `.label` — the real field shape mandi_flowers color variants carry
+  // (AdminSettingsTab.jsx creates {variantId, name, photoUrl, currentPrice}). An earlier version of
+  // this fix read `.label` here, which is always undefined on a real variant — the test fixture
+  // used to match that wrong field too, hiding the bug (review finding, 2026-11-13).
+  const jaimala = { id: "jaimala", name: "Jaimala", unit: "piece", currentPrice: 80, markup: 20, colorVariants: [{ variantId: "v_red", name: "Red", photoUrl: "red.jpg", currentPrice: 90 }] };
+  const mandiOpts = { ...baseOpts([]), mandiCatalogue: [jaimala] };
+
+  it("reaches the mandi list (flowerAgg) and totalReal at the bare mandi rate — no markup, no artificial side", () => {
+    const f = fn({ zoneElements: { stage: [{ name: "Jaimala", mandiId: "jaimala", qty: 5 }] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f, [f], mandiOpts);
+    expect(result.totalReal).toBeCloseTo(5 * 80, 5); // bare rate, markup is guest-price-only
+    expect(result.totalArtificial).toBe(0);
+    const breakdown = buildMandiBreakdown(result.flowerAgg);
+    const row = breakdown.find((r) => r.name === "Jaimala");
+    expect(row?.qty).toBeCloseTo(5, 5);
+  });
+
+  it("a picked colour variant prices at the variant's own rate, not the parent's", () => {
+    const f = fn({ zoneElements: { stage: [{ name: "Jaimala", mandiId: "jaimala", mandiVariantId: "v_red", qty: 4 }] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f, [f], mandiOpts);
+    expect(result.totalReal).toBeCloseTo(4 * 90, 5);
+  });
+
+  it("a picked colour variant's name reaches the mandi list's own colorVariant field (swatch/photo), not left null", () => {
+    const f = fn({ zoneElements: { stage: [{ name: "Jaimala", mandiId: "jaimala", mandiVariantId: "v_red", qty: 4 }] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f, [f], mandiOpts);
+    const row = result.flowerAgg.get("jaimala");
+    expect(row?.colorVariant).toMatchObject({ variantId: "v_red", label: "Red", photoUrl: "red.jpg" });
+  });
+
+  it("an unresolvable mandiId is recorded as uncosted, not silently dropped", () => {
+    const f = fn({ zoneElements: { stage: [{ name: "Ghost", mandiId: "gone", qty: 2 }] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f, [f], mandiOpts);
+    expect(result.totalReal).toBe(0);
+    expect(result.uncosted.some((u) => u.name === "Ghost")).toBe(true);
+  });
+
+  it("a SAME-colour direct mandi item reused from the immediately preceding function gets the reuse credit — same mechanism and fixture shape as the Rose palette-reuse test above", () => {
+    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "Red", zoneElements: { stage: [{ name: "Jaimala", mandiId: "jaimala", qty: 10 }] }, enabledEls: { stage: true } });
+    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "Red", zoneElements: { stage: [{ name: "Jaimala", mandiId: "jaimala", qty: 20 }] }, enabledEls: { stage: true } });
+    const opts = {
+      ...mandiOpts,
+      colorPrefsForFn: { jaimala: pick("Red") },
+      colorPrefsByFnIdx: { 0: { jaimala: pick("Red") }, 1: { jaimala: pick("Red") } },
+    };
+    const result = computeFnFloralCost(f2, [f1, f2], opts);
+    const line = result.elementBreakdown[0].realLines[0];
+    expect(line.qtyFull).toBe(20);
+    expect(line.reuseCredit).toBeCloseTo(10 * FLOWER_REUSE_RATE, 5);
+    expect(line.qty).toBeCloseTo(20 - 10 * FLOWER_REUSE_RATE, 5);
+  });
+});
+
 describe("computeFnRawFlowerUsage", () => {
   it("aggregates raw (uncredited) real and artificial need per exact flower id, ignoring reuse entirely", () => {
     const f = fn({ zoneElements: { stage: [{ name: "Rose", patternId: "p_rose", qty: 10, realPct: 30 }] }, enabledEls: { stage: true } });
@@ -385,6 +444,15 @@ describe("computeFnRawFlowerUsage", () => {
     const f = fn({ zoneElements: { stage: [{ name: "Rose", patternId: "p_rose", qty: 10, realPct: 100 }] }, enabledEls: { stage: true } });
     const usage = computeFnRawFlowerUsage(f, baseOpts([pRose]));
     expect(usage.get("rose").colour).toBe(null);
+  });
+
+  it("tracks a direct mandi item too (el.mandiId, no pattern) — at its full qty, 100% real, so a LATER function can be credited for reusing it", () => {
+    const jaimala = { id: "jaimala", name: "Jaimala", unit: "piece", currentPrice: 80, markup: 20 };
+    const f = fn({ zoneElements: { stage: [{ name: "Jaimala", mandiId: "jaimala", qty: 6 }] }, enabledEls: { stage: true } });
+    const usage = computeFnRawFlowerUsage(f, { ...baseOpts([]), mandiCatalogue: [jaimala] });
+    const u = usage.get("jaimala");
+    expect(u?.realQty).toBeCloseTo(6, 5);
+    expect(u?.artUnits).toBe(0);
   });
 });
 

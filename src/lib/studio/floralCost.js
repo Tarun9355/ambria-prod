@@ -255,6 +255,18 @@ export function computeFnRawFlowerUsage(fn, opts) {
     expandedElems.forEach((el) => {
       const elName = (el.name || "").toLowerCase().trim();
       const elQty = el.qty || 0;
+      // A raw mandi commodity (el.mandiId) — same shape as computeFnFloralCost's own mandiId
+      // branch, kept in sync manually. Recorded here too so a LATER function's reuse-credit lookup
+      // (precedingUsage.get(el.mandiId)) has something to find — without this, a direct mandi add
+      // could never be credited as "reused from yesterday" by a following function, the same gap
+      // that used to leave it out of the mandi list/actuals entirely (fixed alongside).
+      if (el.mandiId) {
+        const parent = mandiCatalogue.find((m) => m.id === el.mandiId);
+        if (!parent) return;
+        const variant = el.mandiVariantId ? (parent.colorVariants || []).find((v) => v.variantId === el.mandiVariantId) : null;
+        add(el.mandiId, elQty, 0, parent, variant || null);
+        return;
+      }
       // Same rule as computeFnFloralCost above (kept in sync manually): an explicit pattern
       // reference either resolves live or this element contributes nothing here — never guessed by
       // fuzzy name matching against its own decorated label.
@@ -439,6 +451,55 @@ export function computeFnFloralCost(fn, allFns, opts) {
     expandedElems.forEach(el => {
       const elName = (el.name || "").toLowerCase().trim();
       const elQty = el.qty || 0;
+      // A raw mandi commodity added straight to a zone (el.mandiId, e.g. "Loose Petals"/Jaimala —
+      // no recipe/pattern, no rentable IMS stock behind it; StudioApp.jsx's getElPriceFromMandi
+      // prices it the same way: the picked colour variant's own rate, or the parent's, × markup%
+      // for the GUEST price). This engine had no handling for this element shape at all before —
+      // a direct mandi add never reached flowerAgg, so it silently never showed in Deal Check's own
+      // Florals tab mandi list, the artificial/real actuals, or anywhere else this engine feeds
+      // (IMS Dept Ops, Planning) — owner report, 2026-11-13. Always 100% real (no artificial side
+      // exists for a direct mandi item), and the ACTUALS side bills at the bare mandi rate, same
+      // convention every recipe ingredient below already uses — markup is a guest-price-only
+      // concept, applied solely in getElPriceFromMandi, never here.
+      if (el.mandiId) {
+        const parent = mandiCatalogue.find(m => m.id === el.mandiId);
+        if (!parent) { uncosted.push({ name: el.name || "(unnamed)", zoneKey: zk, qty: elQty, reason: "Mandi item not found" }); return; }
+        const variant = el.mandiVariantId ? (parent.colorVariants || []).find(v => v.variantId === el.mandiVariantId) : null;
+        const baseRate = Number((variant || parent).currentPrice) || 0;
+        // mandi_flowers color variants carry `.name` (AdminSettingsTab.jsx), never `.label` — the
+        // mandi list's own `colorVariant` field expects the DCFloralsTab.jsx shape
+        // {variantId, label, photoUrl, rate}, built here the same way its own colour-picker does
+        // (review finding, 2026-11-13: a bare `.label` read is always undefined, silently losing
+        // the picked colour — both the swatch/photo AND the reuse-credit match against it).
+        const variantColour = variant ? { variantId: variant.variantId, label: variant.name || "", photoUrl: variant.photoUrl || null, rate: Number(variant.currentPrice) || 0 } : null;
+        const displayName = variantColour?.label ? `${parent.name} (${variantColour.label})` : parent.name;
+        // Same reuse-credit mechanism every recipe ingredient gets (FLOWER_REUSE_RATE × the
+        // preceding function's own usage of this exact species, gated on a matching colour) —
+        // species identity is keyed on el.mandiId here, the same id computeFnRawFlowerUsage must
+        // also record this element under for the credit to ever find anything (fixed alongside).
+        const pUsage = precedingUsage?.get(el.mandiId) || null;
+        const myColour = variantColour?.label || resolvedFlowerColour(el.mandiId, colorPrefsForFn, overrideByParentId, fn, parent);
+        const colorEligible = manualRepeat || (autoEligible && !!pUsage && !!myColour && !!pUsage.colour && fuzzyColourMatch(myColour, pUsage.colour));
+        const reuseCredit = (colorEligible && pUsage) ? FLOWER_REUSE_RATE * pUsage.realQty : 0;
+        const totalQty = Math.max(0, elQty - reuseCredit);
+        const lineCost = totalQty * baseRate;
+        totalReal += lineCost;
+        // No pattern.sizes concept for a raw mandi commodity — el.size (if any) is recorded as-is,
+        // not resolved through sizeClassToPatternKey/sizeFromMode (those need a recipe to size).
+        const mandiSizeKey = el.size || null;
+        const realLinesForEl = [{ flowerId: el.mandiId, name: displayName, perPattern: 1, qty: totalQty, qtyFull: elQty, reuseCredit, unit: parent.unit || "kg", unitPrice: baseRate, lineCost, realOnly: true, variantPicked: variantColour?.label || null }];
+        elementBreakdown.push({ name: el.name || parent.name, zoneKey: zk, qty: elQty, realPct: 100, realCost: lineCost, artCost: 0, total: lineCost, hasPattern: false, realLines: realLinesForEl, size: mandiSizeKey, artLines: [], artBunchesFlower: 0, artBunchesGreen: 0, artBunchesFlowerFull: 0, artBunchesGreenFull: 0, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern: false, repeatZone: zoneRepeat, repeatLabel, kitParent: el._kitParent || null });
+        if (totalQty > 0) {
+          const prev = flowerAgg.get(el.mandiId) || { flowerId: el.mandiId, name: displayName, totalQty: 0, totalQtyFull: 0, totalCost: 0, unit: parent.unit || "kg", unitPrice: baseRate, contributors: [], realOnly: true, flowerType: parent.flowerType || "flower", variantPicked: variantColour?.label || null, colorVariant: variantColour, colorPrefs: null };
+          prev.totalQty += totalQty;
+          prev.totalQtyFull += elQty;
+          prev.totalCost += lineCost;
+          prev.unitPrice = prev.totalQty > 0 ? prev.totalCost / prev.totalQty : baseRate;
+          prev.contributors.push({ elName: el.name || parent.name, zoneKey: zk, elQty, perPattern: 1, realFrac: 1, contribution: totalQty, repeatZone: zoneRepeat, reuseCredit, repeatLabel, size: mandiSizeKey, realOnly: true });
+          flowerAgg.set(el.mandiId, prev);
+        }
+        return;
+      }
       // An explicit pattern reference — el.patternId, set either by the kit-walk above (a kit's
       // attached recipe add-on) or already present on a plain top-level recipe-only zone element
       // (Build's own "+ Add element" pure-recipe flow) — either resolves to a LIVE pattern or it
