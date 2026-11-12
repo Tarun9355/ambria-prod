@@ -463,7 +463,7 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, t
     const wMidCount = wAxisPillars - 2;
     const lAxis = axisOf(L, lAxisPillars);
     const wAxis = axisOf(W, wAxisPillars);
-    const pillars = [
+    const perimeterPillars = [
       { id: "P-NW", H }, { id: "P-NE", H },
       { id: "P-SW", H }, { id: "P-SE", H },
       ...Array.from({ length: lMidCount }, (_, i) => ({ id: `P-N-mid${i+1}`, H })),
@@ -471,12 +471,71 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, t
       ...Array.from({ length: wMidCount }, (_, i) => ({ id: `P-W-mid${i+1}`, H })),
       ...Array.from({ length: wMidCount }, (_, i) => ({ id: `P-E-mid${i+1}`, H })),
     ];
-    const beams = [
+    const perimeterBeams = [
       ...lAxis.segLens.map((len, i) => ({ side: lAxis.segLens.length === 1 ? "front" : `front-${i+1}`, lengthFt: len })),
       ...lAxis.segLens.map((len, i) => ({ side: lAxis.segLens.length === 1 ? "back" : `back-${i+1}`, lengthFt: len })),
       ...wAxis.segLens.map((len, i) => ({ side: wAxis.segLens.length === 1 ? "left" : `left-${i+1}`, lengthFt: len })),
       ...wAxis.segLens.map((len, i) => ({ side: wAxis.segLens.length === 1 ? "right" : `right-${i+1}`, lengthFt: len })),
     ];
+
+    // ── Cross-bracing (owner-reported gap, 2026-11-12) ─────────────────────────────────────────
+    // Every N/S mid-pillar pair and every W/E mid-pillar pair used to stand with nothing tying them
+    // to their opposite-side partner — just a post, not a structural member. Each mid-pillar pair now
+    // gets its own beam line spanning the box's OTHER axis. An N/S line (i-th one) spans W, so it
+    // needs an interior support at every one of W's OWN wMidCount mid-positions — literally the SAME
+    // positions every OTHER N/S line's interior supports fall at, and the SAME positions every W/E
+    // line crosses through (a W/E line spans L and needs lMidCount interior supports, at the N/S
+    // mid-positions). So interior supports are built ONCE as a single lMidCount×wMidCount grid —
+    // `interiorPillarAt(i,j)` memoizes each node — rather than once per cross-line; two lines meeting
+    // at the same physical point share that one pillar instead of each building its own stacked on
+    // top of the other (regression review, 2026-11-12: an earlier per-line version silently built 2
+    // pillars at every grid node once BOTH axes had mid-pillars, over-reserving real stock and
+    // over-billing curtains/Liza — see `interior: true` below, which keeps these out of curtain
+    // billing). The 1×1 case (a single shared center post, e.g. a 60×60 box) falls out of this same
+    // grid formula with no special-casing needed. Segment lengths are the real lAxis/wAxis.segLens
+    // already resolved above — a cross line's span is BY DEFINITION the same span (W for N/S, L for
+    // W/E) as the perimeter axis already computed, so reusing it instead of re-resolving a parallel
+    // "crossAxis" keeps the two from ever silently disagreeing.
+    const interiorGrid = {}; // key `${i}-${j}` (1-based) -> pillar object
+    const interiorPillarAt = (i, j) => {
+      const key = `${i}-${j}`;
+      if (!interiorGrid[key]) {
+        const id = (lMidCount === 1 && wMidCount === 1) ? "P-center" : `P-int-${i}-${j}`;
+        interiorGrid[key] = { id, H, interior: true };
+      }
+      return interiorGrid[key];
+    };
+    const crossBeams = [];
+
+    for (let i = 1; i <= lMidCount; i++) {
+      const fromId = `P-N-mid${i}`, toId = `P-S-mid${i}`;
+      const label = lMidCount === 1 ? "cross-NS" : `cross-NS${i}`;
+      if (wMidCount <= 0) {
+        crossBeams.push({ side: label, lengthFt: wAxis.segLens[0] ?? W, from: fromId, to: toId });
+      } else {
+        const midIds = Array.from({ length: wMidCount }, (_, k) => interiorPillarAt(i, k + 1).id);
+        const chain = [fromId, ...midIds, toId];
+        for (let s = 0; s < chain.length - 1; s++) {
+          crossBeams.push({ side: `${label}-${s+1}`, lengthFt: wAxis.segLens[s], from: chain[s], to: chain[s+1] });
+        }
+      }
+    }
+    for (let j = 1; j <= wMidCount; j++) {
+      const fromId = `P-W-mid${j}`, toId = `P-E-mid${j}`;
+      const label = wMidCount === 1 ? "cross-WE" : `cross-WE${j}`;
+      if (lMidCount <= 0) {
+        crossBeams.push({ side: label, lengthFt: lAxis.segLens[0] ?? L, from: fromId, to: toId });
+      } else {
+        const midIds = Array.from({ length: lMidCount }, (_, k) => interiorPillarAt(k + 1, j).id);
+        const chain = [fromId, ...midIds, toId];
+        for (let s = 0; s < chain.length - 1; s++) {
+          crossBeams.push({ side: `${label}-${s+1}`, lengthFt: lAxis.segLens[s], from: chain[s], to: chain[s+1] });
+        }
+      }
+    }
+
+    const pillars = [...perimeterPillars, ...Object.values(interiorGrid)];
+    const beams = [...perimeterBeams, ...crossBeams];
     return {
       config, method, pillars, beams,
       physicalL: lAxis.physical,
@@ -903,7 +962,12 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
   // Half Box: curtains only on front pillars (back pillars are against wall)
   const curtainsPerPillar = zc.curtainsPerPillar || (config === "u_only" ? 2 : 4);
   const pillarCount = topo.pillarCount || (topo.pillars||[]).length || 0;
-  const curtainPillarCount = topo.frontPillarCount || pillarCount;
+  // Interior cross-bracing pillars (full_box, 2026-11-12 — `interior: true`, buildTopology above)
+  // stand in the middle of the floor, not framing an opening — they don't get a curtain set like a
+  // perimeter pillar does. frontPillarCount (half_box) already excludes back pillars the same way,
+  // for the same reason (nothing to drape).
+  const curtainPillarCount = topo.frontPillarCount
+    || (Array.isArray(topo.pillars) ? topo.pillars.filter(p => !p?.interior).length : pillarCount);
   const curtainPieces = curtainPillarCount * curtainsPerPillar;
   // FRONT EXTENSION (box only, rare): each side is a Single-U wing = 1 beam (extLen) + 1 NEW outer
   // pillar at height extH. The box's front-corner pillar is SHARED, so we don't re-count it (the

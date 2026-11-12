@@ -25,11 +25,12 @@ describe("trussEngine buildTopology — mirrors pricing.js (padded convention, u
 describe("trussEngine buildTopology — pole uses the raw span (no 1ft/pillar padding), owner decision 2026-11-05", () => {
   const poleEng = { maxSpanFt: 15, pillarWidthFt: 0.3 };
 
-  it("owner's worked example: 16x16x10 box splits every 16ft side into 2x8ft beams, 8 pillars total", () => {
+  it("owner's worked example: 16x16x10 box splits every 16ft side into 2x8ft beams, 8 perimeter pillars + 1 shared center post (cross-bracing, 2026-11-12 — see pricing.test.js's mirrored case for the full rationale)", () => {
     const topo = buildTopology("full_box", 16, 16, 10, 16, 0, poleEng, undefined, "pole");
-    expect(topo.pillarCount).toBe(8);
-    expect(topo.beamCount).toBe(8);
-    expect(topo.beams.map((b) => b.lengthFt)).toEqual([8, 8, 8, 8, 8, 8, 8, 8]);
+    expect(topo.pillarCount).toBe(9);
+    expect(topo.beamCount).toBe(12);
+    expect(topo.beams.map((b) => b.lengthFt)).toEqual([8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]);
+    expect(topo.pillars.filter((p) => p.interior).map((p) => p.id)).toEqual(["P-center"]);
   });
 
   it("control — the SAME dims with iron keep the padded convention: 4 pillars, 14ft beams", () => {
@@ -71,9 +72,9 @@ describe("buildEventAllocation — per-material resolution (bug found + fixed 20
     }, enabledEls: {} }];
     const out = buildEventAllocation(meta, fnList, trussInv);
     expect(out.trusses[0].trussMaterial).toBe("pole");
-    expect(out.trusses[0].allocation.pillarCount).toBe(8);
-    expect(out.totalBeamsUsed).toEqual({ 8: 8 }); // pole's 8ft stock — NOT Iron's 14ft
-    expect(out.totalPillarsUsed).toEqual({ 10: 8 }); // pole's 10ft stock
+    expect(out.trusses[0].allocation.pillarCount).toBe(9); // 8 perimeter + 1 shared center post (cross-bracing)
+    expect(out.totalBeamsUsed).toEqual({ 8: 12 }); // pole's 8ft stock — NOT Iron's 14ft
+    expect(out.totalPillarsUsed).toEqual({ 10: 9 }); // pole's 10ft stock
     expect(out.selfShortage).toBe(false);
   });
 

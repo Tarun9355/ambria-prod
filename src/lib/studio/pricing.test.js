@@ -87,17 +87,19 @@ describe("buildTopology — 1ft/pillar budget, stock-resolved beams, footprint =
 describe("buildTopology — pole uses the raw span (no 1ft/pillar padding), owner decision 2026-11-05", () => {
   const poleEng = { maxSpanFt: 15, pillarWidthFt: 0.3 };
 
-  it("owner's worked example, no stock: 16x16x10 box splits every 16ft side into 2x8ft beams, 3 pillar positions per side, 8 distinct pillars total", () => {
+  it("owner's worked example, no stock: 16x16x10 box splits every 16ft side into 2x8ft beams, 3 pillar positions per side, 8 perimeter pillars + 1 shared center post (cross-bracing, 2026-11-12 — the mid-pillar pair on each axis is tied together by its own cross line, and since this box needs exactly one mid-pillar per axis, both cross lines share a single center post instead of two stacked pillars)", () => {
     const topo = buildTopology("full_box", 16, 16, 10, 16, 0, poleEng, undefined, "pole");
-    expect(topo.pillarCount).toBe(8);
+    expect(topo.pillarCount).toBe(9);
     expect(topo.pillars.every((p) => p.H === 10)).toBe(true);
-    expect(topo.beamCount).toBe(8);
-    expect(topo.beams.map((b) => b.lengthFt)).toEqual([8, 8, 8, 8, 8, 8, 8, 8]);
+    expect(topo.beamCount).toBe(12);
+    expect(topo.beams.map((b) => b.lengthFt)).toEqual([8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]);
     expect(topo.beams.map((b) => b.side)).toEqual([
       "front-1", "front-2", "back-1", "back-2", "left-1", "left-2", "right-1", "right-2",
+      "cross-NS-1", "cross-NS-2", "cross-WE-1", "cross-WE-2",
     ]);
     const pillarIds = topo.pillars.map((p) => p.id);
-    expect(pillarIds).toEqual(expect.arrayContaining(["P-N-mid1", "P-S-mid1", "P-W-mid1", "P-E-mid1"]));
+    expect(pillarIds).toEqual(expect.arrayContaining(["P-N-mid1", "P-S-mid1", "P-W-mid1", "P-E-mid1", "P-center"]));
+    expect(topo.pillars.filter((p) => p.interior).map((p) => p.id)).toEqual(["P-center"]);
     expect(topo.physicalL).toBeCloseTo(16 + 3 * 0.3);
     expect(topo.physicalW).toBeCloseTo(16 + 3 * 0.3);
     expect(topo.stockResolved).toBe(false);
@@ -155,8 +157,8 @@ describe("buildTopology — pole uses the raw span (no 1ft/pillar padding), owne
       },
     };
     const out = calcZoneTrussPreview(zc, trussInv);
-    expect(out.topology.pillarCount).toBe(8);
-    expect(out.topology.beams.map((b) => b.lengthFt)).toEqual([8, 8, 8, 8, 8, 8, 8, 8]);
+    expect(out.topology.pillarCount).toBe(9); // 8 perimeter + 1 shared center post (cross-bracing)
+    expect(out.topology.beams.map((b) => b.lengthFt)).toEqual([8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]);
 
     const ironOut = calcZoneTrussPreview({ ...zc, trussMaterial: "iron" }, trussInv);
     expect(ironOut.topology.pillarCount).toBe(4);

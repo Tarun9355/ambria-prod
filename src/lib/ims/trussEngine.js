@@ -354,7 +354,7 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, t
     const wMidCount = wAxisPillars - 2;
     const lAxis = axisOf(L, lAxisPillars);
     const wAxis = axisOf(W, wAxisPillars);
-    const pillars = [
+    const perimeterPillars = [
       { id: "P-NW", H }, { id: "P-NE", H }, { id: "P-SW", H }, { id: "P-SE", H },
       ...Array.from({ length: lMidCount }, (_, i) => ({ id: `P-N-mid${i+1}`, H })),
       ...Array.from({ length: lMidCount }, (_, i) => ({ id: `P-S-mid${i+1}`, H })),
@@ -362,12 +362,63 @@ export const buildTopology = (config, L, W, H, spanFt, backDepth, engSettings, t
       ...Array.from({ length: wMidCount }, (_, i) => ({ id: `P-E-mid${i+1}`, H })),
     ];
     // 4 sides × N segments per side
-    const beams = [
+    const perimeterBeams = [
       ...lAxis.segLens.map((len, i) => ({ side: lAxis.segLens.length === 1 ? "front" : `front-${i+1}`, lengthFt: len })),
       ...lAxis.segLens.map((len, i) => ({ side: lAxis.segLens.length === 1 ? "back" : `back-${i+1}`, lengthFt: len })),
       ...wAxis.segLens.map((len, i) => ({ side: wAxis.segLens.length === 1 ? "left" : `left-${i+1}`, lengthFt: len })),
       ...wAxis.segLens.map((len, i) => ({ side: wAxis.segLens.length === 1 ? "right" : `right-${i+1}`, lengthFt: len })),
     ];
+
+    // Cross-bracing — mirror of pricing.js's buildTopology full_box block (owner-reported gap,
+    // 2026-11-12; kept in sync manually, same convention as every other lib/ims duplicate here).
+    // See that copy's comment for the full rationale: every N/S and W/E mid-pillar pair gets a beam
+    // line tying it to its opposite-side partner. Interior supports are built ONCE as a single
+    // lMidCount×wMidCount grid (`interiorPillarAt`) — an N/S line's own mid-support and a W/E line
+    // crossing through the same physical point share that one pillar instead of each building its
+    // own stacked on top of the other (regression review, 2026-11-12, caught a per-line version
+    // double-building every grid node once both axes had mid-pillars). Segment lengths reuse the
+    // real lAxis/wAxis.segLens already resolved above — a cross line's span is the SAME span (W for
+    // N/S, L for W/E) the perimeter axis already computed.
+    const interiorGrid = {}; // key `${i}-${j}` (1-based) -> pillar object
+    const interiorPillarAt = (i, j) => {
+      const key = `${i}-${j}`;
+      if (!interiorGrid[key]) {
+        const id = (lMidCount === 1 && wMidCount === 1) ? "P-center" : `P-int-${i}-${j}`;
+        interiorGrid[key] = { id, H, interior: true };
+      }
+      return interiorGrid[key];
+    };
+    const crossBeams = [];
+
+    for (let i = 1; i <= lMidCount; i++) {
+      const fromId = `P-N-mid${i}`, toId = `P-S-mid${i}`;
+      const label = lMidCount === 1 ? "cross-NS" : `cross-NS${i}`;
+      if (wMidCount <= 0) {
+        crossBeams.push({ side: label, lengthFt: wAxis.segLens[0] ?? W, from: fromId, to: toId });
+      } else {
+        const midIds = Array.from({ length: wMidCount }, (_, k) => interiorPillarAt(i, k + 1).id);
+        const chain = [fromId, ...midIds, toId];
+        for (let s = 0; s < chain.length - 1; s++) {
+          crossBeams.push({ side: `${label}-${s+1}`, lengthFt: wAxis.segLens[s], from: chain[s], to: chain[s+1] });
+        }
+      }
+    }
+    for (let j = 1; j <= wMidCount; j++) {
+      const fromId = `P-W-mid${j}`, toId = `P-E-mid${j}`;
+      const label = wMidCount === 1 ? "cross-WE" : `cross-WE${j}`;
+      if (lMidCount <= 0) {
+        crossBeams.push({ side: label, lengthFt: lAxis.segLens[0] ?? L, from: fromId, to: toId });
+      } else {
+        const midIds = Array.from({ length: lMidCount }, (_, k) => interiorPillarAt(k + 1, j).id);
+        const chain = [fromId, ...midIds, toId];
+        for (let s = 0; s < chain.length - 1; s++) {
+          crossBeams.push({ side: `${label}-${s+1}`, lengthFt: lAxis.segLens[s], from: chain[s], to: chain[s+1] });
+        }
+      }
+    }
+
+    const pillars = [...perimeterPillars, ...Object.values(interiorGrid)];
+    const beams = [...perimeterBeams, ...crossBeams];
     return { config, method: "B", pillars, beams, physicalL: lAxis.physical, physicalW: wAxis.physical, maskingL: lAxis.physical + 2 * pillarWidth, maskingW: wAxis.physical + 2 * pillarWidth, pillarCount: pillars.length, beamCount: beams.length, stockResolved: lAxis.resolved && wAxis.resolved };
   }
   return null;
