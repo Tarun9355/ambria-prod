@@ -56,6 +56,22 @@ export function reindexCompositeKeyObject(obj, removedIdx, parseIdx, rebuildKey)
   return next;
 }
 
+// A Set of strings each prefixed "${fnIdx}::…" (DealCheckOverlay.jsx's own kitHandEditsRef — a kit
+// a salesperson has hand-edited, so an IMS-side kit-definition change doesn't silently overwrite
+// their swap). Drops entries for the removed function, shifts the prefix down on entries above it.
+export function reindexFnIdxPrefixedSet(set, removedIdx) {
+  if (!(set instanceof Set)) return set;
+  const next = new Set();
+  set.forEach((entry) => {
+    const m = /^(\d+)::/.exec(entry);
+    if (!m) { next.add(entry); return; } // not fnIdx-prefixed at all — leave untouched
+    const i = Number(m[1]);
+    if (i === removedIdx) return;
+    next.add((i > removedIdx ? i - 1 : i) + "::" + entry.slice(m[0].length));
+  });
+  return next;
+}
+
 // The composite-key shapes actually in use. `dcCollapsedZones` and `dcManualSearch` share the same
 // "${fnIdx}|${zoneKey}" shape; `dcCollapsedFnBlocks` only embeds an fnIdx in its "transport:…" keys
 // (its "manpower:${date}"/"pl:${d}"/"gyv:…" keys carry no fnIdx and must pass through as-is);

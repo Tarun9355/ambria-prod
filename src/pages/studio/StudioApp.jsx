@@ -1932,6 +1932,13 @@ export default function StudioApp() {
   const [dcPrefModal, setDcPrefModal] = useState(null);
   const [dcCustomItems, setDcCustomItems] = useState([]);
   const [dcCustomModal, setDcCustomModal] = useState(null);
+  // A fresh object ({idx}) every time removeFunction fires — DealCheckOverlay.jsx watches this to
+  // reindex its own local kitHandEditsRef (a Set keyed "${fnIdx}::${cardKey}", not reachable from
+  // StudioApp/StudioEventInfo directly), the same reindexing problem every other piece of
+  // Deal Check's per-function state has, see reindexDealCheckStateForRemoval's own comment. A plain
+  // object literal (not a counter) so even two removals at the identical index still change
+  // reference and re-fire the watching effect.
+  const [lastFnRemoval, setLastFnRemoval] = useState(null);
   // Per-element/per-reference stock availability picker — { zoneKey, idx, elName, subcat, date,
   // loading, items, selectedId, onPick }. Lifted here (rather than staying local to StudioBuild)
   // so both Build's own 📦 icon AND the Add Production/Buying Item modal (StudioModals.jsx) can
@@ -2403,22 +2410,31 @@ export default function StudioApp() {
   // DISABLED" note near saveSession's own studio_sessions write).
   const buildSaveBaselineRef = useRef(null);
   const buildConflictWarnedAtRef = useRef(0);
-  // Describes "new function index -> old function index" for whatever removal(s) the deal's prices
-  // haven't caught up to yet — see saveSession's own "ONE PRICE PER FUNCTION" fnTotals comment for
-  // why this exists: that carry-forward reads prev[i] by raw position, with no idea a removal
-  // shifted every later function down. Without this, the function now sitting at position i
-  // inherits whatever price belonged to the REMOVED function at that old position, instead of its
-  // own. Decor content is untouched either way — this is a displayed-price-only bug. Two different
-  // writers, two different shapes (saveSession's own oldIdxFor reads either):
+  // A plain function, `(newIdx) => oldIdx`, describing whatever removal(s) the deal's prices
+  // haven't caught up to yet — null when there's nothing pending. See saveSession's own "ONE PRICE
+  // PER FUNCTION" fnTotals comment for why this exists: that carry-forward reads prev[i] by raw
+  // position, with no idea a removal shifted every later function down. Without this, the function
+  // now sitting at position i inherits whatever price belonged to the REMOVED function at that old
+  // position, instead of its own. Decor content is untouched either way — this is a
+  // displayed-price-only bug.
+  // Two different writers, unified on ONE shape (a function, not an array/object split) specifically
+  // so they COMPOSE: a prior design kept removeFunction's "just one more index shifted" case as a
+  // plain array and loadClientSession's "here's the exact mapping, rebuilt from identity" case as a
+  // plain object, and a removal landing between a load and its first save had no way to combine the
+  // two (regression-caught: it had to pick one and silently drop the other, a real gap). Composing
+  // function closures has no such limit, however many times either side contributes before a save
+  // finally persists:
   //   - removeFunction (StudioEventInfo.jsx, the same-tab case) only knows "this index just
-  //     vanished", not the full mapping — sets an ARRAY of removed indices, oldest first, consumed
-  //     by the next PERSISTING saveSession (not just the next one that runs — see its own comment).
+  //     vanished" — wraps whatever resolver is already here (identity if none) with one more shift.
   //   - loadClientSession (the cross-reload case: client.functions already reflects a removal that
   //     never reached a PERSISTED session, because only sessions[0] is held back, not the client row
-  //     — see saveSession's own "Only the SESSIONS are held back" comment) already derives the exact
-  //     mapping from its own identity-based build relocation, and sets a plain OBJECT {newIdx:
-  //     oldIdx} directly, replacing whatever was here. Consumed the SAME one-shot way as the array
-  //     shape — saveSession clears whichever shape is sitting here the moment a save persists.
+  //     — see saveSession's own "Only the SESSIONS are held back" comment) derives the exact mapping
+  //     from its own identity-based build relocation and sets a fresh resolver directly, replacing
+  //     whatever was here (a load always re-derives the full picture from scratch, so there's nothing
+  //     to compose with at that point).
+  // Consumed (cleared to null) the moment a save actually persists — see saveSession's own "consumed
+  // HERE" comment — not merely the next save that runs, since a held-back autosave must not burn the
+  // one use this gets before the save that actually needs it.
   const pendingFnTotalsRemapRef = useRef(null);
   const emptySaveWarnedRef = useRef(false); // the "deal shows empty but has a saved build" warning, said once until a build is back
   useEffect(() => { activeFnIdxRef.current = activeFnIdx; switchingRef.current = false; }, [activeFnIdx]);
@@ -8786,25 +8802,11 @@ export default function StudioApp() {
         // unconditionally meant a held-back save silently burned the ONE use this remap gets, leaving
         // the save that actually DOES persist to read raw, un-remapped positions again — the exact
         // drift this was built to fix, just one save later.
-        // pendingFnTotalsRemapRef.current carries TWO possible shapes, each from a different origin
-        // that needs it, and both describe the same thing (new index -> old index):
-        //   - an ARRAY of removed indices, oldest first (removeFunction, the same-tab removal case:
-        //     it only knows "this index just vanished", not the full mapping), walked in reverse to
-        //     recover the old position for a given new one, the same shift fnBuilds' own reindex uses.
-        //   - a plain OBJECT {newIdx: oldIdx} (loadClientSession, the cross-reload case: a removal
-        //     already reflected in client.functions by the time this loads, from a save that held
-        //     sessions[0] back — see its own comment), which already knows the exact mapping from its
-        //     own identity-based build relocation, so it's read directly rather than reverse-walked.
+        // pendingFnTotalsRemapRef.current is a plain function (new index -> old index), or null — see
+        // the ref's own declaration comment for why both writers (removeFunction, loadClientSession)
+        // produce this same shape, and why that matters (composability across repeated removals).
         const remap = pendingFnTotalsRemapRef.current;
-        const oldIdxFor = (i) => {
-          if (!remap) return i;
-          if (Array.isArray(remap)) {
-            let oi = i;
-            for (let r = remap.length - 1; r >= 0; r--) { if (oi >= remap[r]) oi += 1; }
-            return oi;
-          }
-          return remap[i] != null ? remap[i] : i;
-        };
+        const oldIdxFor = (i) => (remap ? remap(i) : i);
         for (let i = 0; i < totalFns; i++) {
           // Only onto a function that HAS a build. This carried a price forward on the strength of a
           // snapshot merely existing, and a snapshot exists for every function once a video is picked
@@ -9411,6 +9413,55 @@ export default function StudioApp() {
       });
     })();
   }, [ensureClientHeavyFieldsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── EVENT ORDER deptOps CARPET/FABRIC CHOICES, REINDEXED ON REMOVAL ──
+  // Two more fnIdx-keyed maps with the identical reindex gap, this time living entirely outside
+  // Studio's own client-ledger state: IMS Dept Ops' carpet and fabric-item decision pickers
+  // (DepartmentOpsTab.jsx, "saveDept({ carpetChoice: … })"/"saveDept({ itemChoice: … })") write
+  // straight onto the live event_orders row, keyed "${fnIdx}|${zoneKey}|…" (carpetKey/elementKey,
+  // lib/ims/carpetPlan.js /elementPlan.js) — the SAME "${fnIdx}|…" prefix shape ZONE_PIPE_KEY
+  // already parses, so it's reused here unchanged. Removing a function in Studio can reach an
+  // ALREADY-SOLD/booked deal (removal isn't gated on deal status), so a dept head's already-decided
+  // carpet/fabric choices for a later function could otherwise end up misfiled under an earlier
+  // one's slot once the function above it is removed. deptOps is IMS-owned — Studio's own re-sync
+  // (persistDeptSnapshot) deliberately never touches it — so this patches the live server row
+  // directly and narrowly, the same surgical single-field pattern syncDealValueNow uses just above
+  // (re-read the freshest row first, never write from a possibly-stale local copy of IMS's own data).
+  const reindexEventOrderDeptOpsForRemoval = useCallback(async (removedIdx) => {
+    const eo = eventOrderFor(eventOrders, activeClientId, clientName);
+    // Strict id match only — eventOrderFor's own name-only fallback (for pre-id-era records) can
+    // resolve to a DIFFERENT client's order that happens to share this client's name, and every
+    // other reader/writer of this fallback only ever MERGES fields in; this one DELETES/renumbers
+    // keys, which is too destructive to risk firing against an unrelated client's sold deal over a
+    // name coincidence. Pre-id-era sold deals being re-edited in Studio today are rare enough that
+    // skipping this one patch for them is the safer tradeoff (regression-caught).
+    if (!eo || !activeClientId || eo.clientId !== activeClientId) return;
+    try {
+      const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
+      if (!row || !row.data) return;
+      const cur = row.data;
+      const deptOps = cur.deptOps;
+      if (!deptOps || typeof deptOps !== "object") return; // nothing decided yet
+      const reindexChoice = (choiceMap) => reindexCompositeKeyObject(choiceMap, removedIdx, ZONE_PIPE_KEY.parseIdx, ZONE_PIPE_KEY.rebuildKey);
+      // changed must mean "the reindex actually altered something", not merely "a map exists" — a
+      // regression review caught this writing on every removal for any sold deal with ANY decision
+      // at all, even when nothing in that specific map needed to move, widening the (pre-existing,
+      // shared-by-every-writer-of-this-blob) clobber race with other event_orders writers for no
+      // reason. JSON-comparing is safe here: reindexCompositeKeyObject preserves insertion order and
+      // every value verbatim when it changes nothing, so a true no-op always stringifies identically.
+      let changed = false;
+      const nextDeptOps = { ...deptOps };
+      if (deptOps.Tenting?.carpetChoice) {
+        const next = reindexChoice(deptOps.Tenting.carpetChoice);
+        if (JSON.stringify(next) !== JSON.stringify(deptOps.Tenting.carpetChoice)) { nextDeptOps.Tenting = { ...deptOps.Tenting, carpetChoice: next }; changed = true; }
+      }
+      if (deptOps.Fabric?.itemChoice) {
+        const next = reindexChoice(deptOps.Fabric.itemChoice);
+        if (JSON.stringify(next) !== JSON.stringify(deptOps.Fabric.itemChoice)) { nextDeptOps.Fabric = { ...deptOps.Fabric, itemChoice: next }; changed = true; }
+      }
+      if (!changed) return;
+      await retryingUpdate("event_orders", eo.id, { data: { ...cur, deptOps: nextDeptOps } });
+    } catch { /* best effort — IMS's own next decision on this zone just re-asks the question */ }
+  }, [eventOrders, activeClientId, clientName]);
   // ── LIVE KITS (owner ask 2026-11-10) ── An element on a kit picked in Build (Kit 2, or another item's kit) takes that kit's parts as
   // they are in IMS now: an edit in IMS → Inventory reaches the open deal in real time (the inventory subscription), and the save that
   // follows carries it to Deal Check, Planning and the Setup Book. A kit removed in IMS puts the element back on Kit 1. Sold deals too
@@ -10189,19 +10240,14 @@ export default function StudioApp() {
         restoredBuilds[rawIdx] = v;
       });
       // See oldIdxByNewIdx's own comment above — read by saveSession's fnTotals carry-forward
-      // (oldIdxFor), via the SAME ref removeFunction uses for the same-tab removal case, just a
-      // different shape (a direct {newIdx: oldIdx} map here, vs removeFunction's array of removed
-      // indices + reverse walk — oldIdxFor accepts either). Cleared the SAME one-shot way as
-      // removeFunction's own array contribution — saveSession's own "consumed HERE" comment clears
-      // whichever shape is sitting here the moment a save actually persists, not just the array
-      // shape — so this is simply replaced wholesale by whatever THIS load's own mapping says (null
-      // when nothing shifted); it does not need its own separate clear-tracking logic.
-      // KNOWN GAP (regression-caught, accepted): if a function is removed again before that first
-      // persisting save happens, removeFunction's own array-append line can't compose with this
-      // object shape (two different representations) and deliberately drops it rather than crash —
-      // see that line's own comment. Narrow (needs a load that detects drift, then a removal, before
-      // ANY save lands) and price-display-only; not fixed further here.
-      pendingFnTotalsRemapRef.current = Object.keys(oldIdxByNewIdx).length ? oldIdxByNewIdx : null;
+      // (oldIdxFor), via the SAME ref removeFunction uses for the same-tab removal case. Set as a
+      // plain function, same shape as removeFunction's own contribution, so the two compose cleanly
+      // if a removal lands before this load's own first save persists (removeFunction wraps
+      // whatever's here with one more shift — a load always replaces wholesale, since it re-derives
+      // the full picture from scratch and there's nothing meaningful to compose with at that point).
+      pendingFnTotalsRemapRef.current = Object.keys(oldIdxByNewIdx).length
+        ? ((i) => (oldIdxByNewIdx[i] != null ? oldIdxByNewIdx[i] : i))
+        : null;
       // MUST include idx 0 here (unlike an older version of this block) — it used to be excluded on
       // the assumption that Fn0's data always lives in the live top-level state instead. True only
       // when landingFnIdx is 0. Landing on any OTHER function (a refresh while Fn4 was active, say)
@@ -14334,7 +14380,8 @@ export default function StudioApp() {
     deleteSessionRows: designDeleteSessionRows,
     showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger: designSaveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
-    pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval,
+    pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval, reindexEventOrderDeptOpsForRemoval,
+    lastFnRemoval, setLastFnRemoval,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS
     lmsLeads, setLmsLeads, lmsLoading, setLmsLoading, lmsError, setLmsError, lmsFilling, setLmsFilling, lmsRefreshCounter, setLmsRefreshCounter,

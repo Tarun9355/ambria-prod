@@ -186,7 +186,8 @@ export default function StudioEventInfo({ ctx }) {
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax,
     clientVenueOther, setClientVenueOther, clientPalette, setClientPalette, setClientFlowerPalette, fnBuilds, setFnBuilds, restoreBuildState,
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
-    activeFnIdx, setActiveFnIdx, switchActiveFn, pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval,
+    activeFnIdx, setActiveFnIdx, switchActiveFn, pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval, reindexEventOrderDeptOpsForRemoval,
+    setLastFnRemoval,
     clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch, ledgerReady, ledgerLoadError, houseAgencyFeePct,
     activeClient, loadClientSession, loadClientSessionGuarded, resumeSavedSession, startNewDeal, askConfirm,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
@@ -535,20 +536,22 @@ export default function StudioEventInfo({ ctx }) {
     setFnBuilds(reindexedBuilds);
     // Same reindexing problem, for the NEXT saveSession's price carry-forward — see
     // pendingFnTotalsRemapRef's own comment (StudioApp.jsx) for why that can't just read the
-    // previous save's fnTotals by raw position once a removal has shifted everything down. An
-    // ARRAY, not a single index: two removals can both happen before anything actually saves
-    // (each one re-triggers the debounce, but a fast double-delete can still beat it), and losing
-    // the first one's shift silently mispriced whichever function landed on its old slot.
-    // Array.isArray guard: loadClientSession can leave this holding its OWN, differently-shaped
-    // value (a plain {newIdx: oldIdx} object) if a removal lands before anything saves since that
-    // load — spreading that straight into an array would throw. Simplest safe degrade: start a
-    // fresh array for this removal rather than trying to compose two different representations.
-    const prevRemap = pendingFnTotalsRemapRef.current;
-    pendingFnTotalsRemapRef.current = [...(Array.isArray(prevRemap) ? prevRemap : []), idx];
+    // previous save's fnTotals by raw position once a removal has shifted everything down. Wraps
+    // whatever resolver is already pending (identity if none) with one more shift — composes
+    // correctly across any number of removals, and across a load's own resolver too (no more
+    // needing to detect/discard a differently-shaped prior value).
+    const prevResolve = pendingFnTotalsRemapRef.current || ((i) => i);
+    pendingFnTotalsRemapRef.current = (i) => prevResolve(i < idx ? i : i + 1);
     // Deal Check's own per-function state (manual items, kit edits, card assignments, floral
     // allocations, collapsed-section UI) has the identical reindexing problem fnBuilds just got
     // fixed above, for the same reason — see reindexDealCheckStateForRemoval's own top comment.
     reindexDealCheckStateForRemoval(idx);
+    // Same again for IMS Dept Ops' own carpet/fabric choices on an already-sold event order (outside
+    // Studio's own state entirely) — see reindexEventOrderDeptOpsForRemoval's own top comment.
+    reindexEventOrderDeptOpsForRemoval(idx);
+    // And once more for DealCheckOverlay's own local kitHandEditsRef, which lives in a different
+    // component and isn't reachable from here directly — see lastFnRemoval's own comment.
+    setLastFnRemoval({ idx });
     if (expandedFnIdx >= idx) setExpandedFnIdx(Math.max(0, expandedFnIdx - 1));
     const newActiveIdx = activeFnIdx >= idx ? Math.max(0, activeFnIdx - 1) : activeFnIdx;
     if (activeFnIdx >= idx) setActiveFnIdx(newActiveIdx); // Commit 3 — keep pill on same semantic function after reindex

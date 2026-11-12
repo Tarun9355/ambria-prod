@@ -27,6 +27,7 @@ import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { newSplitGroupId, reconcileDealCheckIntoBuild } from "../../../lib/studio/dealCheckSync.js";
 import { eventOrderFor, ownEventOrderIds } from "../../../lib/studio/eventOrderFor.js";
+import { reindexFnIdxPrefixedSet } from "../../../lib/studio/dealCheckReindex.js";
 
 // ══ THE PAGE'S GROUND ══
 // A glob, not an import, for the same reason every other background in this app uses one: if the file
@@ -220,6 +221,7 @@ export default function DealCheckOverlay({ ctx }) {
     eventOrders,
     // client + auth
     clientLedger, activeClientId, activeClient, clientName, clientDate, authUser, eventGrandTotal,
+    lastFnRemoval,
     // deal check state
     dcActiveTab, setDcActiveTab, dcGenerating, dcGenStatus,
     dcCards, dcInventoryCache, dcCarpetPick, setDcCarpetPick, dcCarpetSplit, setDcCarpetSplit,
@@ -520,6 +522,17 @@ export default function DealCheckOverlay({ ctx }) {
   const isSoldForSync = activeClient?.status === "booked";
   // "fnIdx::cardKey" of every kit whose parts were edited by hand in the kit editor below this session (lib/studio/dealCheckSync.js)
   const kitHandEditsRef = useRef(new Set());
+  // Local to this component, so removeFunction (StudioEventInfo.jsx) can't reach it directly to
+  // reindex it the way it does every other piece of Deal Check's own per-function state (see
+  // reindexDealCheckStateForRemoval's own comment, StudioApp.jsx) — watches lastFnRemoval instead,
+  // a fresh {idx} object StudioApp sets every time a function is removed, regardless of whether
+  // Deal Check happens to be open. Worst case if this were left unfixed: a kit's "don't let IMS's
+  // own definition changes overwrite my hand swap" flag drifts onto the wrong function after a
+  // removal — cosmetic/low-risk (never cross-function decor corruption), but fixed anyway.
+  useEffect(() => {
+    if (!lastFnRemoval) return;
+    kitHandEditsRef.current = reindexFnIdxPrefixedSet(kitHandEditsRef.current, lastFnRemoval.idx);
+  }, [lastFnRemoval]);
   useEffect(() => {
     if (isSoldForSync) return;
     if (isFnSwitching) return;
