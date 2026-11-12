@@ -106,10 +106,12 @@ export function withDeletedInventory(live, inventoryById) {
 }
 
 // Every deleted part beneath a kit element: a nested component (at any depth) whose snapshot carries
-// catalogueDeleted, plus a top-level flower-recipe add-on (si.patternId) whose pattern is deleted.
-// `invForPricing` must be the merged (live + deleted) inventory list — walkKitUnits needs to find a
-// deleted nested component by id to keep walking past it at all. `patternLookup` is a function
-// (id) => pattern | null, live-first with a deleted-fallback (see StudioApp.jsx's patternById).
+// catalogueDeleted. `invForPricing` must be the merged (live + deleted) inventory list —
+// walkKitUnits needs to find a deleted nested component by id to keep walking past it at all.
+// The recipe branch below (si.patternId) is now permanently a no-op: `patternLookup` (StudioApp.jsx's
+// patternById) is live-only since a deleted flower pattern is gone everywhere (owner decision,
+// 2026-11-12), so it never returns a catalogueDeleted-flagged pattern anymore — kept rather than
+// stripped out since callers still pass a real `patternLookup` function here.
 export function deletedKitParts(item, invForPricing, overrideSubItems, patternLookup) {
   const names = new Set();
   if (!item) return [];

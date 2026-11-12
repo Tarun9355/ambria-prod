@@ -291,6 +291,22 @@ describe("computeFnFloralCost — core per-element resolution (unaffected by the
     expect(comp?.kitParent).toBe("Tree");
   });
 
+  it("a kit's recipe pointing at a DELETED pattern contributes nothing — never fuzzy-matched by its own decorated name (owner decision, 2026-11-12: deleted patterns are gone everywhere)", () => {
+    // p_rose is a real, live pattern in this test's own flowerPatterns list — included specifically
+    // to prove a deleted reference doesn't spuriously latch onto some unrelated real pattern that
+    // happens to share a name/substring with its decorated "Tree · recipe" label.
+    const kit = { id: "kit1", name: "Tree", cat: "tenting", subItems: [{ patternId: "p_deleted_gone", qty: 2 }] };
+    const opts = { ...baseOpts([pRose]), imsInventory: [kit] };
+    const result = computeFnFloralCost(
+      fn({ zoneElements: { stage: [{ name: "Tree", invId: "kit1", qty: 2 }] }, enabledEls: { stage: true } }),
+      [], opts,
+    );
+    expect(result.elementBreakdown.some((eb) => /recipe/.test(eb.name))).toBe(false);
+    expect(result.totalReal).toBe(0);
+    expect(result.totalArtificial).toBe(0);
+    expect(result.uncosted.some((u) => /recipe/.test(u.name))).toBe(true);
+  });
+
   it("a kit's flower recipe follows the deal's EDITED parts, not only the master list", () => {
     // Master: 6 recipes per kit. The deal edited it to 10 — 2 kits must itemise 20, not 12.
     const kit = { id: "kit1", name: "Tree", cat: "tenting", subItems: [{ patternId: "p_rose", qty: 6 }] };

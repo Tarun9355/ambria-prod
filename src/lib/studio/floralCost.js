@@ -255,6 +255,11 @@ export function computeFnRawFlowerUsage(fn, opts) {
     expandedElems.forEach((el) => {
       const elName = (el.name || "").toLowerCase().trim();
       const elQty = el.qty || 0;
+      // Same rule as computeFnFloralCost above (kept in sync manually): an explicit pattern
+      // reference either resolves live or this element contributes nothing here — never guessed by
+      // fuzzy name matching against its own decorated label.
+      const elPattern = el.patternId ? flowerPatterns.find((p) => p.id === el.patternId) : null;
+      if (el.patternId && !elPattern) return;
       let rc = rcItems.find((i) => (i.name || "").toLowerCase().trim() === elName);
       if (!rc && elName.length >= 4) {
         rc = rcItems.find((i) => {
@@ -263,7 +268,6 @@ export function computeFnRawFlowerUsage(fn, opts) {
           return n && n.length >= 4 && (elName.includes(n) || n.includes(elName));
         });
       }
-      const elPattern = el.patternId ? flowerPatterns.find((p) => p.id === el.patternId) : null;
       const invItem = findInv(el.invId);
       const pattern = elPattern
         || (invItem ? matchFlowerPattern(invItem, flowerPatterns) : null)
@@ -435,6 +439,23 @@ export function computeFnFloralCost(fn, allFns, opts) {
     expandedElems.forEach(el => {
       const elName = (el.name || "").toLowerCase().trim();
       const elQty = el.qty || 0;
+      // An explicit pattern reference — el.patternId, set either by the kit-walk above (a kit's
+      // attached recipe add-on) or already present on a plain top-level recipe-only zone element
+      // (Build's own "+ Add element" pure-recipe flow) — either resolves to a LIVE pattern or it
+      // doesn't; never guessed. It is checked BEFORE the rc/fuzzy-matching below and returns
+      // immediately when missing — never falling through to a name/Rate-Card guess against its own
+      // decorated label ("Tree · recipe" for a kit add-on; the element's own name otherwise),
+      // which could spuriously match an unrelated flower or Rate-Card row by name coincidence and
+      // fabricate real-looking bunch/cost numbers for a recipe that no longer exists. A deleted
+      // flower pattern is gone everywhere now (owner decision, 2026-11-12, reversing the
+      // deleted-catalogue "keep pricing it" fallback for THIS one catalogue type only — inventory
+      // items/carpet/print materials still price at their last-known rate via that same snapshot,
+      // migration 059, untouched here).
+      const elPattern = el.patternId ? flowerPatterns.find(p => p.id === el.patternId) : null;
+      if (el.patternId && !elPattern) {
+        uncosted.push({ name: el.name || "(unnamed)", zoneKey: zk, qty: elQty, reason: "Recipe deleted — no longer in the Flower Patterns library" });
+        return;
+      }
       // Both the exact match and the substring fallback are scoped to the Rate Card's OWN
       // florals category — an exact name coincidence with a lighting/furnishing/other Rate
       // Card row (e.g. a "Warm LED" or "Sethi Bolster" element) used to slip through here
@@ -451,7 +472,6 @@ export function computeFnFloralCost(fn, allFns, opts) {
           return n && n.length >= 4 && (elName.includes(n) || n.includes(elName));
         });
       }
-      const elPattern = el.patternId ? flowerPatterns.find(p => p.id === el.patternId) : null;
       const invItem = findInv(el.invId);
       const invIsFloral = !!invItem && String(invItem.cat || invItem.category || "").toLowerCase() === "florals";
       let pattern = elPattern

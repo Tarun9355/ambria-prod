@@ -4894,15 +4894,16 @@ export default function StudioApp() {
       .map((p) => ({ id: p.id, name: p.name, sub: p.sub || "", unit: p.unit || "pc" }));
   }, [dealCheckData, studioFloralData]);
 
-  // A flower-recipe pattern by id, live-first with a fallback to the deleted-catalogue snapshot
-  // (migration 059) — so a quote element still pointing at a since-deleted recipe keeps resolving
-  // to its last known rates instead of silently pricing at ₹0. getElPriceFromPattern and a kit's
-  // attached-recipe add-ons both resolve through this rather than a plain live-only `.find`.
+  // A flower-recipe pattern by id — LIVE ONLY (owner decision, 2026-11-12: a deleted flower pattern
+  // is gone everywhere, reversing this function's own former deleted-catalogue-snapshot fallback,
+  // migration 059). getElPriceFromPattern and a kit's attached-recipe add-ons both resolve through
+  // here, so a recipe deleted from the Flower Patterns library now prices at ₹0/no longer shows,
+  // same as any other recipe that was never attached. Inventory items/carpet/print materials keep
+  // their own deleted-catalogue fallback unchanged — this reversal is flower patterns only.
   const patternById = useCallback((id) => {
     if (!id) return null;
-    const live = (sharedFloralSettings.flowerPatterns || []).find((p) => p.id === id);
-    return live || deletedCatalogue.patternsById.get(id) || null;
-  }, [sharedFloralSettings, deletedCatalogue]);
+    return (sharedFloralSettings.flowerPatterns || []).find((p) => p.id === id) || null;
+  }, [sharedFloralSettings]);
 
   // The colour a function's real flowers are priced at (owner decision 2026-11-02: the price follows the colour, in Build, Deal
   // Check and Planning alike): the flower's own 🎨 pick in Deal Check, else the variant its Flower Palette's main colour is tagged to
@@ -4933,9 +4934,11 @@ export default function StudioApp() {
     const floralSrc = sharedFloralSettings;
     const pattern = patternById(el.patternId);
     if (!pattern) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null, catalogueDeleted: null };
-    // Migration 059: a recipe found only via the deleted-catalogue fallback still prices at its last
-    // known rates below (patternById doesn't distinguish) — this is the one flag the caller needs to
-    // show Build's own ⚠ warning instead of a stock-shortfall badge.
+    // patternById is live-only now (owner decision, 2026-11-12: a deleted flower pattern is gone
+    // everywhere) — a deleted recipe simply fails to resolve above and prices at ₹0, same as one
+    // that was never attached. `pattern.catalogueDeleted` can no longer be true here; `deletedInfo`
+    // stays dead (always null) rather than removed outright, so Build's ⚠ badge wiring is untouched
+    // for the inventory-item side, which still does use the deleted-catalogue fallback.
     const deletedInfo = pattern.catalogueDeleted ? { self: true, kind: "recipe", name: pattern.name, deletedAt: pattern.catalogueDeletedAt || null, parts: [] } : null;
     const qty = el.qty || 0;
     const sizeKey = sizeClassToPatternKey(normalizeSizeClass(el.size || "B"));
@@ -5248,8 +5251,9 @@ export default function StudioApp() {
       const effectiveSubItems = Array.isArray(el.kitOverrides) ? el.kitOverrides : (item.subItems || []);
       const attachedPatterns = effectiveSubItems
         .filter((si) => si.patternId)
-        // patternById, not a plain live-only find — a since-deleted attached recipe still resolves
-        // to its last known rates via the deleted-catalogue fallback (migration 059).
+        // patternById is live-only (owner decision, 2026-11-12: a deleted flower pattern is gone
+        // everywhere) — an attached recipe since deleted from the Flower Patterns library resolves
+        // to nothing and the `.filter((x) => x.pattern)` below drops it, same as never attached.
         .map((si) => ({ pattern: patternById(si.patternId), qty: si.qty, si }))
         .filter((x) => x.pattern);
       // (3) a plain component that is ITSELF a floral item — its own sub-category's recipe. Only its

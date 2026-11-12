@@ -18,12 +18,14 @@ describe("kitRecipeParts — the flowers inside a kit, for the Dept PDF's kit pa
   it("leaves inventory parts out — they have their own component rows", () => {
     expect(kitRecipeParts([{ itemId: "I1", qty: 4 }], patterns, 2)).toEqual([]);
   });
-  it("a recipe the pattern list no longer has still shows, by a generic name", () => {
-    expect(kitRecipeParts([{ patternId: "GONE", qty: 3 }], patterns, 1)).toMatchObject([{ name: "Flower recipe", qty: 3 }]);
+  it("a recipe the LOADED pattern list no longer has is dropped — it was deleted from the Flower Patterns library (owner decision, 2026-11-12: deleted patterns are gone everywhere, not listed as a generic placeholder ops would still be told to pull flowers for)", () => {
+    expect(kitRecipeParts([{ patternId: "GONE", qty: 3 }], patterns, 1)).toEqual([]);
   });
-  it("no kits, or no patterns list, or no parts: nothing and no crash", () => {
+  it("no kits, or no parts: nothing and no crash", () => {
     expect(kitRecipeParts(tree, patterns, 0)).toEqual([]);
-    expect(kitRecipeParts(tree, undefined, 1).map(r => r.name)).toEqual(["Flower recipe", "Flower recipe"]);
     expect(kitRecipeParts(undefined, patterns, 2)).toEqual([]);
+  });
+  it("patterns list not loaded yet (undefined, not just empty): still shows a generic placeholder rather than silently dropping the row while data catches up", () => {
+    expect(kitRecipeParts(tree, undefined, 1).map(r => r.name)).toEqual(["Flower recipe", "Flower recipe"]);
   });
 });
