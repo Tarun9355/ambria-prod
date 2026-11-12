@@ -10711,25 +10711,30 @@ export default function StudioApp() {
     // has actually landed — the same combined check already used elsewhere in this file (~9152,
     // ~9424) for exactly this reason.
     if (switchingRef.current || fnSwitchingRef.current) return;
-    // Same baseline capture loadClientSession does (~line 8035) — this is the OTHER door into a
-    // build (Browse's "Resume"/"Continue build", used far more often than a fresh Load), and it was
-    // the one door that never set buildSaveBaselineRef at all. A tab that only ever arrives here
-    // keeps a null baseline for its whole life, and the staleness guard's very first check is
-    // `!!(baseline && ...)` — null reads as "nothing to compare against", so that tab's own autosave
-    // could silently overwrite ANY newer save, no matter how stale it got, with no warning ever
-    // shown. Confirmed as a real incident, not a theoretical one: a different salesperson's tab,
-    // resumed this way and never reloaded since, re-saved a ₹16L+ state over someone else's ₹14L+
-    // edit made minutes earlier.
-    // The baseline MUST be the client's actual current sessions[0] — NOT `session` itself. A
-    // deliberate Resume routinely loads an OLDER session on purpose (rolling back to a past build),
-    // exactly like loadClientSession's own comment already warns about — sessions[0] on the server
-    // stays whatever it already was. Baselining on the (older) resumed session instead made the very
-    // next save look like a conflict against yourself every single time: the live remote (the actual
-    // newest session) always reads as "newer than my baseline", and whoever saved it was flagged as
-    // having "overwritten" you — even though resuming an old build and re-saving it IS the feature.
-    // That is exactly the red "not auto-saved" toast seen immediately after a legitimate rollback.
-    const curTop = (clientLedgerRef.current || clientLedger).find(c => c.id === activeClientIdRef.current)?.sessions?.[0] || null;
-    buildSaveBaselineRef.current = { savedAt: Number(curTop?.savedAt) || 0, savedBy: curTop?.savedBy || null };
+    // Baseline capture (loadClientSession does the same, ~line 8035) is set further below, only once
+    // every refusal check below has actually passed — see the comment at each setter for why setting
+    // it on a path that then refuses would be its own, separate bug (moves the conflict baseline
+    // forward for a resume that never actually happened).
+    const setBaseline = () => {
+      // This is the OTHER door into a build (Browse's "Resume"/"Continue build", used far more often
+      // than a fresh Load), and it was the one door that never set buildSaveBaselineRef at all. A tab
+      // that only ever arrives here keeps a null baseline for its whole life, and the staleness
+      // guard's very first check is `!!(baseline && ...)` — null reads as "nothing to compare
+      // against", so that tab's own autosave could silently overwrite ANY newer save, no matter how
+      // stale it got, with no warning ever shown. Confirmed as a real incident, not a theoretical one:
+      // a different salesperson's tab, resumed this way and never reloaded since, re-saved a ₹16L+
+      // state over someone else's ₹14L+ edit made minutes earlier.
+      // The baseline MUST be the client's actual current sessions[0] — NOT `session` itself. A
+      // deliberate Resume routinely loads an OLDER session on purpose (rolling back to a past build),
+      // exactly like loadClientSession's own comment already warns about — sessions[0] on the server
+      // stays whatever it already was. Baselining on the (older) resumed session instead made the very
+      // next save look like a conflict against yourself every single time: the live remote (the actual
+      // newest session) always reads as "newer than my baseline", and whoever saved it was flagged as
+      // having "overwritten" you — even though resuming an old build and re-saving it IS the feature.
+      // That is exactly the red "not auto-saved" toast seen immediately after a legitimate rollback.
+      const curTop = (clientLedgerRef.current || clientLedger).find(c => c.id === activeClientIdRef.current)?.sessions?.[0] || null;
+      buildSaveBaselineRef.current = { savedAt: Number(curTop?.savedAt) || 0, savedBy: curTop?.savedBy || null };
+    };
     const idx = Number.isInteger(targetFnIdx) ? targetFnIdx : activeFnIdx;
     // A history row's target index comes from an OLDER session's own numbering
     // (bestFnIdxForSession/findLatestBuild), which can point past the deal's current function
@@ -10753,6 +10758,36 @@ export default function StudioApp() {
     const outgoingSnap = curIdx !== idx ? snapshotFnRef.current() : null;
     if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
       const activeSnap = session.fnSnapshots[idx] || session.fnSnapshots[String(idx)] || null;
+      // ── REFUSE A SNAPSHOT WHOSE IDENTITY NOW BELONGS TO A DIFFERENT FUNCTION ──
+      // idx is only ever a POSITION, and removing a function shifts every later position down —
+      // every session saved before that removal still uses the old numbering, with no way to tell
+      // the shift happened. Every snapshot since saveSession started stamping fnType/fnDate per
+      // function (see its own "fnDate/fnVenue" comment, ~line 8651) carries which function it was
+      // ACTUALLY saved for.
+      // NOT a plain "doesn't match idx's current type/date" check — that was the first cut of this
+      // fix, and a regression review caught it blocking a completely normal workflow: Event Info's
+      // Continue is explicitly built to carry a date/type edit just typed on screen (its own comment,
+      // "leaving the details just typed on this screen exactly as they are"), and rolling back to an
+      // old build under a function's NEW name/date is a deliberate, supported move (this function's
+      // own baseline comment above calls it "the feature"). Only refuse when the snapshot's stamp
+      // matches a DIFFERENT function that's still actually on this order right now — the same
+      // "belongsToAnother" collision test persistDeptSnapshot already uses for the identical problem
+      // on the metadata side (its own "REFUSE TO STAMP A DIFFERENT FUNCTION'S IDENTITY" comment,
+      // ~line 4411) — not a mismatch against idx's own, possibly since-edited, identity. Older
+      // snapshots saved before this stamp existed carry neither field and are let through unverified.
+      if (activeSnap && activeSnap.fnType && activeSnap.fnDate) {
+        const liveMeta = fnMetaRef.current || {};
+        const curFns = [
+          { i: 0, type: liveMeta.fn || "", date: liveMeta.clientDate || "" },
+          ...((liveMeta.extraFunctions || []).map((ef, k) => ({ i: k + 1, type: ef?.type || "", date: ef?.date || "" }))),
+        ];
+        const belongsToAnother = curFns.some((c) => c.i !== idx && c.type && c.date && c.type === activeSnap.fnType && c.date === activeSnap.fnDate);
+        if (belongsToAnother) {
+          showMsg(`This save was for "${activeSnap.fnType}" (${activeSnap.fnDate}) — that now matches a DIFFERENT function on this deal, not Function ${idx + 1}. Not resuming; functions may have been reordered since this was saved.`, "red");
+          return;
+        }
+      }
+      setBaseline();
       if (idx !== activeFnIdx) setActiveFnIdx(idx);
       restoreBuildState(activeSnap);
       // ── TOUCH ONLY idx (the function being entered) AND curIdx (the one being left) ──
@@ -10777,6 +10812,7 @@ export default function StudioApp() {
       showMsg("Resumed Fn" + (idx + 1) + " from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
       return;
     }
+    setBaseline();
     // legacy sessions are flat — their data belongs to Fn1. Tested against curIdx (what's actually
     // committed/on screen right now), not idx: every caller already passes idx=0 for a legacy
     // session regardless of which function is active, so checking idx here never actually caught
@@ -12539,15 +12575,27 @@ export default function StudioApp() {
     }, { pickHint: `Pick the item to use for ${f.partName} inside ${f.name}` });
   }, [openAvailModal, imsInventory, setZoneElements, persistDcKitEditsNow]);
   const openOosFix = useCallback((f) => {
+    // Bail out BEFORE stashing/pending anything if a switch is already mid-flight — switchActiveFn
+    // would silently no-op below (it refuses to start a second switch while one is in progress), and
+    // if that in-flight switch is headed somewhere other than f.fnIdx, oosFixPending would be set
+    // with nothing left to ever clear it: the effect that opens the picker only fires once
+    // activeFnIdx actually reaches f.fnIdx, which this click can no longer make happen.
+    if (switchingRef.current) { showMsg("Still switching functions — try again in a moment", "red"); return; }
     oosGateStashRef.current = oosGateModal;
     setOosGateModal(null);
     if (f.fnIdx === activeFnIdx) {
       openOosPicker(f);
     } else {
       setOosFixPending(f);
-      setActiveFnIdx(f.fnIdx);
+      // switchActiveFn, not a bare setActiveFnIdx: this used to relabel the live canvas without ever
+      // snapshotting the OUTGOING function's content first — the exact failure class fixed in
+      // resumeSavedSession (see project_rakesh_taneja_resumesavedsession_incident memory), just a
+      // third, separate door into it. switchActiveFn already captures the outgoing build and batches
+      // the restore — the oosFixPending effect below still fires once its transition actually commits
+      // activeFnIdx.
+      switchActiveFn(f.fnIdx);
     }
-  }, [activeFnIdx, openOosPicker, oosGateModal]);
+  }, [activeFnIdx, openOosPicker, oosGateModal, switchActiveFn]);
   useEffect(() => {
     if (oosFixPending && oosFixPending.fnIdx === activeFnIdx) {
       const f = oosFixPending;
