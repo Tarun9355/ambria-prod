@@ -441,7 +441,15 @@ export function computeFnFloralCost(fn, allFns, opts) {
         kitParts.forEach(si => {
           const siQty = (Number(si.qty) || 0) * outerQty;
           if (siQty <= 0) return;
-          if (si.patternId) { expandedElems.push({ name: `${el.name || kitInvItem?.name || "Kit"} · recipe`, patternId: si.patternId, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem?.name }); return; }
+          // Named after the RECIPE ITSELF ("Chandelier Tree Floral Recipe"), not the generic
+          // "{kit name} · recipe" placeholder this used to carry — the kit's own name already
+          // reaches every consumer via _kitParent (grouping/folding), so this field is free to say
+          // WHICH recipe, the thing someone opening "🧮 how" on the kit's row actually wants to know
+          // (owner report, 2026-11-13: "still seeing tree recipe and not the chandelier recipe").
+          // Falls back to the old generic label only if the pattern itself can't be found by id here
+          // (practically unreachable now — an unresolvable patternId is caught and uncosted before a
+          // name is ever needed, see the elPattern check below — kept as a harmless safety net).
+          if (si.patternId) { const recipeName = flowerPatterns.find(p => p?.id === si.patternId)?.name; expandedElems.push({ name: recipeName || `${el.name || kitInvItem?.name || "Kit"} · recipe`, patternId: si.patternId, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem?.name }); return; }
           const ci = findInv(si.itemId);
           if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem?.name });
         });

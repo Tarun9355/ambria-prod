@@ -291,6 +291,18 @@ describe("computeFnFloralCost — core per-element resolution (unaffected by the
     expect(comp?.kitParent).toBe("Tree");
   });
 
+  it("names the recipe's own elementBreakdown row after the PATTERN itself (e.g. \"Chandelier Tree Floral Recipe\"), not a generic \"{kit} · recipe\" placeholder — the kit's own name is still carried separately via kitParent (owner report, 2026-11-13: \"still seeing tree recipe and not the chandelier recipe\")", () => {
+    const chandelierPattern = { id: "p_chandelier", name: "Chandelier Tree Floral Recipe", sub: "Flower Bunch", sizes: { medium: { flowers: [{ flowerId: "rose", qty: 2 }], extraCost: 0 } } };
+    const kit = { id: "kit1", name: "Tree", cat: "tenting", subItems: [{ patternId: "p_chandelier", qty: 2 }] };
+    const opts = { ...baseOpts([chandelierPattern]), imsInventory: [kit] };
+    const result = computeFnFloralCost(
+      fn({ zoneElements: { stage: [{ name: "Tree", invId: "kit1", qty: 2 }] }, enabledEls: { stage: true } }),
+      [], opts,
+    );
+    const recipe = result.elementBreakdown.find((eb) => eb.kitParent === "Tree" && eb.hasPattern);
+    expect(recipe?.name).toBe("Chandelier Tree Floral Recipe");
+  });
+
   it("a kit's recipe pointing at a DELETED pattern contributes nothing — never fuzzy-matched by its own decorated name (owner decision, 2026-11-12: deleted patterns are gone everywhere)", () => {
     // p_rose is a real, live pattern in this test's own flowerPatterns list — included specifically
     // to prove a deleted reference doesn't spuriously latch onto some unrelated real pattern that
