@@ -148,6 +148,7 @@ import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CA
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs, mergeLmsFunctions } from "../../lib/studio/sessionData.js";
+import { reindexFnIdxObject, reindexFnIdxArray, reindexCompositeKeyObject, ZONE_PIPE_KEY, TRUSS_ZONE_PIPE_KEY, TRANSPORT_COLLAPSE_KEY, FLORAL_CALC_OPEN_KEY } from "../../lib/studio/dealCheckReindex.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 import { thumbUrl } from "../../lib/studio/thumb.js";
@@ -2402,6 +2403,23 @@ export default function StudioApp() {
   // DISABLED" note near saveSession's own studio_sessions write).
   const buildSaveBaselineRef = useRef(null);
   const buildConflictWarnedAtRef = useRef(0);
+  // Describes "new function index -> old function index" for whatever removal(s) the deal's prices
+  // haven't caught up to yet — see saveSession's own "ONE PRICE PER FUNCTION" fnTotals comment for
+  // why this exists: that carry-forward reads prev[i] by raw position, with no idea a removal
+  // shifted every later function down. Without this, the function now sitting at position i
+  // inherits whatever price belonged to the REMOVED function at that old position, instead of its
+  // own. Decor content is untouched either way — this is a displayed-price-only bug. Two different
+  // writers, two different shapes (saveSession's own oldIdxFor reads either):
+  //   - removeFunction (StudioEventInfo.jsx, the same-tab case) only knows "this index just
+  //     vanished", not the full mapping — sets an ARRAY of removed indices, oldest first, consumed
+  //     by the next PERSISTING saveSession (not just the next one that runs — see its own comment).
+  //   - loadClientSession (the cross-reload case: client.functions already reflects a removal that
+  //     never reached a PERSISTED session, because only sessions[0] is held back, not the client row
+  //     — see saveSession's own "Only the SESSIONS are held back" comment) already derives the exact
+  //     mapping from its own identity-based build relocation, and sets a plain OBJECT {newIdx:
+  //     oldIdx} directly, replacing whatever was here. Consumed the SAME one-shot way as the array
+  //     shape — saveSession clears whichever shape is sitting here the moment a save persists.
+  const pendingFnTotalsRemapRef = useRef(null);
   const emptySaveWarnedRef = useRef(false); // the "deal shows empty but has a saved build" warning, said once until a build is back
   useEffect(() => { activeFnIdxRef.current = activeFnIdx; switchingRef.current = false; }, [activeFnIdx]);
   useEffect(() => { fnBuildsRef.current = fnBuilds; }, [fnBuilds]);
@@ -8761,12 +8779,39 @@ export default function StudioApp() {
       fnTotals: (() => {
         const prev = (prevSnapForTotals && typeof prevSnapForTotals.fnTotals === "object" && prevSnapForTotals.fnTotals) || {};
         const next = {};
+        // A function removed since prev's save shifts every later position down by one. READ ONLY
+        // here (not consumed yet — see the real consume point a bit further down, in the branch that
+        // actually persists this save): a held-back autosave (keepDraft/loadEchoNoop/emptyOverBuilt)
+        // still runs this whole block to build its (discarded) snapshot, and clearing the ref here
+        // unconditionally meant a held-back save silently burned the ONE use this remap gets, leaving
+        // the save that actually DOES persist to read raw, un-remapped positions again — the exact
+        // drift this was built to fix, just one save later.
+        // pendingFnTotalsRemapRef.current carries TWO possible shapes, each from a different origin
+        // that needs it, and both describe the same thing (new index -> old index):
+        //   - an ARRAY of removed indices, oldest first (removeFunction, the same-tab removal case:
+        //     it only knows "this index just vanished", not the full mapping), walked in reverse to
+        //     recover the old position for a given new one, the same shift fnBuilds' own reindex uses.
+        //   - a plain OBJECT {newIdx: oldIdx} (loadClientSession, the cross-reload case: a removal
+        //     already reflected in client.functions by the time this loads, from a save that held
+        //     sessions[0] back — see its own comment), which already knows the exact mapping from its
+        //     own identity-based build relocation, so it's read directly rather than reverse-walked.
+        const remap = pendingFnTotalsRemapRef.current;
+        const oldIdxFor = (i) => {
+          if (!remap) return i;
+          if (Array.isArray(remap)) {
+            let oi = i;
+            for (let r = remap.length - 1; r >= 0; r--) { if (oi >= remap[r]) oi += 1; }
+            return oi;
+          }
+          return remap[i] != null ? remap[i] : i;
+        };
         for (let i = 0; i < totalFns; i++) {
           // Only onto a function that HAS a build. This carried a price forward on the strength of a
           // snapshot merely existing, and a snapshot exists for every function once a video is picked
           // — so an untouched, ₹0 function inherited whatever the last save had measured elsewhere.
           if (!fnSnapshots[i] || !fnSnapHasBuild(fnSnapshots[i])) continue;
-          const carried = prev[i] || prev[String(i)];
+          const prevIdx = oldIdxFor(i);
+          const carried = prev[prevIdx] || prev[String(prevIdx)];
           if (carried && typeof carried.total === "number" && carried.total > 0) next[i] = carried;
         }
         // pricingReady, and not just grandTotal > 0. During boot grandTotal IS > 0 — it is a real
@@ -8947,6 +8992,10 @@ export default function StudioApp() {
       // against its own latest write, not the load-time one (mirrors dcSaveBaselineRef's own advance
       // after a successful dcDraft save).
       buildSaveBaselineRef.current = { savedAt: snapshot.savedAt, savedBy: snapshot.savedBy };
+      // The fnTotals remap above is consumed HERE, not where it was read — only a save that actually
+      // lands as sessions[0] makes the next save's prevSnapForTotals reflect the new numbering; a
+      // held-back save must leave the remap intact for whichever save finally does persist.
+      pendingFnTotalsRemapRef.current = null;
       const prunedIds = nextSessionList.slice(SESSION_KEEP).map((x) => x?.id).filter(Boolean);
       sessionBoundaryRef.current = false;
       // ── THE SAME SAVE, ROW-LEVEL, TO `studio_sessions` (migration 026) ──
@@ -9260,6 +9309,108 @@ export default function StudioApp() {
     const next = withKitEdit(base, fnIdx, cardKey, comps);
     try { saveClientLedger(cur.map((x) => (x.id === id ? { ...x, dcKitEdits: next } : x))); } catch { /* best effort: Deal Check's own autosave still carries it */ }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── DEAL CHECK'S OWN PER-FUNCTION STATE, REINDEXED ON REMOVAL ──
+  // removeFunction (StudioEventInfo.jsx) already reindexes fnBuilds when a function is removed —
+  // every build above the removed index shifts down one slot. Deal Check keeps a much larger set of
+  // its OWN per-function state (manual items, kit edits, card assignments, floral allocations,
+  // collapsed-section UI state) that never got the same treatment, so removal left all of it
+  // pointing at the OLD numbering — the function that shifted into the removed one's old slot could
+  // silently inherit a different function's manual items, kit edits or card state. See
+  // lib/studio/dealCheckReindex.js's own top comment for the shared primitives this uses and why
+  // the PERSISTED client-ledger copy needs the exact same fix, not just the live React state: Deal
+  // Check's own autosave only writes these fields while it's actually open (dcRun), so removing a
+  // function with Deal Check closed would otherwise leave the ledger's stale, pre-removal copy
+  // sitting there to silently overwrite this live reindex the next time Deal Check reopens.
+  const reindexDealCheckStateForRemoval = useCallback((removedIdx) => {
+    setDcCards((p) => reindexFnIdxObject(p, removedIdx));
+    setDcZoneState((p) => reindexFnIdxObject(p, removedIdx));
+    setDcKitEdits((p) => reindexFnIdxObject(p, removedIdx));
+    setDcCarpetPick((p) => reindexFnIdxObject(p, removedIdx));
+    setDcCarpetSplit((p) => reindexFnIdxObject(p, removedIdx));
+    setDcResolved((p) => reindexFnIdxObject(p, removedIdx));
+    setDcPhotoOverrides((p) => reindexFnIdxObject(p, removedIdx));
+    setDcSkipped((p) => reindexFnIdxObject(p, removedIdx));
+    setDcProductionAccepted((p) => reindexFnIdxObject(p, removedIdx));
+    setDcArtFlowerAlloc((p) => reindexFnIdxObject(p, removedIdx));
+    setDcArtFlowerAllocSrc((p) => reindexFnIdxObject(p, removedIdx));
+    setDcFloralColorPrefs((p) => reindexFnIdxObject(p, removedIdx));
+    setDcManualItems((p) => reindexFnIdxArray(p, removedIdx));
+    setDcCustomItems((p) => reindexFnIdxArray(p, removedIdx));
+    // dcCollapsedZones carries TWO different key shapes — DCTrussTab's own "truss:${fnIdx}|${zk}|…"
+    // fold keys alongside the plain "${fnIdx}|${zk}" ones everything else writes (a regression
+    // review found the truss ones unhandled) — chain both; neither's regex matches the other's keys.
+    setDcCollapsedZones((p) => reindexCompositeKeyObject(
+      reindexCompositeKeyObject(p, removedIdx, TRUSS_ZONE_PIPE_KEY.parseIdx, TRUSS_ZONE_PIPE_KEY.rebuildKey),
+      removedIdx, ZONE_PIPE_KEY.parseIdx, ZONE_PIPE_KEY.rebuildKey
+    ));
+    setDcManualSearch((p) => reindexCompositeKeyObject(p, removedIdx, ZONE_PIPE_KEY.parseIdx, ZONE_PIPE_KEY.rebuildKey));
+    setDcCollapsedFnBlocks((p) => reindexCompositeKeyObject(p, removedIdx, TRANSPORT_COLLAPSE_KEY.parseIdx, TRANSPORT_COLLAPSE_KEY.rebuildKey));
+    setDcFloralCalcOpen((p) => reindexCompositeKeyObject(p, removedIdx, FLORAL_CALC_OPEN_KEY.parseIdx, FLORAL_CALC_OPEN_KEY.rebuildKey));
+
+    // PERSISTED copy — same fields, same reindex, written straight to the client row (see this
+    // function's own top comment for why the live state above isn't enough on its own).
+    // View-only users never get here in practice (removing a function isn't itself gated — a
+    // separate, pre-existing gap, not this fix's to close — but every OTHER save path IS gated, e.g.
+    // persistDcKitEditsNow just above). Skip the persist (not the live reindex, which never leaves
+    // this tab) rather than let a view-only session write a change straight to the server that
+    // every other door refuses from them — a regression review caught this missing entirely.
+    if (!canDesignEditRef.current) return;
+    const id = activeClientIdRef.current;
+    if (!id) return;
+    (async () => {
+      // Heavy fields (dcDraft/dcCards/dcZoneState/dcKitEdits/dcReservedInventory) are excluded from
+      // the boot-time fetch and only loaded once Deal Check actually opens for this client
+      // (ensureClientHeavyFieldsLoaded, this file's own "dcDraft... out of the boot-time fetch"
+      // comment). Skipping this await — reading clientLedgerRef directly instead — meant a removal
+      // made before Deal Check was ever opened this session saw every heavy field as undefined,
+      // silently left them untouched (JSON drops an undefined key, and the ledger's shallow merge
+      // keeps whatever stale value the server already had) while dcCarpetPick/dcCarpetSplit (already
+      // in the LIGHT view, fetched at boot) DID get reindexed — leaving the server row HALF
+      // reindexed, an inconsistency worse than not touching it at all. Caught by regression review.
+      const c = await ensureClientHeavyFieldsLoaded(id);
+      if (!c) return;
+      const reindexDraft = (draft) => {
+        if (!draft || typeof draft !== "object") return draft;
+        return {
+          ...draft,
+          resolved: reindexFnIdxObject(draft.resolved, removedIdx),
+          cards: reindexFnIdxObject(draft.cards, removedIdx),
+          zoneState: reindexFnIdxObject(draft.zoneState, removedIdx),
+          photoOverrides: reindexFnIdxObject(draft.photoOverrides, removedIdx),
+          skipped: reindexFnIdxObject(draft.skipped, removedIdx),
+          manualItems: reindexFnIdxArray(draft.manualItems, removedIdx),
+          productionAccepted: reindexFnIdxObject(draft.productionAccepted, removedIdx),
+          artFlowerAlloc: reindexFnIdxObject(draft.artFlowerAlloc, removedIdx),
+          artFlowerAllocSrc: reindexFnIdxObject(draft.artFlowerAllocSrc, removedIdx),
+          floralColorPrefs: reindexFnIdxObject(draft.floralColorPrefs, removedIdx),
+          customItems: reindexFnIdxArray(draft.customItems, removedIdx),
+        };
+      };
+      const patch = {
+        dcDraft: reindexDraft(c.dcDraft),
+        dcCards: reindexFnIdxObject(c.dcCards, removedIdx),
+        dcZoneState: reindexFnIdxObject(c.dcZoneState, removedIdx),
+        dcKitEdits: reindexFnIdxObject(c.dcKitEdits, removedIdx),
+        dcCarpetPick: reindexFnIdxObject(c.dcCarpetPick, removedIdx),
+        dcCarpetSplit: reindexFnIdxObject(c.dcCarpetSplit, removedIdx),
+        // Keyed by fnIdx too (requiredByFn[fnIdx]), read by the sold-inventory reconcile to diff
+        // this save's reservations against last time's — left unreindexed, a removal makes that
+        // diff compare the wrong functions against each other on the next reconcile (spurious
+        // "changed" entries in the dept-head change log; the actual block reservations are rebuilt
+        // fresh from current data regardless, so stock correctness itself isn't at risk).
+        dcReservedInventory: reindexFnIdxObject(c.dcReservedInventory, removedIdx),
+      };
+      const cur = clientLedgerRef.current || [];
+      try { saveClientLedger(cur.map((x) => (x.id === id ? { ...x, ...patch } : x))); } catch { /* best effort — the live state above is already correct for this tab */ }
+      // The in-session Deal Check cache is the same shape again — stale otherwise, same reasoning as
+      // the ledger patch above, just for this tab's own memory instead of the server.
+      setDcCache((prev) => {
+        const cached = prev?.[id];
+        if (!cached) return prev;
+        return { ...prev, [id]: reindexDraft(cached) };
+      });
+    })();
+  }, [ensureClientHeavyFieldsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
   // ── LIVE KITS (owner ask 2026-11-10) ── An element on a kit picked in Build (Kit 2, or another item's kit) takes that kit's parts as
   // they are in IMS now: an edit in IMS → Inventory reaches the open deal in real time (the inventory subscription), and the save that
   // follows carries it to Deal Check, Planning and the Setup Book. A kit removed in IMS puts the element back on Kit 1. Sold deals too
@@ -9885,6 +10036,16 @@ export default function StudioApp() {
     // already was). saveSession compares its own next write against this to tell a stale tab from
     // one that's actually caught up — see buildSaveBaselineRef's own comment.
     buildSaveBaselineRef.current = { savedAt: Number(client.sessions?.[0]?.savedAt) || 0, savedBy: client.sessions?.[0]?.savedBy || null };
+    // Default/cross-client reset: any pending removal remap belonged to whatever client was open
+    // before this call (a fast client switch within the same removal-to-save window could otherwise
+    // apply someone else's shift to THIS client's prices). The fnSnapshots branch below OVERWRITES
+    // this with its own freshly-derived remap right after computing restoredBuilds — NOT with
+    // another unconditional clear: client.functions persists through a held-back autosave (only
+    // sessions[0] is held back, not the client row itself — see saveSession's own "Only the SESSIONS
+    // are held back" comment), so a removal made just before a held-back save is very much still
+    // real by the time this load runs, and clearing this unconditionally here left the very next
+    // save still mispricing whatever function shifted into the gap (caught by regression review).
+    pendingFnTotalsRemapRef.current = null;
     setClientDate(client.eventDate || "");
     setVenue(client.venue || "");
     setFn(client.fn || "");
@@ -9948,21 +10109,107 @@ export default function StudioApp() {
       return merge;
     }
     if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
-      const fn0Snap = session.fnSnapshots[0] || session.fnSnapshots["0"] || null;
-      // MUST include idx 0 here (unlike the older version of this block) — it used to be excluded on
+      // Every function this client currently has, by its CURRENT position — function 1 (idx 0) is
+      // client.fn/eventDate (its own top-level fields, not yet overwritten by this load), the rest
+      // are client.functions[1..] (the client row's own current list, already reindexed by any
+      // removal/reorder since this session was saved). Used right below to relocate a snapshot
+      // whose stamped identity (see saveSession's own "fnDate/fnVenue" comment) now belongs to a
+      // DIFFERENT function than the raw index it was saved under — the same index-drift class the
+      // Rakesh Taneja incident's resumeSavedSession fix closed for Resume/Continue, happening here
+      // instead at mount/reload time.
+      const curFnList = [
+        { type: client.fn || "", date: client.eventDate || "" },
+        ...(Array.isArray(client.functions) ? client.functions.slice(1) : []).map(f => ({ type: f?.type || "", date: f?.date || "" })),
+      ];
+      // Index -> every CURRENT function whose type+date matches it, built once. Used below to both
+      // RELOCATE a shifted function's build to its correct new slot (not just refuse to misfile it
+      // — a regression review found the earlier "drop on collision" version left the removed
+      // function's OWN stale build sitting in the gap it left behind, with the real function that
+      // shifted into that slot dropped on top of it) and to recognise two functions that legitimately
+      // share a type+date (a same-day Lunch/Dinner sitting, two family Haldis one morning) as
+      // ambiguous rather than a collision — only a UNIQUE match is ever acted on.
+      const curIdxByStamp = new Map();
+      curFnList.forEach((c, i) => {
+        if (!c.type || !c.date) return;
+        const key = c.type + "||" + c.date;
+        if (!curIdxByStamp.has(key)) curIdxByStamp.set(key, []);
+        curIdxByStamp.get(key).push(i);
+      });
+      const rawEntries = Object.entries(session.fnSnapshots)
+        .map(([k, v]) => ({ rawIdx: parseInt(k), v }))
+        .filter((e) => !isNaN(e.rawIdx) && e.v);
+      // Same ambiguity check, the OTHER direction: a stamp shared by 2+ SNAPSHOTS (two old sessions'
+      // own same-day Lunch/Dinner builds) is just as ambiguous as one shared by 2+ CURRENT functions
+      // — a regression review caught pass 1 only checking the current-function side, so when two old
+      // snapshots legitimately shared a stamp and exactly one current function still had it, the
+      // first one processed silently claimed the slot and the second was dropped outright. Only a
+      // stamp that is unique on BOTH sides is ever acted on below.
+      const rawStampCounts = new Map();
+      rawEntries.forEach(({ v }) => {
+        if (!(v.fnType && v.fnDate)) return;
+        const key = v.fnType + "||" + v.fnDate;
+        rawStampCounts.set(key, (rawStampCounts.get(key) || 0) + 1);
+      });
+      const restoredBuilds = {};
+      // newIdx -> the OLD raw index its build actually came from, wherever that differs from newIdx
+      // — not used for the build restore itself, only to correct fnTotals' own carry-forward at the
+      // NEXT save (see pendingFnTotalsRemapRef's own comment): a session reload can land on a client
+      // row whose functions were already reindexed by a removal (client.functions persists through a
+      // held-back autosave even though sessions[0] itself didn't), so the SAME index-drift this pass
+      // just fixed for decor content would otherwise still mis-price the function that shifted in.
+      const oldIdxByNewIdx = {};
+      // Pass 1 — relocate by identity wherever it's unambiguous: a snapshot whose stamp matches
+      // EXACTLY ONE current function goes to THAT function's current index, whatever that is now —
+      // this is what actually recovers a shifted function's build after an earlier removal, instead
+      // of leaving it stranded at its old index or dropping it outright.
+      const claimedTargets = new Set();
+      const consumedRaw = new Set();
+      rawEntries.forEach(({ rawIdx, v }) => {
+        if (!(v.fnType && v.fnDate)) return;
+        const key = v.fnType + "||" + v.fnDate;
+        if ((rawStampCounts.get(key) || 0) !== 1) return; // ambiguous on the snapshot side too
+        const matches = curIdxByStamp.get(key);
+        if (matches && matches.length === 1 && !claimedTargets.has(matches[0])) {
+          restoredBuilds[matches[0]] = v;
+          claimedTargets.add(matches[0]);
+          consumedRaw.add(rawIdx);
+          if (rawIdx !== matches[0]) oldIdxByNewIdx[matches[0]] = rawIdx;
+        }
+      });
+      // Pass 2 — everything not already placed by identity falls back to its own raw index, UNLESS
+      // that raw index is a target pass 1 already claimed FOR A DIFFERENT snapshot (the function
+      // that used to be at this index was removed, and the function that shifted into it already
+      // got placed here above — this stale leftover must not overwrite that). An unstamped (legacy)
+      // snapshot, or one whose stamp matches nothing current at all (the function it was for no
+      // longer exists anywhere), or one caught in a genuine ambiguous tie (2+ current functions, or
+      // 2+ old snapshots, share that exact stamp) all fall through here and keep today's existing,
+      // safe behaviour.
+      rawEntries.forEach(({ rawIdx, v }) => {
+        if (consumedRaw.has(rawIdx) || claimedTargets.has(rawIdx)) return;
+        restoredBuilds[rawIdx] = v;
+      });
+      // See oldIdxByNewIdx's own comment above — read by saveSession's fnTotals carry-forward
+      // (oldIdxFor), via the SAME ref removeFunction uses for the same-tab removal case, just a
+      // different shape (a direct {newIdx: oldIdx} map here, vs removeFunction's array of removed
+      // indices + reverse walk — oldIdxFor accepts either). Cleared the SAME one-shot way as
+      // removeFunction's own array contribution — saveSession's own "consumed HERE" comment clears
+      // whichever shape is sitting here the moment a save actually persists, not just the array
+      // shape — so this is simply replaced wholesale by whatever THIS load's own mapping says (null
+      // when nothing shifted); it does not need its own separate clear-tracking logic.
+      // KNOWN GAP (regression-caught, accepted): if a function is removed again before that first
+      // persisting save happens, removeFunction's own array-append line can't compose with this
+      // object shape (two different representations) and deliberately drops it rather than crash —
+      // see that line's own comment. Narrow (needs a load that detects drift, then a removal, before
+      // ANY save lands) and price-display-only; not fixed further here.
+      pendingFnTotalsRemapRef.current = Object.keys(oldIdxByNewIdx).length ? oldIdxByNewIdx : null;
+      // MUST include idx 0 here (unlike an older version of this block) — it used to be excluded on
       // the assumption that Fn0's data always lives in the live top-level state instead. True only
       // when landingFnIdx is 0. Landing on any OTHER function (a refresh while Fn4 was active, say)
       // left fnBuilds with no entry at all for Fn0 — not merely stale, ABSENT — so the very next
       // autosave's collectAllFunctionData/saveSession loop (which reads fnBuilds[i] for every i that
       // isn't the live index) found nothing for Fn0 and wrote a session with NO fnSnapshots[0] at all,
-      // permanently erasing Fn1's entire real build. resumeSavedSession (the explicit per-pill Resume
-      // button) already gets this right — it excludes whichever index IS being restored into, not a
-      // hardcoded 0 — this mount-restore path is fixed to match that same, correct pattern.
-      const restoredBuilds = {};
-      Object.entries(session.fnSnapshots).forEach(([k, v]) => {
-        const idx = parseInt(k);
-        if (!isNaN(idx) && v) restoredBuilds[idx] = v;
-      });
+      // permanently erasing Fn1's entire real build.
+      const fn0Snap = restoredBuilds[0] || null;
       // The mount-restore effect (refresh/reopen) passes the function that was actually active
       // before — landing everyone back on Fn0's live state while labelling it "Function N" (a bare
       // setActiveFnIdx after this call, with no matching restore) mislabelled whatever was on screen:
@@ -10196,6 +10443,10 @@ export default function StudioApp() {
   const startNewDeal = useCallback(() => {
     setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setFilterMood([]);setFilterPalette([]);setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");setClientFlowerPalette("");
     loadedClientIdentityRef.current = { name: "", phone: "" };
+    // A pending removal remap belongs to whichever client was just open — carrying it into a brand
+    // new, functionless deal has nothing to apply to anyway, but leaving it set is still a latent
+    // footgun for whatever client gets loaded next without going through loadClientSession first.
+    pendingFnTotalsRemapRef.current = null;
   }, [userVenueScope]);
 
   // ── Restore the active deal on mount (refresh / Studio↔IMS switch) ──
@@ -10781,7 +11032,20 @@ export default function StudioApp() {
           { i: 0, type: liveMeta.fn || "", date: liveMeta.clientDate || "" },
           ...((liveMeta.extraFunctions || []).map((ef, k) => ({ i: k + 1, type: ef?.type || "", date: ef?.date || "" }))),
         ];
-        const belongsToAnother = curFns.some((c) => c.i !== idx && c.type && c.date && c.type === activeSnap.fnType && c.date === activeSnap.fnDate);
+        // A tie that INCLUDES idx is never a collision: two functions legitimately sharing a
+        // type+date (a same-day Lunch and Dinner sitting, two family Haldis the same morning) is
+        // common, and idx's own identity still legitimately matching its own stamp means this is
+        // ambiguous-but-fine, not drift — a regression review caught the first cut of this check
+        // refusing BOTH such functions' own, correct resumes every time, since it only ever checked
+        // "does some OTHER index match", never whether idx itself was among the matches. But a tie
+        // that EXCLUDES idx entirely is still exactly as suspicious as a unique one: a second
+        // regression review caught this version letting that case through unrefused (e.g. an old
+        // session saved when the deal had two same-stamped functions neither of which is the one
+        // being resumed into now). Refuse whenever there's at least one match and idx isn't one of
+        // them — allow only when idx is itself among the matches, or there are no matches at all
+        // (the function this stamp names no longer exists anywhere, a plain rename/removal, not drift).
+        const matchIdxs = curFns.filter((c) => c.type && c.date && c.type === activeSnap.fnType && c.date === activeSnap.fnDate).map((c) => c.i);
+        const belongsToAnother = matchIdxs.length > 0 && !matchIdxs.includes(idx);
         if (belongsToAnother) {
           showMsg(`This save was for "${activeSnap.fnType}" (${activeSnap.fnDate}) — that now matches a DIFFERENT function on this deal, not Function ${idx + 1}. Not resuming; functions may have been reordered since this was saved.`, "red");
           return;
@@ -14070,6 +14334,7 @@ export default function StudioApp() {
     deleteSessionRows: designDeleteSessionRows,
     showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger: designSaveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
+    pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS
     lmsLeads, setLmsLeads, lmsLoading, setLmsLoading, lmsError, setLmsError, lmsFilling, setLmsFilling, lmsRefreshCounter, setLmsRefreshCounter,
