@@ -14,7 +14,7 @@ import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { fetchOpsVendors } from "../../lib/ims/opsVendors";
-import { venueWithParent, standingQty, venueCalendarColor } from "../../lib/ims/fixedVenues";
+import { venueWithParent, standingQty, venueCalendarColor, VENUE_CALENDAR_LEGEND } from "../../lib/ims/fixedVenues";
 import { carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import ElementChoicePlan from "./ElementChoicePlan.jsx";
@@ -3696,6 +3696,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       </button>
                     </div>
                   </div>
+                  {/* Same venue color legend as the separate Ambria Calendar app (owner ask,
+                      2026-11-12) — a static list (lib/ims/fixedVenues.js), not derived from which
+                      venues actually have events this month, so it reads the same every month. */}
+                  <div className="px-4 pb-2 flex items-center gap-x-3 gap-y-1 flex-wrap">
+                    {VENUE_CALENDAR_LEGEND.map((vc) => (
+                      <span key={vc.code} className="inline-flex items-center gap-1 text-[10.5px] text-gray-500">
+                        <span aria-hidden="true" className={`w-2 h-2 rounded-full ${vc.dot}`} />
+                        {vc.code} <span className="text-gray-400">({vc.label})</span>
+                      </span>
+                    ))}
+                  </div>
                   {/* ── PHONE LAYOUT ──
                       Seven columns of 84px cells with a name chip inside each is a desktop shape;
                       at phone width a column is ~45px, so the chips truncate to two characters
@@ -3757,7 +3768,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                   className="w-full text-left rounded-xl bg-gray-50 ring-1 ring-gray-100 hover:bg-blue-50 hover:ring-blue-100 active:bg-blue-100 px-4 py-3.5 flex items-center gap-3.5 cursor-pointer transition-colors">
                                   <span aria-hidden="true" className={`shrink-0 w-2 h-2 rounded-full ring-4 ring-opacity-30 ${vc.dot} ${vc.ring}`} />
                                   <span className="min-w-0 flex-1">
-                                    <span className="block text-[15px] font-semibold text-gray-900 leading-snug truncate">{eo.clientName || "Event"}</span>
+                                    <span className="flex items-center gap-1.5 min-w-0">
+                                      <span className="text-[15px] font-semibold text-gray-900 leading-snug truncate">{eo.clientName || "Event"}</span>
+                                      <span className={`shrink-0 text-[9.5px] font-bold px-1 rounded ${vc.bg} ${vc.text}`}>{vc.code}</span>
+                                    </span>
                                     {/* Venue and shift, because that is what an event_order actually
                                         carries — there are no start/end times on one to show. */}
                                     <span className="mt-0.5 block text-xs text-gray-500 truncate">
@@ -3806,9 +3820,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                               // venue gets "ADD"'s color (lib/ims/fixedVenues.js's venueCalendarColor).
                               const vc = venueCalendarColor(settings, eo.functionsDetail?.[0]?.venue || eo.venue || "");
                               return (
-                                <button key={eo.id} onClick={() => setSelId(eo.id)} title={`Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""}`}
-                                  className={`w-full text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md truncate border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
-                                  {eo.clientName || "Event"}
+                                <button key={eo.id} onClick={() => setSelId(eo.id)} title={`Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
+                                  className={`w-full flex items-center gap-1 text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
+                                  <span className="shrink-0 text-[9px] font-bold opacity-70">{vc.code}</span>
+                                  <span className="min-w-0 truncate">{eo.clientName || "Event"}</span>
                                 </button>
                               );
                             })}
