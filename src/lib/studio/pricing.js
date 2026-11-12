@@ -658,6 +658,60 @@ export const calcZoneTrussPreview = (zc, trussInv) => {
   return out;
 };
 
+// calcZoneTrussPreview's topology/costs/batta describe ONE truss unit, qty-independent BY DESIGN —
+// zoneTrussStandingDiscountDetail used to rely on that same per-unit shape for its own Fixed-Venue
+// standing discount, but needed fixing too (see its own comment): the venue's standing pillar/beam
+// allocation is a per-structure fact, but what it's being CAPPED against has to be this zone's TRUE
+// total need across every truss unit, so it scales through here as well now. Every consumer that
+// needs the actual INSTALLED steel quantity/cost — Deal Check's Truss tab, its cost rollup + Tenting
+// department pull-list, IMS Dept Ops' own Truss plan, and the Truss Labour manpower count — must
+// scale through here, the same way calcZoneFabric already scales its own fabric/liza/curtain/pillar
+// counts by `Math.max(1, zc.trussQty || 1)`. Without this, raising a row's Truss Qty in Build (which
+// DOES scale correctly there — trussRowCost's own `truss *= Math.max(1, row.trussQty || 1)`) silently
+// stopped reaching any of those screens: they kept pricing/listing/counting as if only one truss
+// existed, confirmed live (2026-11-12) — a salesperson bumping Truss Qty to 3 saw no change in Deal
+// Check's Truss tab, its total, IMS Planning's pull quantities, or crew sizing.
+// qtyIsZero's own zeroing (pv.costs.actual/pillarCost/beamCost/battaCost already 0 — see
+// calcZoneTrussPreview's own comment) passes through unaffected: 0 × any qty is still 0. topology's
+// pillars/beams arrays are deliberately left untouched when trussQty is 0 (calcZoneFabric still needs
+// the per-unit dims-based topology for its own Liza wrap-kg math regardless of qty) — every CALLER
+// that turns topology into a physical pull-list already gates that read on `row.trussQty !== 0`
+// first (see DealCheckOverlay.jsx's own Tenting push), same as before this existed.
+export function scaleTrussPreview(pv, trussQty) {
+  if (!pv) return pv;
+  const qty = Math.max(1, Number(trussQty) || 1);
+  if (qty === 1) return pv;
+  const repeatPieces = (arr) => { const out = []; for (let i = 0; i < qty; i++) out.push(...(arr || [])); return out; };
+  return {
+    ...pv,
+    // pillarCount/beamCount/frontPillarCount are cached scalars buildTopology stores ALONGSIDE the
+    // pillars/beams arrays (not re-derived from .length by every reader) — StudioApp.jsx's own Truss
+    // Labour manpower count and DCManpowerTab.jsx/manpowerCount.js all read .pillarCount directly, so
+    // these have to be rescaled too or they'd silently stay at the one-truss figure even once the
+    // arrays above were fixed.
+    topology: pv.topology ? {
+      ...pv.topology,
+      pillars: repeatPieces(pv.topology.pillars),
+      beams: repeatPieces(pv.topology.beams),
+      pillarCount: (pv.topology.pillarCount || 0) * qty,
+      beamCount: (pv.topology.beamCount || 0) * qty,
+      frontPillarCount: (pv.topology.frontPillarCount || 0) * qty,
+    } : pv.topology,
+    costs: pv.costs ? {
+      ...pv.costs,
+      actual: pv.costs.actual * qty,
+      pillarCost: pv.costs.pillarCost * qty,
+      beamCost: pv.costs.beamCost * qty,
+      battaCost: pv.costs.battaCost * qty,
+      pillarRft: pv.costs.pillarRft * qty,
+      beamRft: pv.costs.beamRft * qty,
+      uEquivalent: pv.costs.uEquivalent * qty,
+      boxEquivalent: pv.costs.boxEquivalent * qty,
+    } : pv.costs,
+    batta: pv.batta ? { ...pv.batta, rftRequired: pv.batta.rftRequired * qty, rftWithBuffer: pv.batta.rftWithBuffer * qty } : pv.batta,
+  };
+}
+
 // ─── Deal Check Truss tab — "use minimum joints" dimension snap — DISABLED (owner decision,
 // 2026-11-04) ─────────────────────────────────────────────────────────────────────────────────
 // Used to auto-shrink an entered span by up to 5ft to whichever nearby size needed fewer beam
@@ -701,7 +755,11 @@ export function zoneTrussStandingDiscountDetail(zc, trussInv, venueTruss) {
   // this guard a 0-qty row would still report real pillars/beams here and get a discount against a
   // cost that was never charged.
   if (zc?.trussQty === 0) return { pillar: 0, beam: 0, total: 0 };
-  const preview = calcZoneTrussPreview(zc, trussInv);
+  // Scaled by trussQty — the venue's own standing pillar/beam count is a fixed physical fact
+  // (unaffected by how many trusses THIS zone needs), but the NEED it's being capped against must be
+  // the zone's true total across every truss unit, not just one, or a Truss Qty above 1 under-credited
+  // this discount as if only the first unit's RFT existed to discount against.
+  const preview = scaleTrussPreview(calcZoneTrussPreview(zc, trussInv), zc?.trussQty);
   if (!preview?.costs) return { pillar: 0, beam: 0, total: 0 };
   // A venue's standing pillars/beams are tracked per material (Iron/Pole/Aluminium) — only the
   // slice matching THIS zone's own truss material is actually what's bolted in place for it.

@@ -672,6 +672,29 @@ const trussInvForMaterialIms = (trussInv, material) => {
   };
 };
 
+// Mirror of pricing.js's scaleTrussPreview (lib/ims doesn't depend on lib/studio — same reason
+// trussInvForMaterialIms above is its own copy rather than an import) — repeats a Layer-1 topology's
+// pillars/beams `qty` times (same `Math.max(1, Number(trussQty) || 1)` floor convention pricing.js
+// uses everywhere else) so allocateTruss below resolves REAL stock for the salesperson's actual
+// Truss Qty, not just one truss. Confirmed gap, 2026-11-12: buildEventAllocation fed allocateTruss an
+// unscaled single-unit topology regardless of trussQty, so a sold deal with Truss Qty 3 only ever
+// reserved pillar/beam stock for 1 — understating both IMS's own stock-shortage check (this same
+// function, read pre-sale) and the real truss_allocations reservation written once a deal is sold.
+const scaleTopologyForQty = (topology, trussQty) => {
+  if (!topology) return topology;
+  const qty = Math.max(1, Number(trussQty) || 1);
+  if (qty === 1) return topology;
+  const repeatPieces = (arr) => { const out = []; for (let i = 0; i < qty; i++) out.push(...(arr || [])); return out; };
+  return {
+    ...topology,
+    pillars: repeatPieces(topology.pillars),
+    beams: repeatPieces(topology.beams),
+    pillarCount: (topology.pillarCount || 0) * qty,
+    beamCount: (topology.beamCount || 0) * qty,
+    frontPillarCount: (topology.frontPillarCount || 0) * qty,
+  };
+};
+
 // ─── Layer 4.2 — Build event allocation from EO ────────
 // Iterates zones in the event, runs Layer 1+2+3 for each, returns event entry.
 // Caller passes the dimensions/configs source (EO.functionsDetail OR draft from Studio).
@@ -689,42 +712,57 @@ export const buildEventAllocation = (eventMeta, fnList, trussInv) => {
       // If enabledEls is missing entirely, default to "evaluate all zones with dims"
       // (back-compat with older EOs).
       if (enabledEls && Object.keys(enabledEls).length > 0 && !enabledEls[zoneKey]) return;
-      const layer0 = resolveTrussConfig(zc);
-      if (!layer0 || layer0.source === "none" || layer0.source === "invalid") return;
-      const mat = String(zc.trussMaterial || "iron").toLowerCase();
-      const matInv = trussInvForMaterialIms(trussInv, mat);
-      const eng = matInv?.settings || {};
-      const L = parseFloat(zc.dims?.L) || 0;
-      const W = parseFloat(zc.dims?.W) || 0;
-      const H = parseFloat(zc.dims?.H) || 0;
-      const spanFt = layer0.spanFt || (layer0.source === "auto-3dim" ? Math.max(L, W) : 0);
-      const backDepth = zc.trussBackDepth || eng.defaultBackDepthFt || 4;
-      const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng, matInv, mat);
-      if (!topology) return;
-      const alloc = allocateTruss(`${fn.fnIdx || 0}-${zoneKey}`, topology, matInv);
-      if (!alloc) return;
-      if (alloc.shortage) {
-        anyShortage = true;
-        shortageNotes.push(`Fn${fn.fnIdx ?? 0} ${zoneKey}: ${alloc.shortageNotes.join("; ")}`);
-      }
-      allTrusses.push({
-        fnIdx: fn.fnIdx ?? 0,
-        zoneKey,
-        trussConfig: layer0.config,
-        trussMaterial: mat,
-        allocation: alloc,
-        shortage: !!alloc.shortage,
-        // §2.5.1 corollary (28 May 2026) — carry the requirement forward so dept head
-        // sees what salesperson committed (L×W×H, back depth, who picked the type)
-        // alongside the derived pillar/beam bifurcation.
-        requirement: {
-          L,
-          W,
-          H,
-          spanFt,
-          backDepth,
-          source: layer0.source,  // "sales-pick" | "auto-3dim" | "default-on-forget"
-        },
+      // Every truss structure in the zone (its own row, plus any "+ Add Truss" extras) — a zone with
+      // 2+ truss structures used to only ever allocate stock for the first one.
+      [zc, ...(zc.extraTrussRows || [])].forEach((row, rowIdx) => {
+        // Explicit 0 — a dims-only placeholder (e.g. a client-owned frame), no rental truss actually
+        // standing — every other consumer already excludes it (trussRowCost, calcZoneTrussPreview's
+        // own cost zeroing, StudioApp.jsx's shortage scan, DealCheckOverlay's Tenting pull-list,
+        // eventPlans.js). Reserving real pillar/beam stock for a truss that isn't being built would
+        // over-commit IMS's own inventory against nothing.
+        if (row.trussQty === 0) return;
+        const layer0 = resolveTrussConfig(row);
+        if (!layer0 || layer0.source === "none" || layer0.source === "invalid") return;
+        const mat = String(row.trussMaterial || "iron").toLowerCase();
+        const matInv = trussInvForMaterialIms(trussInv, mat);
+        const eng = matInv?.settings || {};
+        const L = parseFloat(row.dims?.L) || 0;
+        const W = parseFloat(row.dims?.W) || 0;
+        const H = parseFloat(row.dims?.H) || 0;
+        const spanFt = layer0.spanFt || (layer0.source === "auto-3dim" ? Math.max(L, W) : 0);
+        const backDepth = row.trussBackDepth || eng.defaultBackDepthFt || 4;
+        const topology = scaleTopologyForQty(buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng, matInv, mat), row.trussQty);
+        if (!topology) return;
+        const zoneId = rowIdx > 0 ? `${fn.fnIdx || 0}-${zoneKey}-${rowIdx}` : `${fn.fnIdx || 0}-${zoneKey}`;
+        const alloc = allocateTruss(zoneId, topology, matInv);
+        if (!alloc) return;
+        if (alloc.shortage) {
+          anyShortage = true;
+          shortageNotes.push(`Fn${fn.fnIdx ?? 0} ${zoneKey}${rowIdx > 0 ? ` #${rowIdx + 1}` : ""}: ${alloc.shortageNotes.join("; ")}`);
+        }
+        allTrusses.push({
+          fnIdx: fn.fnIdx ?? 0,
+          zoneKey,
+          // Which truss structure of this zone this is (0 = the zone's own row, 1+ = "+ Add Truss"
+          // extras) — lets a UI listing every entry (StructurePlanningTab.jsx) key/label rows beyond
+          // the first distinctly instead of colliding on the same zoneKey.
+          rowIdx,
+          trussConfig: layer0.config,
+          trussMaterial: mat,
+          allocation: alloc,
+          shortage: !!alloc.shortage,
+          // §2.5.1 corollary (28 May 2026) — carry the requirement forward so dept head
+          // sees what salesperson committed (L×W×H, back depth, who picked the type)
+          // alongside the derived pillar/beam bifurcation.
+          requirement: {
+            L,
+            W,
+            H,
+            spanFt,
+            backDepth,
+            source: layer0.source,  // "sales-pick" | "auto-3dim" | "default-on-forget"
+          },
+        });
       });
     });
   });

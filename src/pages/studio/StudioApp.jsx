@@ -98,7 +98,7 @@ import {
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
   calcZoneFabric, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, maskingAfterRepeat, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, trussRowCost, repeatCatFor, repeatCatsOn, REPEAT_CAT_LABELS,
-  freshFnForManpower, snapRowDimsForProduction,
+  freshFnForManpower, snapRowDimsForProduction, scaleTrussPreview,
 } from "../../lib/studio/pricing";
 import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintTotalFor } from "../../lib/studio/paint";
 import { sheetItemLine } from "../../lib/studio/sheetRounding";
@@ -6980,8 +6980,14 @@ export default function StudioApp() {
             const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
             Object.keys(zc).forEach(zk => {
               if (!en[zk] || !zc[zk]) return; const z = zc[zk];
-              const pv = calcZoneTrussPreview(z, tInv); const n = (pv?.topology?.pillars || []).length;
-              if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)`, count: n, ...zoneShapeMeta(z, pv.config, pv.spanFt) }); zoneP += n; }
+              // Every truss structure in the zone (the zone's own row, plus any "+ Add Truss" extras)
+              // — a zone with 2+ truss structures used to only ever count the first one's pillars here.
+              [z, ...(z.extraTrussRows || [])].forEach((row, ri) => {
+                // Scaled by THIS row's own Truss Qty — without it, raising Truss Qty above 1 never
+                // grew the Truss Labour crew estimate, same gap as Deal Check/IMS Planning's own counts.
+                const pv = scaleTrussPreview(calcZoneTrussPreview(row, tInv), row.trussQty); const n = (pv?.topology?.pillars || []).length;
+                if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)${ri > 0 ? ` #${ri + 1}` : ""}`, count: n, ...zoneShapeMeta(row, pv.config, pv.spanFt) }); zoneP += n; }
+              });
             });
           }
         } catch { /* zone has no resolvable truss preview */ }

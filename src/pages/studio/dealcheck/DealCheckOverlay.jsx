@@ -101,7 +101,7 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor, combineAvailability, fixedVenueOverlap, fixedVenueOverlapOnDate } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial, platformStandingDiscount } from "../../../lib/studio/pricing";
+import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial, platformStandingDiscount, scaleTrussPreview } from "../../../lib/studio/pricing";
 import { resolveBeamSegment, resolvePillarHeight } from "../../../lib/ims/trussEngine";
 import { platformAvgRatePerSqft } from "../../../lib/ims/platformEngine";
 import { carpetPricingFor, CARPET_OFF, carpetTakesStockPick } from "../../../lib/studio/taxonomy";
@@ -1110,7 +1110,11 @@ export default function DealCheckOverlay({ ctx }) {
                   // subtracted from a completely different formula).
                   const _venueTrussHere = fixedVenueFor({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "")?.truss;
                   [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach(row => {
-                    const pv = calcZoneTrussPreview(row, tInv);
+                    // Scaled by this row's own Truss Qty — calcZoneTrussPreview describes ONE truss
+                    // unit; without this, raising Truss Qty above 1 in Build never reached this
+                    // rollup's truss cost, the Tenting pull-list pillar/beam/batta quantities below, or
+                    // (transitively) Deal Check's Truss tab total.
+                    const pv = scaleTrussPreview(calcZoneTrussPreview(row, tInv), row.trussQty);
                     if (pv?.costs?.actual) {
                       // The venue's standing-truss discount and a Repeat zone's do not stack: each part
                       // takes only the bigger of the two (trussDiscountedCosts, pricing.js) — same as
@@ -1648,7 +1652,7 @@ export default function DealCheckOverlay({ ctx }) {
                   walkFn(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) { const k = rc.name || rc.sub || "item"; recipeAgg[k] = (recipeAgg[k] || 0) + qty; } });
                   let recipeP = 0; Object.values(recipeAgg).forEach(v => { recipeP += v; });
                   const zoneRows = []; let zoneP = 0;
-                  try { const tInv = dealCheckData?.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const z = zc[zk]; const pv = calcZoneTrussPreview(z, tInv); const n = (pv?.topology?.pillars || []).length; if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)`, count: n, ...zoneShapeMeta(z, pv.config, pv.spanFt) }); zoneP += n; } }); } } catch {}
+                  try { const tInv = dealCheckData?.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const z = zc[zk]; [z, ...(z.extraTrussRows || [])].forEach((row, ri) => { const pv = scaleTrussPreview(calcZoneTrussPreview(row, tInv), row.trussQty); const n = (pv?.topology?.pillars || []).length; if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)${ri > 0 ? ` #${ri + 1}` : ""}`, count: n, ...zoneShapeMeta(row, pv.config, pv.spanFt) }); zoneP += n; } }); }); } } catch {}
                   const p = recipeP + zoneP; if (p <= 0 || !trussLabourRanges.length) return null;
                   let lab = trussLabourRanges[trussLabourRanges.length - 1]?.labour || 0; for (const r of trussLabourRanges) { if (p <= r.upTo) { lab = r.labour || 0; break; } }
                   const rows = [...Object.entries(recipeAgg).map(([name, count]) => ({ sub: name, count })), ...zoneRows];

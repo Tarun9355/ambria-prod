@@ -315,9 +315,9 @@ export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platfo
                                 const pillars = Object.entries(t.allocation?.totals?.pillarsUsed || {});
                                 const beams = Object.entries(t.allocation?.totals?.beamsUsed || {});
                                 return (
-                                  <div key={t.zoneKey} className="flex items-center justify-between gap-2">
+                                  <div key={t.allocation?.trussId || t.zoneKey} className="flex items-center justify-between gap-2">
                                     <div>
-                                      <strong>{zl ? `${zl.icon} ${zl.label}` : t.zoneKey}:</strong>{" "}
+                                      <strong>{zl ? `${zl.icon} ${zl.label}` : t.zoneKey}{t.rowIdx > 0 ? ` #${t.rowIdx + 1}` : ""}:</strong>{" "}
                                       {pillars.map(([s, q]) => `${q}×${s}ft pillar`).join(", ") || "—"} · {beams.map(([s, q]) => `${q}×${s}ft beam`).join(", ") || "—"}
                                       {t.shortage && <span className="ml-1 text-red-600 font-semibold">⚠ short</span>}
                                       {t.override?.reason && <span className="italic text-purple-700"> · override: "{t.override.reason}"</span>}
