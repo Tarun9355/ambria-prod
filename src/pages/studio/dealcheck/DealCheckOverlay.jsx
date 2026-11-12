@@ -2095,6 +2095,17 @@ export default function DealCheckOverlay({ ctx }) {
         const persistWithDetail = (snap) => (dcDataReady ? persistDeptSnapshot(snap && !snap.floralDetail ? { ...snap, floralDetail: floralDetailAll() } : snap) : Promise.resolve(false));
         const buildDeptSnapshot = () => {
           let floralPlan = { projected: 0, flowers: [] };
+          // Artificial flowers/greens used to exist only inside floralPlan (the Deal Check breakdown
+          // panel's own read) — never as a line in deptInv, so Dept Ops' Floral truck-loading list and
+          // Planning never saw them as an actual item to load/count (owner report, 2026-11-12: Deal
+          // Check shows 974 bunches / 60.88kg of artificial flowers, but Floral's truck screen has no
+          // row for it at all — only the real inventory props like vases/stands). Built here (qty in
+          // BUNCHES, the physical countable unit — matches TruckCapacityEditor's own "bunch" unit for
+          // this pseudo-sub, not the derived kg figure) and folded into `inventory` below, non-
+          // mutating: buildDeptSnapshot can run more than once per render (two different "push to IMS"
+          // buttons both call it against the same render's dcCostRollup), so a `.push()` straight onto
+          // dcCostRollup.deptInv.Floral would duplicate the row on a second push in the same render.
+          let floralArtificialExtra = null;
           try {
             // Artificial sourcing rates (bunches→kg→₹) — captured so IMS Dept Ops can show the "how".
             const afBPK = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16;
@@ -2145,6 +2156,42 @@ export default function DealCheckOverlay({ ctx }) {
             // Billed floral income split (what the client pays at real vs artificial rates).
             const income = { real: Math.round(incReal), artificial: Math.round(incArt), total: Math.round(incReal + incArt) };
             floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, artificial, income, season: dcSeasonInfo, capturedAt: Date.now() };
+            // `sub: "Artificial Flowers"` on BOTH rows (greens included) — Studio's own guest-facing
+            // truck/transport cost (StudioApp.jsx's addSub call sites) already lumps flower + green
+            // bunches into that ONE sub-category's capacity; a separate "Artificial Greens" capacity
+            // would only ever be read by IMS's own truck count here, never by Studio's, so the two
+            // would silently disagree on how many trucks a Floral load needs (caught by review,
+            // 2026-11-12). Sharing the one sub keeps both sides reading the same number.
+            // total/unit are deliberately 0 — DepartmentOpsTab.jsx's `invBlockedTotal` already adds
+            // this SAME ₹ figure on top of deptInv's own sum via its own `artStockTotal` (owner ask
+            // 2026-11-11, reads floralPlan.artificial.total directly) specifically because these
+            // weren't deptInv rows at all yet; giving these new rows a real ₹ total too would double
+            // it. The point of adding these rows is only the physical qty (bunches) — for the truck-
+            // loading checklist and its per-truck capacity math — not the cost, which is already
+            // tracked and shown correctly elsewhere (Deal Check's own Floral breakdown).
+            // qty rounds UP from the raw (pre-display-rounded) bunch count, not artificial.flowerBunches/
+            // greenBunches (Math.round) — a 10.4-bunch total rounds down to 10 there, but genuinely
+            // needs an 11th bunch physically pulled and loaded (same "round up, never down" rule the
+            // Dept PDF's own artBunches already applies, deptBookHtml.js, 2026-10-31 owner ask). This
+            // ceils the WHOLE-EVENT sum, not per-ARRANGEMENT like the PDF's own artBunches does (that
+            // needs floralDetailAll()'s artZones, too costly to re-derive here on every render) — so it
+            // can still undercount slightly versus the PDF's own more precise per-arrangement total
+            // (e.g. ten 10.4-bunch arrangements ceils to 104 here but 110 there), but it is strictly no
+            // WORSE than the plain Math.round this replaces, never better to round down and short a load.
+            // stockOnly: true — flags the row to DepartmentOpsTab.jsx so its card hides Rate/Total
+            // (both genuinely 0 here) and its "💡 How" popup, instead of showing a confusing
+            // "Rate ₹0 × 974 … synced before the breakdown existed" that reads as a bug it isn't
+            // (review finding, 2026-11-12).
+            // Rounded to 2 places before ceiling (same float-noise guard deptBookHtml.js's own
+            // artBunches uses) — a sum that lands on 974.0000000000001 from plain float arithmetic
+            // must still ceil to 974, not 975.
+            const bunchQty = (n) => Math.ceil(Math.round((Number(n) || 0) * 100) / 100);
+            if (artificial) {
+              const rows = [];
+              if (afBunches > 0) rows.push({ name: "Artificial flowers", photo: "", qty: bunchQty(afBunches), unit: 0, total: 0, sub: "Artificial Flowers", stockOnly: true });
+              if (agBunches > 0) rows.push({ name: "Artificial greens", photo: "", qty: bunchQty(agBunches), unit: 0, total: 0, sub: "Artificial Flowers", stockOnly: true });
+              if (rows.length) floralArtificialExtra = rows;
+            }
           } catch {}
           // Manpower plan + per-dept detail are computed once in dcCostRollup (so the actuals delta and
           // this snapshot stay identical). Reuse them here rather than recomputing.
@@ -2258,7 +2305,10 @@ export default function DealCheckOverlay({ ctx }) {
             Object.values(byDept).forEach(v => { v.trucks = Math.round(v.trucks * 100) / 100; });
             transportPlan = { byDept, totalTrucks: Math.round(totalTrucks * 100) / 100, truckTotal: Math.round(totalCost), tierLabel: [...tiers].join(", "), capturedAt: Date.now() };
           } catch { /* a book extra — never fail the whole department sync over it */ }
-          return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan, mpPhases: dcCostRollup.mpPhases || null, dealValue, transportPlan };
+          const inventory = floralArtificialExtra
+            ? { ...dcCostRollup.deptInv, Floral: [...(dcCostRollup.deptInv.Floral || []), ...floralArtificialExtra] }
+            : dcCostRollup.deptInv;
+          return { income: incomeRounded, inventory, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan, mpPhases: dcCostRollup.mpPhases || null, dealValue, transportPlan };
         };
         if (isSold && persistDeptSnapshot) {
           // Department $ totals alone miss a flower SWAP that happens to leave a department's

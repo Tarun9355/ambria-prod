@@ -1052,7 +1052,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
         // named them (it reads `recipeParts` off the grouped row directly); this flat list did not,
         // so a kit's recipe silently never appeared on the loading checklist or the PDF's item rows
         // (owner report, 2026-11-12 — the Tree kit's "Chandelier Tree Floral Recipe").
-        (it.recipeParts || []).forEach((rp, ri) => out.push({ id: it.id + "__r" + ri, invId: null, name: rp.name, photo: rp.photo || "", qty: Number(rp.qty) || 0, qtyUnit: rp.uom || "", unit: 0, total: 0, sub: "", kitOf: it.name, isRecipe: true }));
+        (it.recipeParts || []).forEach((rp, ri) => out.push({ id: it.id + "__r" + ri, invId: null, name: rp.name, photo: rp.photo || "", qty: Number(rp.qty) || 0, qtyUnit: rp.uom || "", unit: 0, total: 0, sub: "", kitOf: it.name, isRecipe: true, stockOnly: true }));
       } else out.push(it);
     });
     // Fabric: the per-zone Liza / Velvet / Masking lines become one load line per fabric colour (with the colour's photo), so Truck planning, the loading
@@ -4652,9 +4652,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                   if (a.fixed > 0) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 font-bold" title="Standing stock at this fixed venue - not loaded">📌 FIXED{a.load > 0 ? ` · ${a.fixed}` : ""}</span>;
                                   return null;
                                 })()}
-                                <button onClick={() => setKitOpen(o => ({ ...o, ["calc:" + it.id]: !o["calc:" + it.id] }))} aria-expanded={!!kitOpen["calc:" + it.id]}
-                                  title="How this line's total was worked out"
-                                  className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-semibold hover:bg-gray-200 transition-colors">💡 How</button>
+                                {!it.stockOnly && (
+                                  <button onClick={() => setKitOpen(o => ({ ...o, ["calc:" + it.id]: !o["calc:" + it.id] }))} aria-expanded={!!kitOpen["calc:" + it.id]}
+                                    title="How this line's total was worked out"
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-semibold hover:bg-gray-200 transition-colors">💡 How</button>
+                                )}
                                 {/* Where a merged line's qty comes from (e.g. carpet sqft per zone floor). */}
                                 {Array.isArray(it.parts) && it.parts.length > 0 && (
                                   <button onClick={() => setKitOpen(o => ({ ...o, ["how:" + it.id]: !o["how:" + it.id] }))} aria-expanded={!!kitOpen["how:" + it.id]}
@@ -4738,11 +4740,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                               </StatCell>
                             )}
                             <StatCell label="Rate" w={STAT_W.rate}>
-                              <span className="text-sm text-gray-600 tabular-nums" title={showRentalQty ? "Averaged across functions — a reused unit's repeat-discounted rate blends with a fresh unit's full rate." : undefined}>{fmt(avgRate)}{it.qtyUnit ? <span className="text-xs text-gray-400">/{it.qtyUnit}</span> : null}</span>
+                              {it.stockOnly
+                                ? <span className="text-sm text-gray-300 tabular-nums" title="Stock/quantity only — this line has no rate of its own.">—</span>
+                                : <span className="text-sm text-gray-600 tabular-nums" title={showRentalQty ? "Averaged across functions — a reused unit's repeat-discounted rate blends with a fresh unit's full rate." : undefined}>{fmt(avgRate)}{it.qtyUnit ? <span className="text-xs text-gray-400">/{it.qtyUnit}</span> : null}</span>}
                             </StatCell>
                             <StatCell label="Total" w={STAT_W.total}>
-                              <div className="text-sm font-bold text-gray-900 tabular-nums">{fmt(it.total)}</div>
-                              {mismatch && <div className="text-[10px] text-gray-400 tabular-nums mt-0.5" title={`Rate × qty is ${fmt(derived)}. This line is ${fmt(it.total)}${it.isKit ? " because a kit's total includes the components listed below." : "."}`}>{it.isKit ? "incl. kit" : `≠ ${fmt(derived)}`}</div>}
+                              {it.stockOnly
+                                ? <span className="text-sm text-gray-300 tabular-nums" title="Costed under Floral's own breakdown, not tracked here — this row exists for the quantity only.">—</span>
+                                : <>
+                                    <div className="text-sm font-bold text-gray-900 tabular-nums">{fmt(it.total)}</div>
+                                    {mismatch && <div className="text-[10px] text-gray-400 tabular-nums mt-0.5" title={`Rate × qty is ${fmt(derived)}. This line is ${fmt(it.total)}${it.isKit ? " because a kit's total includes the components listed below." : "."}`}>{it.isKit ? "incl. kit" : `≠ ${fmt(derived)}`}</div>}
+                                  </>}
                             </StatCell>
                           </div>
                       </div>

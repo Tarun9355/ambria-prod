@@ -1005,8 +1005,17 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // Deal Check's whole-event fabric lines ("Liza Fabric (Old)", "Wall Masking (New)"...) and truss lines ("Truss pillar 12ft", sub
     // "truss structure") are no zone's item, so they used to land here as "Also on site" (owner report 2026-11-11) - but each zone page
     // already shows them (the fabric strip, the truss table) and the loading list carries the totals. Left out wherever those show.
+    // Same reasoning as the fabric/truss lines just above: Deal Check's whole-event artificial
+    // flower/green bunch rows (deptInv.Floral's "Artificial flowers"/"Artificial greens", both
+    // sub "Artificial Flowers") are no zone's item either. In the single-department Floral book the
+    // dedicated section just above (artRows, built straight off floralPlan.artificial) already names
+    // them with their real colour split, and the Loading list still carries their totals. In the
+    // combined (all-departments) book neither of those prints (artPlan is always null there, and the
+    // Loading list itself is Floral-book-only, owner call) — excluded unconditionally anyway, since
+    // the alternative there is worse: printing as a loose "no zone" card with no explanation at all.
     const shownOnZones = (b) => (isFabricLine(b) && (showStruct || inBook("Fabric")))
-      || (String(b.sub || "").trim().toLowerCase() === "truss structure" && showTrussTable);
+      || (String(b.sub || "").trim().toLowerCase() === "truss structure" && showTrussTable)
+      || String(b.sub || "").trim().toLowerCase() === "artificial flowers";
     const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id) && b.sub !== "print" && !shownOnZones(b)).map(b => {
       const inv = (b.invId && invById.get(String(b.invId))) || invByName.get(String(b.name || "").trim().toLowerCase()) || null;
       const kitOf = String(b.fromKit || "").trim();
