@@ -115,6 +115,12 @@ import { kitShortfallSplit } from "../../../lib/studio/kitShortfallSplit";
 import { kitRecipeParts } from "../../../lib/studio/kitRecipeParts";
 import { withSetupSlot } from "../../../lib/studio/dihariWindows.js";
 
+// Print's own Deal-Check-side Repeat discount — same 25% as elements (dcRentalCost), truss
+// (trussDiscountedCosts) and the client's own guest-facing print discount (GUEST_STRUCT_DISCOUNT_PCT,
+// StudioApp.jsx). Local to this file, same convention as those: each pricing surface keeps its own
+// constant rather than importing one shared value.
+const PRINT_REPEAT_DISCOUNT_PCT = 25;
+
 // Commission override box (one per venue, Commission tab below) — its OWN local draft state, not
 // a slice of DealCheckOverlay's. That component recomputes dcCostRollup (florals, manpower
 // schedules, department splits — genuinely heavy) fresh on every render, so a draft keyed into
@@ -413,17 +419,26 @@ export default function DealCheckOverlay({ ctx }) {
     const zc = fnData.zoneConfig || {};
     const en = fnData.enabledEls || {};
     const printMats = imsPrintMaterials || [];
+    // Print's own Deal-Check-side Repeat discount (owner correction, 2026-11-13): this had NO
+    // discount logic at all before — a repeated print job always billed Ambria's own cost view at
+    // full rate, unlike elements (repeatAdjustedRental/dcRentalCost) and truss (trussDiscountedCosts),
+    // which already discount this same cost-basis number when their zone is Repeat. Same 25% as
+    // everywhere else, same gating (the zone's own Print chip, or a Fixed Venue unconditionally).
+    const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+    const fvHere = !!fixedVenueFor(fvCfg, fnData.fnVenue || "");
     const jobs = [];
     Object.keys(zc).forEach(zk => {
       if (!en[zk] || !zc[zk]) return;
+      const printRepeat = fvHere || repeatCatFor(zc[zk], "print");
       (zc[zk].prints || []).forEach((p, pi) => {
         const m = printMats.find(x => x.id === p.material);
         const area = (Number(p.areaW) || 0) * (Number(p.areaD) || 0);
         const qty = Math.max(1, Math.round(Number(p.qty) || 1));
         const rate = m?.ratePerSqft || 0;
-        const jobTotal = area * rate * qty;
-        if (jobTotal <= 0) return;
-        jobs.push({ id: `print:${zk}:${pi}`, zoneKey: zk, pi, matName: m?.name || "Print material", size: `${p.areaW || 0}×${p.areaD || 0}ft`, qty, unitCost: area * rate, total: jobTotal });
+        const fullUnitCost = area * rate;
+        if (fullUnitCost * qty <= 0) return;
+        const unitCost = printRepeat ? Math.round(fullUnitCost * (1 - PRINT_REPEAT_DISCOUNT_PCT / 100)) : fullUnitCost;
+        jobs.push({ id: `print:${zk}:${pi}`, zoneKey: zk, pi, matName: m?.name || "Print material", size: `${p.areaW || 0}×${p.areaD || 0}ft`, qty, unitCost, total: unitCost * qty });
       });
     });
     return jobs;
@@ -1085,10 +1100,11 @@ export default function DealCheckOverlay({ ctx }) {
                   // ♻️ Repeat zone: the structure and its fabric are already standing from a prior
                   // day, but reusing them isn't truly free — someone still has to check/re-tension
                   // the rig and steam/re-hang or spot-repair the drape, rather than the ₹0 they used
-                  // to drop to entirely. One flat 30% discount (billed at 70%) across truss/pillar/
-                  // beam/batta (structure) AND masking/liza/curtain (fabric) — replaces the earlier
-                  // owner-decision split (structure billed at 30%, fabric at 50%) with a single rate
-                  // for both. The pillar/beam loadable-line listing below stays fully excluded for a
+                  // to drop to entirely. One flat 25% discount (billed at 75% — owner correction,
+                  // 2026-11-13: was 30%/billed-at-70%, unified down to match trussDiscountedCosts'
+                  // own default and every other category's Deal-Check-side Repeat rate) across
+                  // truss/pillar/beam/batta (structure) AND masking/liza/curtain (fabric) — a single
+                  // rate for both. The pillar/beam loadable-line listing below stays fully excluded for a
                   // repeat zone — there's nothing NEW to source/haul in for a rig that isn't moving,
                   // which is a separate question from what it costs to reuse it.
                   // Cross-function reuse counts as the SAME fact as a manually-flagged Repeat zone:
@@ -1098,7 +1114,7 @@ export default function DealCheckOverlay({ ctx }) {
                   // same "entrance"/"stage"/etc vocabulary), so the same key in two consecutive
                   // functions at the same venue is the same physical setup.
                   const isRepeat = repeatCatFor(zc[zk], "truss") || !!(crossFnPrevFn?.enabledEls?.[zk] && crossFnPrevFn?.zoneConfig?.[zk]);
-                  const repeatFabMult = isRepeat ? 0.7 : 1;
+                  const repeatFabMult = isRepeat ? 0.75 : 1;
                   const photoUrl = (fn.elSelectedPhoto || {})[zk];
                   let density = "moderate";
                   if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
@@ -1324,22 +1340,26 @@ export default function DealCheckOverlay({ ctx }) {
           // shown as its own line in the Buying tab — not buried inside the Truss cost bucket where
           // nothing ever surfaced it as a line item.
           try {
-            const printMats = imsPrintMaterials || [];
+            // Routed through printJobsForFn (regression review, 2026-11-13) rather than its own
+            // from-scratch area×rate×qty sum: that bypassed printJobsForFn's Repeat/Fixed-Venue 25%
+            // discount entirely, so a Repeat zone's print showed discounted in the Buying tab/its
+            // pill (printJobsForFn, read there) but FULL rate here — which feeds byFn[].buying,
+            // buyTotal, margin, and this same Dept Ops "🖨 Print / signage" line. Two numbers for the
+            // same print job disagreeing is exactly what this block's own comment above says must
+            // never happen (it already explains the clientRevenue-vs-cost gap this block was added to
+            // close) — grouping printJobsForFn's output back by zoneKey keeps that one guarantee.
             fns.forEach((fn, fi) => {
-              const zc = fn.zoneConfig || {};
-              const en = fn.enabledEls || {};
-              Object.keys(zc).forEach(zk => {
-                if (!en[zk] || !zc[zk]) return;
-                const pc = (zc[zk].prints || []).reduce((sum, p) => {
-                  const m = printMats.find(x => x.id === p.material);
-                  const s = (Number(p.areaW) || 0) * (Number(p.areaD) || 0);
-                  const q = Math.max(1, Math.round(Number(p.qty) || 1));
-                  return sum + s * (m?.ratePerSqft || 0) * q;
-                }, 0);
+              const jobsByZone = {};
+              printJobsForFn(fn).forEach(pj => {
+                if (!jobsByZone[pj.zoneKey]) jobsByZone[pj.zoneKey] = [];
+                jobsByZone[pj.zoneKey].push(pj);
+              });
+              Object.values(jobsByZone).forEach(jobs => {
+                const pc = jobs.reduce((sum, pj) => sum + pj.total, 0);
                 if (pc > 0) {
                   printCost += pc; byFn[fi].buying += pc;
                   addD("Structure", "buying", pc);
-                  if (deptInv["Structure"]) deptInv["Structure"].push({ name: "🖨 Print / signage", photo: "", qty: (zc[zk].prints || []).length, unit: 0, total: Math.round(pc), sub: "print", prodOrBuy: "buying" });
+                  if (deptInv["Structure"]) deptInv["Structure"].push({ name: "🖨 Print / signage", photo: "", qty: jobs.length, unit: 0, total: Math.round(pc), sub: "print", prodOrBuy: "buying" });
                 }
               });
             });
@@ -2211,7 +2231,7 @@ export default function DealCheckOverlay({ ctx }) {
                 const fnPaletteForAnchors = fn.fnPalette || "Custom";
                 Object.keys(zc).forEach(zk => {
                   // ♻️ Repeat zones reuse standing fabric — nothing new to stock/reorder for them.
-                  // Truss & Masking's own category flag — same one dcCostRollup's fabric ×0.7 above
+                  // Truss & Masking's own category flag — same one dcCostRollup's fabric ×0.75 above
                   // reads — not the zone-wide toggle, so this Fabric-head projection can't disagree
                   // with what the zone is actually billed for.
                   if (!en[zk] || !zc[zk] || repeatCatFor(zc[zk], "truss")) return;

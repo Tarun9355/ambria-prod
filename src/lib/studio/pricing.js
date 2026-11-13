@@ -35,7 +35,9 @@ export function repeatCatFor(zc, cat) {
 // truck — not only a lower rent. These used to read zc.repeat alone, so flipping just the Truss &
 // Masking chip cut the truss rent but still crewed and trucked the truss. Both go through
 // repeatCatFor now, so the zone toggle still means "everything" and each chip can override it.
-// Print has no crew type and is not trucked, so it has nothing to drop here.
+// Print has no crew type of its own, so it has nothing to drop here — its own Repeat truck waiver
+// lives in StudioApp.jsx's truck-calc functions instead (owner correction, 2026-11-13: print's
+// transport is waived under Repeat too now, same as everything else).
 export const REPEAT_CAT_LABELS = { elements: "Elements", truss: "Truss & Masking", platform: "Platform" };
 // The categories of this zone that are on Repeat, in chip order — [] when none.
 export function repeatCatsOn(zc) {
@@ -869,7 +871,12 @@ export function zoneTrussStandingDiscountDetail(zc, trussInv, venueTruss) {
 // `costs` is calcZoneTrussPreview's costs ({ pillarCost, beamCost, battaCost, actual }), `detail` is
 // zoneTrussStandingDiscountDetail's. `actual` is not always pillar + beam + batta (a half box is priced
 // as a hybrid), so it is scaled the same way rather than re-added.
-export function trussDiscountedCosts(costs, detail, isRepeat, repeatPct = 30) {
+// repeatPct was 30 (vs. the client's own 25% guest-facing truss discount, GUEST_STRUCT_DISCOUNT_PCT
+// in StudioApp.jsx) until owner correction, 2026-11-13: both call sites (DCTrussTab.jsx, this file's
+// own DealCheckOverlay.jsx caller) pass no 4th argument, so this default IS the live number Deal
+// Check's own pillar/beam/batta cost math has always used — now unified to 25% everywhere, same as
+// elements (dcRentalCost), platform, and print's own Deal-Check-side discount.
+export function trussDiscountedCosts(costs, detail, isRepeat, repeatPct = 25) {
   const r = isRepeat ? repeatPct / 100 : 0;
   const c = costs || {};
   const d = detail || {};

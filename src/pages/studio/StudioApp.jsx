@@ -988,6 +988,7 @@ export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems,
     // curtains follow Truss & Masking; platform and carpet follow Platform.
     const skipTruss = fvStruct || (guestDiscountOn && repeatCatFor(cfg, "truss"));
     const skipPlat = fvStruct || (guestDiscountOn && repeatCatFor(cfg, "platform"));
+    const skipPrint = fvStruct || (guestDiscountOn && repeatCatFor(cfg, "print"));
     // Zone dims use uppercase L/W/H (see buildZoneConfig) — this used to read lowercase dims.w/
     // dims.d, which never exist, so sqft was always 0 and every truss/platform/carpet truck-load
     // silently dropped out of Build's transport total (only element-based items ever counted).
@@ -997,8 +998,11 @@ export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems,
     // cpT truthy AND not the explicit OFF sentinel — an untouched floor (cpT unset) gets no carpet
     // truck-load either, same as it gets no carpet cost (see CARPET_OFF in taxonomy.js).
     if (!skipPlat && sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
-    // Print jobs: trucked by area (never waived as a repeat — a print is made fresh for each event)
-    { const pSqft = printSqftOf(cfg, printMaterials); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft); }
+    // Print jobs: waived under Repeat/Fixed Venue same as everything else (owner correction,
+    // 2026-11-13 — this used to always truck a print job regardless of Repeat, on the theory a print
+    // is physically remade fresh each time; overridden by explicit owner request to treat it like
+    // truss/platform/elements instead).
+    if (!skipPrint) { const pSqft = printSqftOf(cfg, printMaterials); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft); }
     // Fabric Allocation (masking/liza/curtains) — never trucked before: it's computed from the truss
     // config, not a zoneElement, so it fell through the element loop above entirely. Same base-row-
     // only scope as Truss/Platform/Carpet; density defaults to "moderate" (see computeFnSubQty).
@@ -5130,8 +5134,18 @@ export default function StudioApp() {
   };
   // A function's flat small-print charge (₹400, once, however many small prints) is part of the Print cost of the zone that carries it: added after the guest-price
   // scaling (a set amount, no dial on it) to that zone's struct figures, so every total that reads them counts it once and transport no longer does.
-  const withPrintFlat = (sc, zk, zoneCfg, enabledMap) => {
-    const flat = sc ? printFlatForZone(zoneCfg, enabledMap, structRates.printMaterials, zk) : 0;
+  // `isZoneWaived(zk2)` (owner correction, 2026-11-13): this charge is the small-print equivalent of
+  // the big-print truck-by-area line (truckPrint.js's own file comment calls it a "flat transport
+  // charge") — it was never checked against Repeat/Fixed Venue at all, so a repeated zone's small
+  // print still silently billed ₹400 "transport" even though its big-print sibling line waives
+  // cleanly. A PREDICATE, not just this zone's own flag: the charge is per-FUNCTION, carried by
+  // whichever switched-on zone has the first small print (firstSmallPrint/printFlatForZone,
+  // truckPrint.js) — a boolean for only THIS zone would drop the charge entirely the moment the
+  // carrying zone happened to be waived, instead of letting it fall to the next eligible zone.
+  // Callers build this from the SAME structDiscountFor(...).print check calcStructCost's own print
+  // discount already uses, so it can never disagree with whether a given zone's print was billed Repeat.
+  const withPrintFlat = (sc, zk, zoneCfg, enabledMap, isZoneWaived) => {
+    const flat = sc ? printFlatForZone(zoneCfg, enabledMap, structRates.printMaterials, zk, isZoneWaived) : 0;
     return flat > 0 ? { ...sc, print: (sc.print || 0) + flat, total: (sc.total || 0) + flat, printFlat: flat } : sc;
   };
   // Repeat-billed line cost for `qty` units of `item` at `unitRate` (the full guest-facing,
@@ -6217,7 +6231,7 @@ export default function StudioApp() {
     const zones = Object.entries(zoneConfig).filter(([zk, cfg]) => enabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     // structDiscountFor is per-zone (zc.repeat varies per zone), unlike the old venue-only truss
     // discount this replaced.
-    zones.forEach(z => { c += withPrintFlat(scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, activeFnMeta?.venue || venue))), z.type, zoneConfig, enabledEls).total; }); // the ACTIVE function's venue, not function 1's
+    zones.forEach(z => { c += withPrintFlat(scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, activeFnMeta?.venue || venue))), z.type, zoneConfig, enabledEls, (zk2) => !!structDiscountFor(zoneConfig[zk2], activeFnMeta?.venue || venue).print).total; }); // the ACTIVE function's venue, not function 1's
     // Cross-function reuse (guest-facing) — same eligibility activeCrossFnReuseQty already computes
     // for StudioBuild.jsx's own per-card display (see its own declaration comment for the full
     // history): this total used to have NO mechanism for it at all, so a function with a same-venue,
@@ -6642,7 +6656,7 @@ export default function StudioApp() {
     // which was already emptied out elsewhere, so the loop never actually added any cost;
     // removing it just retires visibly-dead code, it doesn't change any computed total.
     const zones = Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
-    zones.forEach(z => { decor += withPrintFlat(scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, fVenue))), z.type, fZoneConfig, fEnabledEls).total; });
+    zones.forEach(z => { decor += withPrintFlat(scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, fVenue))), z.type, fZoneConfig, fEnabledEls, (zk2) => !!structDiscountFor(fZoneConfig[zk2], fVenue).print).total; });
     // Availability-shortfall pricing now runs for EVERY function, each against its OWN date's
     // blocks (blocksByDate — warmed for every function's date, not just the active one). It used to
     // only run for whichever function was the active Build tab (activeBlocksForDate has no other
@@ -6728,12 +6742,15 @@ export default function StudioApp() {
         // curtains, Platform for platform/carpet.
         const skipTruss = fvStruct || (!hideDiscountFromClient && repeatCatFor(cfg, "truss"));
         const skipPlat = fvStruct || (!hideDiscountFromClient && repeatCatFor(cfg, "platform"));
+        const skipPrint = fvStruct || (!hideDiscountFromClient && repeatCatFor(cfg, "print"));
         const d = cfg.dims || {};
         const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
         if (!skipTruss && cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (!skipPlat && sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
-        { const pSqft = printSqftOf(cfg, structRates.printMaterials); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft); } // big print jobs, by area — see computeTruckItems
+        // Waived under Repeat/Fixed Venue same as truss/platform now (owner correction, 2026-11-13) —
+        // see the identical waiver's own comment a few hundred lines up for the full reasoning.
+        if (!skipPrint) { const pSqft = printSqftOf(cfg, structRates.printMaterials); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft); }
         // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
         const fcTrussInv = sharedFloralSettings.trussInv;
         if (!skipTruss && fcTrussInv) {
@@ -7301,7 +7318,7 @@ export default function StudioApp() {
           itemCount += (el2.qty || 0);
         });
       }
-      const zl = fZoneConfig[k] ? withPrintFlat(scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))), k, fZoneConfig, fEnabledEls) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
+      const zl = fZoneConfig[k] ? withPrintFlat(scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))), k, fZoneConfig, fEnabledEls, (zk2) => !!structDiscountFor(fZoneConfig[zk2], fVenue).print) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
       const customCost = dcCustomItems
         .filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k)
         .reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
@@ -7470,9 +7487,10 @@ export default function StudioApp() {
         if (!cfg || !fEnabledEls[zk]) return;
         // Truss, masking, liza and curtains follow the Truss & Masking chip; platform and carpet
         // follow the Platform chip (RC-30) — each defaulting to the zone toggle via repeatCatFor.
-        const trussRepeat = repeatCatFor(cfg, "truss"), platRepeat = repeatCatFor(cfg, "platform");
+        const trussRepeat = repeatCatFor(cfg, "truss"), platRepeat = repeatCatFor(cfg, "platform"), printRepeat = repeatCatFor(cfg, "print");
         const trussClientWaived = fvStruct || (!hideDiscountFromClient && trussRepeat);
         const platClientWaived = fvStruct || (!hideDiscountFromClient && platRepeat);
+        const printClientWaived = fvStruct || (!hideDiscountFromClient && printRepeat);
         const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
         if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", (trussRepeat || fvStruct) ? 0 : tSqft, tSqft, zk, "Truss structure", "", trussClientWaived ? 0 : tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
@@ -7480,7 +7498,10 @@ export default function StudioApp() {
           if (cfg.plH) addSub("Platform", (platRepeat || fvStruct) ? 0 : sqft, sqft, zk, "Platform", "", platClientWaived ? 0 : sqft);
           if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", (platRepeat || fvStruct) ? 0 : sqft, sqft, zk, "Carpet", "", platClientWaived ? 0 : sqft);
         }
-        { const pSqft = printSqftOf(cfg, structRates.printMaterials); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, pSqft, pSqft, zk, "Print jobs"); } // big prints by area, never a repeat — see computeTruckItems
+        // Waived under Repeat/Fixed Venue same as truss/platform now (owner correction, 2026-11-13 —
+        // this used to never waive print, on the theory a print is physically remade fresh each
+        // time; overridden by explicit owner request to treat it like everything else).
+        { const pSqft = printSqftOf(cfg, structRates.printMaterials); if (pSqft > 0) addSub(PRINT_TRUCK_SUB, (printRepeat || fvStruct) ? 0 : pSqft, pSqft, zk, "Print jobs", "", printClientWaived ? 0 : pSqft); }
         // Fabric Allocation (masking/liza/curtains) — see computeTruckItems' matching comment.
         if (bdTrussInv) {
           const fab = calcZoneFabric(cfg, bdTrussInv, "moderate");
@@ -12393,7 +12414,7 @@ export default function StudioApp() {
           });
         });
       }
-      const zl = fZoneConfig[k] ? withPrintFlat(scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))), k, fZoneConfig, fEnabledEls) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
+      const zl = fZoneConfig[k] ? withPrintFlat(scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))), k, fZoneConfig, fEnabledEls, (zk2) => !!structDiscountFor(fZoneConfig[zk2], fVenue).print) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
       const structItems = [];
       const zc = fZoneConfig[k] || {};
       const zm = zoneMeta[k];

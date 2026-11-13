@@ -32,8 +32,13 @@ describe("Build's truck count includes print jobs", () => {
   it("a zone that is switched off carries no prints", () => {
     expect(run({ stage: { prints } }, CAP, { stage: false }).itemTrucks).toBe(0);
   });
-  it("a repeat setup never waives a print (it is made fresh), even with the guest discount on", () => {
+  it("a repeat setup now waives a print's transport too (owner correction, 2026-11-13 — it used to never waive print here, on the theory a print is remade fresh each time; overridden to match truss/platform/elements, which skip the Print row entirely under Repeat, same as they already do for truss/platform)", () => {
     const r = run({ stage: { prints, repeat: true, repeatTruss: true, repeatPlatform: true } }, CAP, { stage: true }, true);
+    expect(r.breakdown.find((b) => b.label === "Print")).toBeUndefined();
+    expect(r.itemTrucks).toBe(0);
+  });
+  it("without Repeat on, a print still trucks in full even with the guest discount toggle on", () => {
+    const r = run({ stage: { prints } }, CAP, { stage: true }, true);
     expect(r.breakdown.find((b) => b.label === "Print")?.qty).toBe(400);
   });
   it("a small print (under ₹2,000) is not trucked by area: the function carries one flat ₹400 (billed in Print, not as a transport line)", () => {

@@ -130,7 +130,8 @@ export default function DCTrussTab({ ctx }) {
                           }
                           // ♻️ Repeat zone: the structure is already standing, but reusing it isn't
                           // free — someone still has to check/re-tension/touch it up — so it bills at
-                          // 70% (a flat 30% discount — see dcCostRollup's matching change). Covers
+                          // 75% (a flat 25% discount, owner correction 2026-11-13, was 30% — see
+                          // dcCostRollup's matching change). Covers
                           // pillarCost/beamCost/battaCost individually (not just the .actual sum they
                           // roll into) so the per-item tiles shown below agree with the card's own
                           // total instead of quietly showing the old undiscounted figure. The
@@ -200,7 +201,7 @@ export default function DCTrussTab({ ctx }) {
                             (r.pieces || []).forEach(pc => { realPillarSizeCounts[pc.size] = (realPillarSizeCounts[pc.size] || 0) + pc.qty; });
                           });
                         }
-                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (30%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (30%)" : ""}`, pv, row, rowIdx, snapNote, realJoints, realJointsShortage, realBeamSizeCounts, realPillarSizeCounts };
+                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (25%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (25%)" : ""}`, pv, row, rowIdx, snapNote, realJoints, realJointsShortage, realBeamSizeCounts, realPillarSizeCounts };
                       });
                     }).filter(x => x.pv && x.pv.source !== "none");
                     return { fn, previews };
@@ -448,14 +449,15 @@ export default function DCTrussTab({ ctx }) {
                           const photoUrl = (fn.elSelectedPhoto || {})[zk];
                           let density = "moderate";
                           if (photoUrl) { const li = libItems.find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
-                          // Same flat 30% discount (billed at 70%) as the truss steel above for a
-                          // repeat zone — see dcCostRollup's matching change. Scoped to THIS row's
-                          // own truss config (row 0 = the zone's own scalar fields; an extra truss
-                          // row — "+ Add Truss" in Build — carries its own separate fabric
-                          // allocation) rather than always reading the zone's top-level zCfg, which
-                          // used to double-count row 0's fabric once per extra row a zone had, and
-                          // always missed an extra row's own fabric entirely.
-                          const fabCost = calcZoneFabricCost(row, trussInv, anchors, row.drapeDensity || density, row.dcFabricMult) * (pv?.costs?.isRepeat ? 0.7 : 1);
+                          // Same flat 25% discount (billed at 75%, owner correction 2026-11-13, was
+                          // 30%) as the truss steel above for a repeat zone — see dcCostRollup's
+                          // matching change. Scoped to THIS row's own truss config (row 0 = the
+                          // zone's own scalar fields; an extra truss row — "+ Add Truss" in Build —
+                          // carries its own separate fabric allocation) rather than always reading
+                          // the zone's top-level zCfg, which used to double-count row 0's fabric once
+                          // per extra row a zone had, and always missed an extra row's own fabric
+                          // entirely.
+                          const fabCost = calcZoneFabricCost(row, trussInv, anchors, row.drapeDensity || density, row.dcFabricMult) * (pv?.costs?.isRepeat ? 0.75 : 1);
                           fabricCostByPreviewIdx[idx] = fabCost;
                           fnGrand += fabCost;
                         });
@@ -698,10 +700,10 @@ export default function DCTrussTab({ ctx }) {
                                       const lizaAlloc    = showLiza    ? resolveAlloc("liza", "lizaAllocation",    Math.ceil(fab.lizaKg),  trussInv.lizaStock,    "stockKg")     : [];
                                       const curtainAlloc = showCurtain ? resolveAlloc("curtain", "curtainAllocation", fab.curtainPieces, trussInv.curtainStock, "stockPieces") : [];
 
-                                      // Cost rollup. Same flat 30% repeat-zone discount (billed at 70%) as
-                                      // the truss steel above — costs?.isRepeat is this row's own flag, set
-                                      // above.
-                                      const repeatFabMult = costs?.isRepeat ? 0.7 : 1;
+                                      // Cost rollup. Same flat 25% repeat-zone discount (billed at 75%,
+                                      // owner correction 2026-11-13, was 30%) as the truss steel above —
+                                      // costs?.isRepeat is this row's own flag, set above.
+                                      const repeatFabMult = costs?.isRepeat ? 0.75 : 1;
                                       const applyRepeatFab = (t) => repeatFabMult === 1 ? t : { ...t, total: Math.round(t.total * repeatFabMult), reusedCost: Math.round(t.reusedCost * repeatFabMult), freshCost: Math.round(t.freshCost * repeatFabMult) };
                                       // Owner ask (2026-10-15): this must match what the salesperson's
                                       // Build Fabric toggle actually billed the guest — Old or New, picked

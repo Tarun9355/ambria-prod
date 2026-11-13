@@ -1499,8 +1499,14 @@ export default function StudioBuild({ ctx }) {
     .filter(w => w.it && /fabric/i.test(String(w.it.cat || w.it.category || "")) && /printed wall/i.test(String(w.it.subCat || w.it.subcategory || "")));
   // The function's flat small-print charge sits in the Print cost of the zone that carries it (lib/studio/truckPrint.js printFlatForZone), added after the
   // guest-price scaling like every other total that reads the zone's struct figures (StudioApp's withPrintFlat) - tile, zone header and zone total all agree.
+  // isZoneWaived: a PREDICATE over every zone, not just `k`'s own flag — the ₹400 small-print charge
+  // is per-FUNCTION, carried by whichever switched-on zone has the first small print
+  // (firstSmallPrint/printFlatForZone, truckPrint.js). A boolean for only this zone used to drop the
+  // charge entirely when the carrying zone happened to be Repeat/Fixed-Venue waived, instead of
+  // letting it fall to the next eligible zone (owner correction, 2026-11-13).
+  const isPrintZoneWaived = (zk2) => !!structDiscountFor(zoneConfig[zk2], aVenue)?.print;
   const withPrintFlat = (sc, k) => {
-    const flat = sc ? printFlatForZone(zoneConfig, enabledEls, imsPrintMaterialsPriced, k) : 0;
+    const flat = sc ? printFlatForZone(zoneConfig, enabledEls, imsPrintMaterialsPriced, k, isPrintZoneWaived) : 0;
     return flat > 0 ? { ...sc, print: (sc.print || 0) + flat, total: (sc.total || 0) + flat, printFlat: flat } : sc;
   };
   const zoneSectionSub = (k, id) => {
@@ -5808,7 +5814,7 @@ undefined
                   const costShown = guestPriceMultiplier * (printDiscPct > 0 ? Math.round(cost * (1 - printDiscPct / 100)) : cost);
                   // the function's flat transport for small prints is shown on ONE job (the first small one), since it is charged once
                   const smallJob=rate>0&&sqft>0&&Math.round(cost)<SMALL_PRINT_LIMIT;
-                  const _fsp=smallJob&&!isPhantom?firstSmallPrint(zoneConfig,enabledEls,imsPrintMaterialsPriced):null;
+                  const _fsp=smallJob&&!isPhantom?firstSmallPrint(zoneConfig,enabledEls,imsPrintMaterialsPriced,isPrintZoneWaived):null;
                   const carriesFlat=!!_fsp&&_fsp.zk===k&&_fsp.index===pi;
                   const setPrint=(patch)=>{
                     if(isPhantom){setZoneConfig(prev=>({...prev,[k]:{...(prev[k]||{}),prints:[{...p,...patch,id:"PR"+Date.now()+Math.floor(Math.random()*1000)}]}}));return;}
