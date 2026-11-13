@@ -4501,7 +4501,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                   });
                   return [...by].map(([name, kg]) => ({ name, kg })).filter(x => x.kg > 0).sort((x, y) => (x.name ? 0 : 1) - (y.name ? 0 : 1) || y.kg - x.kg);
                 })();
-                const kgTxt = (n) => `${Math.round((Number(n) || 0) * 100) / 100} kg`;
+                // whole kilos (owner ask 2026-11-13: 61.09 kg -> 61 kg); under a kilo keeps one decimal, so a small colour never reads 0 kg
+                const kgTxt = (n) => { const v = Number(n) || 0; return `${v >= 1 ? Math.round(v) : Math.round(v * 10) / 10} kg`; };
                 // ₹/kg and cost moved here from Actuals (owner ask 2026-11-11): the bunches are our stock, so their value is shown with them
                 const line = (icon, label, bunches, bpk, kg, rate, cost) => (
                   <div className="flex items-center justify-between gap-3 px-3 py-2">
