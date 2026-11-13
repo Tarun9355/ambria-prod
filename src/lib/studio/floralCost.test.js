@@ -319,6 +319,21 @@ describe("computeFnFloralCost — core per-element resolution (unaffected by the
     expect(result.uncosted.some((u) => /recipe/.test(u.name))).toBe(true);
   });
 
+  it("a NESTED kit's attached recipe (a kit inside a kit) is found too, at the TOP-level kit's qty and name — not invisible, not Console's own name (owner report, 2026-11-13: \"if a kit has another kit, the crawlers can miss them too\")", () => {
+    // Tree (qty 3) contains Console (×2 per Tree) as a plain component; Console itself carries its
+    // own attached recipe (×4 per Console) — 3 Trees × 2 Consoles × 4 = 24 total recipe units.
+    const console_ = { id: "console1", name: "Console", cat: "structure", subItems: [{ patternId: "p_rose", qty: 4 }] };
+    const tree = { id: "kit1", name: "Tree", cat: "tenting", subItems: [{ itemId: "console1", qty: 2 }] };
+    const opts = { ...baseOpts([pRose]), imsInventory: [tree, console_] };
+    const result = computeFnFloralCost(
+      fn({ zoneElements: { stage: [{ name: "Tree", invId: "kit1", qty: 3 }] }, enabledEls: { stage: true } }),
+      [], opts,
+    );
+    const recipe = result.elementBreakdown.find((eb) => /recipe/.test(eb.name));
+    expect(recipe?.qty).toBe(24);
+    expect(recipe?.kitParent).toBe("Tree"); // the TOP-level kit, not "Console"
+  });
+
   it("a kit's flower recipe follows the deal's EDITED parts, not only the master list", () => {
     // Master: 6 recipes per kit. The deal edited it to 10 — 2 kits must itemise 20, not 12.
     const kit = { id: "kit1", name: "Tree", cat: "tenting", subItems: [{ patternId: "p_rose", qty: 6 }] };

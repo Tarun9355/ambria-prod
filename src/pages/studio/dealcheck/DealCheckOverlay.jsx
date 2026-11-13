@@ -943,7 +943,7 @@ export default function DealCheckOverlay({ ctx }) {
               if (isKit) {
                 const edited = dcKitEdits[fi]?.[ck];
                 const comps = Array.isArray(edited) ? edited : item.subItems.map(s => ({ itemId: s.itemId, patternId: s.patternId, qty: Number(s.qty) || 1 }));
-                recipeParts = kitRecipeParts(comps, dealCheckData?.flowerPatterns, Math.max(0, qty - reusedQty));
+                recipeParts = kitRecipeParts(comps, dealCheckData?.flowerPatterns, Math.max(0, qty - reusedQty), dcInventoryCache);
                 components = comps.map(cp => {
                   const ci = dcInventoryCache.find(x => x.id === cp.itemId);
                   if (!ci) return null;
@@ -1022,7 +1022,7 @@ export default function DealCheckOverlay({ ctx }) {
               rental += lineRental; byFn[fi].rental += lineRental;
               const dD = catToDept(imsField.category(item));
               let miComponents;
-              const miRecipeParts = miIsKit ? kitRecipeParts(item.subItems, dealCheckData?.flowerPatterns, q) : [];
+              const miRecipeParts = miIsKit ? kitRecipeParts(item.subItems, dealCheckData?.flowerPatterns, q, dcInventoryCache) : [];
               if (miIsKit) {
                 miComponents = item.subItems.map(s => {
                   const ci = dcInventoryCache.find(x => x.id === s.itemId);
