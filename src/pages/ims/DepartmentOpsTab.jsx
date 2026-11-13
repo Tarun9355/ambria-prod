@@ -951,8 +951,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // changes there are.
   const recentChanges = useMemo(() => (amendRequests || [])
     .filter(r => r.eventOrderId === sel?.id && r.department === dept && r.status === "logged")
-    .sort((a, b) => (b.requestedAt || 0) - (a.requestedAt || 0))
-    .slice(0, 8), [amendRequests, sel, dept]);
+    .sort((a, b) => (b.requestedAt || 0) - (a.requestedAt || 0)), [amendRequests, sel, dept]);
+  // The whole log, 10 entries a page (owner ask 2026-11-13) - it used to stop at the newest 8. Back to page 1 for another event /
+  // department, and whenever the log is opened.
+  const LOG_PAGE = 10;
+  const [logPage, setLogPage] = useState(0);
+  const logListRef = useRef(null);
+  useEffect(() => { setLogPage(0); }, [sel?.id, dept, logOpen]);
+  const logPages = Math.max(1, Math.ceil(recentChanges.length / LOG_PAGE));
+  const logPageNow = Math.min(logPage, logPages - 1);
+  const goLogPage = (p) => { setLogPage(Math.max(0, Math.min(logPages - 1, p))); if (logListRef.current) logListRef.current.scrollTop = 0; };
 
   // ── Department income snapshot (pushed from Deal Check → matches Studio exactly) ──
   const deptIncome = (sel?.deptIncome && sel.deptIncome[dept]) || null;
@@ -3365,7 +3373,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
         <IconBell s={13} />
         {/* -top/-right so the badge overhangs the button instead of shrinking the
             glyph to make room for it. */}
-        <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-[3px] rounded-full bg-red-500 text-white text-[9px] font-bold leading-[14px] text-center tabular-nums ring-2 ring-white">{recentChanges.length}</span>
+        <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-[3px] rounded-full bg-red-500 text-white text-[9px] font-bold leading-[14px] text-center tabular-nums ring-2 ring-white">{recentChanges.length > 99 ? "99+" : recentChanges.length}</span>
         <span className="sr-only">Activity log — {recentChanges.length} recent changes</span>
         {/* A drawn tooltip rather than the native `title`: title waits about a
             second before appearing, which is long enough that people click the
@@ -4027,8 +4035,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                 action required. Written by StudioApp.jsx's reconcileSoldInventoryBlocks whenever this
                 event's + this department's reserved items actually change. */}
             {(() => {
-              const shown = recentChanges;
-              if (!logOpen || !shown.length) return null;
+              if (!logOpen || !recentChanges.length) return null;
+              const shown = recentChanges.slice(logPageNow * LOG_PAGE, logPageNow * LOG_PAGE + LOG_PAGE);
+              const firstNo = logPageNow * LOG_PAGE + 1, lastNo = firstNo + shown.length - 1;
               return (
                 /* ── A SHEET THAT FITS ITS CONTENT ──
                    On a phone this was a full-screen white page, so one entry sat at the top of
@@ -4044,7 +4053,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[15px] font-semibold text-gray-900">Activity log</span>
-                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500 tabular-nums">{shown.length}</span>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-gray-100 text-gray-500 tabular-nums">{recentChanges.length}</span>
                       </div>
                       {/* One short line. The old subtitle restated the department and client the
                           page header already names, and "Read-only" is evident: there is nothing
@@ -4062,7 +4071,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                     </svg>
                   </button>
                   </div>
-                  <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+                  <div ref={logListRef} className={"flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 " + (logPages > 1 ? "pb-2" : "pb-[max(1rem,env(safe-area-inset-bottom))]")}>
                   {/* A timeline, not a paragraph list. Each entry is one edit at one time, and a
                       dot with a connecting rule says that at a glance — the previous version ran
                       the author, the change and the timestamp together as prose, so telling two
@@ -4156,6 +4165,20 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                     })}
                   </div>
                   </div>
+                  {/* 10 entries a page: which ones these are of how many, and Previous / Next - kept below the list, outside its scroll */}
+                  {logPages > 1 && (
+                    <div className="shrink-0 px-4 pt-2.5 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-gray-100 flex items-center justify-between gap-3">
+                      <button onClick={() => goLogPage(logPageNow - 1)} disabled={logPageNow === 0}
+                        className="h-9 px-3 rounded-lg text-xs font-semibold text-gray-700 bg-white ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">
+                        ‹ Previous
+                      </button>
+                      <span className="text-[11px] text-gray-500 tabular-nums" aria-live="polite">{firstNo}–{lastNo} of {recentChanges.length}</span>
+                      <button onClick={() => goLogPage(logPageNow + 1)} disabled={logPageNow >= logPages - 1}
+                        className="h-9 px-3 rounded-lg text-xs font-semibold text-gray-700 bg-white ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">
+                        Next ›
+                      </button>
+                    </div>
+                  )}
                   </div>
                 </div>
               );
