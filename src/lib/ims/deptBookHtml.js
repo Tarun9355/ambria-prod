@@ -1379,15 +1379,26 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : (kb?.qty || zq), "", parts) });
         }
       });
-      // An arrangement whose name matched no card on this page (renamed since, or on another department's sheet) still gets
-      // its bunches - as a block under its own name, never as a loose "Artificial flowers & greens" list.
-      artLeft.forEach(list => {
-        const parts = artLines(list);
-        const q = list.reduce((t, a) => t + (Number(a.qty) || 0), 0);
+      // An arrangement whose name matched no card on this page (renamed since, moved to another
+      // department's sheet, or — a kit's attached recipe whose KIT belongs to a DIFFERENT
+      // department entirely, so that kit's own card never appears on THIS page at all) still gets
+      // its own card, under its own real name — real flowers AND artificial bunches TOGETHER, never
+      // the artificial side alone (owner report, 2026-11-13: Chandelier Tree Floral Recipe's real
+      // flowers — Morya Patti, banglore daisy, … — never printed anywhere at all, because there used
+      // to be no leftover fallback for the real side the way the artificial side already had one).
+      const realLeftover = new Map(realTaker.remaining().map(r => [r.key, r]));
+      const leftoverKeys = new Set([...artLeft.keys(), ...realLeftover.keys()]);
+      leftoverKeys.forEach(k => {
+        const artList = artLeft.get(k) || [];
+        const realEntry = realLeftover.get(k);
+        const parts = [...(realEntry?.lines || []), ...artLines(artList)];
+        if (!parts.length) return;
+        const name = artList[0]?.el || realEntry?.el || t("Arrangement");
         // its split as Deal Check worked it (realPct, snapshot v19) - "Artificial 100%" like every other flower card; an older
         // snapshot without it still says just "Artificial" until the deal re-syncs
-        const rp = list.find(a => typeof a.realPct === "number")?.realPct;
-        if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", list[0].el || t("Arrangement"), q || "", "", parts, typeof rp === "number" ? mixText(rp) : t("Artificial")) });
+        const rp = artList.find(a => typeof a.realPct === "number")?.realPct;
+        const q = artList.reduce((t, a) => t + (Number(a.qty) || 0), 0);
+        blocks.push({ h: detailH(parts), html: detailCard("🌸", name, q || "", "", parts, typeof rp === "number" ? mixText(rp) : (realEntry ? undefined : t("Artificial"))) });
       });
       // The truss cut list (pillars / beams / batta) is on the zone's own page now, under the truss strip (trussCard) - not repeated here.
       if (!blocks.length) return [];

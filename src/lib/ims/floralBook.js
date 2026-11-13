@@ -12,7 +12,7 @@ import { swappedRecipeFlower } from "./mandiSwap.js";
 const key = (n) => String(n || "").trim().toLowerCase();
 
 export function realLineTaker(realZones, zoneKey, eventSwap) {
-  const left = new Map();
+  const left = new Map(); // key -> the raw z entries (kept, so remaining() can still read el/kitParent after take()s run)
   // Keyed by the KIT's own name (z.kitParent) when a kit is involved, same as the artificial-
   // bunch side's own cross-bracing fix — a kit's attached recipe is recorded under its own
   // decorated name ("Chandelier Tree Floral Recipe"), never the kit's name ("Tree"), so matching
@@ -25,20 +25,36 @@ export function realLineTaker(realZones, zoneKey, eventSwap) {
     left.set(k, [...(left.get(k) || []), z]);
   });
   const known = new Set(left.keys());
+  const taken = new Set();
+  const summarize = (list) => {
+    const sum = new Map();
+    list.forEach((z) => (z.lines || []).forEach((l) => {
+      const qty = Number(l.qty) || 0;
+      const sw = swappedRecipeFlower(eventSwap, l.name, qty) || { name: l.name, qty, unit: l.unit || "" };
+      const sk = key(sw.name) + "|" + sw.unit;
+      const prev = sum.get(sk);
+      if (prev) prev.qty += sw.qty; else sum.set(sk, { ...sw });
+    }));
+    return [...sum.values()].map((l) => ({ ...l, qty: Math.round(l.qty * 100) / 100 })).filter((l) => l.qty > 0);
+  };
   return {
     has: (name) => known.has(key(name)),
     take: (name) => {
-      const k = key(name), list = left.get(k) || [];
-      left.delete(k);
-      const sum = new Map();
-      list.forEach((z) => (z.lines || []).forEach((l) => {
-        const qty = Number(l.qty) || 0;
-        const sw = swappedRecipeFlower(eventSwap, l.name, qty) || { name: l.name, qty, unit: l.unit || "" };
-        const sk = key(sw.name) + "|" + sw.unit;
-        const prev = sum.get(sk);
-        if (prev) prev.qty += sw.qty; else sum.set(sk, { ...sw });
-      }));
-      return [...sum.values()].map((l) => ({ ...l, qty: Math.round(l.qty * 100) / 100 })).filter((l) => l.qty > 0);
+      const k = key(name);
+      if (taken.has(k)) return [];
+      taken.add(k);
+      return summarize(left.get(k) || []);
     },
+    // Whatever nothing on the page has taken yet, once every known card has had its turn — a kit's
+    // attached recipe whose KIT belongs to a DIFFERENT department entirely never gets taken by
+    // anything (that department's own kit card isn't on THIS page at all), so without this it would
+    // just vanish, the same way it used to before kitParent existed. `el` (the recipe's own real
+    // name) and `kitParent` (the kit it's attached to, if any) are both carried so the caller can
+    // build a card that names both — "Tree" as the context, "Chandelier Tree Floral Recipe" as the
+    // specific thing, not a flat "Tree · recipe" mash of the two.
+    remaining: () => [...left.keys()].filter((k) => !taken.has(k)).map((k) => {
+      const list = left.get(k) || [];
+      return { key: k, el: list[0]?.el || null, kitParent: list[0]?.kitParent || null, lines: summarize(list) };
+    }).filter((r) => r.lines.length),
   };
 }

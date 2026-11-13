@@ -53,4 +53,25 @@ describe("realLineTaker — the Floral PDF prints Deal Check's real flower lines
     expect(t.has("Chandelier Tree Floral Recipe")).toBe(false); // only the kit's own name resolves
     expect(t.take("Tree")).toEqual([{ name: "Morya Patti", qty: 10.5, unit: "bundle" }]);
   });
+
+  it("remaining() reports a row nothing on the page ever took — the kit it's attached to belongs to a DIFFERENT department, so there's no card on THIS page to match it by name (bug fixed 2026-11-13: these real flowers never printed anywhere at all)", () => {
+    const kitZones = [
+      { zone: "btr", el: "Chandelier Tree Floral Recipe", kitParent: "Tree", lines: [{ name: "Morya Patti", qty: 10.5, unit: "bundle" }] },
+    ];
+    const t = realLineTaker(kitZones, "btr", new Map());
+    // Nobody ever calls .take("Tree") on this page — Tree's own kit card is on a different
+    // department's book. remaining() must still surface it, with both names preserved.
+    const left = t.remaining();
+    expect(left).toHaveLength(1);
+    expect(left[0]).toMatchObject({ el: "Chandelier Tree Floral Recipe", kitParent: "Tree" });
+    expect(left[0].lines).toEqual([{ name: "Morya Patti", qty: 10.5, unit: "bundle" }]);
+  });
+
+  it("remaining() excludes a row that WAS taken, and never double-counts one taken via has()+take()", () => {
+    const t = realLineTaker(realZones, "btr", new Map());
+    t.take("Terracotta Fibre Pot");
+    const left = t.remaining();
+    expect(left.some((r) => r.el === "Terracotta Fibre Pot")).toBe(false);
+    expect(left.some((r) => r.el === "Flower Bunch")).toBe(true); // never taken on this zone's page
+  });
 });
