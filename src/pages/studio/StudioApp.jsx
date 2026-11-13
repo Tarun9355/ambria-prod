@@ -148,7 +148,7 @@ import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/phot
 import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH, assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher.js";
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
-import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs, mergeLmsFunctions } from "../../lib/studio/sessionData.js";
+import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions } from "../../lib/studio/sessionData.js";
 import { reindexFnIdxObject, reindexFnIdxArray, reindexCompositeKeyObject, ZONE_PIPE_KEY, TRUSS_ZONE_PIPE_KEY, TRANSPORT_COLLAPSE_KEY, FLORAL_CALC_OPEN_KEY } from "../../lib/studio/dealCheckReindex.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
@@ -2439,6 +2439,11 @@ export default function StudioApp() {
   // DISABLED" note near saveSession's own studio_sessions write).
   const buildSaveBaselineRef = useRef(null);
   const buildConflictWarnedAtRef = useRef(0);
+  // Which `${fnIdx}:${fnIdx}:${sourceVideoId}` pairs duplicateSourceVideoFnIdxs has already warned
+  // about this client — see the effect right after allFunctionData's own definition. Reset on every
+  // loadClientSession (a new client/deal) so a previous client's dismissed pairs never suppress a
+  // genuinely new collision on the next one, and a genuinely new deal starts with a clean slate.
+  const warnedVideoPairsRef = useRef(new Set());
   // A plain function, `(newIdx) => oldIdx`, describing whatever removal(s) the deal's prices
   // haven't caught up to yet — null when there's nothing pending. See saveSession's own "ONE PRICE
   // PER FUNCTION" fnTotals comment for why this exists: that carry-forward reads prev[i] by raw
@@ -6384,7 +6389,7 @@ export default function StudioApp() {
         : (() => { const ef = extraFunctions[idx - 1] || {}; return { type: ef.type || "", date: ef.date || "", venue: ef.venue || "", shift: ef.shift || "", pax: ef.pax || "", palette: ef.palette || "Custom", flowerPalette: ef.flowerPalette || "" }; })();
       const isActive = idx === activeFnIdx;
       const snap = isActive
-        ? { zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, genset62, customGensets, customTripRate, elNotes, floralOverrides }
+        ? { zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, genset62, customGensets, customTripRate, elNotes, floralOverrides, sourceVideo }
         : (fnBuilds[idx] || {});
       all.push({
         fnIdx: idx,
@@ -6413,13 +6418,35 @@ export default function StudioApp() {
         floralOverrides: snap.floralOverrides && typeof snap.floralOverrides === "object"
           ? { note: snap.floralOverrides.note || "", rows: Array.isArray(snap.floralOverrides.rows) ? snap.floralOverrides.rows : [] }
           : { note: "", rows: [] },
+        // Read-only, for the early-warning check below (duplicateSourceVideoFnIdxs) — never part of
+        // any write-refusal guard, so it does not need the stricter care suspiciousDuplicateFnIdxs'
+        // own inputs get.
+        sourceVideo: snap.sourceVideo || null,
       });
     }
     return all;
-  }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, clientFlowerPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx]);
+  }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, clientFlowerPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx, sourceVideo]);
   const collectAllFunctionData = useCallback(() => allFunctionData, [allFunctionData]);
   // Layout, same reasoning as snapshotFnRef / saveSessionRef — read from synchronous paths.
   useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; });
+  // ── EARLY WARNING: TWO FUNCTIONS JUST STARTED SHARING ONE REFERENCE VIDEO ──
+  // duplicateSourceVideoFnIdxs' own comment has the full story — this is a one-time, non-blocking
+  // heads-up (never refuses a save, unlike suspiciousDuplicateFnIdxs) meant to catch the Sahiba-
+  // class symptom (a function silently taking on a SIBLING's content) within seconds instead of
+  // the ~week it actually took to notice (2026-11-13). warnedVideoPairsRef survives re-renders but
+  // is cleared on every loadClientSession (see its own reset there) so a brand-new client/deal
+  // doesn't inherit a previous client's already-dismissed pairs, or suppress a genuinely new one.
+  useEffect(() => {
+    duplicateSourceVideoFnIdxs(allFunctionData).forEach(([a, b]) => {
+      const vid = allFunctionData.find((fd) => fd.fnIdx === a)?.sourceVideo?.id || "";
+      const key = `${a}:${b}:${vid}`;
+      if (warnedVideoPairsRef.current.has(key)) return;
+      warnedVideoPairsRef.current.add(key);
+      console.warn(`[duplicateSourceVideoFnIdxs] Function ${a + 1} and Function ${b + 1} now share the same reference video — if this wasn't deliberate, check both builds.`);
+      showMsg?.(`Heads up: Function ${a + 1} and Function ${b + 1} now have the same reference video. If that wasn't on purpose, check both builds.`, "red");
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allFunctionData]);
 
   // Pre-Sold gate (owner ask, 2026-10-17): "ensure we have no deals that go out with out-of-stock
   // stuff" — walks every function/zone/element of the WHOLE build (not just the active tab) the
@@ -10179,6 +10206,9 @@ export default function StudioApp() {
     // already was). saveSession compares its own next write against this to tell a stale tab from
     // one that's actually caught up — see buildSaveBaselineRef's own comment.
     buildSaveBaselineRef.current = { savedAt: Number(client.sessions?.[0]?.savedAt) || 0, savedBy: client.sessions?.[0]?.savedBy || null };
+    // A new client/deal starts with a clean slate for the duplicate-reference-video warning too —
+    // see warnedVideoPairsRef's own comment.
+    warnedVideoPairsRef.current = new Set();
     // Default/cross-client reset: any pending removal remap belonged to whatever client was open
     // before this call (a fast client switch within the same removal-to-save window could otherwise
     // apply someone else's shift to THIS client's prices). The fnSnapshots branch below OVERWRITES
@@ -10617,6 +10647,9 @@ export default function StudioApp() {
     // new, functionless deal has nothing to apply to anyway, but leaving it set is still a latent
     // footgun for whatever client gets loaded next without going through loadClientSession first.
     pendingFnTotalsRemapRef.current = null;
+    // Same reasoning as loadClientSession's own reset (review finding, 2026-11-13) — a brand-new
+    // deal has no business inheriting a previous client's already-dismissed duplicate-video pairs.
+    warnedVideoPairsRef.current = new Set();
   }, [userVenueScope]);
 
   // ── Restore the active deal on mount (refresh / Studio↔IMS switch) ──

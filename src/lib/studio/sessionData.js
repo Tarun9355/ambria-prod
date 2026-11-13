@@ -397,6 +397,45 @@ export function suspiciousDuplicateFnIdxs(allFns, activeFnIdx) {
   return unsafe;
 }
 
+/**
+ * Pairs of fnIdx whose CURRENT sourceVideo is the same, non-empty id — a cheap EARLY-WARNING
+ * signal, not a write-refusal gate. suspiciousDuplicateFnIdxs (above) only catches a collision
+ * once the two functions' decor content is byte-identical; the Sahiba recurrence (2026-11-13,
+ * the day after a manual restore of an earlier Sahiba/Sangeeta-class incident) showed a function
+ * flip to a SIBLING function's own reference video and price range without ever becoming
+ * byte-identical to it (presumably edited a little before/after the corruption), so that guard
+ * never fired and the wrong content sat there, unnoticed, for about a week.
+ *
+ * Two functions legitimately sharing one inspiration video as a starting point IS a real
+ * workflow (reuse the same template, then customize each separately), so this must never refuse
+ * a save the way suspiciousDuplicateFnIdxs does — it only flags the pair so a caller can surface
+ * a one-time, dismissable warning the moment it first appears, instead of it sitting unnoticed
+ * for days. Call sites are expected to track which pairs they've already warned about (e.g. a
+ * ref keyed by `${fnIdxA}:${fnIdxB}:${sourceVideoId}`) so a legitimate, intentional dual-use
+ * doesn't re-warn on every autosave.
+ *
+ * @param {Array<{fnIdx:number, sourceVideo?:{id?:string}}>} allFns
+ * @returns {Array<[number, number]>} fnIdx pairs (sorted ascending within each pair), one per
+ *   colliding sourceVideo id.
+ */
+export function duplicateSourceVideoFnIdxs(allFns) {
+  const bySrc = new Map();
+  (allFns || []).forEach((fd) => {
+    const id = fd?.sourceVideo?.id;
+    if (!id || typeof fd?.fnIdx !== "number") return;
+    if (!bySrc.has(id)) bySrc.set(id, []);
+    bySrc.get(id).push(fd.fnIdx);
+  });
+  const pairs = [];
+  for (const idxs of bySrc.values()) {
+    if (idxs.length < 2) continue;
+    for (let i = 0; i < idxs.length; i++) {
+      for (let j = i + 1; j < idxs.length; j++) pairs.push([idxs[i], idxs[j]].sort((a, b) => a - b));
+    }
+  }
+  return pairs;
+}
+
 // ═══ LMS LOAD: ADD WHAT LMS HAS THAT STUDIO DOESN'T, WITHOUT REORDERING ANYTHING ═══
 //
 // Loading an LMS lead for a client who already has a saved Studio session used to let the SAVED
