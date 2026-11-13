@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { qtyShown } from "../../lib/ims/qtyShown";
 import { thumbUrl } from "../../lib/studio/thumb.js";
 
 // The Fabric department's inventory block, folded to what a planner reads: three fabrics (Liza, Velvet,
@@ -48,7 +49,7 @@ function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
                 <span className="min-w-0">
                   <span className="block text-[13px] font-semibold text-gray-900 truncate">{c.colour}</span>
                   <span className="block text-[11px] text-gray-500 tabular-nums">
-                    {c.qty} {cur.unit}{(c.qtyOld > 0 && c.qtyNew > 0) ? ` · ${c.qtyOld} old + ${c.qtyNew} new` : (c.qtyNew > 0 ? " · new stock" : "")}
+                    {qtyShown(c.qty, cur.unit)} {cur.unit}{(c.qtyOld > 0 && c.qtyNew > 0) ? ` · ${qtyShown(c.qtyOld, cur.unit)} old + ${qtyShown(c.qtyNew, cur.unit)} new` : (c.qtyNew > 0 ? " · new stock" : "")}
                   </span>
                 </span>
               </div>
@@ -64,16 +65,16 @@ function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
       {/* Where it goes: one stacked bar for the split, then a row per zone. */}
       <div>
         <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-1.5">
-          {cur.qty} {cur.unit} across {zoneCount} zone{zoneCount === 1 ? "" : "s"}
+          {qtyShown(cur.qty, cur.unit)} {cur.unit} across {zoneCount} zone{zoneCount === 1 ? "" : "s"}
         </div>
         {cur.colours.length > 1 && cur.zones.some((z) => !(z.colours?.length)) && (
           <p className="text-[11px] text-gray-400 mb-1.5">Which colour goes in which zone shows once this event is synced again from Deal Check.</p>
         )}
         <div className="flex h-2.5 rounded-full overflow-hidden bg-gray-100" role="img"
-          aria-label={cur.zones.map((z) => `${z.name} ${z.qty} ${cur.unit}`).join(", ")}>
+          aria-label={cur.zones.map((z) => `${z.name} ${qtyShown(z.qty, cur.unit)} ${cur.unit}`).join(", ")}>
           {cur.zones.map((z, i) => (
             <span key={`${z.fi}|${z.zoneKey}`} className={ZONE_TONES[i % ZONE_TONES.length]}
-              style={{ width: `${cur.qty > 0 ? (z.qty / cur.qty) * 100 : 0}%` }} title={`${z.name} · ${z.qty} ${cur.unit}`} />
+              style={{ width: `${cur.qty > 0 ? (z.qty / cur.qty) * 100 : 0}%` }} title={`${z.name} · ${qtyShown(z.qty, cur.unit)} ${cur.unit}`} />
           ))}
         </div>
         {showDates && (
@@ -106,7 +107,7 @@ function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
                       {z.colours.map((c) => (
                         <div key={c.colour} className="flex items-center gap-1.5 min-w-0">
                           <Thumb photo={c.photo} hex={c.hex} emoji={cur.emoji} size={28} onZoom={onZoom} label={`${c.colour} ${cur.label}`} />
-                          <span className="text-[12px] text-gray-700 truncate"><span className="font-semibold">{c.colour}</span><span className="text-gray-400 tabular-nums"> · {r2(c.qty)} {cur.unit}</span></span>
+                          <span className="text-[12px] text-gray-700 truncate"><span className="font-semibold">{c.colour}</span><span className="text-gray-400 tabular-nums"> · {qtyShown(r2(c.qty), cur.unit)} {cur.unit}</span></span>
                         </div>
                       ))}
                     </div>
@@ -119,7 +120,7 @@ function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
                 ))}
                 <div className={"shrink-0 text-right tabular-nums " + (showDates ? "sm:w-24" : "")}>
                   {showDates && dateOf(z) && <div className="sm:hidden text-[11px] text-gray-400">{dayLabel(dateOf(z))}</div>}
-                  <div className="text-sm font-bold text-gray-900">{z.qty} {cur.unit}</div>
+                  <div className="text-sm font-bold text-gray-900">{qtyShown(z.qty, cur.unit)} {cur.unit}</div>
                   <div className="text-[11px] text-gray-400">{share}%{z.amount > 0 ? ` · ${fmt(z.amount)}` : ""}</div>
                 </div>
               </div>
@@ -129,7 +130,7 @@ function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
             <div className="hidden sm:flex items-center gap-2.5 rounded-xl bg-white ring-1 ring-gray-100 px-2 py-1.5">
               <span className="flex-1 text-[12px] font-semibold text-gray-600">Per date</span>
               {dates.map((d) => <span key={d} className="w-16 text-right text-sm font-bold text-gray-900 tabular-nums">{r2(cur.zones.filter((z) => dateOf(z) === d).reduce((a, z) => a + z.qty, 0)) || "—"}</span>)}
-              <span className="w-24 text-right text-sm font-bold text-gray-900 tabular-nums">{cur.qty} {cur.unit}</span>
+              <span className="w-24 text-right text-sm font-bold text-gray-900 tabular-nums">{qtyShown(cur.qty, cur.unit)} {cur.unit}</span>
             </div>
           )}
         </div>
@@ -162,11 +163,11 @@ export default function FabricBlock({ groups, fmt, onZoom, fnDates }) {
                   <span className="block text-sm font-semibold text-gray-900 truncate">{g.label}</span>
                   <span className="block text-[11px] text-gray-500 truncate">{g.colourText}</span>
                   <span className="block text-[13px] font-bold text-gray-900 tabular-nums">
-                    {g.qty} {g.unit}<span className="font-medium text-gray-400"> · {fmt(g.amount)}</span>
+                    {qtyShown(g.qty, g.unit)} {g.unit}<span className="font-medium text-gray-400"> · {fmt(g.amount)}</span>
                   </span>
                   {dates.length > 1 && (
-                    <span className="block text-[11px] text-gray-500 tabular-nums truncate" title={dates.map((d) => `${dayLabel(d)}: ${r2(g.zones.filter((z) => dateOf(z) === d).reduce((a, z) => a + z.qty, 0))} ${g.unit}`).join("  ·  ")}>
-                      {dates.map((d) => `${dayLabel(d)} ${r2(g.zones.filter((z) => dateOf(z) === d).reduce((a, z) => a + z.qty, 0))}`).join(" · ")} {g.unit}
+                    <span className="block text-[11px] text-gray-500 tabular-nums truncate" title={dates.map((d) => `${dayLabel(d)}: ${qtyShown(r2(g.zones.filter((z) => dateOf(z) === d).reduce((a, z) => a + z.qty, 0)), g.unit)} ${g.unit}`).join("  ·  ")}>
+                      {dates.map((d) => `${dayLabel(d)} ${qtyShown(r2(g.zones.filter((z) => dateOf(z) === d).reduce((a, z) => a + z.qty, 0)), g.unit)}`).join(" · ")} {g.unit}
                     </span>
                   )}
                 </span>

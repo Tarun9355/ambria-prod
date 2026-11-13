@@ -34,6 +34,7 @@ import { pdfT, pdfUnit, pdfDate, pdfDateTime, hindiReportHtml, HI_FONT_FAMILIES 
 import { nameKey, normName, needsHindi } from "./hindiNames";
 import { toHindi } from "./hindiTranslit";
 import { splitCrewByDept } from "./crewSplit";
+import { roundKg } from "./qtyShown";
 import { gensetsForFn, totalKva } from "./gensetPlan";
 
 // ── THE ZONE PAGE'S DOT TILE, AS A PNG ──
@@ -176,7 +177,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     const money = (v) => esc(fmt(Math.round(Number(v) || 0)));
     // A weight in kilos as the crew loads it (owner ask 2026-11-13): whole kilos, one decimal under a kilo (never "0 kg").
     // Only kilos - a recipe's 0.75 bundle is a real amount and keeps its decimals.
-    const kgR = (v) => { const n = Number(v) || 0; return n >= 1 ? Math.round(n) : Math.round(n * 10) / 10; };
+    const kgR = roundKg;
     // data-block marks a unit the paginator will try to keep on one page. Sections are the
     // natural unit: a heading stranded at the foot of a page with its table overleaf is the
     // single thing that makes a generated report look generated.

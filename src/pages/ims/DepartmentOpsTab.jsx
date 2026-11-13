@@ -44,6 +44,7 @@ import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActual
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { logWrite } from "../../lib/studio/userActions";
 
+import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
 import { kvGet } from "../../lib/ims/kv";
 
 // ── THE SUMMARY TILE ROW ──
@@ -331,7 +332,7 @@ function FloralDetailView({ detail }) {
         <div className={"text-[12px] font-semibold mb-1 " + (tone === "pink" ? "text-pink-600" : "text-emerald-600")}>{label}</div>
         <div className="text-[13px] text-[#1A1A2E] tabular-nums">
           {disc && <span className="line-through opacity-40 mr-1.5">{x.bunchesFull.toFixed(1)} bunches</span>}
-          <span className={disc ? "text-emerald-600 font-bold" : ""}>{x.bunches.toFixed(1)} bunches</span> = {x.kg} kg
+          <span className={disc ? "text-emerald-600 font-bold" : ""}>{x.bunches.toFixed(1)} bunches</span> = {roundKg(x.kg)} kg
         </div>
         <div className="text-[11px] text-[#1A1A2E] mt-0.5">× ₹{x.rate}/kg = {disc && <span className="line-through opacity-40 mr-1">{rupee(x.costFull)}</span>}<span className={"font-semibold " + (tone === "pink" ? "text-pink-600" : "text-emerald-600")}>{rupee(x.cost)}</span></div>
       </div>
@@ -4502,7 +4503,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                   return [...by].map(([name, kg]) => ({ name, kg })).filter(x => x.kg > 0).sort((x, y) => (x.name ? 0 : 1) - (y.name ? 0 : 1) || y.kg - x.kg);
                 })();
                 // whole kilos (owner ask 2026-11-13: 61.09 kg -> 61 kg); under a kilo keeps one decimal, so a small colour never reads 0 kg
-                const kgTxt = (n) => { const v = Number(n) || 0; return `${v >= 1 ? Math.round(v) : Math.round(v * 10) / 10} kg`; };
+                const kgTxt = (n) => `${roundKg(n)} kg`;
                 // ₹/kg and cost moved here from Actuals (owner ask 2026-11-11): the bunches are our stock, so their value is shown with them
                 const line = (icon, label, bunches, bpk, kg, rate, cost) => (
                   <div className="flex items-center justify-between gap-3 px-3 py-2">
@@ -4775,7 +4776,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                             ); })()}
                             {/* with a column per date the single To load figure is left out: each date says what loads on it */}
                             {!showDates && (<StatCell label={showRentalQty ? "To load" : "Qty"} w={STAT_W.qty}>
-                              <span className="text-sm font-semibold text-gray-700 tabular-nums">×{it.qty}{it.qtyUnit ? <span className="ml-0.5 text-xs font-normal text-gray-400">{it.qtyUnit}</span> : null}</span>
+                              <span className="text-sm font-semibold text-gray-700 tabular-nums">×{qtyShown(it.qty, it.qtyUnit)}{it.qtyUnit ? <span className="ml-0.5 text-xs font-normal text-gray-400">{it.qtyUnit}</span> : null}</span>
                             </StatCell>)}
                             {/* Reserved whenever ANY row in this list needs it (anyRentalQty), not just
                                 this one (showRentalQty) — so every row's Rate/Total lands under the
@@ -4843,7 +4844,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                               <span aria-hidden="true" className="text-gray-300 shrink-0">└</span>
                               <span className="text-gray-700 truncate flex-1 min-w-0">{pt.zone}{pt.fn ? <span className="text-gray-400"> · {pt.fn}</span> : null}{pt.dims ? <span className="text-gray-400"> · {pt.dims} ft</span> : null}</span>
                               {Array.from({ length: dateSpacers }, (_, si) => <span key={"sp" + si} className={"hidden sm:block shrink-0 " + STAT_W.qty} />)}
-                              <span className={"shrink-0 font-medium text-gray-500 text-right tabular-nums " + STAT_W.qty}>{pt.qty}{it.qtyUnit ? " " + it.qtyUnit : ""}</span>
+                              <span className={"shrink-0 font-medium text-gray-500 text-right tabular-nums " + STAT_W.qty}>{qtyShown(pt.qty, it.qtyUnit)}{it.qtyUnit ? " " + it.qtyUnit : ""}</span>
                               <span className={"shrink-0 text-gray-500 text-right tabular-nums " + STAT_W.rate}>× {fmt(pt.rate)}</span>
                               <span className={"shrink-0 font-semibold text-gray-700 text-right tabular-nums " + STAT_W.total}>{fmt(pt.total)}</span>
                             </div>
@@ -4851,7 +4852,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                           <div className="flex items-center gap-2 border-t border-gray-200 pt-1">
                             <span className="flex-1 text-gray-600 font-semibold">Total</span>
                             {Array.from({ length: dateSpacers }, (_, si) => <span key={"sp" + si} className={"hidden sm:block shrink-0 " + STAT_W.qty} />)}
-                            <span className={"shrink-0 font-semibold text-gray-700 text-right tabular-nums " + STAT_W.qty}>{it.parts.reduce((a, pt) => a + (Number(pt.qty) || 0), 0)}{it.qtyUnit ? " " + it.qtyUnit : ""}</span>
+                            <span className={"shrink-0 font-semibold text-gray-700 text-right tabular-nums " + STAT_W.qty}>{qtyShown(it.parts.reduce((a, pt) => a + (Number(pt.qty) || 0), 0), it.qtyUnit)}{it.qtyUnit ? " " + it.qtyUnit : ""}</span>
                             <span className={"shrink-0 " + STAT_W.rate} />
                             <span className={"shrink-0 font-bold text-gray-900 text-right tabular-nums " + STAT_W.total}>{fmt(it.parts.reduce((a, pt) => a + (Number(pt.total) || 0), 0))}</span>
                           </div>
@@ -5801,7 +5802,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       const phyL = topo.physicalL ? Math.round(topo.physicalL * 100) / 100 : 0, phyW = topo.physicalW ? Math.round(topo.physicalW * 100) / 100 : 0;
                       const fabRows = fab ? [
                         fab.maskingPieces > 0 && { ic: "🧱", label: "Wall Masking", needN: fab.maskingPieces, allocs: row.maskingAllocation, unit: "pc", part: "masking", stockKey: "maskingStock", qtyField: "stockPieces" },
-                        fab.lizaKg > 0 && { ic: "🧣", label: "Liza", needN: fab.lizaKg, note: fab.lizaModel === "wrap+ceiling" ? `wrap ${fab.lizaWrapKg}kg + ceiling ${fab.lizaCeilingKg}kg` : "wrap only", allocs: row.lizaAllocation, unit: "kg", part: "liza", stockKey: "lizaStock", qtyField: "stockKg" },
+                        fab.lizaKg > 0 && { ic: "🧣", label: "Liza", needN: fab.lizaKg, note: fab.lizaModel === "wrap+ceiling" ? `wrap ${roundKg(fab.lizaWrapKg)}kg + ceiling ${roundKg(fab.lizaCeilingKg)}kg` : "wrap only", allocs: row.lizaAllocation, unit: "kg", part: "liza", stockKey: "lizaStock", qtyField: "stockKg" },
                         fab.curtainPieces > 0 && { ic: "🎀", label: "Velvet Curtains", needN: fab.curtainPieces, allocs: row.curtainAllocation, unit: "pc", part: "curtain", stockKey: "curtainStock", qtyField: "stockPieces" },
                       ].filter(Boolean).map(f => {
                         // The dept head's own colour pick (deptOps.trussFabric, IMS-owned, kept across
@@ -5810,7 +5811,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                         const own = deptData.trussFabric && Array.isArray(deptData.trussFabric[ek]) ? deptData.trussFabric[ek] : null;
                         // else what Deal Check recorded for this truss row at the last sync (it weighs a saved colour against the Fabric Palette), else the row's saved colour
                         const rec = (Array.isArray(sel?.fabricPlan?.rows) ? sel.fabricPlan.rows : []).filter(r => r.kind === f.part && r.fi === z.fi && r.zk === z.zk && (r.ri || 0) === (z.ri || 0)).map(r => ({ colour: r.colour, qty: r.qty }));
-                        return { ...f, ek, need: `${f.needN}${f.unit}`, allocs: own || (rec.length ? rec : f.allocs), own: !!own };
+                        return { ...f, ek, need: `${qtyShown(f.needN, f.unit)}${f.unit}`, allocs: own || (rec.length ? rec : f.allocs), own: !!own };
                       }) : [];
                       // ── THE DEPARTMENT'S OWN EDITS ── deptOps.trussPlan[key]: demand / footprint sizes,
                       // pillar + beam groups, batta. IMS-owned, so every Studio sync leaves them alone;
@@ -5954,7 +5955,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                           ))}
                                           <div className="flex items-center gap-2 text-[11.5px]">
                                             <button onClick={() => save([...cur, { colour: "", qty: 0 }])} className="font-semibold text-blue-600 hover:underline">+ colour</button>
-                                            <span className={sum < f.needN ? "text-amber-600" : "text-gray-500"}>{Math.round(sum * 100) / 100} of {f.need}</span>
+                                            <span className={sum < f.needN ? "text-amber-600" : "text-gray-500"}>{qtyShown(Math.round(sum * 100) / 100, f.unit)} of {f.need}</span>
                                             {f.own && <button onClick={resetOwn} className="ml-auto font-semibold text-gray-500 hover:text-gray-800">↺ back to Deal Check pick</button>}
                                           </div>
                                         </div>
