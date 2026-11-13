@@ -82,11 +82,14 @@ describe("fullRecipeLines - the whole recipe on the card, each flower with its s
     { name: "Rose", qty: 1.25, unit: "bundle" },
     { name: "Gypsy", qty: 0.5, unit: "bunch" },
   ];
-  it("a 100% artificial piece still lists every flower (Satyapal Rana, 20 Nov), tagged Artificial; Oasis whole", () => {
+  it("a 100% artificial piece drops the named flowers entirely, keeping only Oasis whole (owner ask, 2026-11-13: \"if it's 100%, no real flower will be used for it, so it should only show Artificial Flower/Green Bunch counts\" — the card's own separate generic artificial-bunch line already covers all of it; naming the real species it's modelled on is redundant and reads as if real flowers were pulled)", () => {
     expect(fullRecipeLines(recipe, 2, 0, [])).toEqual([
       { name: "Oasis", qty: 2, unit: "pc", tag: "" },
-      { name: "Rose", qty: 2.5, unit: "bundle", tag: "Artificial" },
-      { name: "Gypsy", qty: 1, unit: "bunch", tag: "Artificial" },
+    ]);
+  });
+  it("a 100% artificial piece still drops a Deal Check real-snapshot line that matches a recipe flower by name, instead of flushing it as a leftover \"Real\" line", () => {
+    expect(fullRecipeLines(recipe, 2, 0, [{ name: "rose", qty: 0.001, unit: "bundle" }])).toEqual([
+      { name: "Oasis", qty: 2, unit: "pc", tag: "" },
     ]);
   });
   it("a mixed piece: whole amount, real from Deal Check's line when it has one, else recipe × share", () => {

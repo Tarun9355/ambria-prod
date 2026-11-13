@@ -7,6 +7,12 @@ const STORAGE_KEY = "ambria-auth";
 // so the two always agree. Not a real mailbox — no mail is ever sent (accounts are pre-confirmed).
 export const usernameToEmail = (u) => `${String(u || "").trim().toLowerCase()}@staff.ambria.app`;
 
+// A user row with no explicit `username` column set (legacy/never-edited accounts) logs in with
+// this derived-from-name value instead — UsersTab.jsx's add/reset flows and this module's own
+// self-service password change must resolve the SAME username for the SAME person, or one half
+// builds the wrong synthetic email and "Current password is incorrect" fires for a correct password.
+export const deriveUsername = (name) => (name || "").trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+
 // Resolve the profile row (role, apps, name, U#### id, …) for the currently signed-in Supabase user.
 // Linked via users.auth_id = auth.uid(). Returns the row WITHOUT the password column.
 export async function fetchProfile() {
@@ -34,6 +40,29 @@ export async function login(username, password) {
   }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
   return profile;
+}
+
+/**
+ * Self-service password change for the CURRENTLY signed-in user — no admin/service-role call
+ * needed (unlike Admin's "Reset Password" on another user's row, which goes through the
+ * user-admin edge function): Supabase Auth's updateUser works directly off the live session.
+ * Re-authenticates with the current password first purely as an in-app guard (an unlocked,
+ * still-logged-in device left unattended shouldn't let anyone walking up change the password
+ * with no check at all) — the API itself doesn't require this step.
+ *
+ * Reads the email straight off the live Supabase session (auth.getUser()) rather than
+ * rebuilding it from the profile's username/name — review finding, 2026-11-13: rebuilding it
+ * would silently reauth against a DIFFERENT account if users.username ever drifted from what's
+ * actually on record in Supabase Auth (a manual DB edit, or a legacy row's username getting
+ * filled in later from its name). The live session's own email can never drift from itself.
+ */
+export async function changeOwnPassword(currentPassword, newPassword) {
+  const { data: { user } = {} } = await supabase.auth.getUser();
+  if (!user?.email) throw new Error("No active session — log out and back in, then retry.");
+  const { error: reauthErr } = await supabase.auth.signInWithPassword({ email: user.email, password: currentPassword });
+  if (reauthErr) throw new Error("Current password is incorrect");
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) throw new Error(error.message || "Could not update password");
 }
 
 export async function logout() {

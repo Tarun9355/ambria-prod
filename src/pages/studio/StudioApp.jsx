@@ -12,6 +12,7 @@
 // the Supabase `settings`-table shim (src/lib/ims/kv).
 import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, useTransition, lazy, Suspense } from "react";
 import { useAuth } from "../../lib/AuthContext";
+import { changeOwnPassword } from "../../lib/auth";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
 import { Sk, SkStyle, SkTiles } from "../../components/studio/Skeleton.jsx";
 import { IconPalette, IconSliders, IconBook, IconGear, IconClipboardCheck, IconLogout, IconCheck, IconLock } from "../../components/icons.jsx";
@@ -1855,6 +1856,34 @@ export default function StudioApp() {
   // fires before the menu's own click lands, so clicking Log out would close the menu and
   // never run it. mousedown-outside is the pattern that survives that.
   const [acctMenuOpen, setAcctMenuOpen] = useState(false);
+  // Self-service "Change Password" — same feature + same lib/auth.js call as IMS's account menu
+  // (owner ask, 2026-11-13; extended to Studio too per follow-up, since most Sales users have no
+  // IMS access and so no other way to reach this at all).
+  const [pwModalOpen, setPwModalOpen] = useState(false);
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwErr, setPwErr] = useState("");
+  const [pwDone, setPwDone] = useState(false);
+  const closePwModal = () => { setPwModalOpen(false); setPwCurrent(""); setPwNew(""); setPwConfirm(""); setPwErr(""); setPwDone(false); };
+  const submitPwChange = async () => {
+    setPwErr("");
+    if (!pwCurrent) { setPwErr("Enter your current password"); return; }
+    if (pwNew.length < 6) { setPwErr("New password must be at least 6 characters"); return; }
+    if (pwNew !== pwNew.trim()) { setPwErr("New password can't start or end with a space"); return; }
+    if (pwNew !== pwConfirm) { setPwErr("New passwords don't match"); return; }
+    setPwBusy(true);
+    try {
+      await changeOwnPassword(pwCurrent, pwNew);
+      setPwDone(true);
+      setPwCurrent(""); setPwNew(""); setPwConfirm("");
+    } catch (e) {
+      setPwErr(e.message || "Could not change password");
+    } finally {
+      setPwBusy(false);
+    }
+  };
   const acctRef = useRef(null);
   useEffect(() => {
     if (!acctMenuOpen) return;
@@ -14938,6 +14967,40 @@ export default function StudioApp() {
         );
       })()}
 
+      {/* CHANGE PASSWORD — self-service, same lib/auth.js call + validation as IMS's account menu. */}
+      {pwModalOpen && (
+        <div onClick={closePwModal} style={{ position: "fixed", inset: 0, zIndex: 100001, background: "rgba(15,15,26,0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, animation: "studioDlgFade 0.16s ease-out" }}>
+          <div role="dialog" aria-modal="true" aria-label="Change Password" onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 360, background: "linear-gradient(180deg,#FFFDF8 0%,#FBF6EC 100%)", border: "1px solid rgba(201,169,110,0.35)", borderRadius: 18, padding: "22px 24px 20px", boxShadow: "0 28px 70px rgba(15,15,26,0.38), 0 0 0 1px rgba(255,255,255,0.6) inset", animation: "studioDlgPop 0.2s cubic-bezier(0.34,1.4,0.64,1)" }}>
+            <div style={{ fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 21, fontWeight: 600, fontStyle: "italic", color: "#1A1A2E", marginBottom: 14 }}>🔑 Change Password</div>
+            {pwDone ? (
+              <div>
+                <p style={{ fontSize: 13, color: "#1A1A2E", marginBottom: 6 }}>Your password has been changed.</p>
+                <p style={{ fontSize: 11.5, color: "#6B6457", lineHeight: 1.5, marginBottom: 18 }}>You'll stay signed in here — but any other device or tab already signed into this account will be signed out and need to log in again with the new password.</p>
+                <button onClick={closePwModal} style={{ width: "100%", border: "none", padding: "10px 0", borderRadius: 11, fontSize: 12, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", cursor: "pointer", background: "linear-gradient(135deg, #C9A96E 0%, #A8844A 100%)", color: "#1A1A2E" }}>Done</button>
+              </div>
+            ) : (
+              <div>
+                <label style={{ fontSize: 11, color: "#6B6457" }}>Current Password</label>
+                <input type="password" autoComplete="current-password" autoFocus value={pwCurrent} onChange={e => setPwCurrent(e.target.value)}
+                  style={{ width: "100%", border: "1px solid rgba(26,26,46,0.14)", borderRadius: 9, padding: "8px 10px", fontSize: 13, marginTop: 4, marginBottom: 10 }} />
+                <label style={{ fontSize: 11, color: "#6B6457" }}>New Password</label>
+                <input type="password" autoComplete="new-password" value={pwNew} onChange={e => setPwNew(e.target.value)}
+                  style={{ width: "100%", border: "1px solid rgba(26,26,46,0.14)", borderRadius: 9, padding: "8px 10px", fontSize: 13, marginTop: 4, marginBottom: 10 }} />
+                <label style={{ fontSize: 11, color: "#6B6457" }}>Confirm New Password</label>
+                <input type="password" autoComplete="new-password" value={pwConfirm} onChange={e => setPwConfirm(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") submitPwChange(); }}
+                  style={{ width: "100%", border: "1px solid rgba(26,26,46,0.14)", borderRadius: 9, padding: "8px 10px", fontSize: 13, marginTop: 4, marginBottom: 10 }} />
+                {pwErr && <p style={{ fontSize: 11.5, color: "#dc2626", marginBottom: 10 }}>{pwErr}</p>}
+                <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                  <button onClick={closePwModal} style={{ flex: 1, background: "transparent", color: "#6B6457", border: "1px solid rgba(26,26,46,0.14)", padding: "10px 0", borderRadius: 11, fontSize: 12, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", cursor: "pointer" }}>Cancel</button>
+                  <button onClick={submitPwChange} disabled={pwBusy} style={{ flex: 1, border: "none", padding: "10px 0", borderRadius: 11, fontSize: 12, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase", cursor: pwBusy ? "default" : "pointer", opacity: pwBusy ? 0.6 : 1, background: "linear-gradient(135deg, #C9A96E 0%, #A8844A 100%)", color: "#1A1A2E" }}>{pwBusy ? "Changing…" : "Change"}</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* GLOBAL BULK-TAG PROGRESS PILL — visible on every Studio screen while tagging runs */}
       {bulkTag.running && (
         <div style={{ position: "fixed", bottom: 20, right: 20, zIndex: 100000, background: "#1f2937", color: "#fff", padding: "10px 14px", borderRadius: 12, fontSize: 12, boxShadow: "0 6px 24px rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.12)", minWidth: 220 }}>
@@ -15158,6 +15221,13 @@ export default function StudioApp() {
                       </div>
                       {saveError && <div style={{ fontSize: 10.5, color: "#EF4444", fontWeight: 600, marginTop: 6 }}>Changes are not saving</div>}
                     </div>
+                    <button role="menuitem" className="sa-acct-item"
+                      onClick={() => { setAcctMenuOpen(false); setPwModalOpen(true); }}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "10px 13px",
+                        background: "transparent", border: "none", color: "#fff", fontSize: 12.5, fontWeight: 600,
+                        cursor: "pointer", textAlign: "left" }}>
+                      <IconLock size={14} />Change Password
+                    </button>
                     <button role="menuitem" className="sa-acct-item"
                       onClick={() => { setAcctMenuOpen(false); doLogout(); }}
                       style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "10px 13px",
