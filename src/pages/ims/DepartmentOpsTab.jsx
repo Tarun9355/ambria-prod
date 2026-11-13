@@ -956,9 +956,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // department, and whenever the log is opened.
   const LOG_PAGE = 10;
   const [logPage, setLogPage] = useState(0);
+  // One person's changes only (owner ask 2026-11-13): "" = everyone. A chip per person who changed something, most changes first.
+  const [logBy, setLogBy] = useState("");
   const logListRef = useRef(null);
-  useEffect(() => { setLogPage(0); }, [sel?.id, dept, logOpen]);
-  const logPages = Math.max(1, Math.ceil(recentChanges.length / LOG_PAGE));
+  useEffect(() => { setLogPage(0); setLogBy(""); }, [sel?.id, dept, logOpen]);
+  useEffect(() => { setLogPage(0); if (logListRef.current) logListRef.current.scrollTop = 0; }, [logBy]);
+  const logPeople = useMemo(() => {
+    const m = new Map();
+    recentChanges.forEach(r => { const p = String(r.requestedBy || "").trim() || "—"; m.set(p, (m.get(p) || 0) + 1); });
+    return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [recentChanges]);
+  const logEntries = logBy ? recentChanges.filter(r => (String(r.requestedBy || "").trim() || "—") === logBy) : recentChanges;
+  const logPages = Math.max(1, Math.ceil(logEntries.length / LOG_PAGE));
   const logPageNow = Math.min(logPage, logPages - 1);
   const goLogPage = (p) => { setLogPage(Math.max(0, Math.min(logPages - 1, p))); if (logListRef.current) logListRef.current.scrollTop = 0; };
 
@@ -4036,7 +4045,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                 event's + this department's reserved items actually change. */}
             {(() => {
               if (!logOpen || !recentChanges.length) return null;
-              const shown = recentChanges.slice(logPageNow * LOG_PAGE, logPageNow * LOG_PAGE + LOG_PAGE);
+              const shown = logEntries.slice(logPageNow * LOG_PAGE, logPageNow * LOG_PAGE + LOG_PAGE);
               const firstNo = logPageNow * LOG_PAGE + 1, lastNo = firstNo + shown.length - 1;
               return (
                 /* ── A SHEET THAT FITS ITS CONTENT ──
@@ -4049,7 +4058,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                     className="relative w-full sm:max-w-xl bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[85vh] sm:max-h-[80vh]">
                   {/* Grab handle: the platform's mark for "this is a sheet, swipe or tap out". */}
                   <div aria-hidden="true" className="sm:hidden pt-2 flex justify-center"><span className="w-9 h-1 rounded-full bg-gray-200" /></div>
-                  <div className="shrink-0 px-4 pt-3 pb-3 flex items-center gap-3 border-b border-gray-100">
+                  <div className="shrink-0 px-4 pt-3 pb-3 flex items-start gap-3 border-b border-gray-100">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="text-[15px] font-semibold text-gray-900">Activity log</span>
@@ -4059,6 +4068,22 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                           page header already names, and "Read-only" is evident: there is nothing
                           here to edit. */}
                       <div className="mt-0.5 text-xs text-gray-500">Changes made in Studio</div>
+                      {/* Whose changes: everyone, or one person's. Only when more than one person changed something. */}
+                      {logPeople.length > 1 && (
+                        <div role="group" aria-label="Filter by person" className="mt-2.5 -mx-1 px-1 flex gap-1.5 overflow-x-auto [scrollbar-width:none]">
+                          {[["", recentChanges.length], ...logPeople].map(([p, n]) => {
+                            const on = logBy === p;
+                            return (
+                              <button key={p || "__all"} onClick={() => setLogBy(p)} aria-pressed={on}
+                                className={"shrink-0 h-8 px-2.5 rounded-full text-xs font-medium whitespace-nowrap inline-flex items-center gap-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 "
+                                  + (on ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900")}>
+                                {p || "All"}
+                                <span className={"tabular-nums text-[10px] " + (on ? "text-blue-100" : "text-gray-400")}>{n}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                     <button onClick={() => setLogOpen(false)} aria-label="Close"
                       className="group shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400 transition-colors">
@@ -4172,7 +4197,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                         className="h-9 px-3 rounded-lg text-xs font-semibold text-gray-700 bg-white ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">
                         ‹ Previous
                       </button>
-                      <span className="text-[11px] text-gray-500 tabular-nums" aria-live="polite">{firstNo}–{lastNo} of {recentChanges.length}</span>
+                      <span className="text-[11px] text-gray-500 tabular-nums" aria-live="polite">{firstNo}–{lastNo} of {logEntries.length}</span>
                       <button onClick={() => goLogPage(logPageNow + 1)} disabled={logPageNow >= logPages - 1}
                         className="h-9 px-3 rounded-lg text-xs font-semibold text-gray-700 bg-white ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">
                         Next ›
