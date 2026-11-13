@@ -41,6 +41,9 @@ describe("shared Fabric & Tenting book", () => {
     const lines = [
       { id: "Fabric:l", name: "Liza Fabric (Old)", qty: 29.88, sub: "" },
       { id: "Tenting:t", name: "Truss pillar 12ft", qty: 8, sub: "truss structure" },
+      { id: "Tenting:b", name: "Batta", qty: 514, sub: "truss structure" },
+      { id: "Tenting:p", name: "Platform", qty: 1600, sub: "platform structure (blended Wood+Iron rate)" },
+      { id: "Tenting:c", name: "Brown Beige Rug Carpet", qty: 1600, qtyUnit: "sqft", parts: [{ zone: "Stage", qty: 800 }], sub: "carpet" },
     ];
     const html = buildDeptBookHtml(ctx("Tenting", lines), {}, {}, { depts: ["Fabric", "Tenting"] });
     expect(html).not.toContain("Also on site");
