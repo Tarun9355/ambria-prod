@@ -164,7 +164,9 @@ function StudioBrowse({ ctx }) {
   // its functions' builds is still coming in; Continue / Resume wait for it. A 10s backstop per deal, like pricing's, so a build
   // that never arrives (a function removed since that save) cannot leave the buttons disabled for good.
   const [fnWaitOver, setFnWaitOver] = useState(false);
-  useEffect(() => { setFnWaitOver(false); const t = setTimeout(() => setFnWaitOver(true), 10000); return () => clearTimeout(t); }, [ctx.activeClientId]);
+  // The 10s starts each time loading starts (a deal opened, a function added, a switch) - not once per deal, or a function added
+  // a minute after the deal was opened would get no wait at all.
+  useEffect(() => { setFnWaitOver(false); if (ctx.allFnsLoaded !== false) return undefined; const t = setTimeout(() => setFnWaitOver(true), 10000); return () => clearTimeout(t); }, [ctx.activeClientId, ctx.allFnsLoaded]);
   const fnsLoadingAll = ctx.allFnsLoaded === false && !fnWaitOver;
   // Customize/Exact Look both hand off to pickAndLoadFromVideo → loadEvent, which REPLACES
   // enabledEls wholesale (down to just `{lighting:true}`) for whichever function is active — it

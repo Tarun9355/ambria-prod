@@ -6355,15 +6355,20 @@ export default function StudioApp() {
   const allFnsLoaded = useMemo(() => {
     if (!ledgerReady || restoring || !pricingReady || isFnSwitching) return false;
     if (!activeClientId) return true;
-    const top = clientLedger.find((c) => c.id === activeClientId)?.sessions?.[0];
-    if (!top) return true;
+    const cli = clientLedger.find((c) => c.id === activeClientId);
     const totalFns = 1 + (extraFunctions || []).length;
+    // Every function the deal has (its saved row) must be on screen - the Function chips are drawn from these. A function added in
+    // Event Info reached Browse a moment after the button had already turned on (owner's recording 2026-11-13).
+    if (Array.isArray(cli?.functions) && cli.functions.length > totalFns) return false;
+    const top = cli?.sessions?.[0];
+    if (!top) return true;
     const withData = new Set();
     if (Array.isArray(top._fnRows)) top._fnRows.forEach((r) => { if (r && r.has_data && Number.isInteger(Number(r.fn_idx))) withData.add(Number(r.fn_idx)); });
     else Object.keys(top.fnSnapshots || {}).forEach((k) => withData.add(Number(k)));
     for (const i of withData) {
-      if (!(i >= 0 && i < totalFns) || i === activeFnIdx) continue;
-      if (!fnBuilds || fnBuilds[i] == null) return false;
+      if (i === activeFnIdx || i < 0) continue;
+      // a saved build for a function not on screen yet is still loading (Browse's 10s backstop covers one that was removed)
+      if (i >= totalFns || !fnBuilds || fnBuilds[i] == null) return false;
     }
     return true;
   }, [ledgerReady, restoring, pricingReady, isFnSwitching, activeClientId, clientLedger, extraFunctions, activeFnIdx, fnBuilds]);
