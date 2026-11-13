@@ -93,6 +93,19 @@ describe("syncManualItemToBuild", () => {
     expect(changed.entry[0].qty).toBe(5);
     expect(changed.entry).toHaveLength(1);
   });
+
+  it("carries the manual item's own repeatOverride onto a brand-new entry (review finding, 2026-11-13: a manual block added to an already-Repeat zone must start Fresh, same as Build's own add-search)", () => {
+    const ze = { entry: [] };
+    const mi = { manualId: "m1", imsId: "I1", qty: 1, repeatOverride: false };
+    const next = syncManualItemToBuild(ze, "entry", mi, { name: "Extra Chair" });
+    expect(next.entry[0].repeatOverride).toBe(false);
+  });
+
+  it("never stomps an existing entry's own repeatOverride on re-sync — a manual toggle on the Build card must survive even though the manual item's original stamp differs", () => {
+    const ze = { entry: [{ invId: "I1", imsId: "I1", name: "Extra Chair", qty: 3, _dcManualId: "m1", repeatOverride: true }] };
+    const next = syncManualItemToBuild(ze, "entry", { manualId: "m1", imsId: "I1", qty: 5, repeatOverride: false }, { name: "Extra Chair" });
+    expect(next.entry[0].repeatOverride).toBe(true);
+  });
 });
 
 describe("split lifecycle", () => {

@@ -12009,7 +12009,10 @@ export default function StudioApp() {
       // have a stale baseQty baked in (e.g. 0.5, left over from a long-gone ÷2). A fresh photo pick
       // always derives its base from that photo's own qty, never an inherited one, or the very next
       // Scale edit multiplies the WRONG base and lands on a qty nobody asked for.
-      const rawEls = JSON.parse(JSON.stringify(photo.elements)).map(({ baseQty: _drop, prefs: _c, pid: _p, ...e }) => e); // eslint-disable-line no-unused-vars
+      // repeatOverride (like baseQty/prefs/pid): deal-specific, never part of a photo's recipe — an
+      // older master saved before the save-side strip (review finding, 2026-11-13, "L1") could still
+      // carry one; stripped here too so picking that photo into a brand-new deal never inherits it.
+      const rawEls = JSON.parse(JSON.stringify(photo.elements)).map(({ baseQty: _drop, prefs: _c, pid: _p, repeatOverride: _ro, ...e }) => e); // eslint-disable-line no-unused-vars
       finalEls = curScale > 1
         ? rawEls.map(e => { const base = Number(e.qty) || 0; return { ...e, baseQty: base, qty: Math.max(0, Math.round(base * curScale)) }; })
         : rawEls;
@@ -12136,7 +12139,7 @@ export default function StudioApp() {
     // Strip any stray baseQty the photo's saved elements carry — see the matching note in
     // selectElPhoto; a photo corrected mid-scale can bake in a leftover ratio that has nothing to do
     // with this build.
-    const tagged = (photo.isLibrary ? (photo.elements || []) : []).map(({ baseQty: _drop, prefs: _c, pid: _p, ...it }) => ({ ...JSON.parse(JSON.stringify(it)), _srcPhotoKey: photoKey })); // eslint-disable-line no-unused-vars
+    const tagged = (photo.isLibrary ? (photo.elements || []) : []).map(({ baseQty: _drop, prefs: _c, pid: _p, repeatOverride: _ro, ...it }) => ({ ...JSON.parse(JSON.stringify(it)), _srcPhotoKey: photoKey })); // eslint-disable-line no-unused-vars
     setZoneElements(p => ({ ...p, [elKey]: [...(p[elKey] || []), ...tagged] }));
     if (!current.length) {
       setElSelectedPhoto(p => ({ ...p, [elKey]: photo }));

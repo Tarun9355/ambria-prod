@@ -3508,7 +3508,10 @@ undefined
             const have = new Set((zoneElements[pk] || []).map((el) => el.invId));
             const fresh = items.filter((it) => !have.has(it.id));
             if (fresh.length) {
-              setZoneElements((prev) => ({ ...prev, [pk]: [...(prev[pk] || []), ...fresh.map((it) => ({ name: it.name, qty: 1, unit: it.unit, size: "", invId: it.id, addedAt: todayStr() }))] }));
+              // repeatOverride:false when the zone is already Repeat — see the zone card's own
+              // add-search for the full rationale; a wall just added here can't be reused stock either.
+              const freshOv = isRepeatCat(pk, "elements") ? { repeatOverride: false } : {};
+              setZoneElements((prev) => ({ ...prev, [pk]: [...(prev[pk] || []), ...fresh.map((it) => ({ name: it.name, qty: 1, unit: it.unit, size: "", invId: it.id, addedAt: todayStr(), ...freshOv }))] }));
               showMsg(fresh.length === 1 ? `Added "${String(fresh[0].name).trim()}" to ${zoneMeta[pk]?.label || pk}` : `Added ${fresh.length} printed walls to ${zoneMeta[pk]?.label || pk}`, "green");
             }
             setPrintedWallPicker(null);
@@ -4239,7 +4242,9 @@ undefined
         // same way selecting it would (saved full zone spec over the dims-derived one).
         const isSel = elSelectedPhoto[k]?.isLibrary && elSelectedPhoto[k]?.eventId === selP.eventId;
         const draft = isSel ? null : {
-          elements: JSON.parse(JSON.stringify(m.elements || [])).map(({ baseQty: _b, ...e }) => e),
+          // repeatOverride is deal-specific, same as baseQty — never seed a draft of the master with
+          // one left over from an older, pre-strip save (review finding, 2026-11-13, "L1").
+          elements: JSON.parse(JSON.stringify(m.elements || [])).map(({ baseQty: _b, repeatOverride: _ro, ...e }) => e),
           cfg: { ...(ctx.buildZoneConfig?.(k, m.dims || {}) || {}), ...JSON.parse(JSON.stringify(m.zoneConfigByType?.[k] || {})) },
         };
         setCorrectPhoto({ libId: selP.eventId, zoneKey: k, name: m.name || "", tags: mt, draft });
@@ -5126,9 +5131,17 @@ undefined
                       if(!addElPos||addElPos.key!==k) return null;
                       return matches.length>0?createPortal(<div className="ael-widget" style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
                         {matches.map(m=>{
+                          // isRepeatCat(k,"elements")?{repeatOverride:false}:{} on every add below: a brand-new
+                          // element just picked from search has never been installed anywhere before, so it
+                          // can't actually BE reused/repeat stock — stamping an explicit Fresh override the
+                          // moment the zone is already Repeat keeps it priced (and badged) fresh instead of
+                          // silently inheriting the zone's ♻️ flag (owner report, 2026-11-13: a new item added
+                          // to a Repeat zone was defaulting to Repeat pricing with no override at all). Leaving
+                          // the field out entirely when the zone ISN'T Repeat keeps every non-Repeat zone
+                          // exactly as before (inherited vs explicit-false price identically there anyway).
                           if(m.kind==="pat"){ const pt=m.pt; return <div key={"pat:"+pt.id}
                             onClick={()=>{
-                              if(!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id}]}));}
+                              if(!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id,...(isRepeatCat(k,"elements")?{repeatOverride:false}:{})}]}));}
                               setZoneElSearch(prev=>({...prev,[k]:""}));
                             }}
                             style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
@@ -5145,7 +5158,7 @@ undefined
                           </div>; }
                           if(m.kind==="mandi"){ const mi=m.m; const variants=Array.isArray(mi.colorVariants)?mi.colorVariants:[]; return <div key={"mandi:"+mi.id}
                             onClick={()=>{
-                              if(!(zoneElements[k]||[]).find(el=>el.mandiId===mi.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:mi.name,qty:1,unit:mi.unit||"kg",size:"",mandiId:mi.id,mandiVariantId:variants.length===1?variants[0].variantId:""}]}));}
+                              if(!(zoneElements[k]||[]).find(el=>el.mandiId===mi.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:mi.name,qty:1,unit:mi.unit||"kg",size:"",mandiId:mi.id,mandiVariantId:variants.length===1?variants[0].variantId:"",...(isRepeatCat(k,"elements")?{repeatOverride:false}:{})}]}));}
                               setZoneElSearch(prev=>({...prev,[k]:""}));
                             }}
                             style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
@@ -5194,7 +5207,7 @@ undefined
                               // made, not just today's live date — markSold bulk-freezes every
                               // element present at sale time to the sold date, so this stamp only
                               // ever matters for an item added to a deal that's already Sold.
-                              if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr()}]}));}
+                              if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr(),...(isRepeatCat(k,"elements")?{repeatOverride:false}:{})}]}));}
                               setZoneElSearch(prev=>({...prev,[k]:""}));
                             }}
                             style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
@@ -6165,7 +6178,12 @@ undefined
         // verbatim baked a stray scale ratio into the master; the next salesperson to pick this photo
         // fresh (scale back at 1) would have it silently resurface on their very first Scale edit,
         // multiplying against a base that had nothing to do with their build. Strip it at the source.
-        const elems=JSON.parse(JSON.stringify((ownsLive?(zoneElements[zk]||master?.elements):(correctPhoto.draft?.elsDirty?correctPhoto.draft.elements:master?.elements))||[])).map(({baseQty:_drop,...e})=>e);
+        // repeatOverride (like baseQty) is a deal-specific pricing choice, not part of the recipe —
+        // saving it verbatim would let a Fresh/Repeat mark picked for THIS deal's zone (including the
+        // repeatOverride:false this build now auto-stamps on anything added to an already-Repeat zone)
+        // silently resurface against a completely different deal that later picks this photo (review
+        // finding, 2026-11-13: without this, the new auto-stamp fix leaks into Library masters).
+        const elems=JSON.parse(JSON.stringify((ownsLive?(zoneElements[zk]||master?.elements):(correctPhoto.draft?.elsDirty?correctPhoto.draft.elements:master?.elements))||[])).map(({baseQty:_drop,repeatOverride:_ro,...e})=>e);
         // Save the FULL zone build spec — dimensions, truss, masking, plinth, carpet, prints,
         // materials, custom ceiling/masking items — everything the salesperson set on this zone, so
         // reselecting the photo restores it exactly. Deal-specific choices (repeat discount, quantity
@@ -6428,9 +6446,19 @@ undefined
               const q=(zoneElSearch[zk]||"").toLowerCase().trim();
               const addMatches=q?(()=>{
                 const kitCoveredIds=new Set(els.filter(el=>el.invId).flatMap(el=>{const it=(imsInventory||[]).find(i=>i.id===el.invId);return it?[...kitDescendantIds(it,imsInventory,el.kitOverrides)]:[];}));
-                const inv=smartFilter((imsInventory||[]).filter(it=>!els.find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)),q,it=>[it.name,it.cat,it.subCat||it.subcategory]).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr()})}));
-                const pat=smartFilter((recipeOnlyPatterns||[]).filter(pt=>!els.find(el=>el.patternId===pt.id)),q,pt=>[pt.name]).map(pt=>({key:"pat:"+pt.id,label:pt.name,sub:"🌺 Flower recipe",make:()=>({name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id})}));
-                const mandi=smartFilter(((dealCheckData||studioFloralData)?.mandiCatalogue||[]).filter(m=>isDirectMandiElement(m)&&!els.find(el=>el.mandiId===m.id)),q,m=>[m.name]).map(m=>{const v=Array.isArray(m.colorVariants)?m.colorVariants:[];return {key:"mandi:"+m.id,label:m.name,sub:`🌸 Mandi · ${m.unit||"kg"}`,src:m.photoUrl,make:()=>({name:m.name,qty:1,unit:m.unit||"kg",size:"",mandiId:m.id,mandiVariantId:v.length===1?v[0].variantId:""})};});
+                // repeatOverride:false the moment this zone is already Repeat — a brand-new element
+                // just added here has never been installed before, so it can't be reused/repeat
+                // stock (same fix as the main zone card's own add-search above).
+                // ownsLive + zcLive specifically (not cfgCur, which for a draft is the Library master's
+                // own saved config with repeat/repeatCats already stripped at save time) — a draft add
+                // here is editing a Library template, not a live deal's zone, so it has no "currently
+                // Repeat" state of its own to inherit from, and must never pick one up (review finding,
+                // 2026-11-13: cfgCur would almost always read false here anyway post-strip, but an
+                // older, pre-strip master could still read true and wrongly bake Fresh into the recipe).
+                const freshOv=ownsLive&&repeatCatFor(zcLive,"elements")?{repeatOverride:false}:{};
+                const inv=smartFilter((imsInventory||[]).filter(it=>!els.find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)),q,it=>[it.name,it.cat,it.subCat||it.subcategory]).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr(),...freshOv})}));
+                const pat=smartFilter((recipeOnlyPatterns||[]).filter(pt=>!els.find(el=>el.patternId===pt.id)),q,pt=>[pt.name]).map(pt=>({key:"pat:"+pt.id,label:pt.name,sub:"🌺 Flower recipe",make:()=>({name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id,...freshOv})}));
+                const mandi=smartFilter(((dealCheckData||studioFloralData)?.mandiCatalogue||[]).filter(m=>isDirectMandiElement(m)&&!els.find(el=>el.mandiId===m.id)),q,m=>[m.name]).map(m=>{const v=Array.isArray(m.colorVariants)?m.colorVariants:[];return {key:"mandi:"+m.id,label:m.name,sub:`🌸 Mandi · ${m.unit||"kg"}`,src:m.photoUrl,make:()=>({name:m.name,qty:1,unit:m.unit||"kg",size:"",mandiId:m.id,mandiVariantId:v.length===1?v[0].variantId:"",...freshOv})};});
                 return [...inv,...pat,...mandi];
               })():[];
               const prints=cfgCur.prints||[];
