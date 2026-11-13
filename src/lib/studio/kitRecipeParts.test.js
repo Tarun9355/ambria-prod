@@ -28,4 +28,32 @@ describe("kitRecipeParts — the flowers inside a kit, for the Dept PDF's kit pa
   it("patterns list not loaded yet (undefined, not just empty): still shows a generic placeholder rather than silently dropping the row while data catches up", () => {
     expect(kitRecipeParts(tree, undefined, 1).map(r => r.name)).toEqual(["Flower recipe", "Flower recipe"]);
   });
+
+  it("finds a NESTED kit's own recipe too, when given the inventory list (owner report, 2026-11-13: \"if a kit has another kit, the crawlers can miss them too\") — and stays exactly as before when inventory is omitted", () => {
+    const console_ = { id: "console1", subItems: [{ patternId: "FP9", qty: 3 }] };
+    const treeWithNestedConsole = [{ itemId: "console1", qty: 2 }];
+    // Omitted inventory: unchanged behaviour, the nested kit's own recipe is invisible (old gap).
+    expect(kitRecipeParts(treeWithNestedConsole, patterns, 2)).toEqual([]);
+    // With inventory: 2 Trees × 2 Consoles × 3 per-console = 12 bunches, found and named correctly.
+    expect(kitRecipeParts(treeWithNestedConsole, patterns, 2, [console_])).toEqual([
+      { name: "Flower Bunch", qty: 12, uom: "pc", photo: "", patternId: "FP9" },
+    ]);
+  });
+
+  it("honours the deal's own edit of the NESTED kit's recipe (cp.subOverrides), not just its master subItems (review finding, 2026-11-13, \"F4\": this used to pass a bare undefined, ignoring a per-deal edit two levels down)", () => {
+    const console_ = { id: "console1", subItems: [{ patternId: "FP9", qty: 3 }] }; // master: 3/console
+    const editedConsole = [{ itemId: "console1", qty: 2, subOverrides: [{ patternId: "FP9", qty: 10 }] }]; // edited to 10/console
+    // 1 Tree × 2 Consoles × 10 (edited, not the master's 3) = 20 bunches.
+    expect(kitRecipeParts(editedConsole, patterns, 1, [console_])).toEqual([
+      { name: "Flower Bunch", qty: 20, uom: "pc", photo: "", patternId: "FP9" },
+    ]);
+  });
+
+  it("finds a nested kit's recipe via subOverrides even when the master subItems is empty — same nested-depth gap as F4, just with nothing at all on the master side (review finding, 2026-11-13)", () => {
+    const emptyConsole = { id: "console1", subItems: [] };
+    const editedEmptyConsole = [{ itemId: "console1", qty: 2, subOverrides: [{ patternId: "FP9", qty: 3 }] }];
+    expect(kitRecipeParts(editedEmptyConsole, patterns, 2, [emptyConsole])).toEqual([
+      { name: "Flower Bunch", qty: 12, uom: "pc", photo: "", patternId: "FP9" },
+    ]);
+  });
 });

@@ -276,6 +276,72 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
   return { realRate, artRate, extra: Number(sizeData.extraCost) || 0 };
 };
 
+// ─── Floral content beneath a kit, at ANY nesting depth ───────────────────────────────────────
+// Every consumer that needs "what floral stuff is inside this kit" — Build's own guest price
+// (kitFloralCompDelta/attachedPatterns), the mandi list/actuals engine (floralCost.js), the Dept
+// PDF's recipe listing (kitRecipeParts.js), Deal Check's own cost rollup — used to walk a kit's
+// subItems ONE level only, each with its own independent, duplicated loop. A kit nested inside
+// another kit (si.itemId resolving to a SECOND kit, which has its OWN attached recipe or its own
+// florals-category component) was invisible to every one of them: not priced on the guest's bill,
+// not in the mandi list, not in the Dept PDF — silently missing at every single consumer, because
+// none of them ever checked whether a sub-item was itself a kit worth recursing into (owner report,
+// 2026-11-13: "a lot of the times kits own items get missed by the crawl... if a kit has another
+// kit, the crawlers can miss them too").
+//
+// This is the ONE walk now — every consumer above calls this instead of re-deriving its own copy.
+// Mirrors walkKitUnits's own recursion/cycle-guard shape (lib/ims/helpers.js) but, unlike that one
+// (which deliberately SKIPS patternId recipe add-ons — it's for physical/truckable items only),
+// this one is specifically FOR floral content: it visits every patternId recipe add-on AND every
+// florals-category physical component, at any depth, and ALSO recurses into a non-floral-category
+// sub-item if THAT sub-item is itself a kit (its own category is irrelevant — only whether it has
+// subItems of its own to walk).
+//
+// visit(node) is called once per sub-item found: { patternId, qty, size, kitParent, raw } for a
+// recipe add-on, or { itemId, item, qty, size, kitParent, raw } for ANY physical component — every
+// one of them, not just florals-category ones (review finding, 2026-11-13, "F3": the two existing
+// consumers disagree on which categories count — floralCost.js wants florals-category components
+// only, kitFloralCompDelta wants whatever its own matchFlowerPattern call succeeds on regardless of
+// category — so the walker hands back every component and leaves that decision to each consumer,
+// exactly like each one's own pre-existing one-level code already did). `qty` is already multiplied
+// by every ancestor kit's own qty. `kitParent` is always the TOP-LEVEL kit's own name (or id, when
+// unnamed), not the immediate nested parent — the thing every fold-back consumer (a zone page's own
+// card, Deal Check's per-element row) actually keys on, since a nested sub-kit never gets its own
+// separate row to fold into.
+//
+// `item` may be null (review finding, 2026-11-13, "F1": a kit deleted from the catalogue — migration
+// 059 — whose per-deal edit, `overrideSubItems`, still carries a live recipe; `findInv`-style
+// lookups that don't consult the deleted-catalogue snapshot resolve such a kit to nothing, but the
+// override itself is real and must still be walked) — only `overrideSubItems` being a non-empty
+// array can supply subItems in that case, since there is no `item.subItems` to fall back to and no
+// `item.name`/`item.id` for the cycle guard or a default kitParent; the caller is expected to pass
+// an explicit `_kitParent` (e.g. the zone element's own name) in that situation.
+export function walkKitFloralParts(item, qty, allInventory, overrideSubItems, visit, _kitParent, _seen) {
+  if (!(Number(qty) > 0)) return;
+  const subItems = Array.isArray(overrideSubItems) ? overrideSubItems : (item && Array.isArray(item.subItems) ? item.subItems : []);
+  if (!subItems.length) return;
+  const seen = _seen ? new Set(_seen) : new Set();
+  if (item?.id) { if (seen.has(item.id)) return; seen.add(item.id); } // cycle guard, same as walkKitUnits
+  const kitParent = _kitParent || item?.name || item?.id;
+  subItems.forEach((si) => {
+    const siQty = qty * (Number(si.qty) || 0);
+    if (siQty <= 0) return;
+    if (si.patternId) { visit({ patternId: si.patternId, qty: siQty, size: si.size, kitParent, raw: si }); return; }
+    const ci = (allInventory || []).find((i) => i.id === si.itemId);
+    if (!ci) return;
+    visit({ itemId: ci.id, item: ci, qty: siQty, size: si.size, kitParent, raw: si });
+    // Recurse regardless of THIS node's own category — a non-floral kit (e.g. a console nested
+    // inside Tree) can still carry its own attached recipe or its own floral component deeper in.
+    // Gate on EITHER the master's own subItems OR the deal's subOverrides for this nested kit —
+    // not subItems alone (review finding, 2026-11-13: a nested kit whose MASTER subItems is empty
+    // but whose per-deal subOverrides carries a live recipe used to be silently skipped; same shape
+    // as the 2026-11-12 top-level rule, just not applied at nested depth until now).
+    const subOv = Array.isArray(si.subOverrides) ? si.subOverrides : undefined;
+    if (subOv?.length || (Array.isArray(ci.subItems) && ci.subItems.length > 0)) {
+      walkKitFloralParts(ci, siQty, allInventory, subOv, visit, kitParent, seen);
+    }
+  });
+}
+
 // A kit's PLAIN components ({itemId,qty} — not patternId add-ons) can themselves be floral items
 // whose own sub-category carries a flower recipe. priceForInvItem counts only their FLAT RENTAL, so
 // the recipe money has to be added on top of the kit's price. This returns exactly that top-up.
@@ -287,27 +353,57 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
 // The flat rental cancels out algebraically and is NOT looked up here: the editor's per-unit figure
 // is `blend + extra + flatRental` and the delta is that minus `flatRental`, leaving just the recipe
 // part. Don't "fix" this by adding a rental lookup — that double-counts.
+//
+// `comps` only walks ONE level in by itself — nested-kit recursion (walkKitFloralParts, above) is
+// applied here too now, so a component that is itself a kit with its own floral component inside
+// contributes its own top-up as well, not just comps' own direct entries.
 export const kitFloralCompDelta = ({ comps, inventory, flowerPatterns, mandiCatalogue, floralSettings, rcFloralModeByKey, floralRatio, elSize, rcFactorByKey }) => {
   if (!Array.isArray(comps) || comps.length === 0) return 0;
   const modes = rcFloralModeByKey || {};
   const globalReal = Math.max(0, Math.min(100, 100 - (Number(floralRatio) || 0)));
-  return comps.reduce((sum, c) => {
-    if (!c || c.patternId) return sum;   // recipe add-ons are priced separately, on top
-    const cItem = (inventory || []).find((i) => i.id === c.itemId);
-    if (!cItem) return sum;
+  const priceComponent = (cItem, size, realPctOverride, qty) => {
     const pat = matchFlowerPattern(cItem, flowerPatterns || []);
-    if (!pat) return sum;                // not a floral component — the overwhelming majority
+    if (!pat) return 0;                // not a floral component — the overwhelming majority
     // A component may pin its own size; with none it inherits the element's, and a missing size
     // means "big" — the same fallback every other kit-pricing call site uses.
-    const rates = floralPatternUnitRates(pat, sizeClassToPatternKey(c.size || elSize || "B"), mandiCatalogue || [], floralSettings || {}, inventory, rcFactorByKey);
-    if (!rates) return sum;
+    const rates = floralPatternUnitRates(pat, sizeClassToPatternKey(size || elSize || "B"), mandiCatalogue || [], floralSettings || {}, inventory, rcFactorByKey);
+    if (!rates) return 0;
     const sk = String(cItem.subCat || cItem.subcategory || pat.sub || "").trim().toLowerCase();
     const subMode = sk ? modes[sk] : undefined;
     const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : globalReal;
-    const realPct = (typeof c.realPct === "number" && c.realPct >= 0 && c.realPct <= 100) ? c.realPct : modeDefault;
+    const realPct = (typeof realPctOverride === "number" && realPctOverride >= 0 && realPctOverride <= 100) ? realPctOverride : modeDefault;
     const recipeMoney = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
-    return sum + recipeMoney * (Number(c.qty) || 0);
+    return recipeMoney * (Number(qty) || 0);
+  };
+  const direct = comps.reduce((sum, c) => {
+    if (!c || c.patternId) return sum;   // recipe add-ons are priced separately, on top
+    const cItem = (inventory || []).find((i) => i.id === c.itemId);
+    if (!cItem) return sum;
+    return sum + priceComponent(cItem, c.size, c.realPct, c.qty);
   }, 0);
+  // A NESTED kit's own floral component, any depth down — comps' own direct loop above only ever
+  // sees comps' immediate entries, so a kit-inside-a-kit's own floral part needed its own walk.
+  let nested = 0;
+  comps.forEach((c) => {
+    if (!c || c.patternId || !c.itemId) return;
+    const cItem = (inventory || []).find((i) => i.id === c.itemId);
+    if (!cItem) return;
+    const subOv = Array.isArray(c.subOverrides) ? c.subOverrides : undefined;
+    // Gate on EITHER the master's own subItems OR the deal's subOverrides (same nested-depth fix as
+    // walkKitFloralParts' own recursion gate above — a nested kit with empty master subItems but a
+    // live subOverrides edit must still be walked).
+    if (!subOv?.length && (!Array.isArray(cItem.subItems) || !cItem.subItems.length)) return;
+    walkKitFloralParts(cItem, Number(c.qty) || 0, inventory, subOv, (node) => {
+      // node.raw is the SUB-ITEM's own entry at whichever depth it was found — its own realPct
+      // pin (set via subOverrides) must be honoured the same way the direct loop honours c.realPct
+      // above, not dropped (review finding, 2026-11-13, "F3": this used to pass undefined, always
+      // falling back to the mode default regardless of a nested per-instance override).
+      if (node.itemId) nested += priceComponent(node.item, node.size, node.raw?.realPct, node.qty);
+      // node.patternId (a nested recipe add-on) is priced by attachedPatterns' own recursive walk,
+      // not here — kitFloralCompDelta is specifically the "plain floral component" top-up.
+    });
+  });
+  return direct + nested;
 };
 
 const RC_UNIT_LABELS = {

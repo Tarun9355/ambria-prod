@@ -110,7 +110,7 @@ import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing, assembleMarkedDatesFromRows } from "../../lib/inventory/helpers";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits, kitDescendantIds } from "../../lib/ims/helpers";
-import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
+import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, walkKitFloralParts, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
 import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDefaultWindowsByPhaseFromRows } from "../../lib/ims/labourTypes";
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
@@ -5195,6 +5195,10 @@ export default function StudioApp() {
       return t;
     })();
     const isKit = Array.isArray(item.subItems) && item.subItems.length > 0;
+    // Set by the isKit floral branch below when applicable; added back on top of whichever pricing
+    // path (availability-checked or plain) this element ultimately falls through to.
+    let kitFlowerCost = 0;
+    let kitFlowerSMB = false;
     // The real/artificial mix of the function BEING PRICED. Every event-level caller (event total,
     // Summary breakdown, cost sheet) prices all functions in one pass and passes each one's own
     // ratio as opts.fnRatio; falling back to `floralRatio` (the ACTIVE function's mix) priced every
@@ -5249,13 +5253,21 @@ export default function StudioApp() {
       // Per-instance overrides (el.kitOverrides) replace the kit's own global subItems recipe for
       // THIS element only — same source priceForInvItem below already reads for the rental total.
       const effectiveSubItems = Array.isArray(el.kitOverrides) ? el.kitOverrides : (item.subItems || []);
-      const attachedPatterns = effectiveSubItems
-        .filter((si) => si.patternId)
+      // walkKitFloralParts (not a plain one-level filter over effectiveSubItems) so a recipe attached
+      // to a NESTED kit — a kit inside this kit, at any depth — is priced too, not just this kit's
+      // own immediate add-ons (owner report, 2026-11-13: nested-kit floral content silently missing
+      // from the guest's bill). qty starts at 1 (one unit of THIS element) so each node's own `qty`
+      // already carries every ancestor kit's own per-unit multiplier, same as a direct si.qty read
+      // always did for the un-nested case.
+      const attachedPatterns = [];
+      walkKitFloralParts(item, 1, invForPricing, el.kitOverrides, (node) => {
+        if (!node.patternId) return;
         // patternById is live-only (owner decision, 2026-11-12: a deleted flower pattern is gone
         // everywhere) — an attached recipe since deleted from the Flower Patterns library resolves
-        // to nothing and the `.filter((x) => x.pattern)` below drops it, same as never attached.
-        .map((si) => ({ pattern: patternById(si.patternId), qty: si.qty, si }))
-        .filter((x) => x.pattern);
+        // to nothing, same as never attached.
+        const pattern = patternById(node.patternId);
+        if (pattern) attachedPatterns.push({ pattern, qty: node.qty, si: node.raw });
+      });
       // (3) a plain component that is ITSELF a floral item — its own sub-category's recipe. Only its
       //     flat rental reaches priceForInvItem, so the recipe money is topped up here. This was
       //     missing: the kit's own breakdown (KitComponentsEditor's footer) counted it while the
@@ -5268,11 +5280,19 @@ export default function StudioApp() {
       });
       // compDelta alone is enough to take this branch — a kit can have floral components without
       // carrying a sub-category recipe or any add-on of its own.
+      //
+      // kitFlowerCost/kitFlowerSMB (not an early return, as this used to be): the recipe/floral-
+      // component part of a kit's price isn't itself rentable stock, so it never needs an
+      // availability-shortfall check — but the kit's own PHYSICAL rental quantity still does, and
+      // a floral kit used to skip that check entirely (warning: null, unconditionally), which let a
+      // double-booked/overbooked floral kit sell past its real stock with no shortfall badge at all
+      // (owner decision, 2026-11-13, F2: "needs the shortfall check restored"). Falling through to
+      // the shared availability-check block below (instead of returning here) restores it for the
+      // kit's rental side; kitFlowerCost is added back on top of whatever that block computes,
+      // further down, exactly once, per unit.
       if (subCatPattern || attachedPatterns.length || compDelta > 0) {
-        const flowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty, x.si), 0) + compDelta;
-        const unitPrice = priceForInvItem(item, rcFactorByKey, invForPricing, el.kitOverrides) + flowerCost;
-        const anySMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
-        return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: anySMB };
+        kitFlowerCost = recipeCost(subCatPattern, item.subCat || item.subcategory) + attachedPatterns.reduce((sum, x) => sum + recipeCost(x.pattern, x.pattern.sub, x.qty, x.si), 0) + compDelta;
+        kitFlowerSMB = subCatPattern?.mode === "smb" || attachedPatterns.some((x) => x.pattern.mode === "smb");
       }
     }
 
@@ -5414,8 +5434,16 @@ export default function StudioApp() {
       // so this floors to ownedRate — no production premium for something that can't be produced.
       const shortRate = Math.max(ownedRate, (Number(item.cost) || 0) * (oosCostPctFor(item, rcCostPctForSub, shortfallFnDate, shortfallAsOf) / 100));
       const shortCost = shortQty * shortRate;
-      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides) + shortCost;
-      const unitPrice = qty > 0 ? lineCost / qty : ownedRate;
+      // kitFlowerCost (a floral kit's recipe/component top-up, per unit — see isKit above) is never
+      // itself subject to the shortfall split (a recipe isn't rentable stock), but OWNED units must
+      // still carry it THROUGH repeatAdjustedLineCost — folded into that call's own unitRate, same as
+      // the old early-return did — so it still gets Repeat/standing-stock/cross-function discounting
+      // (review finding, 2026-11-13, "F1": a bare `+ kitFlowerCost * qty` added after the discount
+      // call left the recipe money undiscounted even for fully-owned, non-short units). SHORT units
+      // still get the recipe money, just at full rate on top of shortCost — same as the discount
+      // never applying to a true shortfall's rental portion either.
+      const lineCost = repeatAdjustedLineCost(item, ownedQty, ownedRate + kitFlowerCost, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides) + shortCost + kitFlowerCost * shortQty;
+      const unitPrice = qty > 0 ? lineCost / qty : ownedRate + kitFlowerCost;
       // outOfStock: genuinely nothing can be done about this shortfall (no stock, can't be made
       // either, or not enough production lead time left) — StudioBuild.jsx's badge reads this to
       // show "Out of stock" instead of "priced at cost%", openAvailModal (StudioApp.jsx) refuses to
@@ -5471,13 +5499,13 @@ export default function StudioApp() {
       // item that ever took this availability-checked path — which is every element card in Build.
       // shortCost (raw, pre-date-multiplier) — getElPrice's own wrapper reads this to keep the
       // date-category multiplier off a true shortfall's cost-basis price (see its own comment).
-      return { rc: null, unitPrice, fullUnitPrice: ownedRate, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, available: ownedQty, shortCost, outOfStock, maxQty, shortWhy,
+      return { rc: null, unitPrice, fullUnitPrice: ownedRate + kitFlowerCost, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, patternSMB: kitFlowerSMB, available: ownedQty, shortCost, outOfStock, maxQty, shortWhy,
         // madeToOrder: short on the date, but the item is ticked 'Can be made' and there is time to make it - Build does not call it
         // short (owner ask 2026-11-06); it is still priced at cost% for the part past stock, and Planning still sees it to be made.
         madeToOrder: shortQty > 0 && canMakeShort };
     }
-    const unitPrice = priceForInvItem(item, rcFactorByKey, invForPricing, el.kitOverrides);
-    return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null };
+    const unitPrice = priceForInvItem(item, rcFactorByKey, invForPricing, el.kitOverrides) + kitFlowerCost;
+    return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: kitFlowerSMB };
   }, [imsInventory, invForPricing, patternById, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate, flowerRateForFn, hideDiscountFromClient]);
 
   // Thin outer wrapper: resolves live-vs-deleted `item` once, calls the core pricing body, then

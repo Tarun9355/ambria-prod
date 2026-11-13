@@ -57,7 +57,7 @@
 // "flower" rows (IMS Admin UI) — greens/real-only/mapping items have no palette picker at all,
 // so they're simply never reuse-eligible under this mechanism.
 
-import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass, convertFlowerQty } from "../ims/flowerHelpers";
+import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass, convertFlowerQty, walkKitFloralParts } from "../ims/flowerHelpers";
 import { repeatCatFor, parseFlowerPalette, fuzzyColourMatch } from "./pricing";
 import { shiftToTiming } from "./manpowerCount";
 
@@ -236,21 +236,18 @@ export function computeFnRawFlowerUsage(fn, opts) {
       expandedElems.push(el);
       const kitInvItem = findInv(el.invId);
       // Same rule as computeFnFloralCost below (kept in sync manually — fixed together, 2026-11-12):
-      // el.kitOverrides (the deal's own edit) checked FIRST, master subItems only as fallback, gated
-      // on there being any kitParts at all rather than on the master item's own subItems being
-      // non-empty — so an edited kit whose master subItems is empty, or whose invId can't resolve
-      // here, still contributes its el.kitOverrides recipe to the preceding-function reuse credit.
-      const outerQty = el.qty || 0;
-      const kitParts = Array.isArray(el.kitOverrides) && el.kitOverrides.length > 0 ? el.kitOverrides : (kitInvItem?.subItems || []);
-      if (kitParts.length > 0) {
-        kitParts.forEach((si) => {
-          const siQty = (Number(si.qty) || 0) * outerQty;
-          if (siQty <= 0) return;
-          if (si.patternId) { expandedElems.push({ name: `${el.name || kitInvItem?.name || "Kit"} · recipe`, patternId: si.patternId, qty: siQty, size: el.size }); return; }
-          const ci = findInv(si.itemId);
-          if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size });
-        });
-      }
+      // el.kitOverrides (the deal's own edit) checked FIRST, master subItems only as fallback — so an
+      // edited kit whose master subItems is empty, or whose invId can't resolve here, still
+      // contributes its el.kitOverrides recipe to the preceding-function reuse credit. walkKitFloralParts
+      // (lib/ims/flowerHelpers.js) recurses into a NESTED kit's own recipe/component too, at any depth
+      // (fixed alongside computeFnFloralCost — owner report, 2026-11-13).
+      walkKitFloralParts(kitInvItem, el.qty || 0, [...imsInventory, ...dcInventoryCache], el.kitOverrides, (node) => {
+        if (node.patternId) { expandedElems.push({ name: `${node.kitParent} · recipe`, patternId: node.patternId, qty: node.qty, size: node.size || el.size }); return; }
+        // florals-category only — same scope the old one-level code had (see computeFnFloralCost's
+        // own matching comment, "F3").
+        if (String(node.item.cat || node.item.category || "").toLowerCase() !== "florals") return;
+        expandedElems.push({ name: node.item.name, invId: node.item.id, qty: node.qty, size: node.size || el.size });
+      }, el.name || kitInvItem?.name);
     });
     expandedElems.forEach((el) => {
       const elName = (el.name || "").toLowerCase().trim();
@@ -418,42 +415,40 @@ export function computeFnFloralCost(fn, allFns, opts) {
 
     // A kit's own subItems can carry floral content of their own — a flower-recipe add-on
     // (si.patternId, e.g. a floral topper baked into a stage kit) or a component item that is
-    // itself categorized as florals. Neither ever reached this tab before: the loop below only
-    // ever looked at the outer element's own invId/patternId/name, so a kit's floral pieces
-    // were priced correctly (Build's getElPrice already folds kitFloralCompDelta/
-    // attachedPatterns into the rental line) but never itemized here.
+    // itself categorized as florals — at ANY nesting depth (walkKitFloralParts, lib/ims/flowerHelpers.js:
+    // a kit nested inside this kit, with its OWN attached recipe or floral component, used to be
+    // invisible here too — the walk never went past the first level, same bug class as Build's own
+    // pricing had, fixed alongside — owner report, 2026-11-13: "if a kit has another kit, the
+    // crawlers can miss them too"). Named after the RECIPE/COMPONENT ITSELF, not a generic
+    // "{kit name} · recipe" placeholder — the TOP-LEVEL kit's own name reaches every consumer via
+    // _kitParent (grouping/folding on the PDF and Deal Check's per-element table), so this name is
+    // free to say WHICH recipe, the thing someone opening "🧮 how" on the kit's row actually wants
+    // to know.
     const expandedElems = [];
     (elems || []).forEach(el => {
       expandedElems.push(el);
       const kitInvItem = findInv(el.invId);
-      // The deal's own edit of the kit (Build's "Kit — includes" editor → el.kitOverrides) is what was
-      // priced and what gets made; the master item's subItems is only the fallback when nothing was
-      // edited — checked FIRST, exactly matching Build's own pricing engine (StudioApp.jsx's
-      // effectiveSubItems). Gating entry into this block on `kitInvItem.subItems.length > 0` (fixed
-      // 2026-11-12) used to mean an edited kit whose MASTER item's own subItems was empty, or whose
-      // invId failed to resolve here at all, never even looked at el.kitOverrides — silently dropping
-      // every attached flower recipe from this engine's mandi list/artificial bunches, even though
-      // Build's own price breakdown (a separate engine, kitFloralCompDelta/attachedPatterns) already
-      // correctly counted them (owner report, 2026-11-12 — the Tree kit's Chandelier Floral Recipe).
-      const outerQty = el.qty || 0;
-      const kitParts = Array.isArray(el.kitOverrides) && el.kitOverrides.length > 0 ? el.kitOverrides : (kitInvItem?.subItems || []);
-      if (kitParts.length > 0) {
-        kitParts.forEach(si => {
-          const siQty = (Number(si.qty) || 0) * outerQty;
-          if (siQty <= 0) return;
-          // Named after the RECIPE ITSELF ("Chandelier Tree Floral Recipe"), not the generic
-          // "{kit name} · recipe" placeholder this used to carry — the kit's own name already
-          // reaches every consumer via _kitParent (grouping/folding), so this field is free to say
-          // WHICH recipe, the thing someone opening "🧮 how" on the kit's row actually wants to know
-          // (owner report, 2026-11-13: "still seeing tree recipe and not the chandelier recipe").
-          // Falls back to the old generic label only if the pattern itself can't be found by id here
-          // (practically unreachable now — an unresolvable patternId is caught and uncosted before a
-          // name is ever needed, see the elPattern check below — kept as a harmless safety net).
-          if (si.patternId) { const recipeName = flowerPatterns.find(p => p?.id === si.patternId)?.name; expandedElems.push({ name: recipeName || `${el.name || kitInvItem?.name || "Kit"} · recipe`, patternId: si.patternId, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem?.name }); return; }
-          const ci = findInv(si.itemId);
-          if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem?.name });
-        });
-      }
+      walkKitFloralParts(kitInvItem, el.qty || 0, [...imsInventory, ...dcInventoryCache], el.kitOverrides, (node) => {
+        if (node.patternId) {
+          const recipeName = flowerPatterns.find(p => p?.id === node.patternId)?.name;
+          expandedElems.push({ name: recipeName || `${node.kitParent} · recipe`, patternId: node.patternId, qty: node.qty, size: node.size || el.size, _kitParent: node.kitParent });
+          return;
+        }
+        // florals-category only — same scope the old one-level code had; the walker itself no
+        // longer pre-filters by category (review finding, 2026-11-13, "F3": a different consumer,
+        // kitFloralCompDelta, needs ANY category, so that decision moved here, into this engine's
+        // own consumption of the walk, rather than living inside the shared walker).
+        if (String(node.item.cat || node.item.category || "").toLowerCase() !== "florals") return;
+        expandedElems.push({ name: node.item.name, invId: node.item.id, qty: node.qty, size: node.size || el.size, _kitParent: node.kitParent });
+      // _kitParent (6th arg) passed explicitly as el.name over kitInvItem?.name — the zone
+      // element's own, possibly-renamed display name takes priority over the master catalogue's,
+      // same precedence the old one-level code used, so a renamed kit still folds back correctly
+      // on the zone page (which keys on the ELEMENT's own name, not the catalogue's). Works even
+      // when kitInvItem itself fails to resolve (a kit deleted from the catalogue, migration 059,
+      // whose el.kitOverrides still carries a live recipe — review finding, 2026-11-13, "F1": the
+      // walker tolerates a null item as long as overrideSubItems is given, but still needs an
+      // explicit name since there's no item.name to fall back to).
+      }, el.name || kitInvItem?.name);
     });
 
     expandedElems.forEach(el => {
