@@ -4381,7 +4381,11 @@ export default function StudioApp() {
       for (const id of [...(deletedIds || []), ...[...prevMap.keys()].filter((id) => !nextIds.has(id))]) {
         await deleteRow("event_orders", id);
       }
-    } catch (e) { showMsg?.("Event order save failed: " + (e?.message || e), "red"); }
+      // Returns whether the write actually landed — pushEventOrderPlan awaits this now (regression
+      // review, 2026-11-13) so a failed event_orders write can abort instead of still reporting
+      // "Booking confirmed" and firing confetti for a push IMS never received.
+      return true;
+    } catch (e) { showMsg?.("Event order save failed: " + (e?.message || e), "red"); return false; }
   }, [showMsg]);
   // Persist the Deal Check department breakdown onto the client's SOLD event-order row (table), so
   // IMS Dept Ops shows the SAME numbers (income, inventory-with-photos, manpower) Studio computed.
@@ -9923,8 +9927,15 @@ export default function StudioApp() {
     // this client's own live one(s)" helper every other such lookup in this file already uses —
     // clientId alone, no date, is the stable identity; a client with no live order yet still creates
     // fresh, same as before.
-    const myLiveIds = new Set(ownEventOrderIds(eventOrders, client.id, client.name));
-    const myLiveOrders = eventOrders.filter(e => myLiveIds.has(e.id));
+    // Reads the REF, not the `eventOrders` state this callback closed over (regression review,
+    // 2026-11-13): markSold/applyBookedChanges now await a client_ledger save before calling this,
+    // which widens the gap between when this closure was created and when it actually runs. Another
+    // deal's event_orders row can change (auto-confirm, a dept head's edit, another salesperson's
+    // booking) via realtime in that gap — eventOrdersRef2 is kept current by its own effect, the
+    // closed-over `eventOrders` is not. Reading the stale copy here would both miss (and so delete,
+    // via saveEventOrders' own diff below) and silently overwrite-with-stale-data any such change.
+    const myLiveIds = new Set(ownEventOrderIds(eventOrdersRef2.current, client.id, client.name));
+    const myLiveOrders = eventOrdersRef2.current.filter(e => myLiveIds.has(e.id));
     const existingActive = myLiveOrders.length
       ? [...myLiveOrders].sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0))[0]
       : undefined;
@@ -10027,15 +10038,20 @@ export default function StudioApp() {
     // manpower edits, mandi actuals, on-site expenses, trucks, dismantle) and the last department
     // snapshot — which is the opposite of what persistDeptSnapshot goes out of its way to keep.
     const eo = existingActive ? { ...existingActive, ...eoPlan } : eoPlan;
-    saveEventOrders(existingActive ? eventOrders.map(e => e.id === eoId ? eo : e) : [...eventOrders, eo]);
-    // Bridge to IMS: SOLD orders also go into the shared `event_orders` TABLE (Studio's own list
-    // is a kv blob; IMS — Events, Planning, Dept Ops — reads the table + realtime).
-    retryingUpsert("event_orders", { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo }).then(({ error }) => { if (error) console.warn("[pushEventOrderPlan] event_orders table sync failed:", error.message); });
+    // Built off the same ref read above, not the closed-over `eventOrders` — see the comment on
+    // myLiveIds/myLiveOrders. The old separate `retryingUpsert` call right after this used to send the
+    // exact same row (eoToRow(eo) is byte-identical to what it built by hand) as a second, unawaited,
+    // error-swallowed write — pure duplication of what saveEventOrders already does per changed row.
+    // Dropped; saveEventOrders below is now awaited and checked instead, so a write failure here
+    // actually aborts (no confetti, no "Booking confirmed") instead of silently leaving IMS without
+    // the row Studio just told the salesperson was booked.
+    const eoSaved = await saveEventOrders(existingActive ? eventOrdersRef2.current.map(e => e.id === eoId ? eo : e) : [...eventOrdersRef2.current, eo]);
+    if (!eoSaved) return false;
     logActivity("booking", `${activityEmoji} ${client.name} — ${activityVerb} by ${authUser?.name || "—"}`);
     // Fill IMS Dept Ops for the booking now, rather than whenever someone next opens Deal Check.
     syncDeptOpsHeadless();
     return true;
-  }, [collectAllFunctionData, activeFnIdx, calcFunctionBreakdown, dcCustomItems, floralRatio, dcFloralColorPrefs, dcPhotoOverrides, dcSkipped, dcProductionAccepted, dcDedupOverrides, calcFnFloralSourcingCost, manpowerPlanForBooking, eventOrders, saveEventOrders, clientDate, clientPhone, clientShift, clientBrideGroom, clientPax, zoneConfig, zoneElements, enabledEls, elTiers, dcManualItems, venue, authUser, logActivity, syncDeptOpsHeadless]);
+  }, [collectAllFunctionData, activeFnIdx, calcFunctionBreakdown, dcCustomItems, floralRatio, dcFloralColorPrefs, dcPhotoOverrides, dcSkipped, dcProductionAccepted, dcDedupOverrides, calcFnFloralSourcingCost, manpowerPlanForBooking, saveEventOrders, clientDate, clientPhone, clientShift, clientBrideGroom, clientPax, zoneConfig, zoneElements, enabledEls, elTiers, dcManualItems, venue, authUser, logActivity, syncDeptOpsHeadless]);
 
   const markSold = useCallback(async () => {
     try {
@@ -10089,6 +10105,14 @@ export default function StudioApp() {
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return; }
       const { client, ledger } = result;
+      // saveSession's own client_ledger write (pre-booking status) is in flight via savePromise —
+      // wait for it before firing the "booked" write below. Both target the SAME client_ledger row's
+      // `status` column via merge_client_ledger_rows, which overwrites it outright (not a merge on
+      // that one column) — if this write's request reached Postgres before saveSession's did, the
+      // booked status landed first then got clobbered back to "ongoing" a moment later by the
+      // in-flight save, even though markSold reported success. Nothing re-sends it afterwards, since
+      // the in-memory baseline already (correctly, from this tab's view) says booked.
+      if (result.savePromise) await result.savePromise;
       // bookedSystemTotal is the frozen baseline the Summary hero diffs the live build against to
       // show "pending changes since booking" (owner decision: negotiated deal value stays frozen,
       // salesperson applies build-driven changes manually via Apply Changes — see Summary's own
@@ -10096,7 +10120,25 @@ export default function StudioApp() {
       // silently rebase it, or a real pending change made between two re-confirms would vanish
       // unnoticed.
       const updated = ledger.map(c => c.id === client.id ? { ...c, status: "booked", bookedAt: Date.now(), bookedBy: authUser?.name || "—", finalSession: c.sessions?.[0] || null, bookedSystemTotal: (c.bookedSystemTotal != null ? c.bookedSystemTotal : eventGrandTotal) } : c);
-      saveClientLedger(updated);
+      // AWAITED and checked (Ajay Pandey/Pragya Arya incident, 2026-11-13): this used to fire-and-forget
+      // saveClientLedger, then push straight into pushEventOrderPlan regardless. setClientLedger inside
+      // saveClientLedger runs synchronously, so the Studio screen looked booked immediately either way —
+      // but the actual client_ledger DB write (merge_client_ledger_rows RPC) happens async. When that RPC
+      // failed/dropped, the push below still went ahead and wrote event_orders as sold, reserving stock
+      // and starting ops planning in IMS, while client_ledger's real row stayed "ongoing" forever — a
+      // deal IMS already treated as booked that Studio (and anyone re-querying client_ledger) never saw
+      // as sold at all. Aborting here keeps the two writes fate-shared again.
+      const ledgerSaved = await saveClientLedger(updated);
+      if (!ledgerSaved) {
+        // saveClientLedger's own setClientLedger already applied `updated` (status: "booked") to this
+        // tab's in-memory state before its network write failed — that's what made the original
+        // incident possible (the UI looked booked while the DB row didn't). Best-effort revert so this
+        // tab goes back to showing "Sold — Confirm Booking" instead of "Apply Changes", and so an
+        // unrelated later autosave can't persist the false "booked" status on its own. Not awaited:
+        // this is a courtesy correction on top of the abort above, not something the user is blocked on.
+        saveClientLedger(ledger);
+        return;
+      }
       const pushed = await pushEventOrderPlan(client);
       if (!pushed) return;
       // ── RESERVE INVENTORY THE MOMENT A DEAL IS ACTUALLY SOLD ──
@@ -10151,8 +10193,14 @@ export default function StudioApp() {
       const { client: savedClient, ledger } = result;
       let freshClient = savedClient;
       if (savedClient.bookedSystemTotal !== eventGrandTotal) {
+        // Wait for saveSession's own client_ledger write first — see markSold's identical comment
+        // (same merge_client_ledger_rows race: two writes to the same row, last one to land wins).
+        if (result.savePromise) await result.savePromise;
         const updated = ledger.map(c => c.id === savedClient.id ? { ...c, bookedSystemTotal: eventGrandTotal } : c);
-        saveClientLedger(updated);
+        // Awaited — see markSold's identical comment on why a dropped client_ledger write must not
+        // let the event_orders push go ahead anyway.
+        const ledgerSaved = await saveClientLedger(updated);
+        if (!ledgerSaved) return false;
         freshClient = updated.find(c => c.id === savedClient.id);
       }
       const pushed = await pushEventOrderPlan(freshClient, { skipDupeConfirm: true, activityVerb: "Booking updated", activityEmoji: "✏️" });
