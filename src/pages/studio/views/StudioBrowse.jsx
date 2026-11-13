@@ -160,6 +160,12 @@ function StudioBrowse({ ctx }) {
     return () => clearTimeout(t);
   }, [liveTarget]);
   const priceSettled = settledTotal != null;
+  // ── NOT BEFORE EVERY FUNCTION HAS LOADED ── (owner ask 2026-11-13) ctx.allFnsLoaded (StudioApp) is false while the deal or any of
+  // its functions' builds is still coming in; Continue / Resume wait for it. A 10s backstop per deal, like pricing's, so a build
+  // that never arrives (a function removed since that save) cannot leave the buttons disabled for good.
+  const [fnWaitOver, setFnWaitOver] = useState(false);
+  useEffect(() => { setFnWaitOver(false); const t = setTimeout(() => setFnWaitOver(true), 10000); return () => clearTimeout(t); }, [ctx.activeClientId]);
+  const fnsLoadingAll = ctx.allFnsLoaded === false && !fnWaitOver;
   // Customize/Exact Look both hand off to pickAndLoadFromVideo → loadEvent, which REPLACES
   // enabledEls wholesale (down to just `{lighting:true}`) for whichever function is active — it
   // never merges with what's already turned on. If that function's live canvas already holds a
@@ -1591,7 +1597,7 @@ function StudioBrowse({ ctx }) {
                         having a price of its own (the trap described above): priceSettled always turns
                         true shortly after load (pricingReady has a 10s backstop), so the button can
                         never be stuck disabled. */}
-                    {(()=>{ const notReady = ctx.isFnSwitching || !priceSettled;
+                    {(()=>{ const fnsLoading = fnsLoadingAll; const notReady = ctx.isFnSwitching || fnsLoading || !priceSettled;
                     return (
                     <button disabled={notReady}
                       // Always resumeSavedSession, even when isCurrent (the live sourceVideo already
@@ -1603,10 +1609,10 @@ function StudioBrowse({ ctx }) {
                       // the SAME snapshot object, so it's a safe no-op when the build really was
                       // already loaded, and a real fix when it wasn't.
                       onClick={(e)=>{e.stopPropagation();if(notReady)return;resumeSavedSession(s,s._fnIdx);}}
-                      title={ctx.isFnSwitching?"Still loading this function…":!priceSettled?"Loading prices…":(s._fnIdx!==activeFnIdx?`Switches to Function ${s._fnIdx+1} and loads this build`:undefined)}
+                      title={ctx.isFnSwitching?"Still loading this function…":fnsLoading?"Loading all functions…":!priceSettled?"Loading prices…":(s._fnIdx!==activeFnIdx?`Switches to Function ${s._fnIdx+1} and loads this build`:undefined)}
                       className="sb-bnr-btn sb-bnr-solid" style={{padding:"6px 12px",borderRadius:7,border:"none",background:isDark?"#D97706":"#B45309",color:"#fff",fontSize:10,fontWeight:700,whiteSpace:"nowrap",flex:1,
                         cursor:notReady?"progress":"pointer",opacity:notReady?0.5:1}}>
-                      {isCurrent?"Continue":"Resume"} build {"→"}
+                      {fnsLoading?"Loading functions…":<>{isCurrent?"Continue":"Resume"} build {"→"}</>}
                     </button>
                     ); })()}
                     </div>
@@ -1682,11 +1688,11 @@ function StudioBrowse({ ctx }) {
                               and restoring into it loses work — a wait that ends on its own, which is
                               why this refuses rather than queuing. */}
                           {/* Same wait as the main button: not until the prices have settled. */}
-                          {(() => { const hBusy = ctx.isFnSwitching || !priceSettled; return (
+                          {(() => { const hBusy = ctx.isFnSwitching || fnsLoadingAll || !priceSettled; return (
                           <span role="button" tabIndex={0}
                             aria-disabled={hBusy ? "true" : undefined}
-                            title={ctx.isFnSwitching ? "Still loading this function…" : !priceSettled ? "Loading prices…" : "Resume this session"}
-                            onClick={()=>{ if (hBusy) { showMsg(ctx.isFnSwitching ? "Still loading this function — try again in a moment" : "Prices are still loading — one moment", "red"); return; } resumeSavedSession(s, hIdx ?? undefined); }}
+                            title={ctx.isFnSwitching ? "Still loading this function…" : fnsLoadingAll ? "Loading all functions…" : !priceSettled ? "Loading prices…" : "Resume this session"}
+                            onClick={()=>{ if (hBusy) { showMsg(ctx.isFnSwitching ? "Still loading this function — try again in a moment" : fnsLoadingAll ? "All functions are still loading — one moment" : "Prices are still loading — one moment", "red"); return; } resumeSavedSession(s, hIdx ?? undefined); }}
                             style={{fontSize:9.5,fontWeight:700,color:accent,cursor:hBusy?"progress":"pointer",opacity:hBusy?0.5:1,whiteSpace:"nowrap"}}>↻ Resume</span>
                           ); })()}
                           {s.id && <span onClick={()=>deleteSession(s.id)} title="Delete this session" style={{fontSize:11,color:textS,cursor:"pointer",lineHeight:1}}>✕</span>}

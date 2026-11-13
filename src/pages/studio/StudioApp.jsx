@@ -6348,6 +6348,26 @@ export default function StudioApp() {
     return null;
   }, [clientLedger, activeClientId, activeFnIdx]);
 
+  // ── EVERY FUNCTION OF THE OPEN DEAL HAS LOADED ── (owner ask 2026-11-13) Browse's saved-build "Continue / Resume build"
+  // stays disabled until this is true: the ledger and the deal restore are in, pricing is ready, no function switch is in
+  // flight, and every function the latest saved session holds a build for is in memory (fnBuilds, or the one on screen).
+  // Continuing earlier could land on a Build whose other functions were not there yet.
+  const allFnsLoaded = useMemo(() => {
+    if (!ledgerReady || restoring || !pricingReady || isFnSwitching) return false;
+    if (!activeClientId) return true;
+    const top = clientLedger.find((c) => c.id === activeClientId)?.sessions?.[0];
+    if (!top) return true;
+    const totalFns = 1 + (extraFunctions || []).length;
+    const withData = new Set();
+    if (Array.isArray(top._fnRows)) top._fnRows.forEach((r) => { if (r && r.has_data && Number.isInteger(Number(r.fn_idx))) withData.add(Number(r.fn_idx)); });
+    else Object.keys(top.fnSnapshots || {}).forEach((k) => withData.add(Number(k)));
+    for (const i of withData) {
+      if (!(i >= 0 && i < totalFns) || i === activeFnIdx) continue;
+      if (!fnBuilds || fnBuilds[i] == null) return false;
+    }
+    return true;
+  }, [ledgerReady, restoring, pricingReady, isFnSwitching, activeClientId, clientLedger, extraFunctions, activeFnIdx, fnBuilds]);
+
   // Every function's data, built once per change of its inputs: dozens of calls per render (every price, floral and stock
   // check) used to each build the whole list afresh. Callers only read it - the same objects are handed to each.
   const allFunctionData = useMemo(() => {
@@ -14500,7 +14520,7 @@ export default function StudioApp() {
     venue, setVenue, fn, setFn, clientName, setClientName, clientDate, setClientDate, clientPhone, setClientPhone,
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax, clientVenueOther, setClientVenueOther,
     clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette, extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
-    activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching, ledgerReady,
+    activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching, allFnsLoaded, ledgerReady,
     copyBuildsFromClient,
     // The optimistic index — which function was CLICKED, before the switch commits. Build's own
     // pill nav has always read `fnPending ?? activeFnIdx`; Deal Check never received it, so it had
