@@ -246,16 +246,32 @@ describe("nearestCleanSpans — the smart dim tip (owner ask, 2026-11-04, replac
     expect(tip.down).toBeNull();
     expect(tip.up).toEqual({ span: 4, budget: 2 });
   });
-  it("a single beam up to 1ft short of budget is ALREADY clean (resolveBeamSegment's own tolerance) — no false 'needs a joint', even though the budget isn't an exact stock size", () => {
-    // 13ft → budget 11 → resolveBeamSegment picks one 10ft beam (0 joints, 1ft gap) over any 2-piece
-    // combo, since joints (weight 100) dominates gap (weight 10) in its own cost ranking.
-    expect(nearestCleanSpans(13, 10, { ...eng, trussInv: realStockWithPillars })).toBeNull();
-    // 15ft → budget 13 → one 12ft beam, 0 joints, 1ft gap.
-    expect(nearestCleanSpans(15, 10, { ...eng, trussInv: realStockWithPillars })).toBeNull();
-    // 17.5ft → budget 15.5 → one 15ft beam, 0 joints, 0.5ft gap.
+  // Owner decision, 2026-11-13 ("bogus"): a single beam a full 1ft short of budget used to be
+  // silently treated as "already clean" for Iron/Aluminium — e.g. 15ft's 13ft budget quietly
+  // building from one 12ft beam, no joint, no tip, no indication it was ever short. A true 0ft
+  // tolerance was tried and rejected (it broke every fractional pillar-gap budget, e.g. 22.5ft,
+  // which no whole-foot combo can ever hit exactly) — 0.5ft is the new tolerance for padded
+  // materials (no fixture here carries a `material` tag, so this defaults to "iron" via
+  // materialHasSpanPadding, same as every real Iron zone): still enough to keep a genuine
+  // half-foot fractional budget clean, but a FULL foot short is now correctly flagged — these 3 of
+  // the 4 original cases (each exactly 1ft short) now surface a real "needs a joint" tip instead
+  // of staying silent; only the 0.5ft-short case (budget 15.5, still within the new tolerance)
+  // stays clean, unchanged.
+  it("a single beam a full 1ft short of budget is no longer 'already clean' for a padded material — now correctly surfaces a tip", () => {
+    // 13ft → budget 11: a 10ft-only combo is 1ft short (now out of tolerance) — resolveBeamSegment
+    // is forced into an exact 2-piece combo (8+3=11, 1 joint) instead, so there's now something to
+    // suggest nearby: 12ft (10ft beam) or 14ft (12ft beam), whichever actually lands clean.
+    expect(nearestCleanSpans(13, 10, { ...eng, trussInv: realStockWithPillars }))
+      .toEqual({ pillarCount: 2, reason: "joint", down: { span: 12, budget: 10 }, up: { span: 14, budget: 12 } });
+    // 15ft → budget 13: a 12ft-only combo is 1ft short — forced to 10+3=13 (1 joint) — nearby: 14ft or 17ft.
+    expect(nearestCleanSpans(15, 10, { ...eng, trussInv: realStockWithPillars }))
+      .toEqual({ pillarCount: 2, reason: "joint", down: { span: 14, budget: 12 }, up: { span: 17, budget: 15 } });
+    // 17.5ft → budget 15.5: a 15ft beam is only 0.5ft short — still within the new tolerance, still
+    // genuinely clean (plenty of free stock), so this one case is unchanged.
     expect(nearestCleanSpans(17.5, 10, { ...eng, trussInv: realStockWithPillars })).toBeNull();
-    // 18ft → budget 16 → one 15ft beam, 0 joints, 1ft gap (beats 12+4, which would be a joint).
-    expect(nearestCleanSpans(18, 10, { ...eng, trussInv: realStockWithPillars })).toBeNull();
+    // 18ft → budget 16: a 15ft-only combo is 1ft short — forced to 12+4=16 (1 joint) — nearby: 17ft down, nothing up.
+    expect(nearestCleanSpans(18, 10, { ...eng, trussInv: realStockWithPillars }))
+      .toEqual({ pillarCount: 2, reason: "joint", down: { span: 17, budget: 15 }, up: null });
   });
   it("a bigger nudge than ~6ft stops suggesting rather than jumping to a wildly different span", () => {
     // 31ft → budget 29 — nothing in stock within 6ft either direction (largest stock size is 15ft).
@@ -404,10 +420,18 @@ describe("trussRowCost / calcZoneTrussPreview — price off the raw entered span
     const preview = calcZoneTrussPreview(row, trussInv);
     expect(preview.spanFt).toBe(23); // never snapped
     // 23ft, 2 pillars (span < maxSpanFt:1000): budget 21, one segment of 21 — this stock only has
-    // 10ft beams, and no exact 21 is possible (10 is 11 short, 20 is 1 short — exactly at the 1ft
-    // tolerance edge, so 20 is the best available): built 20, physical 20 + 2×0.75 = 21.5.
+    // 10ft beams, so no combo gets within the new 0.5ft tolerance for Iron (owner decision,
+    // 2026-11-13: 20, 1ft short, no longer counts as "close enough to call clean"). But the
+    // fallback still builds the closest REAL combo the stock allows — two 10ft beams (20ft, 1ft
+    // gap) — rather than degrading to a single far-short piece (review finding, 2026-11-13: the
+    // first version of this fix did exactly that, returning a lone 10ft beam with an 11ft gap;
+    // fixed by ranking the fallback pool itself by smallest gap first, not fewest joints first).
+    // Physically the footprint lands back on the SAME number as before this whole change (21.5) —
+    // what changed is that it's now correctly flagged `shortage: true` (needs 2 joined 10ft pieces,
+    // a real production step) instead of being silently called a clean, joint-free 21ft build.
     expect(preview.topology.beams.map((b) => b.lengthFt)).toEqual([21]);
     expect(preview.topology.physicalL).toBe(21.5);
+    expect(preview.topology.stockResolved).toBe(false); // the shortage is surfaced, not silently absorbed
   });
 });
 
