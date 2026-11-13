@@ -10,7 +10,7 @@
 // and are the fallback for an event whose layout has not synced.
 
 import { trussBaseArea } from "../studio/taxonomy.js";
-import { anchorsForPaletteByMaterial, resolveFabricAllocation } from "../studio/pricing.js";
+import { anchorsForPaletteByMaterial, resolveFabricAllocation, fabricAnchorsForRow } from "../studio/pricing.js";
 
 export const FABRIC_KINDS = [
   { key: "liza", label: "Liza Fabric", lineName: "Liza Fabric", unit: "kg", stockKey: "lizaStock", qtyField: "stockKg", allocField: "lizaAllocation", emoji: "🧣", qtyOf: (f) => f.lizaKg },
@@ -68,7 +68,15 @@ function applicationText(kind, fab, row) {
     if (pillars > 0 && pieces > 0) return `${pillars} pillar${pillars === 1 ? "" : "s"} × ${Math.round(pieces / pillars)} curtains`;
     return "";
   }
-  const walls = Object.entries(row?.mkWalls || {}).filter(([, v]) => v).map(([k]) => k);
+  // Only the walls the masking FABRIC goes on - the rule the pieces are counted by (pricing.js calcZoneFabric wallIsFabric): masking
+  // switched on, the wall ticked, and the wall's own material (else the truss's) fabric. An Acrylic / Flex wall or a custom panel used to
+  // be named here too, so "Back + left walls" read as fabric on a wall that takes none.
+  const wallIsFabric = (w) => {
+    if (!row?.mkOn || !(row.mkWalls || {})[w]) return false;
+    const ov = (row.mkWallMat || {})[w];
+    return /fabric/i.test(String(ov?.matKey || (ov?.customItemId ? "" : row.mkT) || ""));
+  };
+  const walls = ["back", "left", "right"].filter(wallIsFabric);
   const side = walls.length ? `${walls.map((w, i) => (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w)).join(" + ")} wall${walls.length === 1 ? "" : "s"}` : "";
   return `${side ? side + " · " : ""}13 ft panels`;
 }
@@ -115,7 +123,7 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
       let rowCols;
       if (isLive) {
         // the colour this row's fabric goes in under the function's palette - a repeat zone's standing fabric too
-        rowCols = [...(q > 0 ? resolveFabricAllocation(e.row?.[kind.allocField], Math.ceil(q), anchorsForPaletteByMaterial([], fnPalettes[e.fi], kind.key), liveStock, kind.qtyField)
+        rowCols = [...(q > 0 ? resolveFabricAllocation(e.row?.[kind.allocField], Math.ceil(q), fabricAnchorsForRow(e.row, kind.key, anchorsForPaletteByMaterial([], fnPalettes[e.fi], kind.key)), liveStock, kind.qtyField)
           .map((a) => ({ colour: a.colour || "(unassigned)", qty: num(a.qty) })) : []), ...looseCols];
         // only new fabric counts towards what is pulled from stock; a repeat zone's is already standing
         if (!e.repeat) rowCols.forEach((c) => {

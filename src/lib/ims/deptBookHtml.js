@@ -589,6 +589,57 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       const dens = [...new Set(rows.map(r => String(r.drapeDensity || "moderate").toLowerCase()))].filter(d => DRAPE_LBL[d]);
       return dens.length ? [{ k: t("Drape"), html: esc(dens.map(d => t(DRAPE_LBL[d])).join(" / ")) }, ...fabric] : fabric;
     };
+    // ── THE MASKING ON EACH WALL ── (owner report 2026-11-13) over a zone's truss rows (the zone and its "+ Add Truss" rows): the walls
+    // masked in fabric (Wall Masking pieces, from stock) and those masked in Acrylic / Flex / Vinyl or a custom panel - which printed
+    // nowhere in the book, so the crew never learnt that wall needed masking at all.
+    const WALL_LBL = { back: "Back wall", left: "Left wall", right: "Right wall" };
+    const maskRatesList = Array.isArray(settings?.maskingRates) ? settings.maskingRates : [];
+    const maskMatName = (key) => (maskRatesList.find(r => r && r.key === key)?.name) || ({ fabric: "Fabric", acrylic: "Acrylic", flex: "Flex", vinyl: "Vinyl" })[key] || String(key || "");
+    const maskWallsOf = (fi, zk) => {
+      const f = fns.find((x, i) => (x?.fnIdx ?? i) === fi) || fns[fi];
+      const zc = f?.zones?.[zk];
+      const out = { fabric: [], other: new Map() }; // other: material label -> its walls
+      if (!zc) return out;
+      const addOther = (label, w) => { const list = out.other.get(label) || []; if (w && !list.includes(w)) list.push(w); out.other.set(label, list); };
+      [zc, ...(Array.isArray(zc.extraTrussRows) ? zc.extraTrussRows : [])].forEach(row => {
+        if (!row) return;
+        const wallMatAll = row.mkWallMat || {};
+        const hasWallOverride = ["back", "left", "right"].some(w => wallMatAll[w] && (wallMatAll[w].matKey || wallMatAll[w].customItemId));
+        // A custom panel for the whole truss (no per-wall picks) is priced as one panel whether or not masking is switched on or walls
+        // are ticked (pricing.js trussRowCost) - so it prints the same way: its name, with the ticked walls when there are any.
+        if (row.customMaskingItemId && !hasWallOverride) {
+          const label = invById.get(String(row.customMaskingItemId))?.name || t("Custom panel");
+          const ticked = ["back", "left", "right"].filter(w => (row.mkWalls || {})[w]);
+          if (!ticked.length) addOther(label, null); else ticked.forEach(w => addOther(label, w));
+          return;
+        }
+        if (!row.mkOn) return;
+        ["back", "left", "right"].forEach(w => {
+          if (!(row.mkWalls || {})[w]) return;
+          const ov = (row.mkWallMat || {})[w];
+          const custom = ov?.customItemId || (!ov?.matKey && row.customMaskingItemId);
+          const key = ov?.matKey || (ov?.customItemId ? null : row.mkT);
+          // a "No fabric" truss takes no masking FABRIC (no pieces) - but its Acrylic / Flex / panel masking is still priced, so it still prints
+          if (!custom && /fabric/i.test(String(key || ""))) { if (!row.noFabric && !out.fabric.includes(w)) out.fabric.push(w); return; }
+          const label = custom ? (invById.get(String(custom))?.name || t("Custom panel")) : maskMatName(key);
+          if (label) addOther(label, w);
+        });
+      });
+      return out;
+    };
+    if (showStruct || inBook("Fabric")) {
+      fns.forEach((f, i) => {
+        const fi = f?.fnIdx ?? i;
+        Object.keys(f?.zones || {}).forEach(zk => {
+          if ((f?.enabledEls || {})[zk] === false) return;
+          const { other } = maskWallsOf(fi, zk);
+          if (!other.size) return;
+          const key = `${fi}|${zk}`;
+          const html = [...other].map(([mat, ws]) => `<b class="fpc">${esc(hn(mat))}${ws.length ? ` · ${esc(ws.map(w => t(WALL_LBL[w])).join(" + "))}` : ""}</b>`).join("");
+          fabricByZone.set(key, [...(fabricByZone.get(key) || []), { k: t("Masking"), html }]);
+        });
+      });
+    }
     if (showStruct || inBook("Fabric")) {
       try {
         buildFabricGroups({ entries: fabricEntriesOf(), lines: [], fabricPlan: sel?.fabricPlan, stock: trussInv, fnPalettes: fabricPalettesOf() }).groups.forEach(g => {
@@ -602,7 +653,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
               ? cols.map(c => `<b class="fpc">${colourMark(c.colour, c.hex, c.photo)}${esc(hn(c.colour))}${qtyTxt(c.qty)}</b>`).join("") + (z.standing ? `<b class="fpc">♻ ${t("Repeat")}</b>` : "")
               : esc(t("Colour not picked")) + (Number(z.qty) > 0 ? ` · <b>${qtyTxt(z.qty).trim()}</b>` : "");
             const key = `${z.fi}|${z.zoneKey}`;
-            fabricByZone.set(key, [...(fabricByZone.get(key) || []), { k: t(g.label), html }]);
+            // Wall Masking: which walls the pieces go on (owner report 2026-11-13: the pieces printed with no wall, so the crew could not
+            // tell where they go) - only the walls masked in fabric, the rule the pieces are counted by.
+            const wallsTxt = g.key === "masking" ? maskWallsOf(z.fi, z.zoneKey).fabric.map(w => t(WALL_LBL[w])).join(" + ") : "";
+            fabricByZone.set(key, [...(fabricByZone.get(key) || []), { k: t(g.label), html: html + (wallsTxt ? ` <b class="fpc">${esc(wallsTxt)}</b>` : "") }]);
           });
         });
       } catch { /* the zone pages print without the colours */ }

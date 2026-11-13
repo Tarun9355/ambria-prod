@@ -16,7 +16,7 @@ const entry = (zk, zLabel, fab, row = {}) => ({ fi: 0, zk, zLabel, fnLabel: "Wed
 const entries = [
   entry("stage", "Stage", { lizaKg: 13.67, lizaWrapKg: 3.5, lizaCeilingKg: 10.17, density: "moderate", curtainPieces: 22, curtainPillarCount: 11, maskingPieces: 0 }),
   entry("entry", "Entry", { lizaKg: 12.74, lizaWrapKg: 2.17, lizaCeilingKg: 10.57, density: "moderate", curtainPieces: 20, curtainPillarCount: 5, maskingPieces: 0 }),
-  entry("photobooth", "Photobooth", { lizaKg: 5.42, lizaWrapKg: 5.42, lizaCeilingKg: 0, curtainPieces: 16, curtainPillarCount: 4, maskingPieces: 3 }, { mkWalls: { back: true, left: true } }),
+  entry("photobooth", "Photobooth", { lizaKg: 5.42, lizaWrapKg: 5.42, lizaCeilingKg: 0, curtainPieces: 16, curtainPillarCount: 4, maskingPieces: 3 }, { mkOn: true, mkT: "fabric", mkWalls: { back: true, left: true } }),
 ];
 const fabricPlan = { liza: [{ colour: "Ivory", qty: 35, qtyOld: 35, qtyNew: 0 }], curtain: [{ colour: "Ivory", qty: 58, qtyOld: 58, qtyNew: 0 }], masking: [{ colour: "Ivory", qty: 3, qtyOld: 3, qtyNew: 0 }] };
 const stock = { lizaStock: [{ colour: "Ivory", photo: "ivory-liza.jpg" }], curtainStock: [{ colour: "Ivory", photo: "ivory-velvet.jpg" }], maskingStock: [{ colour: "Ivory", hex: "#f5f0e1" }] };
@@ -264,5 +264,29 @@ describe("buildFabricGroups — colours worked out live from the function's Fabr
   it("no palette entry for the function: what Deal Check recorded is kept", () => {
     const g = build(null, [mk("stage", "Stage", 10)]).find((x) => x.key === "liza");
     expect(g.colours.map((c) => c.colour)).toEqual(["Rose Gold dark"]);
+  });
+});
+
+describe("buildFabricGroups — Wall Masking in the colour picked on the truss (owner report 2026-11-13)", () => {
+  const stock = { maskingStock: [{ colour: "Black", stockPieces: 8 }, { colour: "Maroon", stockPieces: 75 }, { colour: "Ivory", stockPieces: 78 }] };
+  const mk = (row = {}) => ({ fi: 0, ri: 0, zk: "entry", zLabel: "Entry", fnLabel: "Cocktail", photo: "", fab: { maskingPieces: 4 }, row });
+  const masking = (row) => buildFabricGroups({ entries: [mk(row)], lines: [], fabricPlan: null, stock, fnPalettes: { 0: "Black, Maroon" } }).groups.find((g) => g.key === "masking");
+  it("no colour picked on the truss: the palette's colours, as before", () => {
+    expect(masking({}).colours.map((c) => c.colour).sort()).toEqual(["Black", "Maroon"]);
+  });
+  it("a colour picked on the truss (Build's 🎨 Colour): all of the masking in that colour, not split over the palette", () => {
+    const g = masking({ mkColour: "Ivory" });
+    expect(g.colours.map((c) => [c.colour, c.qty])).toEqual([["Ivory", 4]]);
+    expect(g.zones[0].colours.map((c) => c.colour)).toEqual(["Ivory"]);
+  });
+});
+
+describe("buildFabricGroups — the masking note names only the walls the fabric goes on", () => {
+  const g = (row) => buildFabricGroups({ entries: [{ fi: 0, ri: 0, zk: "entry", zLabel: "Entry", fab: { maskingPieces: 2 }, row }], lines: [] }).groups.find((x) => x.key === "masking").zones[0].application;
+  it("an Acrylic right wall is not called a fabric wall", () => {
+    expect(g({ mkOn: true, mkT: "fabric", mkWalls: { back: true, right: true }, mkWallMat: { right: { matKey: "acrylic" } } })).toBe("Back wall · 13 ft panels");
+  });
+  it("walls ticked but masking switched off: none named", () => {
+    expect(g({ mkOn: false, mkT: "fabric", mkWalls: { back: true } })).toBe("13 ft panels");
   });
 });

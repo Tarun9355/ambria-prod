@@ -13874,6 +13874,24 @@ export default function StudioApp() {
             .then(({ error }) => { if (error) console.error("[reconcile] project.functions backfill link failed:", error.message); });
         }
       }
+      // ── A ROW NO FUNCTION OF THE DEAL MATCHES ANY MORE GIVES UP ITS ITEMS ── (owner report 2026-11-13, LOVELEEN SAHANI) a
+      // function whose type changed (16 Nov "Ring Ceremony" -> "Wedding") got a new row by (date, type), and the old one kept its
+      // 55 Ratten Chairs: IMS's Inventory date view counts every row, so it showed 110 blocked of 55 for a deal holding 55. Only
+      // its items are emptied - the row stays (it may carry ops' own manpower / expenses). Judged against EVERY function of the deal,
+      // not just the ones this run processed, so a one-function run can never strip another function's row.
+      // through the ref (always the latest), never this callback's closure: collectAllFunctionData is not among its deps, and a stale
+      // list missing a just-added function would have emptied that function's row
+      const liveFns = collectAllFunctionDataRef.current?.();
+      const allFnKeys = new Set(((Array.isArray(liveFns) && liveFns.length) ? liveFns : fnsToProcess)
+        .filter((fn) => fn && fn.fnDate).map((fn) => fnRowKey(fn.fnDate, fn.fnType)));
+      if (allFnKeys.size) {
+        (fnRows || []).forEach((r) => {
+          const items = Array.isArray(r?.data?.items) ? r.data.items : [];
+          if (!items.length || allFnKeys.has(fnRowKey(r.date || r.data?.date, r.data?.type || r.name))) return;
+          retryingUpdate("functions", r.id, { data: { ...r.data, items: [] } }, "id", { report: false })
+            .then(({ error }) => { if (error) console.error("[reconcile] stale functions row clear failed for", r.id, ":", error.message); else console.info("[reconcile] cleared items of stale functions row", r.id, "(no function of the deal is", r.data?.type || r.name, "on", r.date || r.data?.date, "any more)"); });
+        });
+      }
     } catch (e) {
       // Best-effort — the real reservation (`blocks`, below) isn't affected by this failing.
       console.error("[reconcile] functions fetch failed, items view will stay stale:", e?.message || e);
