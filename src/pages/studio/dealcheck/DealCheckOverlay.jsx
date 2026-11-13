@@ -1010,7 +1010,7 @@ export default function DealCheckOverlay({ ctx }) {
               const q = Number(mi.qty) || 1;
               // A manually added item can be a kit too — price it the same way as a matched card.
               const baseR = effKitRental(item, fi, null);
-              const _rep = mi.zoneKey ? repeatCatFor(fn.zoneConfig?.[mi.zoneKey], "elements") : false;
+              const _rep = typeof mi.repeatOverride === "boolean" ? mi.repeatOverride : (mi.zoneKey ? repeatCatFor(fn.zoneConfig?.[mi.zoneKey], "elements") : false);
               // Same per-component department split as matched cards above — a manually-added kit
               // used to have no components list AT ALL (not even for display), so its parts' cost and
               // Dept Ops visibility went entirely to the kit's own department.
@@ -3174,7 +3174,7 @@ export default function DealCheckOverlay({ ctx }) {
                           const shortRate = Math.max(baseR, (Number(it.cost) || 0) * (oosCostPctFor(it, _costPctFor, _fnDateForRepeat) / 100));
                           zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, ownedQty, baseR, _fnDateForRepeat, _crossFnAvail) + shortQty * shortRate;
                         });
-                        manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = mi.zoneKey ? repeatCatFor(fns[fnIdx]?.zoneConfig?.[mi.zoneKey], "elements") : false; zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, q)); });
+                        manualItemsInZone.forEach(mi => { const it = dcInventoryCache.find(x => x.id === mi.imsId); if (!it) return; const q = Number(mi.qty) || 1; const baseR = effKitRental(it, fnIdx, null); const _rep = typeof mi.repeatOverride === "boolean" ? mi.repeatOverride : (mi.zoneKey ? repeatCatFor(fns[fnIdx]?.zoneConfig?.[mi.zoneKey], "elements") : false); zoneRentalTotal += repeatAdjustedRental(_rep, _fnVenueForRepeat, it, q, baseR, _fnDateForRepeat, _crossFnTakePill(it.id, q)); });
                         // NOT net of a fixed-venue's standing-platform discount (platformStandingDiscount,
                         // pricing.js) — that discount is pooled per FUNCTION (every zone's platform sqft
                         // shares one standing allowance), so there's no single well-defined "this zone's
@@ -4146,7 +4146,7 @@ export default function DealCheckOverlay({ ctx }) {
                                   const sub = item ? imsField.subcategory(item) : "";
                                   // Hard cap: you can't block more than is available at this venue.
                                   const _vName = (fns[fnIdx] || {}).fnVenue || "";
-                                  const _rep = mi.zoneKey ? repeatCatFor(fns[fnIdx]?.zoneConfig?.[mi.zoneKey], "elements") : false;
+                                  const _rep = typeof mi.repeatOverride === "boolean" ? mi.repeatOverride : (mi.zoneKey ? repeatCatFor(fns[fnIdx]?.zoneConfig?.[mi.zoneKey], "elements") : false);
                                   const lineTotal = item ? repeatAdjustedRental(_rep, _vName, item, mi.qty, rental, _fnDateForRepeat, _crossFnTakeManual(item.id, mi.qty)) : 0;
                                   // Discounted equivalent of "rental" for the "× qty" caption below — so
                                   // that line's own arithmetic reproduces lineTotal instead of looking
@@ -4269,6 +4269,10 @@ export default function DealCheckOverlay({ ctx }) {
                                             return (
                                               <div key={item.id} onClick={()=>{
                                                 if (isBlocked) return;
+                                                // repeatOverride:false when the zone is already Repeat — same fix as
+                                                // Build's own add-search (StudioBuild.jsx): a manual block just added
+                                                // here was never actually installed/reused, so it can't inherit the
+                                                // zone's Repeat discount (review finding, 2026-11-13).
                                                 const newItem = {
                                                   manualId: `m-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
                                                   imsId: item.id,
@@ -4276,6 +4280,7 @@ export default function DealCheckOverlay({ ctx }) {
                                                   note: "",
                                                   fnIdx,
                                                   zoneKey: zk,
+                                                  ...(repeatCatFor(fns[fnIdx]?.zoneConfig?.[zk], "elements") ? { repeatOverride: false } : {}),
                                                 };
                                                 setDcManualItems(prev => [...prev, newItem]);
                                                 setDcManualSearch(prev => ({...prev, [searchKey]: ""}));

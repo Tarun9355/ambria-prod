@@ -123,7 +123,15 @@ export function syncManualItemToBuild(zoneElements, zoneKey, manualItem, pickIte
     qty: Number(manualItem.qty) || 1, size: "",
     _dcManualId: manualItem.manualId,
   };
-  if (existingIdx === -1) return cloneZone(zoneElements, zoneKey, [...arr, desired]);
+  if (existingIdx === -1) {
+    // manualItem.repeatOverride (stamped false by DealCheckOverlay's own add-search when the zone
+    // is already Repeat — review finding, 2026-11-13, same fix as Build's add-search) carries over
+    // ONLY at creation, not into every later `desired` merge below — a manual toggle on this
+    // element's own Build card (if ever used) must not get silently stomped back on the next
+    // reconcile tick just because it differs from the manual item's original stamp.
+    const initialOv = typeof manualItem.repeatOverride === "boolean" ? { repeatOverride: manualItem.repeatOverride } : {};
+    return cloneZone(zoneElements, zoneKey, [...arr, { ...desired, ...initialOv }]);
+  }
   const current = arr[existingIdx];
   if (current.invId === desired.invId && current.qty === desired.qty && current.name === desired.name) return zoneElements;
   const nextArr = arr.slice();
