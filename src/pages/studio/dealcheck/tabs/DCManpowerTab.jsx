@@ -170,9 +170,7 @@ export default function DCManpowerTab({ ctx }) {
     dcMpIncludeMinusOne, setDcMpIncludeMinusOne,
     dcMpIncludeDismantle, setDcMpIncludeDismantle,
     dcMpCalcOpen, setDcMpCalcOpen,
-    // auth — manpower planning now lives in IMS Dept Ops; salespeople get a read-only view here,
-    // Admin can still edit (e.g. for a special case or troubleshooting)
-    isAdmin,
+    // (auth: no longer gates this tab - see canEditMp below)
     // Ops' own live edits, once this deal is sold (event_orders.data.deptOps) + the Studio system
     // plan they're reconciled against (dcCostRollup.manpowerDetail, merged into ctx at the call
     // site in DealCheckOverlay.jsx — not part of the app-wide ctx StudioApp.jsx builds). Lets this
@@ -180,6 +178,9 @@ export default function DCManpowerTab({ ctx }) {
     // a label that says the real plan lives elsewhere.
     dcEoActuals, manpowerDetail,
   } = ctx;
+  // Manpower is editable by everyone now (owner ask 2026-11-13: a salesperson could not lower the fixed-venue minimum crew here) -
+  // shift picks, per-shift counts, -1 / dismantle days and Reset. It was Admin-only, with a read-only note for everyone else.
+  const canEditMp = true;
 
   return (() => {
                   // ═══ MANPOWER TAB — Booking-level day-wise forecast (22 May 2026) ═══
@@ -876,15 +877,15 @@ export default function DCManpowerTab({ ctx }) {
                         {/* The switches read as controls now rather than as two bare checkboxes
                             floating in a tinted band — a pressed pill shows which days are in. */}
                         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",borderTop:`1px solid ${HAIRLINE}`,paddingTop:12}}>
-                          <label className={isAdmin?"dcm-btn":undefined} style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:12.5,fontWeight:600,padding:"6px 11px",borderRadius:9,cursor:isAdmin?"pointer":"default",border:`1px solid ${dcMpIncludeMinusOne?"#C7CDD6":CARD_BORDER}`,background:dcMpIncludeMinusOne?TILE_BG:CARD_BG,color:isAdmin?INK:INK_3,opacity:isAdmin?1:0.7}}>
-                            <input type="checkbox" checked={dcMpIncludeMinusOne} disabled={!isAdmin} onChange={e=>setDcMpIncludeMinusOne(e.target.checked)} style={{margin:0,accentColor:"#F59E0B"}} />
+                          <label className={canEditMp?"dcm-btn":undefined} style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:12.5,fontWeight:600,padding:"6px 11px",borderRadius:9,cursor:canEditMp?"pointer":"default",border:`1px solid ${dcMpIncludeMinusOne?"#C7CDD6":CARD_BORDER}`,background:dcMpIncludeMinusOne?TILE_BG:CARD_BG,color:canEditMp?INK:INK_3,opacity:canEditMp?1:0.7}}>
+                            <input type="checkbox" checked={dcMpIncludeMinusOne} disabled={!canEditMp} onChange={e=>setDcMpIncludeMinusOne(e.target.checked)} style={{margin:0,accentColor:"#F59E0B"}} />
                             ⏮️ −1 day early setup
                           </label>
-                          <label className={isAdmin?"dcm-btn":undefined} style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:12.5,fontWeight:600,padding:"6px 11px",borderRadius:9,cursor:isAdmin?"pointer":"default",border:`1px solid ${dcMpIncludeDismantle?"#C7CDD6":CARD_BORDER}`,background:dcMpIncludeDismantle?TILE_BG:CARD_BG,color:isAdmin?INK:INK_3,opacity:isAdmin?1:0.7}}>
-                            <input type="checkbox" checked={dcMpIncludeDismantle} disabled={!isAdmin} onChange={e=>setDcMpIncludeDismantle(e.target.checked)} style={{margin:0,accentColor:"#F43F5E"}} />
+                          <label className={canEditMp?"dcm-btn":undefined} style={{display:"inline-flex",alignItems:"center",gap:7,fontSize:12.5,fontWeight:600,padding:"6px 11px",borderRadius:9,cursor:canEditMp?"pointer":"default",border:`1px solid ${dcMpIncludeDismantle?"#C7CDD6":CARD_BORDER}`,background:dcMpIncludeDismantle?TILE_BG:CARD_BG,color:canEditMp?INK:INK_3,opacity:canEditMp?1:0.7}}>
+                            <input type="checkbox" checked={dcMpIncludeDismantle} disabled={!canEditMp} onChange={e=>setDcMpIncludeDismantle(e.target.checked)} style={{margin:0,accentColor:"#F43F5E"}} />
                             🧹 Dismantle days
                           </label>
-                          {!isAdmin && <span style={{fontSize:11.5,color:INK_3,fontStyle:"italic",alignSelf:"center"}}>Read-only — manpower planning lives in IMS → Dept Ops</span>}
+                          {!canEditMp && <span style={{fontSize:11.5,color:INK_3,fontStyle:"italic",alignSelf:"center"}}>Read-only — manpower planning lives in IMS → Dept Ops</span>}
                           {/* ═══ RESET TO DERIVED ═══
                               Window picks and per-window head counts are saved per client and
                               restored on load, and a stored count WINS over the derived one
@@ -894,7 +895,7 @@ export default function DCManpowerTab({ ctx }) {
                               Regenerate used to be the way to clear that, and it is gone, so this is
                               the only path back to a clean derivation. Shown only when something is
                               actually pinned, so it is not noise on an untouched deal. */}
-                          {isAdmin && (Object.keys(dcMpOverrides || {}).length > 0 || Object.keys(dcMpWinCount || {}).length > 0) && (
+                          {canEditMp && (Object.keys(dcMpOverrides || {}).length > 0 || Object.keys(dcMpWinCount || {}).length > 0) && (
                             <button
                               onClick={() => {
                                 const nWin = Object.keys(dcMpWinCount || {}).length;
@@ -1082,10 +1083,10 @@ export default function DCManpowerTab({ ctx }) {
                                         // warm hairline so it recedes into the tile instead of
                                         // ruling a cool grey line across it.
                                         if (!on) return (
-                                          <button key={w.id} onClick={isAdmin?(()=>toggleWindow(d.date, t, w.id, d.phase)):undefined}
-                                            title={isAdmin?"Add this shift":undefined}
-                                            className={isAdmin?"dcm-ghost":undefined}
-                                            style={{ fontSize:11.5,padding:"3px 9px",borderRadius:999,cursor:isAdmin?"pointer":"default",border:`1px solid ${TILE_BORDER}`,background:"transparent",color:INK_3,fontWeight:500 }}>
+                                          <button key={w.id} onClick={canEditMp?(()=>toggleWindow(d.date, t, w.id, d.phase)):undefined}
+                                            title={canEditMp?"Add this shift":undefined}
+                                            className={canEditMp?"dcm-ghost":undefined}
+                                            style={{ fontSize:11.5,padding:"3px 9px",borderRadius:999,cursor:canEditMp?"pointer":"default",border:`1px solid ${TILE_BORDER}`,background:"transparent",color:INK_3,fontWeight:500 }}>
                                             {w.label}
                                           </button>
                                         );
@@ -1103,12 +1104,12 @@ export default function DCManpowerTab({ ctx }) {
                                         const wc = winCountFor(d.date, t, w.id, ppl);
                                         return (
                                           <span key={w.id} style={{display:"inline-flex",alignItems:"center",border:`1px solid ${CARD_BORDER}`,borderRadius:999,overflow:"hidden",background:CARD_BG,boxShadow:"0 1px 1px rgba(36,30,53,0.03)"}}>
-                                            <button onClick={isAdmin?(()=>toggleWindow(d.date, t, w.id, d.phase)):undefined} title={isAdmin?"Remove this shift":undefined} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11.5,padding:"3px 7px 3px 9px",cursor:isAdmin?"pointer":"default",border:"none",background:"transparent",color:INK,fontWeight:600}}>
+                                            <button onClick={canEditMp?(()=>toggleWindow(d.date, t, w.id, d.phase)):undefined} title={canEditMp?"Remove this shift":undefined} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11.5,padding:"3px 7px 3px 9px",cursor:canEditMp?"pointer":"default",border:"none",background:"transparent",color:INK,fontWeight:600}}>
                                               <span aria-hidden="true" style={{color:GOLD,fontSize:10}}>✓</span>{w.label}
                                             </button>
-                                            {isAdmin && <button onClick={()=>setWinCount(d.date, t, w.id, Math.max(0, wc-1))} title="One fewer this shift" style={{fontSize:13,width:19,cursor:"pointer",border:"none",borderLeft:`1px solid ${HAIRLINE}`,background:"transparent",color:INK_3,fontWeight:600,lineHeight:1.6}}>−</button>}
+                                            {canEditMp && <button onClick={()=>setWinCount(d.date, t, w.id, Math.max(0, wc-1))} title="One fewer this shift" style={{fontSize:13,width:19,cursor:"pointer",border:"none",borderLeft:`1px solid ${HAIRLINE}`,background:"transparent",color:INK_3,fontWeight:600,lineHeight:1.6}}>−</button>}
                                             <span title="Crew in this shift" style={{fontSize:11.5,minWidth:15,textAlign:"center",color:INK,fontWeight:700,...NUM}}>{wc}</span>
-                                            {isAdmin && <button onClick={()=>setWinCount(d.date, t, w.id, wc+1)} title="One more this shift" style={{fontSize:13,width:19,cursor:"pointer",border:"none",borderRight:"none",borderLeft:`1px solid ${HAIRLINE}`,background:"transparent",color:INK_3,fontWeight:600,lineHeight:1.6}}>+</button>}
+                                            {canEditMp && <button onClick={()=>setWinCount(d.date, t, w.id, wc+1)} title="One more this shift" style={{fontSize:13,width:19,cursor:"pointer",border:"none",borderRight:"none",borderLeft:`1px solid ${HAIRLINE}`,background:"transparent",color:INK_3,fontWeight:600,lineHeight:1.6}}>+</button>}
                                           </span>
                                         );
                                       })}
