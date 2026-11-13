@@ -143,6 +143,8 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const [filterType, setFilterType] = useState("All");
   const [filterNeedsReview, setFilterNeedsReview] = useState(false); // Tier 1.2 — show only items flagged for cat-migration review
   const [availDate, setAvailDate] = useState(""); // check availability AS OF a specific date (YYYY-MM-DD)
+  // item popup: with a date picked, its "Blocked for Functions" lists that day only unless this is on (back off for each item opened)
+  const [selAllDates, setSelAllDates] = useState(false);
   const [availOnly, setAvailOnly] = useState("all"); // when a date is set: "all" | "blocked" | "free" on that date
   // Which of the 3 date-pricing tiers is TODAY, per the live config — same resolver the Calendar
   // and Block modal use (markedDates override > auto-synced LMS category > Filler), so the Price
@@ -348,6 +350,9 @@ Rules:
   // (date-agnostic), which over-states unavailability for any single day. When a date is picked we
   // instead count only the qty committed to functions happening ON that date → true blocked / available
   // for that day. Map: { [invId]: qtyBlockedOnDate }, plus which functions block it (for the tooltip).
+  // A function row whose deal was cancelled no longer holds stock (cancelling releases `blocks` but never touches `functions`) -
+  // left out of the date count the same way the item popup's list already left it out.
+  const fnCancelled = (f) => !!f?.eventOrderId && (eventOrders || []).find((e) => e.id === f.eventOrderId)?.status === "cancelled";
   const dateBlock = useMemo(() => {
     if (!availDate) return null;
     // One deal's functions on the same day share the same pieces (set up once at the venue), so per deal an item counts at the MOST
@@ -355,7 +360,7 @@ Rules:
     // rows on one date read 110 blocked of 55 (owner report 2026-11-13). Different deals still add up.
     const perDeal = {}; // dealKey -> { invId -> { qty, names[] } }
     (functions || []).forEach((f) => {
-      if (f.date !== availDate) return;
+      if (f.date !== availDate || fnCancelled(f)) return;
       const dealKey = f.eventOrderId || f.projectId || f.id;
       const d = perDeal[dealKey] || (perDeal[dealKey] = {});
       (f.items || []).forEach((it) => {
@@ -372,7 +377,8 @@ Rules:
       (byItem[invId] = byItem[invId] || []).push({ name: [...new Set(names)].join(" + "), qty });
     }));
     return { qty: m, fns: byItem };
-  }, [availDate, functions]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availDate, functions, eventOrders]);
   const blockedOf = (i) => dateBlock ? (dateBlock.qty[i.id] || 0) : (i.blocked || 0);
   const availOf = (i) => (Number(i.qty) || 0) - blockedOf(i);
 
@@ -885,6 +891,7 @@ Rules:
   for (const i of visibleInventory) { const c = normCat(i.cat) || "Uncategorised"; catCounts[c] = (catCounts[c] || 0) + 1; }
   const catChips = Object.keys(catCounts).sort((a, b) => catCounts[b] - catCounts[a]); // busiest first
   const selItem = inventory.find((i) => i.id === detailItem);
+  useEffect(() => { setSelAllDates(false); }, [detailItem]);
   const blockInv = inventory.find((i) => i.id === blockModal);
   const deleteConfirmInv = inventory.find((i) => i.id === deleteConfirmId);
 
@@ -1541,7 +1548,7 @@ Rules:
               : <div className="w-28 h-28 rounded-xl border bg-gray-100 flex flex-col items-center justify-center text-gray-300 flex-shrink-0"><span className="text-4xl">📷</span><span className="text-xs mt-1">No photo</span></div>
             }
             <div className="grid grid-cols-3 gap-x-6 gap-y-2 text-sm flex-1">
-              {[["Category", selItem.cat], ["Type", selItem.type], ["Class", selItem.itemClass], ["Qty", selItem.qty + " " + selItem.unit], ["Available", (selItem.qty - (selItem.blocked || 0)) + " " + selItem.unit], ["Blocked", (selItem.blocked || 0) + " " + selItem.unit], ["Location", selItem.loc], ["Rental Price", selPrice ? fmt(selPrice) : "—"], ["Cost", fmt(selItem.cost)], ["Breakage", selItem.breakagePct + "%"], ["Out of Stock Cost %", typeof selItem.oosCostPct === "number" ? selItem.oosCostPct + "%" : "— (sub-category default)"], ["Dimensions", dimsText], ["Printable Area", printText]].map(([l, v]) => (
+              {[["Category", selItem.cat], ["Type", selItem.type], ["Class", selItem.itemClass], ["Qty", selItem.qty + " " + selItem.unit], [availDate ? "Available on date" : "Available", availOf(selItem) + " " + selItem.unit], [availDate ? "Blocked on date" : "Blocked", blockedOf(selItem) + " " + selItem.unit], ["Location", selItem.loc], ["Rental Price", selPrice ? fmt(selPrice) : "—"], ["Cost", fmt(selItem.cost)], ["Breakage", selItem.breakagePct + "%"], ["Out of Stock Cost %", typeof selItem.oosCostPct === "number" ? selItem.oosCostPct + "%" : "— (sub-category default)"], ["Dimensions", dimsText], ["Printable Area", printText]].map(([l, v]) => (
                 <div key={l}><span className="text-gray-400">{l}: </span><span className="font-medium text-gray-800">{v}</span></div>
               ))}
             </div>
@@ -1565,7 +1572,16 @@ Rules:
             </div>
           )}
           <div>
-            <h4 className="font-semibold text-gray-700 mb-2 text-sm">Blocked for Functions:</h4>
+            {/* With a date picked above, only that day's functions (owner ask 2026-11-13: it listed every function from August
+                on whatever date was picked); "All dates" shows the full list again. */}
+            <div className="flex items-center gap-2 mb-2">
+              <h4 className="font-semibold text-gray-700 text-sm">Blocked for Functions{availDate && !selAllDates ? ` on ${availDate.split("-").reverse().join("-")}` : ""}:</h4>
+              {availDate && (
+                <button onClick={() => setSelAllDates(v => !v)} className="ml-auto text-xs font-medium text-sky-700 hover:text-sky-900 px-2 py-1 rounded-md hover:bg-sky-50">
+                  {selAllDates ? "Only this date" : "All dates"}
+                </button>
+              )}
+            </div>
             {(() => {
               // A function row's own event_order can be cancelled (a duplicate booking, say)
               // without the function row itself ever being cleaned up — cancelStudioEvent only
@@ -1578,14 +1594,11 @@ Rules:
               const blockedFns = functions
                 .filter((f) => {
                   if (!f.items?.some((it) => it.invId === selItem.id)) return false;
-                  if (f.eventOrderId) {
-                    const eo = eventOrders.find((e) => e.id === f.eventOrderId);
-                    if (eo?.status === "cancelled") return false;
-                  }
-                  return true;
+                  if (availDate && !selAllDates && f.date !== availDate) return false;
+                  return !fnCancelled(f);
                 })
                 .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
-              if (blockedFns.length === 0) return <p className="text-sm text-gray-400 italic">Not blocked for any function</p>;
+              if (blockedFns.length === 0) return <p className="text-sm text-gray-400 italic">{availDate && !selAllDates ? "Not blocked for any function on this date" : "Not blocked for any function"}</p>;
               return blockedFns.map((f) => {
                   const it = f.items.find((it) => it.invId === selItem.id);
                   // Guest name + venue — read from the linked event_order when there is one (the
