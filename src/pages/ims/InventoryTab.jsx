@@ -1609,8 +1609,13 @@ Rules:
                   const guestName = eo?.clientName || f.brideGroom || f.clientName || "";
                   const venueRaw = eo?.venue ?? f.venue;
                   const venueName = typeof venueRaw === "string" ? venueRaw : (venueRaw?.name || "");
+                  // The session (Day / Night / Lunch …) beside the date (owner ask 2026-11-13): two functions on one date read the same
+                  // without it. The row's own shift, else the deal's function on that date and type.
+                  const shiftRaw = f.shift || (Array.isArray(eo?.functionsDetail) ? eo.functionsDetail.find((x) => x?.date === f.date && (!f.type || x?.fnType === f.type || x?.type === f.type))?.shift : "") || "";
+                  const shift = String(shiftRaw).trim();
                   return <div key={f.id} className="flex items-center gap-3 py-2 border-b text-sm flex-wrap">
                     <span className="font-medium">{f.name}</span><span className="text-gray-500">{f.date}</span>
+                    {shift && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 ring-1 ring-amber-200">{shift}</span>}
                     {guestName && <span className="text-gray-700">{guestName}</span>}
                     {venueName && <span className="text-gray-500 text-xs">{venueName}</span>}
                     <Badge color="indigo">{it.dept}</Badge><span className="text-gray-500 text-xs">{it.remark}</span>
