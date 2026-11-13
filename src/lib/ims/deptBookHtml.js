@@ -174,6 +174,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // "<" in one of them would otherwise break the markup or inject into it.
     const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const money = (v) => esc(fmt(Math.round(Number(v) || 0)));
+    // A weight in kilos as the crew loads it (owner ask 2026-11-13): whole kilos, one decimal under a kilo (never "0 kg").
+    // Only kilos - a recipe's 0.75 bundle is a real amount and keeps its decimals.
+    const kgR = (v) => { const n = Number(v) || 0; return n >= 1 ? Math.round(n) : Math.round(n * 10) / 10; };
     // data-block marks a unit the paginator will try to keep on one page. Sections are the
     // natural unit: a heading stranded at the foot of a page with its table overleaf is the
     // single thing that makes a generated report look generated.
@@ -243,14 +246,14 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         + (it.invId && decidedInstead.has(String(it.invId)) ? `<div class="sub">${t("Planning chose instead: {list}", { list: esc(decidedInstead.get(String(it.invId)).join(", ")) })}</div>` : "")
         + (paint ? `<div class="sub">${t("Paint: {paint}", { paint: esc(paintHn(paint)) })}</div>` : "")
         + (it.sub === "print" ? finish.prints.map(p => `<div class="sub">${esc(printLineT(p))}</div>`).join("") : "");
-      return `<tr><td>${esc(hn(it.name))}${sub}</td><td class="n b">${esc(it.qty)}</td></tr>`;
+      return `<tr><td>${esc(hn(it.name))}${sub}</td><td class="n b">${esc(it.qtyUnit === "kg" ? kgR(it.qty) : it.qty)}</td></tr>`;
     });
 
     const moveRows = movements.map(m =>
       `<tr><td>${esc(hn(m.name))}</td><td>${esc(m.type === "transfer" ? t("Transfer → {to}", { to: hn(m.toEventName) || t("site") }) : m.type === "damage" ? t("Damaged") : t("Back to production house"))}</td><td class="n">${esc(m.qty)}</td><td>${esc(m.by || "—")}</td></tr>`);
 
     const fabRows = inBook("Fabric") ? fabricReqRows.flatMap(ft => ft.rows.map(r =>
-      `<tr><td>${esc(t(ft.label))} · ${r.colour && r.colour !== "(unassigned)" ? `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid rgba(0,0,0,.18);background:${esc(r.hex)};margin-right:5px;vertical-align:middle"></span>` : ""}${esc(r.colour === "(unassigned)" ? t("(unassigned)") : hn(r.colour))}</td><td class="n">${esc(r.required)} ${esc(hu(ft.unit))}</td><td class="n">${esc(r.avail)} ${esc(hu(ft.unit))}</td><td class="n ${r.short > 0 ? "bad" : "ok"}">${r.short > 0 ? t("short {n}", { n: `${esc(r.short)} ${esc(hu(ft.unit))}` }) : t("ok")}</td></tr>`)) : [];
+      `<tr><td>${esc(t(ft.label))} · ${r.colour && r.colour !== "(unassigned)" ? `<span style="display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid rgba(0,0,0,.18);background:${esc(r.hex)};margin-right:5px;vertical-align:middle"></span>` : ""}${esc(r.colour === "(unassigned)" ? t("(unassigned)") : hn(r.colour))}</td><td class="n">${esc(ft.unit === "kg" ? kgR(r.required) : r.required)} ${esc(hu(ft.unit))}</td><td class="n">${esc(ft.unit === "kg" ? kgR(r.avail) : r.avail)} ${esc(hu(ft.unit))}</td><td class="n ${r.short > 0 ? "bad" : "ok"}">${r.short > 0 ? t("short {n}", { n: `${esc(ft.unit === "kg" ? kgR(r.short) : r.short)} ${esc(hu(ft.unit))}` }) : t("ok")}</td></tr>`)) : [];
 
     // ── ARTIFICIAL FLOWERS & GREENS ── the bunches the Floral book sends out, worked to kilos the way Deal Check does it (bunches ÷ bunches per kg),
     // and the specific colours to pull. Per function when the event has more than one (floralDetail), then the whole event. No rupees: this book is for the crew.
@@ -270,7 +273,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       const fnBunches = (f, kind) => Array.isArray(f?.artZones) && f.artZones.length
         ? f.artZones.reduce((t, a) => t + artBunches(a[kind]), 0)
         : artBunches(f?.art?.[kind]?.bunches);
-      const kgOf = (b, bpk) => (Number(bpk) > 0 ? Math.round(b / bpk * 100) / 100 : 0);
+      const kgOf = (b, bpk) => (Number(bpk) > 0 ? kgR(b / bpk) : 0);
       const fnRows = fdKeys.map(k => ({ k, f: fd[k] || {}, fl: fnBunches(fd[k], "flower"), gr: fnBunches(fd[k], "green") }));
       const multi = fnRows.filter(r => r.fl > 0 || r.gr > 0).length > 1;
       if (multi) fnRows.forEach(({ k, f, fl, gr }) => {
@@ -593,7 +596,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
             const cols = (z.colours || []).filter(c => c.colour && c.colour !== "(unassigned)");
             // Each colour with its quantity, as Planning's Fabric block shows it (owner ask 2026-11-02: one colour used to print with no
             // quantity, so the crew could not tell how much Liza / Velvet the zone takes); no colour picked yet: the zone's own quantity.
-            const qtyTxt = (q) => Number(q) > 0 ? ` ${esc(q)} ${esc(hu(g.unit))}` : "";
+            const qtyTxt = (q) => Number(q) > 0 ? ` ${esc(g.unit === "kg" ? kgR(q) : q)} ${esc(hu(g.unit))}` : "";
             const html = cols.length
               ? cols.map(c => `<b class="fpc">${colourMark(c.colour, c.hex, c.photo)}${esc(hn(c.colour))}${qtyTxt(c.qty)}</b>`).join("") + (z.standing ? `<b class="fpc">♻ ${t("Repeat")}</b>` : "")
               : esc(t("Colour not picked")) + (Number(z.qty) > 0 ? ` · <b>${qtyTxt(z.qty).trim()}</b>` : "");

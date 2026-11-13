@@ -49,4 +49,14 @@ describe("shared Fabric & Tenting book", () => {
     expect(html).not.toContain("Also on site");
     expect(html).toContain("Truss pillar 12ft"); // still in the loading list
   });
+  it("kilos in the loading list print whole (61.09 kg -> 61), other quantities as they are", () => {
+    const lines = [
+      { id: "Floral:a", name: "Artificial flowers", qty: 61.09, qtyUnit: "kg", sub: "Artificial Flowers" },
+      { id: "Floral:b", name: "Rose bundle", qty: 2.5, sub: "" },
+    ];
+    const html = buildDeptBookHtml(ctx("Floral", lines), {}, {}, {});
+    expect(html).toContain(">61</td>");
+    expect(html).not.toContain("61.09");
+    expect(html).toContain(">2.5</td>");
+  });
 });
