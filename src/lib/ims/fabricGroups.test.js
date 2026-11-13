@@ -266,3 +266,17 @@ describe("buildFabricGroups — colours worked out live from the function's Fabr
     expect(g.colours.map((c) => c.colour)).toEqual(["Rose Gold dark"]);
   });
 });
+
+describe("buildFabricGroups — Wall Masking in the colour picked on the truss (owner report 2026-11-13)", () => {
+  const stock = { maskingStock: [{ colour: "Black", stockPieces: 8 }, { colour: "Maroon", stockPieces: 75 }, { colour: "Ivory", stockPieces: 78 }] };
+  const mk = (row = {}) => ({ fi: 0, ri: 0, zk: "entry", zLabel: "Entry", fnLabel: "Cocktail", photo: "", fab: { maskingPieces: 4 }, row });
+  const masking = (row) => buildFabricGroups({ entries: [mk(row)], lines: [], fabricPlan: null, stock, fnPalettes: { 0: "Black, Maroon" } }).groups.find((g) => g.key === "masking");
+  it("no colour picked on the truss: the palette's colours, as before", () => {
+    expect(masking({}).colours.map((c) => c.colour).sort()).toEqual(["Black", "Maroon"]);
+  });
+  it("a colour picked on the truss (Build's 🎨 Colour): all of the masking in that colour, not split over the palette", () => {
+    const g = masking({ mkColour: "Ivory" });
+    expect(g.colours.map((c) => [c.colour, c.qty])).toEqual([["Ivory", 4]]);
+    expect(g.zones[0].colours.map((c) => c.colour)).toEqual(["Ivory"]);
+  });
+});

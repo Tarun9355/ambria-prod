@@ -101,7 +101,7 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor, combineAvailability, fixedVenueOverlap, fixedVenueOverlapOnDate } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial, platformStandingDiscount, scaleTrussPreview } from "../../../lib/studio/pricing";
+import { calcZoneFabric, resolveFabricAllocation, fabricAnchorsForRow, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial, platformStandingDiscount, scaleTrussPreview } from "../../../lib/studio/pricing";
 import { resolveBeamSegment, resolvePillarHeight } from "../../../lib/ims/trussEngine";
 import { platformAvgRatePerSqft } from "../../../lib/ims/platformEngine";
 import { carpetPricingFor, CARPET_OFF, carpetTakesStockPick } from "../../../lib/studio/taxonomy";
@@ -2233,7 +2233,7 @@ export default function DealCheckOverlay({ ctx }) {
                       // colour can now be tagged with (StudioBuild.jsx), so each material only ever
                       // auto-fills from colours actually meant for it, not every colour the
                       // salesperson picked regardless of which fabric they meant it for.
-                      const allocs = resolveFabricAllocation(existing, Math.ceil(totalQty), anchorsForPaletteByMaterial(imsPaletteCatalogue, fnPaletteForAnchors, key), stockArr, qtyField);
+                      const allocs = resolveFabricAllocation(existing, Math.ceil(totalQty), fabricAnchorsForRow(row, key, anchorsForPaletteByMaterial(imsPaletteCatalogue, fnPaletteForAnchors, key)), stockArr, qtyField);
                       const bump = (c, qty) => { if (!agg[key][c]) agg[key][c] = { old: 0, new: 0 }; agg[key][c][tier] += qty; };
                       if (allocs.length) allocs.forEach(a => { bump(a.colour || "(unassigned)", Number(a.qty) || 0); byRow.push({ fi: fnI, zk, ri, kind: key, colour: a.colour || "(unassigned)", qty: Number(a.qty) || 0, tier }); });
                       else { bump("(unassigned)", Math.ceil(totalQty)); byRow.push({ fi: fnI, zk, ri, kind: key, colour: "(unassigned)", qty: Math.ceil(totalQty), tier }); }

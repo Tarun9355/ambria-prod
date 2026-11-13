@@ -10,7 +10,7 @@
 // and are the fallback for an event whose layout has not synced.
 
 import { trussBaseArea } from "../studio/taxonomy.js";
-import { anchorsForPaletteByMaterial, resolveFabricAllocation } from "../studio/pricing.js";
+import { anchorsForPaletteByMaterial, resolveFabricAllocation, fabricAnchorsForRow } from "../studio/pricing.js";
 
 export const FABRIC_KINDS = [
   { key: "liza", label: "Liza Fabric", lineName: "Liza Fabric", unit: "kg", stockKey: "lizaStock", qtyField: "stockKg", allocField: "lizaAllocation", emoji: "🧣", qtyOf: (f) => f.lizaKg },
@@ -115,7 +115,7 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
       let rowCols;
       if (isLive) {
         // the colour this row's fabric goes in under the function's palette - a repeat zone's standing fabric too
-        rowCols = [...(q > 0 ? resolveFabricAllocation(e.row?.[kind.allocField], Math.ceil(q), anchorsForPaletteByMaterial([], fnPalettes[e.fi], kind.key), liveStock, kind.qtyField)
+        rowCols = [...(q > 0 ? resolveFabricAllocation(e.row?.[kind.allocField], Math.ceil(q), fabricAnchorsForRow(e.row, kind.key, anchorsForPaletteByMaterial([], fnPalettes[e.fi], kind.key)), liveStock, kind.qtyField)
           .map((a) => ({ colour: a.colour || "(unassigned)", qty: num(a.qty) })) : []), ...looseCols];
         // only new fabric counts towards what is pulled from stock; a repeat zone's is already standing
         if (!e.repeat) rowCols.forEach((c) => {

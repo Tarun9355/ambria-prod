@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, snapRowDimsForProduction, trussInvForMaterial, dcFabricMultOf, scaleTrussPreview } from "../../../../lib/studio/pricing";
+import { calcZoneFabric, resolveFabricAllocation, fabricAnchorsForRow, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, snapRowDimsForProduction, trussInvForMaterial, dcFabricMultOf, scaleTrussPreview } from "../../../../lib/studio/pricing";
 import { fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { resolveBeamSegment, resolvePillarHeight } from "../../../../lib/ims/trussEngine";
 import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
@@ -692,7 +692,7 @@ export default function DCTrussTab({ ctx }) {
                                       // Palette colour can be tagged with (StudioBuild.jsx) — only
                                       // colours actually meant for THIS material become its anchors.
                                       const resolveAlloc = (material, allocField, totalQty, stockArr, qtyField) => {
-                                        return resolveFabricAllocation(row[allocField], totalQty, anchorsForPaletteByMaterial(imsPaletteCatalogue, fnPalette, material), stockArr, qtyField);
+                                        return resolveFabricAllocation(row[allocField], totalQty, fabricAnchorsForRow(row, material, anchorsForPaletteByMaterial(imsPaletteCatalogue, fnPalette, material)), stockArr, qtyField);
                                       };
                                       const maskingAlloc = showMasking ? resolveAlloc("masking", "maskingAllocation", fab.maskingPieces, trussInv.maskingStock, "stockPieces") : [];
                                       const lizaAlloc    = showLiza    ? resolveAlloc("liza", "lizaAllocation",    Math.ceil(fab.lizaKg),  trussInv.lizaStock,    "stockKg")     : [];

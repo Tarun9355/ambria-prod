@@ -1199,6 +1199,15 @@ export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, q
 // agrees with the function's Fabric Palette: a saved allocation naming a colour that none of the palette's anchors for this material allows is a leftover from
 // an earlier palette (Build's Fabric Palette was changed since) and is ignored, so the palette decides. With no palette picked (no anchors), a saved allocation
 // stands as it always did. `existing` is row[allocField].
+// The colour(s) a truss row's fabric of one material is meant to go in: for Wall Masking, the ONE colour the salesperson picked on the
+// truss in Build (zc.mkColour, "🎨 Colour") when there is one - it was read only by Build itself, so Deal Check, Planning and the Setup
+// Book split the masking over the Fabric Palette's colours instead (owner report 2026-11-13: "masking in pdf incorrect"). Else the
+// palette's anchors for that material, as before.
+export const fabricAnchorsForRow = (row, material, paletteAnchors) => {
+  const picked = material === "masking" ? String(row?.mkColour || "").trim() : "";
+  return picked ? [picked] : (Array.isArray(paletteAnchors) ? paletteAnchors : []);
+};
+
 export const resolveFabricAllocation = (existing, totalQty, paletteAnchors, stockArray, qtyField) => {
   const anchors = Array.isArray(paletteAnchors) ? paletteAnchors : [];
   if (Array.isArray(existing) && existing.length > 0) {
