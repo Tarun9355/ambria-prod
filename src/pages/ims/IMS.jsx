@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/AuthContext";
+import { changeOwnPassword } from "../../lib/auth";
+import { Modal } from "../../components/ui";
 import { supabase, fetchAll, updateRow, deleteRow } from "../../lib/supabase";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
 import { notePlanningInputChange } from "../../lib/planningInputBus";
@@ -208,6 +210,38 @@ const allocToRow = (date, entry) => {
 export default function IMS() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  // Self-service "Change Password" — see the account block + its modal, near the bottom of this
+  // file (owner ask, 2026-11-13: let users reset their own password from the IMS sidebar).
+  const [pwModalOpen, setPwModalOpen] = useState(false);
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwErr, setPwErr] = useState("");
+  const [pwDone, setPwDone] = useState(false);
+  const closePwModal = () => { setPwModalOpen(false); setPwCurrent(""); setPwNew(""); setPwConfirm(""); setPwErr(""); setPwDone(false); };
+  const submitPwChange = async () => {
+    setPwErr("");
+    // Never trim either password — a user's actual stored password could itself contain a
+    // leading/trailing space (the old flat-file passwords this migrated from didn't forbid it),
+    // and silently trimming a NEW password here would save "abc123" while the user keeps typing
+    // "abc123 " at every future login, looking exactly like a lockout (review finding, 2026-11-13,
+    // "#2"). Reject it instead, so what's typed is exactly what's checked and exactly what's saved.
+    if (!pwCurrent) { setPwErr("Enter your current password"); return; }
+    if (pwNew.length < 6) { setPwErr("New password must be at least 6 characters"); return; }
+    if (pwNew !== pwNew.trim()) { setPwErr("New password can't start or end with a space"); return; }
+    if (pwNew !== pwConfirm) { setPwErr("New passwords don't match"); return; }
+    setPwBusy(true);
+    try {
+      await changeOwnPassword(pwCurrent, pwNew);
+      setPwDone(true);
+      setPwCurrent(""); setPwNew(""); setPwConfirm("");
+    } catch (e) {
+      setPwErr(e.message || "Could not change password");
+    } finally {
+      setPwBusy(false);
+    }
+  };
   // Remember the last open IMS tab so toggling to Studio and back returns here (not Dashboard).
   const [tab, setTab] = useState(() => {
     const isValidTab = (id) => id === "approvals" || TABS.some((t) => t.id === id);
@@ -2648,6 +2682,11 @@ export default function IMS() {
           <div className="text-[11px] text-gray-400 truncate">{user?.role || "User"}</div>
         </div>
       </div>
+      <button onClick={() => setPwModalOpen(true)}
+        className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium text-gray-600 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
+        <span aria-hidden="true" className="shrink-0 w-5 flex items-center justify-center">🔑</span>
+        Change Password
+      </button>
       {/* Full width, and red only on hover: signing out is destructive enough to want a moment's
           thought, but it is not a warning sitting in the rail all day. */}
       <button onClick={handleLogout}
@@ -2657,6 +2696,42 @@ export default function IMS() {
         </span>
         Log out
       </button>
+      <Modal open={pwModalOpen} onClose={closePwModal} title="🔑 Change Password">
+        {pwDone ? (
+          <div>
+            <p className="text-sm text-gray-700 mb-1">Your password has been changed.</p>
+            <p className="text-xs text-gray-500 mb-4">You'll stay signed in here — but any other device or tab already signed into this account will be signed out and need to log in again with the new password.</p>
+            <div className="flex justify-end">
+              <button onClick={closePwModal} className="px-4 py-2 bg-green-600 text-white rounded-lg text-xs">Done</button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs text-gray-500">Current Password</label>
+              <input type="password" autoComplete="current-password" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} autoFocus
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm mt-1" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">New Password</label>
+              <input type="password" autoComplete="new-password" value={pwNew} onChange={(e) => setPwNew(e.target.value)}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm mt-1" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">Confirm New Password</label>
+              <input type="password" autoComplete="new-password" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") submitPwChange(); }}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm mt-1" />
+            </div>
+            {pwErr && <p className="text-xs text-red-600">{pwErr}</p>}
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={closePwModal} className="px-4 py-2 border border-gray-300 rounded-lg text-xs text-gray-700">Cancel</button>
+              <button onClick={submitPwChange} disabled={pwBusy}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs disabled:opacity-50">{pwBusy ? "Changing…" : "Change Password"}</button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 

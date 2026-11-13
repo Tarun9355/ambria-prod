@@ -4,6 +4,7 @@ import { ROLES, ROLE_DEFAULTS, PERM_LABELS, PERM_GROUPS, PERM_UNWIRED, effective
 import { callUserAdmin } from "../../lib/userAdmin";
 import { DEPTS, userDepartments } from "../../lib/ims/deptClassify";
 import { useAuth } from "../../lib/AuthContext";
+import { deriveUsername } from "../../lib/auth";
 import RoleAccessModal, { SectionRow } from "./RoleAccessModal.jsx";
 import { IMS_TABS, IMS_SUBTABS, STUDIO_TABS, STUDIO_SUBTABS, roleTabOn, roleTabVed, roleSubTabs, userTabOn, userTabVed, userSubTabs, userTabCustom, userHasAnyOverride } from "../../lib/ims/tabAccess";
 
@@ -49,9 +50,6 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
   // resolves to in Edit Access — drives the "customized" callout in the modal's Permissions panel.
   const roleDefaultPerms = effectiveRolePerms(form.role, settings);
   const permsOverridden = JSON.stringify([...(form.permissions||[])].sort()) !== JSON.stringify([...roleDefaultPerms].sort());
-
-  // Derive username from display name: lowercase, spaces → _, strip non-alphanumerics
-  const deriveUsername = (name) => (name||"").trim().toLowerCase().replace(/\s+/g,"_").replace(/[^a-z0-9_]/g,"");
 
   // Generate a readable password: "{NamePrefix}-{4 chars}". E.g. "Ashi-7K42"
   // Mix of digits + uppercase letters (no ambiguous chars like 0/O/1/I/l).
