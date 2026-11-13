@@ -39,6 +39,15 @@ export function fullRecipeLines(recipe, pieces, realShare, snapReal, words = { r
     const fromSnap = takeSnap(f);
     if (!(total > 0)) return;
     if (f.full || !mixed) { out.push({ name: f.name, qty: total, unit: f.unit || "", tag: "" }); return; }
+    // 100% artificial (share<=0): every unit of this flower is already covered by the card's own
+    // generic "Artificial flowers"/"Artificial greens" bunch line(s) (a separate, already-present
+    // source on the same card - the zone's own artificial-bunch allocation) - naming the specific
+    // real species it's modelled on adds nothing and reads as if real flowers were still being
+    // pulled for it (owner report, 2026-11-13: "if it's 100%, no real flower will be used for it,
+    // so it should only show Artificial Flower/Green Bunch counts there"). takeSnap(f) above still
+    // runs first, so a matching Deal Check real-line entry (should be none at share 0) is consumed
+    // rather than falling through to the leftover-flush loop below and reappearing as "Real" anyway.
+    if (share <= 0) return;
     const real = fromSnap ? r2(fromSnap.qty) : r2(total * share);
     const art = r2(total * (1 - share));
     const tag = real <= 0 ? words.art : art <= 0 ? words.real : `${words.real} ${real} · ${words.art} ${art}`;
