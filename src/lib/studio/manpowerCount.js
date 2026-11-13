@@ -24,7 +24,7 @@
 // explanation stays tailored per audience/file.
 
 import { matchFlowerPattern } from "../ims/flowerHelpers";
-import { resolveTrussConfig, calcZoneTrussPreview, calcZoneFabric } from "./pricing";
+import { resolveTrussConfig, calcZoneTrussPreview, calcZoneFabric, scaleTrussPreview } from "./pricing";
 import { heavyExtraLabour, eventTimingMultFor } from "../ims/constants";
 import { standingReductionBySubcat } from "../ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat, walkKitUnits } from "../ims/helpers";
@@ -54,7 +54,14 @@ export function tentingZoneUsage(fn, ctx) {
     if (!en[zk] || !zc[zk]) return;
     const z = zc[zk];
     if (ctx?.trussInv) {
-      try { const pv = calcZoneTrussPreview(z, ctx.trussInv); if (pv?.topology?.pillarCount) truss += pv.topology.pillarCount; } catch { /* zone has no resolvable truss preview */ }
+      // Every truss structure in the zone (its own row, plus any "+ Add Truss" extras) — a zone with
+      // 2+ truss structures used to only ever count the first one's pillars here. Each scaled by its
+      // OWN Truss Qty — without it, raising Truss Qty above 1 in Build never grew the Tenting crew
+      // usage count this feeds (DCManpowerTab, DealCheckOverlay's calcPpl, and StudioApp's
+      // booking-confirmation manpower snapshot all share this one engine).
+      [z, ...(z.extraTrussRows || [])].forEach((row) => {
+        try { const pv = scaleTrussPreview(calcZoneTrussPreview(row, ctx.trussInv), row?.trussQty); if (pv?.topology?.pillarCount) truss += pv.topology.pillarCount; } catch { /* zone has no resolvable truss preview */ }
+      });
     }
     const rows = [{ plH: z.plH, floorDims: z.floorDims || {}, plQty: z.plQty, cpT: z.cpT }, ...(z.extraPlatformRows || [])];
     rows.forEach((row) => {
@@ -336,7 +343,11 @@ function peopleTrussLabour(fn, ctx) {
     const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
     Object.keys(zc).forEach((zk) => {
       if (!en[zk] || !zc[zk]) return;
-      try { const pv = calcZoneTrussPreview(zc[zk], ctx.trussInv); if (pv?.topology?.pillarCount) pillars += pv.topology.pillarCount; } catch { /* zone has no resolvable truss preview */ }
+      // Every truss structure in the zone, each scaled by its OWN Truss Qty — same reason as
+      // tentingZoneUsage above.
+      [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach((row) => {
+        try { const pv = scaleTrussPreview(calcZoneTrussPreview(row, ctx.trussInv), row?.trussQty); if (pv?.topology?.pillarCount) pillars += pv.topology.pillarCount; } catch { /* zone has no resolvable truss preview */ }
+      });
     });
   }
   if (pillars <= 0 || !(ctx.trussLabourRanges || []).length) return 0;

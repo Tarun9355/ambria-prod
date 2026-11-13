@@ -736,8 +736,17 @@ export default function DCFloralsTab({ ctx }) {
                           // their cost is still folded into totalReal/totalArtificial above, just not
                           // shown again here as a "no pattern" row (there was never a pattern to have).
                           if (eb.isInvOnlyNoPattern) return;
-                          if (!byName[eb.name]) { byName[eb.name] = { name: eb.name, zones: [], totalQty: 0, realPct: eb.realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, invCost: 0, entries: [] }; merged.push(byName[eb.name]); }
-                          const g = byName[eb.name];
+                          // Grouped by the KIT's own name (eb.kitParent) when a kit is involved, so the
+                          // SAME recipe/component showing up across several zones of the same kit still
+                          // merges into one row (same reason plain same-named elements already merge
+                          // across zones) — but DISPLAYED by its own name (the recipe's real name, e.g.
+                          // "Chandelier Tree Floral Recipe", or the component's own name), never the
+                          // kit's name. Showing "Tree" here read as if the kit itself were a flower
+                          // (owner feedback, 2026-11-13: "why show it as tree, thats confusing" — the
+                          // row IS the recipe, grouped under the kit only so repeats merge).
+                          const groupName = eb.kitParent || eb.name;
+                          if (!byName[groupName]) { byName[groupName] = { name: eb.name, zones: [], totalQty: 0, realPct: eb.realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, invCost: 0, entries: [] }; merged.push(byName[groupName]); }
+                          const g = byName[groupName];
                           g.zones.push(eb.zoneKey);
                           g.totalQty += (eb.qty || 0);
                           g.realCost += (eb.realCost || 0);

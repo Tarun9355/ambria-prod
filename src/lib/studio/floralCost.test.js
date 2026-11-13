@@ -274,6 +274,51 @@ describe("computeFnFloralCost — core per-element resolution (unaffected by the
     expect(result.elementBreakdown.some((eb) => eb.name === "Round Fibre Pot")).toBe(true);
   });
 
+  it("tags a kit-expanded recipe/component with the KIT's own name (kitParent), not its own decorated display name", () => {
+    // The Dept PDF's zone pages fold a kit's attached recipe bunches back into the kit's own card by
+    // matching THIS field against the kit's displayed name ("Tree") — not the recipe's own name
+    // ("Tree · recipe"), which never matches any real card and used to fall through to a confusing
+    // standalone card of its own (owner report, 2026-11-12).
+    const f = fn({ zoneElements: { stage: [{ name: "Tree", invId: "kit1", qty: 2 }] }, enabledEls: { stage: true } });
+    const opts = {
+      ...baseOpts([pRose]),
+      imsInventory: [{ id: "kit1", name: "Tree", cat: "tenting", subItems: [{ patternId: "p_rose", qty: 6 }, { itemId: "sub1", qty: 3 }] }, { id: "sub1", name: "Round Fibre Pot", cat: "florals", subCat: "Flower Bunch" }],
+    };
+    const result = computeFnFloralCost(f, [f], opts);
+    const recipe = result.elementBreakdown.find((eb) => /recipe/.test(eb.name));
+    const comp = result.elementBreakdown.find((eb) => eb.name === "Round Fibre Pot");
+    expect(recipe?.kitParent).toBe("Tree");
+    expect(comp?.kitParent).toBe("Tree");
+  });
+
+  it("names the recipe's own elementBreakdown row after the PATTERN itself (e.g. \"Chandelier Tree Floral Recipe\"), not a generic \"{kit} · recipe\" placeholder — the kit's own name is still carried separately via kitParent (owner report, 2026-11-13: \"still seeing tree recipe and not the chandelier recipe\")", () => {
+    const chandelierPattern = { id: "p_chandelier", name: "Chandelier Tree Floral Recipe", sub: "Flower Bunch", sizes: { medium: { flowers: [{ flowerId: "rose", qty: 2 }], extraCost: 0 } } };
+    const kit = { id: "kit1", name: "Tree", cat: "tenting", subItems: [{ patternId: "p_chandelier", qty: 2 }] };
+    const opts = { ...baseOpts([chandelierPattern]), imsInventory: [kit] };
+    const result = computeFnFloralCost(
+      fn({ zoneElements: { stage: [{ name: "Tree", invId: "kit1", qty: 2 }] }, enabledEls: { stage: true } }),
+      [], opts,
+    );
+    const recipe = result.elementBreakdown.find((eb) => eb.kitParent === "Tree" && eb.hasPattern);
+    expect(recipe?.name).toBe("Chandelier Tree Floral Recipe");
+  });
+
+  it("a kit's recipe pointing at a DELETED pattern contributes nothing — never fuzzy-matched by its own decorated name (owner decision, 2026-11-12: deleted patterns are gone everywhere)", () => {
+    // p_rose is a real, live pattern in this test's own flowerPatterns list — included specifically
+    // to prove a deleted reference doesn't spuriously latch onto some unrelated real pattern that
+    // happens to share a name/substring with its decorated "Tree · recipe" label.
+    const kit = { id: "kit1", name: "Tree", cat: "tenting", subItems: [{ patternId: "p_deleted_gone", qty: 2 }] };
+    const opts = { ...baseOpts([pRose]), imsInventory: [kit] };
+    const result = computeFnFloralCost(
+      fn({ zoneElements: { stage: [{ name: "Tree", invId: "kit1", qty: 2 }] }, enabledEls: { stage: true } }),
+      [], opts,
+    );
+    expect(result.elementBreakdown.some((eb) => /recipe/.test(eb.name))).toBe(false);
+    expect(result.totalReal).toBe(0);
+    expect(result.totalArtificial).toBe(0);
+    expect(result.uncosted.some((u) => /recipe/.test(u.name))).toBe(true);
+  });
+
   it("a kit's flower recipe follows the deal's EDITED parts, not only the master list", () => {
     // Master: 6 recipes per kit. The deal edited it to 10 — 2 kits must itemise 20, not 12.
     const kit = { id: "kit1", name: "Tree", cat: "tenting", subItems: [{ patternId: "p_rose", qty: 6 }] };
@@ -282,6 +327,21 @@ describe("computeFnFloralCost — core per-element resolution (unaffected by the
       .elementBreakdown.find((eb) => /recipe/.test(eb.name))?.qty;
     expect(qtyOf({ name: "Tree", invId: "kit1", qty: 2 })).toBe(12);
     expect(qtyOf({ name: "Tree", invId: "kit1", qty: 2, kitOverrides: [{ patternId: "p_rose", qty: 10 }] })).toBe(20);
+  });
+
+  it("a kit's recipe still itemises from el.kitOverrides even when the MASTER item's own subItems is empty (bug fixed 2026-11-12)", () => {
+    // The master catalogue item has no subItems at all (e.g. cleared, or never set) — only this
+    // one deal's own edit (el.kitOverrides) carries the attached flower recipe. Gating kit-expansion
+    // on the master's subItems.length used to mean this recipe was silently dropped here even though
+    // Build's own separate pricing engine (kitFloralCompDelta/attachedPatterns) already counted it.
+    const kit = { id: "kit1", name: "Tree", cat: "tenting", subItems: [] };
+    const opts = { ...baseOpts([pRose]), imsInventory: [kit] };
+    const result = computeFnFloralCost(
+      fn({ zoneElements: { stage: [{ name: "Tree", invId: "kit1", qty: 2, kitOverrides: [{ patternId: "p_rose", qty: 10 }] }] }, enabledEls: { stage: true } }),
+      [], opts,
+    );
+    const recipe = result.elementBreakdown.find((eb) => /recipe/.test(eb.name));
+    expect(recipe?.qty).toBe(20);
   });
 
   it("surfaces an unresolvable floral-looking element as uncosted instead of silently dropping it", () => {
@@ -318,6 +378,65 @@ describe("computeFnFloralCost — core per-element resolution (unaffected by the
   });
 });
 
+describe("computeFnFloralCost — a raw mandi commodity added directly (el.mandiId, e.g. Jaimala/Loose Petals, no recipe/pattern at all)", () => {
+  // Jaimala — a real mandi item, directly addable in Build the same way "Loose Petals" is (an
+  // IMS "Markup %" set on the mandi row, no flower pattern involved). Bug fixed 2026-11-13:
+  // computeFnFloralCost had NO handling for this element shape at all — it never resolved
+  // el.mandiId, so a direct mandi add silently never reached flowerAgg (the mandi list every
+  // actuals screen reads), even though Build's own getElPriceFromMandi priced it correctly.
+  // `.name`, not `.label` — the real field shape mandi_flowers color variants carry
+  // (AdminSettingsTab.jsx creates {variantId, name, photoUrl, currentPrice}). An earlier version of
+  // this fix read `.label` here, which is always undefined on a real variant — the test fixture
+  // used to match that wrong field too, hiding the bug (review finding, 2026-11-13).
+  const jaimala = { id: "jaimala", name: "Jaimala", unit: "piece", currentPrice: 80, markup: 20, colorVariants: [{ variantId: "v_red", name: "Red", photoUrl: "red.jpg", currentPrice: 90 }] };
+  const mandiOpts = { ...baseOpts([]), mandiCatalogue: [jaimala] };
+
+  it("reaches the mandi list (flowerAgg) and totalReal at the bare mandi rate — no markup, no artificial side", () => {
+    const f = fn({ zoneElements: { stage: [{ name: "Jaimala", mandiId: "jaimala", qty: 5 }] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f, [f], mandiOpts);
+    expect(result.totalReal).toBeCloseTo(5 * 80, 5); // bare rate, markup is guest-price-only
+    expect(result.totalArtificial).toBe(0);
+    const breakdown = buildMandiBreakdown(result.flowerAgg);
+    const row = breakdown.find((r) => r.name === "Jaimala");
+    expect(row?.qty).toBeCloseTo(5, 5);
+  });
+
+  it("a picked colour variant prices at the variant's own rate, not the parent's", () => {
+    const f = fn({ zoneElements: { stage: [{ name: "Jaimala", mandiId: "jaimala", mandiVariantId: "v_red", qty: 4 }] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f, [f], mandiOpts);
+    expect(result.totalReal).toBeCloseTo(4 * 90, 5);
+  });
+
+  it("a picked colour variant's name reaches the mandi list's own colorVariant field (swatch/photo), not left null", () => {
+    const f = fn({ zoneElements: { stage: [{ name: "Jaimala", mandiId: "jaimala", mandiVariantId: "v_red", qty: 4 }] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f, [f], mandiOpts);
+    const row = result.flowerAgg.get("jaimala");
+    expect(row?.colorVariant).toMatchObject({ variantId: "v_red", label: "Red", photoUrl: "red.jpg" });
+  });
+
+  it("an unresolvable mandiId is recorded as uncosted, not silently dropped", () => {
+    const f = fn({ zoneElements: { stage: [{ name: "Ghost", mandiId: "gone", qty: 2 }] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f, [f], mandiOpts);
+    expect(result.totalReal).toBe(0);
+    expect(result.uncosted.some((u) => u.name === "Ghost")).toBe(true);
+  });
+
+  it("a SAME-colour direct mandi item reused from the immediately preceding function gets the reuse credit — same mechanism and fixture shape as the Rose palette-reuse test above", () => {
+    const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "Red", zoneElements: { stage: [{ name: "Jaimala", mandiId: "jaimala", qty: 10 }] }, enabledEls: { stage: true } });
+    const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "Red", zoneElements: { stage: [{ name: "Jaimala", mandiId: "jaimala", qty: 20 }] }, enabledEls: { stage: true } });
+    const opts = {
+      ...mandiOpts,
+      colorPrefsForFn: { jaimala: pick("Red") },
+      colorPrefsByFnIdx: { 0: { jaimala: pick("Red") }, 1: { jaimala: pick("Red") } },
+    };
+    const result = computeFnFloralCost(f2, [f1, f2], opts);
+    const line = result.elementBreakdown[0].realLines[0];
+    expect(line.qtyFull).toBe(20);
+    expect(line.reuseCredit).toBeCloseTo(10 * FLOWER_REUSE_RATE, 5);
+    expect(line.qty).toBeCloseTo(20 - 10 * FLOWER_REUSE_RATE, 5);
+  });
+});
+
 describe("computeFnRawFlowerUsage", () => {
   it("aggregates raw (uncredited) real and artificial need per exact flower id, ignoring reuse entirely", () => {
     const f = fn({ zoneElements: { stage: [{ name: "Rose", patternId: "p_rose", qty: 10, realPct: 30 }] }, enabledEls: { stage: true } });
@@ -337,6 +456,15 @@ describe("computeFnRawFlowerUsage", () => {
     const f = fn({ zoneElements: { stage: [{ name: "Rose", patternId: "p_rose", qty: 10, realPct: 100 }] }, enabledEls: { stage: true } });
     const usage = computeFnRawFlowerUsage(f, baseOpts([pRose]));
     expect(usage.get("rose").colour).toBe(null);
+  });
+
+  it("tracks a direct mandi item too (el.mandiId, no pattern) — at its full qty, 100% real, so a LATER function can be credited for reusing it", () => {
+    const jaimala = { id: "jaimala", name: "Jaimala", unit: "piece", currentPrice: 80, markup: 20 };
+    const f = fn({ zoneElements: { stage: [{ name: "Jaimala", mandiId: "jaimala", qty: 6 }] }, enabledEls: { stage: true } });
+    const usage = computeFnRawFlowerUsage(f, { ...baseOpts([]), mandiCatalogue: [jaimala] });
+    const u = usage.get("jaimala");
+    expect(u?.realQty).toBeCloseTo(6, 5);
+    expect(u?.artUnits).toBe(0);
   });
 });
 

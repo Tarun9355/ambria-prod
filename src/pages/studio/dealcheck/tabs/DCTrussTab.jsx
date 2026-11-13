@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, snapRowDimsForProduction, trussInvForMaterial, dcFabricMultOf } from "../../../../lib/studio/pricing";
+import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, calcFabricAllocationTotal, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, snapRowDimsForProduction, trussInvForMaterial, dcFabricMultOf, scaleTrussPreview } from "../../../../lib/studio/pricing";
 import { fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { resolveBeamSegment, resolvePillarHeight } from "../../../../lib/ims/trussEngine";
 import { findCrossFnReuseSource } from "../../../../lib/studio/crossFnReuse";
@@ -112,7 +112,12 @@ export default function DCTrussTab({ ctx }) {
                         // `snappedRow` is always === `row`; kept only because the real-stock joint
                         // resolution just below still needs a row to read dims off of.
                         const snappedRow = snapRowDimsForProduction(row, trussInv);
-                        const pv = calcZoneTrussPreview(row, trussInv);
+                        // Scaled by this row's own Truss Qty — calcZoneTrussPreview itself describes
+                        // ONE truss unit; without this a Truss Qty raised above 1 billed/listed as if
+                        // only one existed. zoneTrussStandingDiscountDetail just below scales the same
+                        // way internally now, so both sides of its discount math stay on the same
+                        // (scaled) footing.
+                        const pv = scaleTrussPreview(calcZoneTrussPreview(row, trussInv), row.trussQty);
                         if (pv && pv.costs) {
                           const disc = venueTrussHere ? zoneTrussStandingDiscountDetail(row, trussInv, venueTrussHere) : { pillar: 0, beam: 0, total: 0 };
                           // The venue's standing discount and a Repeat zone's do not stack: each part takes

@@ -235,14 +235,18 @@ export function computeFnRawFlowerUsage(fn, opts) {
     (elems || []).forEach((el) => {
       expandedElems.push(el);
       const kitInvItem = findInv(el.invId);
-      if (kitInvItem && Array.isArray(kitInvItem.subItems) && kitInvItem.subItems.length > 0) {
-        const outerQty = el.qty || 0;
-        // Same rule as the Florals detail below: the deal's edited kit (el.kitOverrides) when there is one, else the master list.
-        const kitParts = Array.isArray(el.kitOverrides) && el.kitOverrides.length > 0 ? el.kitOverrides : kitInvItem.subItems;
+      // Same rule as computeFnFloralCost below (kept in sync manually — fixed together, 2026-11-12):
+      // el.kitOverrides (the deal's own edit) checked FIRST, master subItems only as fallback, gated
+      // on there being any kitParts at all rather than on the master item's own subItems being
+      // non-empty — so an edited kit whose master subItems is empty, or whose invId can't resolve
+      // here, still contributes its el.kitOverrides recipe to the preceding-function reuse credit.
+      const outerQty = el.qty || 0;
+      const kitParts = Array.isArray(el.kitOverrides) && el.kitOverrides.length > 0 ? el.kitOverrides : (kitInvItem?.subItems || []);
+      if (kitParts.length > 0) {
         kitParts.forEach((si) => {
           const siQty = (Number(si.qty) || 0) * outerQty;
           if (siQty <= 0) return;
-          if (si.patternId) { expandedElems.push({ name: `${el.name || kitInvItem.name} · recipe`, patternId: si.patternId, qty: siQty, size: el.size }); return; }
+          if (si.patternId) { expandedElems.push({ name: `${el.name || kitInvItem?.name || "Kit"} · recipe`, patternId: si.patternId, qty: siQty, size: el.size }); return; }
           const ci = findInv(si.itemId);
           if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size });
         });
@@ -251,6 +255,23 @@ export function computeFnRawFlowerUsage(fn, opts) {
     expandedElems.forEach((el) => {
       const elName = (el.name || "").toLowerCase().trim();
       const elQty = el.qty || 0;
+      // A raw mandi commodity (el.mandiId) — same shape as computeFnFloralCost's own mandiId
+      // branch, kept in sync manually. Recorded here too so a LATER function's reuse-credit lookup
+      // (precedingUsage.get(el.mandiId)) has something to find — without this, a direct mandi add
+      // could never be credited as "reused from yesterday" by a following function, the same gap
+      // that used to leave it out of the mandi list/actuals entirely (fixed alongside).
+      if (el.mandiId) {
+        const parent = mandiCatalogue.find((m) => m.id === el.mandiId);
+        if (!parent) return;
+        const variant = el.mandiVariantId ? (parent.colorVariants || []).find((v) => v.variantId === el.mandiVariantId) : null;
+        add(el.mandiId, elQty, 0, parent, variant || null);
+        return;
+      }
+      // Same rule as computeFnFloralCost above (kept in sync manually): an explicit pattern
+      // reference either resolves live or this element contributes nothing here — never guessed by
+      // fuzzy name matching against its own decorated label.
+      const elPattern = el.patternId ? flowerPatterns.find((p) => p.id === el.patternId) : null;
+      if (el.patternId && !elPattern) return;
       let rc = rcItems.find((i) => (i.name || "").toLowerCase().trim() === elName);
       if (!rc && elName.length >= 4) {
         rc = rcItems.find((i) => {
@@ -259,7 +280,6 @@ export function computeFnRawFlowerUsage(fn, opts) {
           return n && n.length >= 4 && (elName.includes(n) || n.includes(elName));
         });
       }
-      const elPattern = el.patternId ? flowerPatterns.find((p) => p.id === el.patternId) : null;
       const invItem = findInv(el.invId);
       const pattern = elPattern
         || (invItem ? matchFlowerPattern(invItem, flowerPatterns) : null)
@@ -406,17 +426,32 @@ export function computeFnFloralCost(fn, allFns, opts) {
     (elems || []).forEach(el => {
       expandedElems.push(el);
       const kitInvItem = findInv(el.invId);
-      if (kitInvItem && Array.isArray(kitInvItem.subItems) && kitInvItem.subItems.length > 0) {
-        const outerQty = el.qty || 0;
-        // The deal's own edit of the kit (Build's "Kit — includes" editor → el.kitOverrides) is what was priced and
-        // what gets made; the master list is only the default when nothing was edited.
-        const kitParts = Array.isArray(el.kitOverrides) && el.kitOverrides.length > 0 ? el.kitOverrides : kitInvItem.subItems;
+      // The deal's own edit of the kit (Build's "Kit — includes" editor → el.kitOverrides) is what was
+      // priced and what gets made; the master item's subItems is only the fallback when nothing was
+      // edited — checked FIRST, exactly matching Build's own pricing engine (StudioApp.jsx's
+      // effectiveSubItems). Gating entry into this block on `kitInvItem.subItems.length > 0` (fixed
+      // 2026-11-12) used to mean an edited kit whose MASTER item's own subItems was empty, or whose
+      // invId failed to resolve here at all, never even looked at el.kitOverrides — silently dropping
+      // every attached flower recipe from this engine's mandi list/artificial bunches, even though
+      // Build's own price breakdown (a separate engine, kitFloralCompDelta/attachedPatterns) already
+      // correctly counted them (owner report, 2026-11-12 — the Tree kit's Chandelier Floral Recipe).
+      const outerQty = el.qty || 0;
+      const kitParts = Array.isArray(el.kitOverrides) && el.kitOverrides.length > 0 ? el.kitOverrides : (kitInvItem?.subItems || []);
+      if (kitParts.length > 0) {
         kitParts.forEach(si => {
           const siQty = (Number(si.qty) || 0) * outerQty;
           if (siQty <= 0) return;
-          if (si.patternId) { expandedElems.push({ name: `${el.name || kitInvItem.name} · recipe`, patternId: si.patternId, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem.name }); return; }
+          // Named after the RECIPE ITSELF ("Chandelier Tree Floral Recipe"), not the generic
+          // "{kit name} · recipe" placeholder this used to carry — the kit's own name already
+          // reaches every consumer via _kitParent (grouping/folding), so this field is free to say
+          // WHICH recipe, the thing someone opening "🧮 how" on the kit's row actually wants to know
+          // (owner report, 2026-11-13: "still seeing tree recipe and not the chandelier recipe").
+          // Falls back to the old generic label only if the pattern itself can't be found by id here
+          // (practically unreachable now — an unresolvable patternId is caught and uncosted before a
+          // name is ever needed, see the elPattern check below — kept as a harmless safety net).
+          if (si.patternId) { const recipeName = flowerPatterns.find(p => p?.id === si.patternId)?.name; expandedElems.push({ name: recipeName || `${el.name || kitInvItem?.name || "Kit"} · recipe`, patternId: si.patternId, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem?.name }); return; }
           const ci = findInv(si.itemId);
-          if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem.name });
+          if (ci && String(ci.cat || ci.category || "").toLowerCase() === "florals") expandedElems.push({ name: ci.name, invId: ci.id, qty: siQty, size: el.size, _kitParent: el.name || kitInvItem?.name });
         });
       }
     });
@@ -424,6 +459,72 @@ export function computeFnFloralCost(fn, allFns, opts) {
     expandedElems.forEach(el => {
       const elName = (el.name || "").toLowerCase().trim();
       const elQty = el.qty || 0;
+      // A raw mandi commodity added straight to a zone (el.mandiId, e.g. "Loose Petals"/Jaimala —
+      // no recipe/pattern, no rentable IMS stock behind it; StudioApp.jsx's getElPriceFromMandi
+      // prices it the same way: the picked colour variant's own rate, or the parent's, × markup%
+      // for the GUEST price). This engine had no handling for this element shape at all before —
+      // a direct mandi add never reached flowerAgg, so it silently never showed in Deal Check's own
+      // Florals tab mandi list, the artificial/real actuals, or anywhere else this engine feeds
+      // (IMS Dept Ops, Planning) — owner report, 2026-11-13. Always 100% real (no artificial side
+      // exists for a direct mandi item), and the ACTUALS side bills at the bare mandi rate, same
+      // convention every recipe ingredient below already uses — markup is a guest-price-only
+      // concept, applied solely in getElPriceFromMandi, never here.
+      if (el.mandiId) {
+        const parent = mandiCatalogue.find(m => m.id === el.mandiId);
+        if (!parent) { uncosted.push({ name: el.name || "(unnamed)", zoneKey: zk, qty: elQty, reason: "Mandi item not found" }); return; }
+        const variant = el.mandiVariantId ? (parent.colorVariants || []).find(v => v.variantId === el.mandiVariantId) : null;
+        const baseRate = Number((variant || parent).currentPrice) || 0;
+        // mandi_flowers color variants carry `.name` (AdminSettingsTab.jsx), never `.label` — the
+        // mandi list's own `colorVariant` field expects the DCFloralsTab.jsx shape
+        // {variantId, label, photoUrl, rate}, built here the same way its own colour-picker does
+        // (review finding, 2026-11-13: a bare `.label` read is always undefined, silently losing
+        // the picked colour — both the swatch/photo AND the reuse-credit match against it).
+        const variantColour = variant ? { variantId: variant.variantId, label: variant.name || "", photoUrl: variant.photoUrl || null, rate: Number(variant.currentPrice) || 0 } : null;
+        const displayName = variantColour?.label ? `${parent.name} (${variantColour.label})` : parent.name;
+        // Same reuse-credit mechanism every recipe ingredient gets (FLOWER_REUSE_RATE × the
+        // preceding function's own usage of this exact species, gated on a matching colour) —
+        // species identity is keyed on el.mandiId here, the same id computeFnRawFlowerUsage must
+        // also record this element under for the credit to ever find anything (fixed alongside).
+        const pUsage = precedingUsage?.get(el.mandiId) || null;
+        const myColour = variantColour?.label || resolvedFlowerColour(el.mandiId, colorPrefsForFn, overrideByParentId, fn, parent);
+        const colorEligible = manualRepeat || (autoEligible && !!pUsage && !!myColour && !!pUsage.colour && fuzzyColourMatch(myColour, pUsage.colour));
+        const reuseCredit = (colorEligible && pUsage) ? FLOWER_REUSE_RATE * pUsage.realQty : 0;
+        const totalQty = Math.max(0, elQty - reuseCredit);
+        const lineCost = totalQty * baseRate;
+        totalReal += lineCost;
+        // No pattern.sizes concept for a raw mandi commodity — el.size (if any) is recorded as-is,
+        // not resolved through sizeClassToPatternKey/sizeFromMode (those need a recipe to size).
+        const mandiSizeKey = el.size || null;
+        const realLinesForEl = [{ flowerId: el.mandiId, name: displayName, perPattern: 1, qty: totalQty, qtyFull: elQty, reuseCredit, unit: parent.unit || "kg", unitPrice: baseRate, lineCost, realOnly: true, variantPicked: variantColour?.label || null }];
+        elementBreakdown.push({ name: el.name || parent.name, zoneKey: zk, qty: elQty, realPct: 100, realCost: lineCost, artCost: 0, total: lineCost, hasPattern: false, realLines: realLinesForEl, size: mandiSizeKey, artLines: [], artBunchesFlower: 0, artBunchesGreen: 0, artBunchesFlowerFull: 0, artBunchesGreenFull: 0, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern: false, repeatZone: zoneRepeat, repeatLabel, kitParent: el._kitParent || null });
+        if (totalQty > 0) {
+          const prev = flowerAgg.get(el.mandiId) || { flowerId: el.mandiId, name: displayName, totalQty: 0, totalQtyFull: 0, totalCost: 0, unit: parent.unit || "kg", unitPrice: baseRate, contributors: [], realOnly: true, flowerType: parent.flowerType || "flower", variantPicked: variantColour?.label || null, colorVariant: variantColour, colorPrefs: null };
+          prev.totalQty += totalQty;
+          prev.totalQtyFull += elQty;
+          prev.totalCost += lineCost;
+          prev.unitPrice = prev.totalQty > 0 ? prev.totalCost / prev.totalQty : baseRate;
+          prev.contributors.push({ elName: el.name || parent.name, zoneKey: zk, elQty, perPattern: 1, realFrac: 1, contribution: totalQty, repeatZone: zoneRepeat, reuseCredit, repeatLabel, size: mandiSizeKey, realOnly: true });
+          flowerAgg.set(el.mandiId, prev);
+        }
+        return;
+      }
+      // An explicit pattern reference — el.patternId, set either by the kit-walk above (a kit's
+      // attached recipe add-on) or already present on a plain top-level recipe-only zone element
+      // (Build's own "+ Add element" pure-recipe flow) — either resolves to a LIVE pattern or it
+      // doesn't; never guessed. It is checked BEFORE the rc/fuzzy-matching below and returns
+      // immediately when missing — never falling through to a name/Rate-Card guess against its own
+      // decorated label ("Tree · recipe" for a kit add-on; the element's own name otherwise),
+      // which could spuriously match an unrelated flower or Rate-Card row by name coincidence and
+      // fabricate real-looking bunch/cost numbers for a recipe that no longer exists. A deleted
+      // flower pattern is gone everywhere now (owner decision, 2026-11-12, reversing the
+      // deleted-catalogue "keep pricing it" fallback for THIS one catalogue type only — inventory
+      // items/carpet/print materials still price at their last-known rate via that same snapshot,
+      // migration 059, untouched here).
+      const elPattern = el.patternId ? flowerPatterns.find(p => p.id === el.patternId) : null;
+      if (el.patternId && !elPattern) {
+        uncosted.push({ name: el.name || "(unnamed)", zoneKey: zk, qty: elQty, reason: "Recipe deleted — no longer in the Flower Patterns library" });
+        return;
+      }
       // Both the exact match and the substring fallback are scoped to the Rate Card's OWN
       // florals category — an exact name coincidence with a lighting/furnishing/other Rate
       // Card row (e.g. a "Warm LED" or "Sethi Bolster" element) used to slip through here
@@ -440,7 +541,6 @@ export function computeFnFloralCost(fn, allFns, opts) {
           return n && n.length >= 4 && (elName.includes(n) || n.includes(elName));
         });
       }
-      const elPattern = el.patternId ? flowerPatterns.find(p => p.id === el.patternId) : null;
       const invItem = findInv(el.invId);
       const invIsFloral = !!invItem && String(invItem.cat || invItem.category || "").toLowerCase() === "florals";
       let pattern = elPattern
@@ -478,7 +578,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
       if (!pattern) {
         // Floral by identity but nothing to price it by — recorded, not dropped, so the
         // money is traceable to "priced as plain rental elsewhere" instead of silently lost.
-        elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, realLines: [], size: sizeKey, artLines: [], artBunchesFlower: 0, artBunchesGreen: 0, artBunchesFlowerFull: 0, artBunchesGreenFull: 0, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern: invIsFloral, repeatZone: zoneRepeat, repeatLabel });
+        elementBreakdown.push({ name: el.name, zoneKey: zk, qty: elQty, realPct, realCost: 0, artCost: 0, total: 0, hasPattern: false, realLines: [], size: sizeKey, artLines: [], artBunchesFlower: 0, artBunchesGreen: 0, artBunchesFlowerFull: 0, artBunchesGreenFull: 0, flowerPerBunchRate, greenPerBunchRate, isInvOnlyNoPattern: invIsFloral, repeatZone: zoneRepeat, repeatLabel, kitParent: el._kitParent || null });
         return;
       }
       const sizes = pattern.sizes || {};
@@ -606,6 +706,13 @@ export function computeFnFloralCost(fn, allFns, opts) {
         flowerPerBunchRate, greenPerBunchRate,
         isInvOnlyNoPattern: false,
         repeatZone: zoneRepeat, repeatLabel,
+        // The outer kit element's own name (e.g. "Tree"), when this row is a recipe/floral component
+        // EXPANDED OUT of a kit (el._kitParent, stamped above) rather than a plain zone element on its
+        // own — carried through so a consumer can fold this row's bunches back into the KIT's own
+        // card instead of a standalone one named after the decorated "Tree · recipe" display name,
+        // which never matches any real card (owner report, 2026-11-12: Tree showed as its own loose
+        // "Tree · recipe" card instead of inside Tree's own kit card, alongside its real components).
+        kitParent: el._kitParent || null,
       });
     });
   });

@@ -14,7 +14,7 @@ import { IconPrinter } from "../../components/icons";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { fetchOpsVendors } from "../../lib/ims/opsVendors";
-import { venueWithParent, standingQty } from "../../lib/ims/fixedVenues";
+import { venueWithParent, standingQty, venueCalendarColor, VENUE_CALENDAR_LEGEND } from "../../lib/ims/fixedVenues";
 import { carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import ElementChoicePlan from "./ElementChoicePlan.jsx";
@@ -770,8 +770,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const [mpFn, setMpFn] = useState("all");
   // Inventory blocked scope, the same way: "all", or one function's index.
   const [invFn, setInvFn] = useState("all");
-  // Whole-event crew row whose "how" modal is open (its crew type), or null.
-  const [mpHowType, setMpHowType] = useState(null);
   // Fabric colour swatch shown large ({name, hex}), or null.
   const [swatchView, setSwatchView] = useState(null);
   // 🔁 Mandi swap on the Floral real-shopping list — { i, q, toName, qty, price, note } while open.
@@ -921,7 +919,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   };
   // A PDF open for one event must not carry over when the picker moves to another.
   useEffect(() => { setDeckView(null); }, [selId]);
-  useEffect(() => { setMpFn("all"); setMpHowType(null); setInvFn("all"); }, [selId]);
+  useEffect(() => { setMpFn("all"); setInvFn("all"); }, [selId]);
   // The last PDF View deck built, keyed by department + the event's full data. Opening it again
   // with nothing changed reuses it instantly instead of rebuilding; any edit to the event changes
   // the key, so what opens is still always the latest. Its blob: URL is freed when replaced.
@@ -1041,10 +1039,20 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const blockedFlatOf = (grouped, d) => {
     const out = [];
     grouped.forEach(it => {
-      if (it.isKit && Array.isArray(it.components) && it.components.length) {
-        const partsSum = it.kitPartsTotal != null ? it.kitPartsTotal : it.components.reduce((s, c) => s + (Number(c.total) || 0), 0);
-        out.push({ ...it, isKit: false, components: null, total: Math.max(0, (Number(it.total) || 0) - partsSum) }); // kit shell (its own base value)
-        it.components.forEach((cp, ci) => out.push({ id: it.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, photo: cp.photo || "", qty: Number(cp.qty) || 0, unit: cp.unit || 0, total: Number(cp.total) || 0, sub: cp.sub || "", kitOf: it.name }));
+      const hasComponents = it.isKit && Array.isArray(it.components) && it.components.length;
+      const hasRecipeParts = it.isKit && Array.isArray(it.recipeParts) && it.recipeParts.length;
+      if (hasComponents || hasRecipeParts) {
+        const partsSum = it.kitPartsTotal != null ? it.kitPartsTotal : (it.components || []).reduce((s, c) => s + (Number(c.total) || 0), 0);
+        out.push({ ...it, isKit: false, components: null, recipeParts: null, total: Math.max(0, (Number(it.total) || 0) - partsSum) }); // kit shell (its own base value)
+        (it.components || []).forEach((cp, ci) => out.push({ id: it.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, photo: cp.photo || "", qty: Number(cp.qty) || 0, unit: cp.unit || 0, total: Number(cp.total) || 0, sub: cp.sub || "", kitOf: it.name }));
+        // A kit's flower RECIPE parts (Tree: Flower Trail, Flower Bunch) are not inventory — no
+        // imsId, no money (priced in Build/floral cost already) — but were never split into their
+        // own row here, the only place that turns a kit into the flat list the truck-loading screen
+        // and the Dept PDF's loading/item rows actually read. The grouped-list "Kits" page already
+        // named them (it reads `recipeParts` off the grouped row directly); this flat list did not,
+        // so a kit's recipe silently never appeared on the loading checklist or the PDF's item rows
+        // (owner report, 2026-11-12 — the Tree kit's "Chandelier Tree Floral Recipe").
+        (it.recipeParts || []).forEach((rp, ri) => out.push({ id: it.id + "__r" + ri, invId: null, name: rp.name, photo: rp.photo || "", qty: Number(rp.qty) || 0, qtyUnit: rp.uom || "", unit: 0, total: 0, sub: "", kitOf: it.name, isRecipe: true, stockOnly: true }));
       } else out.push(it);
     });
     // Fabric: the per-zone Liza / Velvet / Masking lines become one load line per fabric colour (with the colour's photo), so Truck planning, the loading
@@ -3696,6 +3704,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       </button>
                     </div>
                   </div>
+                  {/* Same venue color legend as the separate Ambria Calendar app (owner ask,
+                      2026-11-12) — a static list (lib/ims/fixedVenues.js), not derived from which
+                      venues actually have events this month, so it reads the same every month. */}
+                  <div className="px-4 pb-2 flex items-center gap-x-3 gap-y-1 flex-wrap">
+                    {VENUE_CALENDAR_LEGEND.map((vc) => (
+                      <span key={vc.code} className="inline-flex items-center gap-1 text-[10.5px] text-gray-500">
+                        <span aria-hidden="true" className={`w-2 h-2 rounded-full ${vc.dot}`} />
+                        {vc.code} <span className="text-gray-400">({vc.label})</span>
+                      </span>
+                    ))}
+                  </div>
                   {/* ── PHONE LAYOUT ──
                       Seven columns of 84px cells with a name chip inside each is a desktop shape;
                       at phone width a column is ~45px, so the chips truncate to two characters
@@ -3750,28 +3769,34 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                             <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-gray-100 text-gray-500 tabular-nums">{dayEvs.length} event{dayEvs.length === 1 ? "" : "s"}</span>
                           </div>
                           <div className="space-y-2.5">
-                            {dayEvs.map(eo => (
-                              <button key={eo.id} onClick={() => setSelId(eo.id)}
-                                className="w-full text-left rounded-xl bg-gray-50 ring-1 ring-gray-100 hover:bg-blue-50 hover:ring-blue-100 active:bg-blue-100 px-4 py-3.5 flex items-center gap-3.5 cursor-pointer transition-colors">
-                                <span aria-hidden="true" className="shrink-0 w-2 h-2 rounded-full bg-blue-500 ring-4 ring-blue-100" />
-                                <span className="min-w-0 flex-1">
-                                  <span className="block text-[15px] font-semibold text-gray-900 leading-snug truncate">{eo.clientName || "Event"}</span>
-                                  {/* Venue and shift, because that is what an event_order actually
-                                      carries — there are no start/end times on one to show. */}
-                                  <span className="mt-0.5 block text-xs text-gray-500 truncate">
-                                    {venueOf(eo) || "—"}
-                                    {eo.functionsDetail?.[0]?.shift ? ` · ${eo.functionsDetail[0].shift}` : ""}
+                            {dayEvs.map(eo => {
+                              const vc = venueCalendarColor(settings, eo.functionsDetail?.[0]?.venue || eo.venue || "");
+                              return (
+                                <button key={eo.id} onClick={() => setSelId(eo.id)}
+                                  className="w-full text-left rounded-xl bg-gray-50 ring-1 ring-gray-100 hover:bg-blue-50 hover:ring-blue-100 active:bg-blue-100 px-4 py-3.5 flex items-center gap-3.5 cursor-pointer transition-colors">
+                                  <span aria-hidden="true" className={`shrink-0 w-2 h-2 rounded-full ring-4 ring-opacity-30 ${vc.dot} ${vc.ring}`} />
+                                  <span className="min-w-0 flex-1">
+                                    <span className="flex items-center gap-1.5 min-w-0">
+                                      <span className="text-[15px] font-semibold text-gray-900 leading-snug truncate">{eo.clientName || "Event"}</span>
+                                      <span className={`shrink-0 text-[9.5px] font-bold px-1 rounded ${vc.bg} ${vc.text}`}>{vc.code}</span>
+                                    </span>
+                                    {/* Venue and shift, because that is what an event_order actually
+                                        carries — there are no start/end times on one to show. */}
+                                    <span className="mt-0.5 block text-xs text-gray-500 truncate">
+                                      {venueOf(eo) || "—"}
+                                      {eo.functionsDetail?.[0]?.shift ? ` · ${eo.functionsDetail[0].shift}` : ""}
+                                    </span>
+                                    {/* Own line, not tacked onto venue/shift above — that span already
+                                        truncates, and venue+shift alone was often long enough to push
+                                        "booked by {name}" past the ellipsis before it ever rendered. */}
+                                    {eo.salesperson && <span className="block text-xs text-gray-400 truncate">Booked by {eo.salesperson}</span>}
                                   </span>
-                                  {/* Own line, not tacked onto venue/shift above — that span already
-                                      truncates, and venue+shift alone was often long enough to push
-                                      "booked by {name}" past the ellipsis before it ever rendered. */}
-                                  {eo.salesperson && <span className="block text-xs text-gray-400 truncate">Booked by {eo.salesperson}</span>}
-                                </span>
-                                <span aria-hidden="true" className="shrink-0 text-gray-400">
-                                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L9 7 L5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                                </span>
-                              </button>
-                            ))}
+                                  <span aria-hidden="true" className="shrink-0 text-gray-400">
+                                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L9 7 L5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                  </span>
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       );
@@ -3797,12 +3822,19 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                           <div className="space-y-1">
                             {/* Each event is its own button — clicking a DAY would be ambiguous on
                                 a date carrying two events, and this page can only show one. */}
-                            {evs.map(eo => (
-                              <button key={eo.id} onClick={() => setSelId(eo.id)} title={`Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""}`}
-                                className="w-full text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md truncate border-l-[3px] border-blue-500 bg-blue-50/80 text-blue-900 hover:bg-blue-100 transition-colors">
-                                {eo.clientName || "Event"}
-                              </button>
-                            ))}
+                            {evs.map(eo => {
+                              // Same color legend as the separate Ambria Calendar app: one of
+                              // Ambria's own venues gets that venue's color, a client's own outdoor
+                              // venue gets "ADD"'s color (lib/ims/fixedVenues.js's venueCalendarColor).
+                              const vc = venueCalendarColor(settings, eo.functionsDetail?.[0]?.venue || eo.venue || "");
+                              return (
+                                <button key={eo.id} onClick={() => setSelId(eo.id)} title={`Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
+                                  className={`w-full flex items-center gap-1 text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
+                                  <span className="shrink-0 text-[9px] font-bold opacity-70">{vc.code}</span>
+                                  <span className="min-w-0 truncate">{eo.clientName || "Event"}</span>
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       );
@@ -4620,9 +4652,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                   if (a.fixed > 0) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 font-bold" title="Standing stock at this fixed venue - not loaded">📌 FIXED{a.load > 0 ? ` · ${a.fixed}` : ""}</span>;
                                   return null;
                                 })()}
-                                <button onClick={() => setKitOpen(o => ({ ...o, ["calc:" + it.id]: !o["calc:" + it.id] }))} aria-expanded={!!kitOpen["calc:" + it.id]}
-                                  title="How this line's total was worked out"
-                                  className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-semibold hover:bg-gray-200 transition-colors">💡 How</button>
+                                {!it.stockOnly && (
+                                  <button onClick={() => setKitOpen(o => ({ ...o, ["calc:" + it.id]: !o["calc:" + it.id] }))} aria-expanded={!!kitOpen["calc:" + it.id]}
+                                    title="How this line's total was worked out"
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-semibold hover:bg-gray-200 transition-colors">💡 How</button>
+                                )}
                                 {/* Where a merged line's qty comes from (e.g. carpet sqft per zone floor). */}
                                 {Array.isArray(it.parts) && it.parts.length > 0 && (
                                   <button onClick={() => setKitOpen(o => ({ ...o, ["how:" + it.id]: !o["how:" + it.id] }))} aria-expanded={!!kitOpen["how:" + it.id]}
@@ -4706,11 +4740,17 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                               </StatCell>
                             )}
                             <StatCell label="Rate" w={STAT_W.rate}>
-                              <span className="text-sm text-gray-600 tabular-nums" title={showRentalQty ? "Averaged across functions — a reused unit's repeat-discounted rate blends with a fresh unit's full rate." : undefined}>{fmt(avgRate)}{it.qtyUnit ? <span className="text-xs text-gray-400">/{it.qtyUnit}</span> : null}</span>
+                              {it.stockOnly
+                                ? <span className="text-sm text-gray-300 tabular-nums" title="Stock/quantity only — this line has no rate of its own.">—</span>
+                                : <span className="text-sm text-gray-600 tabular-nums" title={showRentalQty ? "Averaged across functions — a reused unit's repeat-discounted rate blends with a fresh unit's full rate." : undefined}>{fmt(avgRate)}{it.qtyUnit ? <span className="text-xs text-gray-400">/{it.qtyUnit}</span> : null}</span>}
                             </StatCell>
                             <StatCell label="Total" w={STAT_W.total}>
-                              <div className="text-sm font-bold text-gray-900 tabular-nums">{fmt(it.total)}</div>
-                              {mismatch && <div className="text-[10px] text-gray-400 tabular-nums mt-0.5" title={`Rate × qty is ${fmt(derived)}. This line is ${fmt(it.total)}${it.isKit ? " because a kit's total includes the components listed below." : "."}`}>{it.isKit ? "incl. kit" : `≠ ${fmt(derived)}`}</div>}
+                              {it.stockOnly
+                                ? <span className="text-sm text-gray-300 tabular-nums" title="Costed under Floral's own breakdown, not tracked here — this row exists for the quantity only.">—</span>
+                                : <>
+                                    <div className="text-sm font-bold text-gray-900 tabular-nums">{fmt(it.total)}</div>
+                                    {mismatch && <div className="text-[10px] text-gray-400 tabular-nums mt-0.5" title={`Rate × qty is ${fmt(derived)}. This line is ${fmt(it.total)}${it.isKit ? " because a kit's total includes the components listed below." : "."}`}>{it.isKit ? "incl. kit" : `≠ ${fmt(derived)}`}</div>}
+                                  </>}
                             </StatCell>
                           </div>
                       </div>
@@ -4834,12 +4874,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
               {fnChipRow(mpFn, setMpFn)}
               {mpEventOpen && hasMpSnapshot && (() => {
                 const ev = eventManpower();
-                const lab = ev.types.find(t => t.type === "Labours");
-                const tile = (label, value, sub) => <div className="rounded-xl bg-white ring-1 ring-gray-200 px-3 py-2 min-w-0">
-                  <div className="text-[11px] uppercase tracking-wider text-gray-400 font-semibold">{label}</div>
-                  <div className="text-[18px] font-bold text-gray-900 tabular-nums leading-tight">{value}</div>
-                  {sub && <div className="text-[11.5px] text-gray-500 truncate">{sub}</div>}
-                </div>;
                 return (
                   <div className="m-2.5 mb-0 rounded-xl bg-slate-50 ring-1 ring-slate-200 p-3 space-y-3 text-[13px] text-gray-700">
                     <div className="flex items-center gap-2">
@@ -4847,112 +4881,26 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       <span className="text-[11.5px] text-gray-400">all departments · with each dept's edits</span>
                       <button onClick={() => setMpEventOpen(false)} className="ml-auto text-gray-400 hover:text-gray-700 text-[16px] leading-none" title="Close">×</button>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {tile("Labours", lab ? `${lab.peak} peak` : "—", lab ? `${Math.round(lab.dihari)} dihari across the event` : "no labour on this booking")}
-                      {tile("Total dihari", Math.round(ev.totalDihari), "every crew type")}
-                      {tile("Manpower cost", fmt(ev.total), `${ev.depts.length} department${ev.depts.length === 1 ? "" : "s"}`)}
-                    </div>
-                    {ev.labDays.length > 0 && (
-                      <div>
-                        <div className="text-[11.5px] font-semibold text-gray-500 mb-1.5">Labours on site, by day</div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {ev.labDays.map((d, i) => <span key={i} className="inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 py-1"><span className="text-gray-500">{d.label}</span><b className="text-gray-900 tabular-nums">{d.count}</b></span>)}
-                        </div>
-                      </div>
-                    )}
                     <div className="grid gap-3 md:grid-cols-2">
                       <div className="rounded-xl bg-white ring-1 ring-gray-200 overflow-hidden">
-                        <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Crew</span><span className="w-14 text-right">Peak</span><span className="w-14 text-right">Dihari</span><span className="w-20 text-right">Cost</span><span className="w-10" /></div>
-                        {ev.types.map(t => <div key={t.type} className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-100 items-center">
-                          <span className="truncate font-medium text-gray-900">{crewIcon(t.type)} {t.type}{t.shared && <span className="ml-1.5 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold align-middle">SHARED</span>}</span>
-                          <span className="w-14 text-right tabular-nums">{t.peak}</span>
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Crew</span><span className="w-14 text-right">Dihari</span><span className="w-20 text-right">Cost</span></div>
+                        {ev.types.map(t => <div key={t.type} className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-100 items-center">
+                          <span className="truncate font-medium text-gray-900">{crewIcon(t.type)} {t.type}</span>
                           <span className="w-14 text-right tabular-nums">{Math.round(t.dihari)}</span>
                           <span className="w-20 text-right tabular-nums font-semibold text-gray-900">{fmt(t.cost)}</span>
-                          <button onClick={() => setMpHowType(t.type)} title={`How ${t.type} adds up`}
-                            className="w-10 rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 px-1.5 py-0.5 text-[11px] font-semibold cursor-pointer">how</button>
                         </div>)}
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-200 bg-gray-50 font-semibold text-gray-900"><span>Total</span><span className="w-14 text-right tabular-nums">{Math.round(ev.totalDihari)}</span><span className="w-20 text-right tabular-nums">{fmt(ev.total)}</span></div>
                       </div>
                       <div className="rounded-xl bg-white ring-1 ring-gray-200 overflow-hidden">
-                        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Department</span><span className="w-16 text-right">Labour dih.</span><span className="w-14 text-right">Dihari</span><span className="w-20 text-right">Cost</span></div>
-                        {ev.depts.map(d => <div key={d.dept} className={"grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-100 items-center " + (d.dept === dept ? "bg-blue-50/60" : "")}>
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Department</span><span className="w-14 text-right">Dihari</span><span className="w-20 text-right">Cost</span></div>
+                        {ev.depts.map(d => <div key={d.dept} className={"grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-100 items-center " + (d.dept === dept ? "bg-blue-50/60" : "")}>
                           <span className="truncate font-medium text-gray-900">{d.dept}{d.dept === dept && <span className="ml-1.5 text-[10px] text-blue-600 font-bold">THIS</span>}</span>
-                          <span className="w-16 text-right tabular-nums">{d.labDihari ? (Math.round(d.labDihari * 10) / 10) : "—"}</span>
                           <span className="w-14 text-right tabular-nums">{Math.round(d.dihari * 10) / 10}</span>
                           <span className="w-20 text-right tabular-nums font-semibold text-gray-900">{fmt(d.cost)}</span>
                         </div>)}
+                        <div className="grid grid-cols-[1fr_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-200 bg-gray-50 font-semibold text-gray-900"><span>Total</span><span className="w-14 text-right tabular-nums">{Math.round(ev.totalDihari)}</span><span className="w-20 text-right tabular-nums">{fmt(ev.total)}</span></div>
                       </div>
                     </div>
-                    {/* ── HOW A CREW ROW ADDS UP ──
-                        Every department's share of this crew type, with each department's own edits,
-                        plus how the count was derived and the days it works. Read-only: edits stay in
-                        each department's own Manpower plan. */}
-                    {(() => {
-                      const t = mpHowType && ev.types.find(x => x.type === mpHowType);
-                      if (!t) return null;
-                      const src = t.rows.find(x => x.trace) || t.rows[0];
-                      // Shared crew is ONE event-wide team: its days come from the schedule's own
-                      // headcount, not from any one department's share of it.
-                      const days = t.shared
-                        ? (Array.isArray(src?.schedule) ? src.schedule.map(day => ({ label: phaseLbl(day), crew: Number(day.count) || 0, shifts: Array.isArray(day.windowIds) ? day.windowIds.length : (Number(day.windows) || 0) })) : [])
-                        : null;
-                      return createPortal(
-                        <div data-hi-scope onClick={() => setMpHowType(null)} className="fixed inset-0 z-[9999] bg-black/40 flex items-center justify-center p-4">
-                          <div onClick={e => e.stopPropagation()} className="w-full max-w-xl max-h-[85vh] overflow-y-auto rounded-2xl bg-white shadow-2xl p-4 space-y-3 text-[13px] text-gray-700">
-                            <div className="flex items-center gap-2">
-                              <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm leading-none">{crewIcon(t.type)}</span>
-                              <span className="text-[15px] font-semibold text-gray-900">How {t.type} adds up</span>
-                              {t.shared && <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold">SHARED</span>}
-                              <button onClick={() => setMpHowType(null)} className="ml-auto text-gray-400 hover:text-gray-700 text-[18px] leading-none cursor-pointer" title="Close">×</button>
-                            </div>
-                            <div className="grid grid-cols-3 gap-2">
-                              {tile("Peak", t.peak, t.shared ? "one team, whole event" : "summed across departments")}
-                              {tile("Dihari", Math.round(t.dihari), "crew × shifts, all days")}
-                              {tile("Cost", fmt(t.cost), `${t.rows.length} department${t.rows.length === 1 ? "" : "s"}`)}
-                            </div>
-                            {t.shared && <div className="rounded-lg bg-slate-50 ring-1 ring-slate-200 px-2.5 py-2 text-[12px] text-gray-600">One event-wide team, split across departments by their usage or income share. Each department's figure below is its share, with its own edits.</div>}
-                            {src?.trace && (
-                              <div>
-                                <div className="text-[11.5px] font-semibold text-gray-500 mb-1.5">How the count was worked out</div>
-                                {renderMpTrace(src.trace)}
-                              </div>
-                            )}
-                            {days && days.length > 0 && (
-                              <div>
-                                <div className="text-[11.5px] font-semibold text-gray-500 mb-1.5">On site, by day</div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {days.map((d, i) => <span key={i} className="inline-flex items-center gap-1.5 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 py-1" title="Crew × shift count is a rough guide — when a day's shifts carry different crew, the dihari figure is the real total."><span className="text-gray-500">{d.label}</span><b className="text-gray-900 tabular-nums">{d.crew}</b><span className="text-gray-400">× {d.shifts} shift{d.shifts === 1 ? "" : "s"} = {d.dihari} dihari</span></span>)}
-                                </div>
-                              </div>
-                            )}
-                            <div className="rounded-xl ring-1 ring-gray-200 overflow-hidden">
-                              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 bg-gray-50 text-[11px] uppercase tracking-wider text-gray-400 font-semibold"><span>Department</span><span className="w-14 text-right">Dihari</span><span className="w-16 text-right">₹/day</span><span className="w-20 text-right">Cost</span></div>
-                              {t.rows.map(x => (
-                                <div key={x.dept} className={"px-3 py-1.5 border-t border-gray-100 " + (x.dept === dept ? "bg-blue-50/60" : "")}>
-                                  <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center">
-                                    <span className="truncate font-medium text-gray-900">{x.dept}{x.dept === dept && <span className="ml-1.5 text-[10px] text-blue-600 font-bold">THIS</span>}</span>
-                                    <span className="w-14 text-right tabular-nums">{Math.round(x.dihari * 10) / 10}</span>
-                                    <span className="w-16 text-right tabular-nums">{fmt(x.rate)}</span>
-                                    <span className="w-20 text-right tabular-nums font-semibold text-gray-900">{fmt(x.cost)}</span>
-                                  </div>
-                                  {!t.shared && x.days.length > 0 && (
-                                    <div className="mt-1 flex flex-wrap gap-1 text-[11.5px] text-gray-500">
-                                      {x.days.map((d, i) => <span key={i} className="rounded bg-gray-100 px-1.5 py-0.5">{d.label} · {d.crew} × {d.shifts}</span>)}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 border-t border-gray-200 bg-gray-50 font-semibold text-gray-900">
-                                <span>Total</span>
-                                <span className="w-14 text-right tabular-nums">{Math.round(t.dihari)}</span>
-                                <span className="w-16" />
-                                <span className="w-20 text-right tabular-nums">{fmt(t.cost)}</span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>,
-                        document.body
-                      );
-                    })()}
                   </div>
                 );
               })()}
@@ -5510,7 +5458,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                               {(() => { const cv = choiceViewAll.get(it.id); const ph = cv?.name ? cv.photo : it.photo; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : it.hex ? <div aria-hidden="true" className="w-8 h-8 rounded-lg ring-1 ring-black/10 shrink-0" style={{ background: it.hex }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
                               <div className="min-w-0 flex-1">
                                 <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={choiceViewAll.get(it.id)?.name || it.name}>{choiceViewAll.get(it.id)?.name || it.name}</div>
-                                <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
+                                <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty}{it.qtyUnit ? ` ${it.qtyUnit}` : ""} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
                                 {/* This item's share of the truck, and how many more of it the space left takes. */}
                                 {(() => {
                                   const sh = truckShares[dept]?.get(truckKey(it));

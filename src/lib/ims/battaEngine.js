@@ -50,20 +50,31 @@ export const buildEventBattaAllocation = (eventMeta, fnList, trussInv) => {
     Object.entries(zones).forEach(([zoneKey, zc]) => {
       if (!zc) return;
       if (enabledEls && Object.keys(enabledEls).length > 0 && !enabledEls[zoneKey]) return;
-      const layer0 = resolveTrussConfig(zc);
-      if (!layer0 || layer0.source === "none" || layer0.source === "invalid") return;
-      const mat = String(zc.trussMaterial || "iron").toLowerCase();
-      const eng = engForMaterial(trussInv, mat);
-      const L = parseFloat(zc.dims?.L) || 0;
-      const W = parseFloat(zc.dims?.W) || 0;
-      const H = parseFloat(zc.dims?.H) || 0;
-      const spanFt = layer0.spanFt || (layer0.source === "auto-3dim" ? Math.max(L, W) : 0);
-      const backDepth = zc.trussBackDepth || eng.defaultBackDepthFt || 4;
-      const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng, undefined, mat);
-      const rft = topologyRft(topology);
-      if (rft <= 0) return;
-      const withBuffer = rft * (1 + battaBufferPct(trussInv, mat) / 100);
-      byRft[mat] = Math.round(((byRft[mat] || 0) + withBuffer) * 100) / 100;
+      // Every truss structure in the zone (its own row, plus any "+ Add Truss" extras) — a zone with
+      // 2+ truss structures used to only ever bill batta for the first one.
+      [zc, ...(zc.extraTrussRows || [])].forEach((row) => {
+        // Explicit 0 — a dims-only placeholder, no rental truss actually standing — same exclusion
+        // every other consumer already makes (see trussEngine.js's matching guard).
+        if (row.trussQty === 0) return;
+        const layer0 = resolveTrussConfig(row);
+        if (!layer0 || layer0.source === "none" || layer0.source === "invalid") return;
+        const mat = String(row.trussMaterial || "iron").toLowerCase();
+        const eng = engForMaterial(trussInv, mat);
+        const L = parseFloat(row.dims?.L) || 0;
+        const W = parseFloat(row.dims?.W) || 0;
+        const H = parseFloat(row.dims?.H) || 0;
+        const spanFt = layer0.spanFt || (layer0.source === "auto-3dim" ? Math.max(L, W) : 0);
+        const backDepth = row.trussBackDepth || eng.defaultBackDepthFt || 4;
+        const topology = buildTopology(layer0.config, L, W, H, spanFt, backDepth, eng, undefined, mat);
+        // Scaled by THIS row's own Truss Qty — same floor convention as pricing.js's
+        // scaleTrussPreview/trussRowCost. Without it, a Truss Qty above 1 under-reserved this zone's
+        // real batta RFT demand by the same factor.
+        const qty = Math.max(1, Number(row.trussQty) || 1);
+        const rft = topologyRft(topology) * qty;
+        if (rft <= 0) return;
+        const withBuffer = rft * (1 + battaBufferPct(trussInv, mat) / 100);
+        byRft[mat] = Math.round(((byRft[mat] || 0) + withBuffer) * 100) / 100;
+      });
     });
   });
   return {

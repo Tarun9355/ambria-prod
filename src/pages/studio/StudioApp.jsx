@@ -98,7 +98,7 @@ import {
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
   calcZoneFabric, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, maskingAfterRepeat, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, trussRowCost, repeatCatFor, repeatCatsOn, REPEAT_CAT_LABELS,
-  freshFnForManpower, snapRowDimsForProduction,
+  freshFnForManpower, snapRowDimsForProduction, scaleTrussPreview,
 } from "../../lib/studio/pricing";
 import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintTotalFor } from "../../lib/studio/paint";
 import { sheetItemLine } from "../../lib/studio/sheetRounding";
@@ -148,6 +148,7 @@ import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CA
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs, mergeLmsFunctions } from "../../lib/studio/sessionData.js";
+import { reindexFnIdxObject, reindexFnIdxArray, reindexCompositeKeyObject, ZONE_PIPE_KEY, TRUSS_ZONE_PIPE_KEY, TRANSPORT_COLLAPSE_KEY, FLORAL_CALC_OPEN_KEY } from "../../lib/studio/dealCheckReindex.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 import { thumbUrl } from "../../lib/studio/thumb.js";
@@ -1931,6 +1932,13 @@ export default function StudioApp() {
   const [dcPrefModal, setDcPrefModal] = useState(null);
   const [dcCustomItems, setDcCustomItems] = useState([]);
   const [dcCustomModal, setDcCustomModal] = useState(null);
+  // A fresh object ({idx}) every time removeFunction fires — DealCheckOverlay.jsx watches this to
+  // reindex its own local kitHandEditsRef (a Set keyed "${fnIdx}::${cardKey}", not reachable from
+  // StudioApp/StudioEventInfo directly), the same reindexing problem every other piece of
+  // Deal Check's per-function state has, see reindexDealCheckStateForRemoval's own comment. A plain
+  // object literal (not a counter) so even two removals at the identical index still change
+  // reference and re-fire the watching effect.
+  const [lastFnRemoval, setLastFnRemoval] = useState(null);
   // Per-element/per-reference stock availability picker — { zoneKey, idx, elName, subcat, date,
   // loading, items, selectedId, onPick }. Lifted here (rather than staying local to StudioBuild)
   // so both Build's own 📦 icon AND the Add Production/Buying Item modal (StudioModals.jsx) can
@@ -2402,6 +2410,32 @@ export default function StudioApp() {
   // DISABLED" note near saveSession's own studio_sessions write).
   const buildSaveBaselineRef = useRef(null);
   const buildConflictWarnedAtRef = useRef(0);
+  // A plain function, `(newIdx) => oldIdx`, describing whatever removal(s) the deal's prices
+  // haven't caught up to yet — null when there's nothing pending. See saveSession's own "ONE PRICE
+  // PER FUNCTION" fnTotals comment for why this exists: that carry-forward reads prev[i] by raw
+  // position, with no idea a removal shifted every later function down. Without this, the function
+  // now sitting at position i inherits whatever price belonged to the REMOVED function at that old
+  // position, instead of its own. Decor content is untouched either way — this is a
+  // displayed-price-only bug.
+  // Two different writers, unified on ONE shape (a function, not an array/object split) specifically
+  // so they COMPOSE: a prior design kept removeFunction's "just one more index shifted" case as a
+  // plain array and loadClientSession's "here's the exact mapping, rebuilt from identity" case as a
+  // plain object, and a removal landing between a load and its first save had no way to combine the
+  // two (regression-caught: it had to pick one and silently drop the other, a real gap). Composing
+  // function closures has no such limit, however many times either side contributes before a save
+  // finally persists:
+  //   - removeFunction (StudioEventInfo.jsx, the same-tab case) only knows "this index just
+  //     vanished" — wraps whatever resolver is already here (identity if none) with one more shift.
+  //   - loadClientSession (the cross-reload case: client.functions already reflects a removal that
+  //     never reached a PERSISTED session, because only sessions[0] is held back, not the client row
+  //     — see saveSession's own "Only the SESSIONS are held back" comment) derives the exact mapping
+  //     from its own identity-based build relocation and sets a fresh resolver directly, replacing
+  //     whatever was here (a load always re-derives the full picture from scratch, so there's nothing
+  //     to compose with at that point).
+  // Consumed (cleared to null) the moment a save actually persists — see saveSession's own "consumed
+  // HERE" comment — not merely the next save that runs, since a held-back autosave must not burn the
+  // one use this gets before the save that actually needs it.
+  const pendingFnTotalsRemapRef = useRef(null);
   const emptySaveWarnedRef = useRef(false); // the "deal shows empty but has a saved build" warning, said once until a build is back
   useEffect(() => { activeFnIdxRef.current = activeFnIdx; switchingRef.current = false; }, [activeFnIdx]);
   useEffect(() => { fnBuildsRef.current = fnBuilds; }, [fnBuilds]);
@@ -4860,15 +4894,16 @@ export default function StudioApp() {
       .map((p) => ({ id: p.id, name: p.name, sub: p.sub || "", unit: p.unit || "pc" }));
   }, [dealCheckData, studioFloralData]);
 
-  // A flower-recipe pattern by id, live-first with a fallback to the deleted-catalogue snapshot
-  // (migration 059) — so a quote element still pointing at a since-deleted recipe keeps resolving
-  // to its last known rates instead of silently pricing at ₹0. getElPriceFromPattern and a kit's
-  // attached-recipe add-ons both resolve through this rather than a plain live-only `.find`.
+  // A flower-recipe pattern by id — LIVE ONLY (owner decision, 2026-11-12: a deleted flower pattern
+  // is gone everywhere, reversing this function's own former deleted-catalogue-snapshot fallback,
+  // migration 059). getElPriceFromPattern and a kit's attached-recipe add-ons both resolve through
+  // here, so a recipe deleted from the Flower Patterns library now prices at ₹0/no longer shows,
+  // same as any other recipe that was never attached. Inventory items/carpet/print materials keep
+  // their own deleted-catalogue fallback unchanged — this reversal is flower patterns only.
   const patternById = useCallback((id) => {
     if (!id) return null;
-    const live = (sharedFloralSettings.flowerPatterns || []).find((p) => p.id === id);
-    return live || deletedCatalogue.patternsById.get(id) || null;
-  }, [sharedFloralSettings, deletedCatalogue]);
+    return (sharedFloralSettings.flowerPatterns || []).find((p) => p.id === id) || null;
+  }, [sharedFloralSettings]);
 
   // The colour a function's real flowers are priced at (owner decision 2026-11-02: the price follows the colour, in Build, Deal
   // Check and Planning alike): the flower's own 🎨 pick in Deal Check, else the variant its Flower Palette's main colour is tagged to
@@ -4899,9 +4934,11 @@ export default function StudioApp() {
     const floralSrc = sharedFloralSettings;
     const pattern = patternById(el.patternId);
     if (!pattern) return { rc: null, unitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null, catalogueDeleted: null };
-    // Migration 059: a recipe found only via the deleted-catalogue fallback still prices at its last
-    // known rates below (patternById doesn't distinguish) — this is the one flag the caller needs to
-    // show Build's own ⚠ warning instead of a stock-shortfall badge.
+    // patternById is live-only now (owner decision, 2026-11-12: a deleted flower pattern is gone
+    // everywhere) — a deleted recipe simply fails to resolve above and prices at ₹0, same as one
+    // that was never attached. `pattern.catalogueDeleted` can no longer be true here; `deletedInfo`
+    // stays dead (always null) rather than removed outright, so Build's ⚠ badge wiring is untouched
+    // for the inventory-item side, which still does use the deleted-catalogue fallback.
     const deletedInfo = pattern.catalogueDeleted ? { self: true, kind: "recipe", name: pattern.name, deletedAt: pattern.catalogueDeletedAt || null, parts: [] } : null;
     const qty = el.qty || 0;
     const sizeKey = sizeClassToPatternKey(normalizeSizeClass(el.size || "B"));
@@ -5214,8 +5251,9 @@ export default function StudioApp() {
       const effectiveSubItems = Array.isArray(el.kitOverrides) ? el.kitOverrides : (item.subItems || []);
       const attachedPatterns = effectiveSubItems
         .filter((si) => si.patternId)
-        // patternById, not a plain live-only find — a since-deleted attached recipe still resolves
-        // to its last known rates via the deleted-catalogue fallback (migration 059).
+        // patternById is live-only (owner decision, 2026-11-12: a deleted flower pattern is gone
+        // everywhere) — an attached recipe since deleted from the Flower Patterns library resolves
+        // to nothing and the `.filter((x) => x.pattern)` below drops it, same as never attached.
         .map((si) => ({ pattern: patternById(si.patternId), qty: si.qty, si }))
         .filter((x) => x.pattern);
       // (3) a plain component that is ITSELF a floral item — its own sub-category's recipe. Only its
@@ -5440,7 +5478,7 @@ export default function StudioApp() {
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, invForPricing, el.kitOverrides);
     return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null };
-  }, [imsInventory, invForPricing, patternById, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate, flowerRateForFn]);
+  }, [imsInventory, invForPricing, patternById, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate, flowerRateForFn, hideDiscountFromClient]);
 
   // Thin outer wrapper: resolves live-vs-deleted `item` once, calls the core pricing body, then
   // attaches `catalogueDeleted` (migration 059) — a SEPARATE field from `warning` (stock-shortfall
@@ -6727,10 +6765,10 @@ export default function StudioApp() {
       direct: Object.values(direct).map(d => ({ ...d, qty: rnd(d.qty), cost: Math.round(d.cost) })),
       // artificial bunches per element row, with its zone - the Dept Ops PDF lists them on each zone's own page
       // realPct: the arrangement's real share, so the book's card for it says its split ("Artificial 70% · Real 30%") - owner ask 2026-11-11
-      artZones: eb.filter(e => (e.artBunchesFlower || 0) > 0 || (e.artBunchesGreen || 0) > 0).map(e => ({ zone: e.zoneKey, el: e.name, qty: rnd(e.qty), flower: rnd(e.artBunchesFlower, 10), green: rnd(e.artBunchesGreen, 10), ...(typeof e.realPct === "number" ? { realPct: Math.round(e.realPct) } : null) })),
+      artZones: eb.filter(e => (e.artBunchesFlower || 0) > 0 || (e.artBunchesGreen || 0) > 0).map(e => ({ zone: e.zoneKey, el: e.name, qty: rnd(e.qty), flower: rnd(e.artBunchesFlower, 10), green: rnd(e.artBunchesGreen, 10), kitParent: e.kitParent || null, ...(typeof e.realPct === "number" ? { realPct: Math.round(e.realPct) } : null) })),
       // the real flowers per element row, with its zone, exactly as Deal Check works them (real share, real-only flowers at
       // full, reuse credit taken off) plus the recipe's inventory ingredients - the Dept Ops PDF prints these on the zone pages
-      realZones: eb.filter(e => !e.isInvOnlyNoPattern).map(e => ({ zone: e.zoneKey, el: e.name,
+      realZones: eb.filter(e => !e.isInvOnlyNoPattern).map(e => ({ zone: e.zoneKey, el: e.name, kitParent: e.kitParent || null,
         lines: [...(e.realLines || []).map(l => ({ name: l.name, qty: Number(l.qty) || 0, unit: l.unit || "" })),
           ...(e.artLines || []).filter(l => l.invItem).map(l => ({ name: l.name, qty: Number(l.qty) || 0, unit: l.unit || "" }))].filter(l => l.qty > 0) }))
         .filter(z => z.lines.length),
@@ -6946,8 +6984,14 @@ export default function StudioApp() {
             const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
             Object.keys(zc).forEach(zk => {
               if (!en[zk] || !zc[zk]) return; const z = zc[zk];
-              const pv = calcZoneTrussPreview(z, tInv); const n = (pv?.topology?.pillars || []).length;
-              if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)`, count: n, ...zoneShapeMeta(z, pv.config, pv.spanFt) }); zoneP += n; }
+              // Every truss structure in the zone (the zone's own row, plus any "+ Add Truss" extras)
+              // — a zone with 2+ truss structures used to only ever count the first one's pillars here.
+              [z, ...(z.extraTrussRows || [])].forEach((row, ri) => {
+                // Scaled by THIS row's own Truss Qty — without it, raising Truss Qty above 1 never
+                // grew the Truss Labour crew estimate, same gap as Deal Check/IMS Planning's own counts.
+                const pv = scaleTrussPreview(calcZoneTrussPreview(row, tInv), row.trussQty); const n = (pv?.topology?.pillars || []).length;
+                if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)${ri > 0 ? ` #${ri + 1}` : ""}`, count: n, ...zoneShapeMeta(row, pv.config, pv.spanFt) }); zoneP += n; }
+              });
             });
           }
         } catch { /* zone has no resolvable truss preview */ }
@@ -8761,12 +8805,25 @@ export default function StudioApp() {
       fnTotals: (() => {
         const prev = (prevSnapForTotals && typeof prevSnapForTotals.fnTotals === "object" && prevSnapForTotals.fnTotals) || {};
         const next = {};
+        // A function removed since prev's save shifts every later position down by one. READ ONLY
+        // here (not consumed yet — see the real consume point a bit further down, in the branch that
+        // actually persists this save): a held-back autosave (keepDraft/loadEchoNoop/emptyOverBuilt)
+        // still runs this whole block to build its (discarded) snapshot, and clearing the ref here
+        // unconditionally meant a held-back save silently burned the ONE use this remap gets, leaving
+        // the save that actually DOES persist to read raw, un-remapped positions again — the exact
+        // drift this was built to fix, just one save later.
+        // pendingFnTotalsRemapRef.current is a plain function (new index -> old index), or null — see
+        // the ref's own declaration comment for why both writers (removeFunction, loadClientSession)
+        // produce this same shape, and why that matters (composability across repeated removals).
+        const remap = pendingFnTotalsRemapRef.current;
+        const oldIdxFor = (i) => (remap ? remap(i) : i);
         for (let i = 0; i < totalFns; i++) {
           // Only onto a function that HAS a build. This carried a price forward on the strength of a
           // snapshot merely existing, and a snapshot exists for every function once a video is picked
           // — so an untouched, ₹0 function inherited whatever the last save had measured elsewhere.
           if (!fnSnapshots[i] || !fnSnapHasBuild(fnSnapshots[i])) continue;
-          const carried = prev[i] || prev[String(i)];
+          const prevIdx = oldIdxFor(i);
+          const carried = prev[prevIdx] || prev[String(prevIdx)];
           if (carried && typeof carried.total === "number" && carried.total > 0) next[i] = carried;
         }
         // pricingReady, and not just grandTotal > 0. During boot grandTotal IS > 0 — it is a real
@@ -8947,6 +9004,10 @@ export default function StudioApp() {
       // against its own latest write, not the load-time one (mirrors dcSaveBaselineRef's own advance
       // after a successful dcDraft save).
       buildSaveBaselineRef.current = { savedAt: snapshot.savedAt, savedBy: snapshot.savedBy };
+      // The fnTotals remap above is consumed HERE, not where it was read — only a save that actually
+      // lands as sessions[0] makes the next save's prevSnapForTotals reflect the new numbering; a
+      // held-back save must leave the remap intact for whichever save finally does persist.
+      pendingFnTotalsRemapRef.current = null;
       const prunedIds = nextSessionList.slice(SESSION_KEEP).map((x) => x?.id).filter(Boolean);
       sessionBoundaryRef.current = false;
       // ── THE SAME SAVE, ROW-LEVEL, TO `studio_sessions` (migration 026) ──
@@ -9260,6 +9321,157 @@ export default function StudioApp() {
     const next = withKitEdit(base, fnIdx, cardKey, comps);
     try { saveClientLedger(cur.map((x) => (x.id === id ? { ...x, dcKitEdits: next } : x))); } catch { /* best effort: Deal Check's own autosave still carries it */ }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── DEAL CHECK'S OWN PER-FUNCTION STATE, REINDEXED ON REMOVAL ──
+  // removeFunction (StudioEventInfo.jsx) already reindexes fnBuilds when a function is removed —
+  // every build above the removed index shifts down one slot. Deal Check keeps a much larger set of
+  // its OWN per-function state (manual items, kit edits, card assignments, floral allocations,
+  // collapsed-section UI state) that never got the same treatment, so removal left all of it
+  // pointing at the OLD numbering — the function that shifted into the removed one's old slot could
+  // silently inherit a different function's manual items, kit edits or card state. See
+  // lib/studio/dealCheckReindex.js's own top comment for the shared primitives this uses and why
+  // the PERSISTED client-ledger copy needs the exact same fix, not just the live React state: Deal
+  // Check's own autosave only writes these fields while it's actually open (dcRun), so removing a
+  // function with Deal Check closed would otherwise leave the ledger's stale, pre-removal copy
+  // sitting there to silently overwrite this live reindex the next time Deal Check reopens.
+  const reindexDealCheckStateForRemoval = useCallback((removedIdx) => {
+    setDcCards((p) => reindexFnIdxObject(p, removedIdx));
+    setDcZoneState((p) => reindexFnIdxObject(p, removedIdx));
+    setDcKitEdits((p) => reindexFnIdxObject(p, removedIdx));
+    setDcCarpetPick((p) => reindexFnIdxObject(p, removedIdx));
+    setDcCarpetSplit((p) => reindexFnIdxObject(p, removedIdx));
+    setDcResolved((p) => reindexFnIdxObject(p, removedIdx));
+    setDcPhotoOverrides((p) => reindexFnIdxObject(p, removedIdx));
+    setDcSkipped((p) => reindexFnIdxObject(p, removedIdx));
+    setDcProductionAccepted((p) => reindexFnIdxObject(p, removedIdx));
+    setDcArtFlowerAlloc((p) => reindexFnIdxObject(p, removedIdx));
+    setDcArtFlowerAllocSrc((p) => reindexFnIdxObject(p, removedIdx));
+    setDcFloralColorPrefs((p) => reindexFnIdxObject(p, removedIdx));
+    setDcManualItems((p) => reindexFnIdxArray(p, removedIdx));
+    setDcCustomItems((p) => reindexFnIdxArray(p, removedIdx));
+    // dcCollapsedZones carries TWO different key shapes — DCTrussTab's own "truss:${fnIdx}|${zk}|…"
+    // fold keys alongside the plain "${fnIdx}|${zk}" ones everything else writes (a regression
+    // review found the truss ones unhandled) — chain both; neither's regex matches the other's keys.
+    setDcCollapsedZones((p) => reindexCompositeKeyObject(
+      reindexCompositeKeyObject(p, removedIdx, TRUSS_ZONE_PIPE_KEY.parseIdx, TRUSS_ZONE_PIPE_KEY.rebuildKey),
+      removedIdx, ZONE_PIPE_KEY.parseIdx, ZONE_PIPE_KEY.rebuildKey
+    ));
+    setDcManualSearch((p) => reindexCompositeKeyObject(p, removedIdx, ZONE_PIPE_KEY.parseIdx, ZONE_PIPE_KEY.rebuildKey));
+    setDcCollapsedFnBlocks((p) => reindexCompositeKeyObject(p, removedIdx, TRANSPORT_COLLAPSE_KEY.parseIdx, TRANSPORT_COLLAPSE_KEY.rebuildKey));
+    setDcFloralCalcOpen((p) => reindexCompositeKeyObject(p, removedIdx, FLORAL_CALC_OPEN_KEY.parseIdx, FLORAL_CALC_OPEN_KEY.rebuildKey));
+
+    // PERSISTED copy — same fields, same reindex, written straight to the client row (see this
+    // function's own top comment for why the live state above isn't enough on its own).
+    // View-only users never get here in practice (removing a function isn't itself gated — a
+    // separate, pre-existing gap, not this fix's to close — but every OTHER save path IS gated, e.g.
+    // persistDcKitEditsNow just above). Skip the persist (not the live reindex, which never leaves
+    // this tab) rather than let a view-only session write a change straight to the server that
+    // every other door refuses from them — a regression review caught this missing entirely.
+    if (!canDesignEditRef.current) return;
+    const id = activeClientIdRef.current;
+    if (!id) return;
+    (async () => {
+      // Heavy fields (dcDraft/dcCards/dcZoneState/dcKitEdits/dcReservedInventory) are excluded from
+      // the boot-time fetch and only loaded once Deal Check actually opens for this client
+      // (ensureClientHeavyFieldsLoaded, this file's own "dcDraft... out of the boot-time fetch"
+      // comment). Skipping this await — reading clientLedgerRef directly instead — meant a removal
+      // made before Deal Check was ever opened this session saw every heavy field as undefined,
+      // silently left them untouched (JSON drops an undefined key, and the ledger's shallow merge
+      // keeps whatever stale value the server already had) while dcCarpetPick/dcCarpetSplit (already
+      // in the LIGHT view, fetched at boot) DID get reindexed — leaving the server row HALF
+      // reindexed, an inconsistency worse than not touching it at all. Caught by regression review.
+      const c = await ensureClientHeavyFieldsLoaded(id);
+      if (!c) return;
+      const reindexDraft = (draft) => {
+        if (!draft || typeof draft !== "object") return draft;
+        return {
+          ...draft,
+          resolved: reindexFnIdxObject(draft.resolved, removedIdx),
+          cards: reindexFnIdxObject(draft.cards, removedIdx),
+          zoneState: reindexFnIdxObject(draft.zoneState, removedIdx),
+          photoOverrides: reindexFnIdxObject(draft.photoOverrides, removedIdx),
+          skipped: reindexFnIdxObject(draft.skipped, removedIdx),
+          manualItems: reindexFnIdxArray(draft.manualItems, removedIdx),
+          productionAccepted: reindexFnIdxObject(draft.productionAccepted, removedIdx),
+          artFlowerAlloc: reindexFnIdxObject(draft.artFlowerAlloc, removedIdx),
+          artFlowerAllocSrc: reindexFnIdxObject(draft.artFlowerAllocSrc, removedIdx),
+          floralColorPrefs: reindexFnIdxObject(draft.floralColorPrefs, removedIdx),
+          customItems: reindexFnIdxArray(draft.customItems, removedIdx),
+        };
+      };
+      const patch = {
+        dcDraft: reindexDraft(c.dcDraft),
+        dcCards: reindexFnIdxObject(c.dcCards, removedIdx),
+        dcZoneState: reindexFnIdxObject(c.dcZoneState, removedIdx),
+        dcKitEdits: reindexFnIdxObject(c.dcKitEdits, removedIdx),
+        dcCarpetPick: reindexFnIdxObject(c.dcCarpetPick, removedIdx),
+        dcCarpetSplit: reindexFnIdxObject(c.dcCarpetSplit, removedIdx),
+        // Keyed by fnIdx too (requiredByFn[fnIdx]), read by the sold-inventory reconcile to diff
+        // this save's reservations against last time's — left unreindexed, a removal makes that
+        // diff compare the wrong functions against each other on the next reconcile (spurious
+        // "changed" entries in the dept-head change log; the actual block reservations are rebuilt
+        // fresh from current data regardless, so stock correctness itself isn't at risk).
+        dcReservedInventory: reindexFnIdxObject(c.dcReservedInventory, removedIdx),
+      };
+      const cur = clientLedgerRef.current || [];
+      try { saveClientLedger(cur.map((x) => (x.id === id ? { ...x, ...patch } : x))); } catch { /* best effort — the live state above is already correct for this tab */ }
+      // The in-session Deal Check cache is the same shape again — stale otherwise, same reasoning as
+      // the ledger patch above, just for this tab's own memory instead of the server.
+      setDcCache((prev) => {
+        const cached = prev?.[id];
+        if (!cached) return prev;
+        return { ...prev, [id]: reindexDraft(cached) };
+      });
+    })();
+  }, [ensureClientHeavyFieldsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ── EVENT ORDER deptOps CARPET/FABRIC CHOICES, REINDEXED ON REMOVAL ──
+  // Two more fnIdx-keyed maps with the identical reindex gap, this time living entirely outside
+  // Studio's own client-ledger state: IMS Dept Ops' carpet and fabric-item decision pickers
+  // (DepartmentOpsTab.jsx, "saveDept({ carpetChoice: … })"/"saveDept({ itemChoice: … })") write
+  // straight onto the live event_orders row, keyed "${fnIdx}|${zoneKey}|…" (carpetKey/elementKey,
+  // lib/ims/carpetPlan.js /elementPlan.js) — the SAME "${fnIdx}|…" prefix shape ZONE_PIPE_KEY
+  // already parses, so it's reused here unchanged. Removing a function in Studio can reach an
+  // ALREADY-SOLD/booked deal (removal isn't gated on deal status), so a dept head's already-decided
+  // carpet/fabric choices for a later function could otherwise end up misfiled under an earlier
+  // one's slot once the function above it is removed. deptOps is IMS-owned — Studio's own re-sync
+  // (persistDeptSnapshot) deliberately never touches it — so this patches the live server row
+  // directly and narrowly, the same surgical single-field pattern syncDealValueNow uses just above
+  // (re-read the freshest row first, never write from a possibly-stale local copy of IMS's own data).
+  const reindexEventOrderDeptOpsForRemoval = useCallback(async (removedIdx) => {
+    const eo = eventOrderFor(eventOrders, activeClientId, clientName);
+    // Strict id match only — eventOrderFor's own name-only fallback (for pre-id-era records) can
+    // resolve to a DIFFERENT client's order that happens to share this client's name, and every
+    // other reader/writer of this fallback only ever MERGES fields in; this one DELETES/renumbers
+    // keys, which is too destructive to risk firing against an unrelated client's sold deal over a
+    // name coincidence. Pre-id-era sold deals being re-edited in Studio today are rare enough that
+    // skipping this one patch for them is the safer tradeoff (regression-caught).
+    if (!eo || !activeClientId || eo.clientId !== activeClientId) return;
+    try {
+      const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
+      if (!row || !row.data) return;
+      const cur = row.data;
+      const deptOps = cur.deptOps;
+      if (!deptOps || typeof deptOps !== "object") return; // nothing decided yet
+      const reindexChoice = (choiceMap) => reindexCompositeKeyObject(choiceMap, removedIdx, ZONE_PIPE_KEY.parseIdx, ZONE_PIPE_KEY.rebuildKey);
+      // changed must mean "the reindex actually altered something", not merely "a map exists" — a
+      // regression review caught this writing on every removal for any sold deal with ANY decision
+      // at all, even when nothing in that specific map needed to move, widening the (pre-existing,
+      // shared-by-every-writer-of-this-blob) clobber race with other event_orders writers for no
+      // reason. JSON-comparing is safe here: reindexCompositeKeyObject preserves insertion order and
+      // every value verbatim when it changes nothing, so a true no-op always stringifies identically.
+      let changed = false;
+      const nextDeptOps = { ...deptOps };
+      if (deptOps.Tenting?.carpetChoice) {
+        const next = reindexChoice(deptOps.Tenting.carpetChoice);
+        if (JSON.stringify(next) !== JSON.stringify(deptOps.Tenting.carpetChoice)) { nextDeptOps.Tenting = { ...deptOps.Tenting, carpetChoice: next }; changed = true; }
+      }
+      if (deptOps.Fabric?.itemChoice) {
+        const next = reindexChoice(deptOps.Fabric.itemChoice);
+        if (JSON.stringify(next) !== JSON.stringify(deptOps.Fabric.itemChoice)) { nextDeptOps.Fabric = { ...deptOps.Fabric, itemChoice: next }; changed = true; }
+      }
+      if (!changed) return;
+      await retryingUpdate("event_orders", eo.id, { data: { ...cur, deptOps: nextDeptOps } });
+    } catch { /* best effort — IMS's own next decision on this zone just re-asks the question */ }
+  }, [eventOrders, activeClientId, clientName]);
   // ── LIVE KITS (owner ask 2026-11-10) ── An element on a kit picked in Build (Kit 2, or another item's kit) takes that kit's parts as
   // they are in IMS now: an edit in IMS → Inventory reaches the open deal in real time (the inventory subscription), and the save that
   // follows carries it to Deal Check, Planning and the Setup Book. A kit removed in IMS puts the element back on Kit 1. Sold deals too
@@ -9885,6 +10097,16 @@ export default function StudioApp() {
     // already was). saveSession compares its own next write against this to tell a stale tab from
     // one that's actually caught up — see buildSaveBaselineRef's own comment.
     buildSaveBaselineRef.current = { savedAt: Number(client.sessions?.[0]?.savedAt) || 0, savedBy: client.sessions?.[0]?.savedBy || null };
+    // Default/cross-client reset: any pending removal remap belonged to whatever client was open
+    // before this call (a fast client switch within the same removal-to-save window could otherwise
+    // apply someone else's shift to THIS client's prices). The fnSnapshots branch below OVERWRITES
+    // this with its own freshly-derived remap right after computing restoredBuilds — NOT with
+    // another unconditional clear: client.functions persists through a held-back autosave (only
+    // sessions[0] is held back, not the client row itself — see saveSession's own "Only the SESSIONS
+    // are held back" comment), so a removal made just before a held-back save is very much still
+    // real by the time this load runs, and clearing this unconditionally here left the very next
+    // save still mispricing whatever function shifted into the gap (caught by regression review).
+    pendingFnTotalsRemapRef.current = null;
     setClientDate(client.eventDate || "");
     setVenue(client.venue || "");
     setFn(client.fn || "");
@@ -9948,21 +10170,102 @@ export default function StudioApp() {
       return merge;
     }
     if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
-      const fn0Snap = session.fnSnapshots[0] || session.fnSnapshots["0"] || null;
-      // MUST include idx 0 here (unlike the older version of this block) — it used to be excluded on
+      // Every function this client currently has, by its CURRENT position — function 1 (idx 0) is
+      // client.fn/eventDate (its own top-level fields, not yet overwritten by this load), the rest
+      // are client.functions[1..] (the client row's own current list, already reindexed by any
+      // removal/reorder since this session was saved). Used right below to relocate a snapshot
+      // whose stamped identity (see saveSession's own "fnDate/fnVenue" comment) now belongs to a
+      // DIFFERENT function than the raw index it was saved under — the same index-drift class the
+      // Rakesh Taneja incident's resumeSavedSession fix closed for Resume/Continue, happening here
+      // instead at mount/reload time.
+      const curFnList = [
+        { type: client.fn || "", date: client.eventDate || "" },
+        ...(Array.isArray(client.functions) ? client.functions.slice(1) : []).map(f => ({ type: f?.type || "", date: f?.date || "" })),
+      ];
+      // Index -> every CURRENT function whose type+date matches it, built once. Used below to both
+      // RELOCATE a shifted function's build to its correct new slot (not just refuse to misfile it
+      // — a regression review found the earlier "drop on collision" version left the removed
+      // function's OWN stale build sitting in the gap it left behind, with the real function that
+      // shifted into that slot dropped on top of it) and to recognise two functions that legitimately
+      // share a type+date (a same-day Lunch/Dinner sitting, two family Haldis one morning) as
+      // ambiguous rather than a collision — only a UNIQUE match is ever acted on.
+      const curIdxByStamp = new Map();
+      curFnList.forEach((c, i) => {
+        if (!c.type || !c.date) return;
+        const key = c.type + "||" + c.date;
+        if (!curIdxByStamp.has(key)) curIdxByStamp.set(key, []);
+        curIdxByStamp.get(key).push(i);
+      });
+      const rawEntries = Object.entries(session.fnSnapshots)
+        .map(([k, v]) => ({ rawIdx: parseInt(k), v }))
+        .filter((e) => !isNaN(e.rawIdx) && e.v);
+      // Same ambiguity check, the OTHER direction: a stamp shared by 2+ SNAPSHOTS (two old sessions'
+      // own same-day Lunch/Dinner builds) is just as ambiguous as one shared by 2+ CURRENT functions
+      // — a regression review caught pass 1 only checking the current-function side, so when two old
+      // snapshots legitimately shared a stamp and exactly one current function still had it, the
+      // first one processed silently claimed the slot and the second was dropped outright. Only a
+      // stamp that is unique on BOTH sides is ever acted on below.
+      const rawStampCounts = new Map();
+      rawEntries.forEach(({ v }) => {
+        if (!(v.fnType && v.fnDate)) return;
+        const key = v.fnType + "||" + v.fnDate;
+        rawStampCounts.set(key, (rawStampCounts.get(key) || 0) + 1);
+      });
+      const restoredBuilds = {};
+      // newIdx -> the OLD raw index its build actually came from, wherever that differs from newIdx
+      // — not used for the build restore itself, only to correct fnTotals' own carry-forward at the
+      // NEXT save (see pendingFnTotalsRemapRef's own comment): a session reload can land on a client
+      // row whose functions were already reindexed by a removal (client.functions persists through a
+      // held-back autosave even though sessions[0] itself didn't), so the SAME index-drift this pass
+      // just fixed for decor content would otherwise still mis-price the function that shifted in.
+      const oldIdxByNewIdx = {};
+      // Pass 1 — relocate by identity wherever it's unambiguous: a snapshot whose stamp matches
+      // EXACTLY ONE current function goes to THAT function's current index, whatever that is now —
+      // this is what actually recovers a shifted function's build after an earlier removal, instead
+      // of leaving it stranded at its old index or dropping it outright.
+      const claimedTargets = new Set();
+      const consumedRaw = new Set();
+      rawEntries.forEach(({ rawIdx, v }) => {
+        if (!(v.fnType && v.fnDate)) return;
+        const key = v.fnType + "||" + v.fnDate;
+        if ((rawStampCounts.get(key) || 0) !== 1) return; // ambiguous on the snapshot side too
+        const matches = curIdxByStamp.get(key);
+        if (matches && matches.length === 1 && !claimedTargets.has(matches[0])) {
+          restoredBuilds[matches[0]] = v;
+          claimedTargets.add(matches[0]);
+          consumedRaw.add(rawIdx);
+          if (rawIdx !== matches[0]) oldIdxByNewIdx[matches[0]] = rawIdx;
+        }
+      });
+      // Pass 2 — everything not already placed by identity falls back to its own raw index, UNLESS
+      // that raw index is a target pass 1 already claimed FOR A DIFFERENT snapshot (the function
+      // that used to be at this index was removed, and the function that shifted into it already
+      // got placed here above — this stale leftover must not overwrite that). An unstamped (legacy)
+      // snapshot, or one whose stamp matches nothing current at all (the function it was for no
+      // longer exists anywhere), or one caught in a genuine ambiguous tie (2+ current functions, or
+      // 2+ old snapshots, share that exact stamp) all fall through here and keep today's existing,
+      // safe behaviour.
+      rawEntries.forEach(({ rawIdx, v }) => {
+        if (consumedRaw.has(rawIdx) || claimedTargets.has(rawIdx)) return;
+        restoredBuilds[rawIdx] = v;
+      });
+      // See oldIdxByNewIdx's own comment above — read by saveSession's fnTotals carry-forward
+      // (oldIdxFor), via the SAME ref removeFunction uses for the same-tab removal case. Set as a
+      // plain function, same shape as removeFunction's own contribution, so the two compose cleanly
+      // if a removal lands before this load's own first save persists (removeFunction wraps
+      // whatever's here with one more shift — a load always replaces wholesale, since it re-derives
+      // the full picture from scratch and there's nothing meaningful to compose with at that point).
+      pendingFnTotalsRemapRef.current = Object.keys(oldIdxByNewIdx).length
+        ? ((i) => (oldIdxByNewIdx[i] != null ? oldIdxByNewIdx[i] : i))
+        : null;
+      // MUST include idx 0 here (unlike an older version of this block) — it used to be excluded on
       // the assumption that Fn0's data always lives in the live top-level state instead. True only
       // when landingFnIdx is 0. Landing on any OTHER function (a refresh while Fn4 was active, say)
       // left fnBuilds with no entry at all for Fn0 — not merely stale, ABSENT — so the very next
       // autosave's collectAllFunctionData/saveSession loop (which reads fnBuilds[i] for every i that
       // isn't the live index) found nothing for Fn0 and wrote a session with NO fnSnapshots[0] at all,
-      // permanently erasing Fn1's entire real build. resumeSavedSession (the explicit per-pill Resume
-      // button) already gets this right — it excludes whichever index IS being restored into, not a
-      // hardcoded 0 — this mount-restore path is fixed to match that same, correct pattern.
-      const restoredBuilds = {};
-      Object.entries(session.fnSnapshots).forEach(([k, v]) => {
-        const idx = parseInt(k);
-        if (!isNaN(idx) && v) restoredBuilds[idx] = v;
-      });
+      // permanently erasing Fn1's entire real build.
+      const fn0Snap = restoredBuilds[0] || null;
       // The mount-restore effect (refresh/reopen) passes the function that was actually active
       // before — landing everyone back on Fn0's live state while labelling it "Function N" (a bare
       // setActiveFnIdx after this call, with no matching restore) mislabelled whatever was on screen:
@@ -10061,6 +10364,31 @@ export default function StudioApp() {
   useEffect(() => () => {
     if (dealPresenceRef.current) { try { supabase.removeChannel(dealPresenceRef.current.channel); } catch { /* ignore */ } dealPresenceRef.current = null; }
   }, []);
+  // Also release on pagehide, not just unmount — a real tab close/refresh tears the page down before
+  // React ever gets to run the unmount cleanup above (confirmed: "You already have this deal open"
+  // firing against your OWN just-closed tab after a refresh). Explicitly untracking here gives the
+  // presence leave a chance to reach the server before the socket drops, instead of leaving this
+  // entry to clear only via the server's own disconnect-timeout detection, which the comment on
+  // claimDealPresence already documents as sometimes lagging well past a few seconds.
+  // pagehide ONLY, not beforeunload: every beforeunload listener on the page (Build's own unsaved-
+  // edit prompt, saveHealth's failed-write prompt) fires regardless of what the user picks on the
+  // native "Leave site?" dialog — releasing here on beforeunload would drop the lock the instant
+  // that prompt appears, even if the salesperson then clicks Stay and keeps editing with no claim
+  // held, letting a second device in. pagehide only fires once the unload is actually going ahead.
+  // Nulling the ref after releasing keeps it consistent with the other two cleanup paths above — a
+  // tab restored from the back/forward cache after this fires starts with no stale claim, same as
+  // today's refresh-restore path (which never re-claims at all; see loadClientSessionGuarded above).
+  useEffect(() => {
+    const onHide = () => {
+      const p = dealPresenceRef.current;
+      if (!p) return;
+      try { p.channel.untrack(); } catch { /* best-effort */ }
+      try { supabase.removeChannel(p.channel); } catch { /* best-effort */ }
+      dealPresenceRef.current = null;
+    };
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, []);
   // Wraps loadClientSession for Event Info's "Load →" button only — the one place this was asked
   // for. Every OTHER caller of loadClientSession still calls it directly, unguarded, on purpose:
   // the automated planning-sync sweep is a system process re-opening a booked deal headlessly, not
@@ -10072,7 +10400,14 @@ export default function StudioApp() {
   // restructuring that function, which this deliberately does not do.
   const loadClientSessionGuarded = useCallback(async (client, session, landingStep, opts) => {
     if (dealPresenceRef.current) {
-      try { supabase.removeChannel(dealPresenceRef.current.channel); } catch { /* ignore */ }
+      // Awaited, not fire-and-forget: claimDealPresence immediately below opens a channel on the
+      // SAME topic (`realtime:presence:client:${clientId}`) whenever this re-claims the deal it was
+      // already holding (e.g. clicking Load → again on the deal already open in this tab) — the
+      // realtime client dedupes channels by topic and only drops the old one once the server has
+      // acknowledged the leave, so an unawaited remove here could hand the new claim back the OLD,
+      // still-leaving channel, whose subscribe is then a no-op and whose presence state still shows
+      // this tab's own now-superseded entry — a same-tab false "You already have this deal open".
+      try { await supabase.removeChannel(dealPresenceRef.current.channel); } catch { /* ignore */ }
       dealPresenceRef.current = null;
     }
     if (!client?.id || !authUser?.id) { loadClientSession(client, session, landingStep, opts); return; }
@@ -10196,6 +10531,10 @@ export default function StudioApp() {
   const startNewDeal = useCallback(() => {
     setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setFilterMood([]);setFilterPalette([]);setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");setClientFlowerPalette("");
     loadedClientIdentityRef.current = { name: "", phone: "" };
+    // A pending removal remap belongs to whichever client was just open — carrying it into a brand
+    // new, functionless deal has nothing to apply to anyway, but leaving it set is still a latent
+    // footgun for whatever client gets loaded next without going through loadClientSession first.
+    pendingFnTotalsRemapRef.current = null;
   }, [userVenueScope]);
 
   // ── Restore the active deal on mount (refresh / Studio↔IMS switch) ──
@@ -10700,50 +11039,152 @@ export default function StudioApp() {
   }, []);
   const resumeSavedSession = useCallback((session, targetFnIdx) => {
     if (!session) return;
-    // Same baseline capture loadClientSession does (~line 8035) — this is the OTHER door into a
-    // build (Browse's "Resume"/"Continue build", used far more often than a fresh Load), and it was
-    // the one door that never set buildSaveBaselineRef at all. A tab that only ever arrives here
-    // keeps a null baseline for its whole life, and the staleness guard's very first check is
-    // `!!(baseline && ...)` — null reads as "nothing to compare against", so that tab's own autosave
-    // could silently overwrite ANY newer save, no matter how stale it got, with no warning ever
-    // shown. Confirmed as a real incident, not a theoretical one: a different salesperson's tab,
-    // resumed this way and never reloaded since, re-saved a ₹16L+ state over someone else's ₹14L+
-    // edit made minutes earlier.
-    // The baseline MUST be the client's actual current sessions[0] — NOT `session` itself. A
-    // deliberate Resume routinely loads an OLDER session on purpose (rolling back to a past build),
-    // exactly like loadClientSession's own comment already warns about — sessions[0] on the server
-    // stays whatever it already was. Baselining on the (older) resumed session instead made the very
-    // next save look like a conflict against yourself every single time: the live remote (the actual
-    // newest session) always reads as "newer than my baseline", and whoever saved it was flagged as
-    // having "overwritten" you — even though resuming an old build and re-saving it IS the feature.
-    // That is exactly the red "not auto-saved" toast seen immediately after a legitimate rollback.
-    const curTop = (clientLedgerRef.current || clientLedger).find(c => c.id === activeClientIdRef.current)?.sessions?.[0] || null;
-    buildSaveBaselineRef.current = { savedAt: Number(curTop?.savedAt) || 0, savedBy: curTop?.savedBy || null };
+    // Same guard switchActiveFn opens with: a pill switch's transition can still be in flight
+    // (committedFnIdxRef not yet advanced) when this fires from Event Info, which has no
+    // isFnSwitching gate of its own. Racing restoreBuildState's urgent update against a pending
+    // transition's queued setActiveFnIdx left the screen labelled as one function while actually
+    // showing another's content — refusing outright while a switch is still committing is simpler
+    // than reasoning about which update lands last. Both flags, not just switchingRef: the 3s
+    // fnBusy backstop (~line 2477) clears switchingRef even while the transition it was guarding is
+    // still pending, so switchingRef alone reopens this window on a slow device before the switch
+    // has actually landed — the same combined check already used elsewhere in this file (~9152,
+    // ~9424) for exactly this reason.
+    if (switchingRef.current || fnSwitchingRef.current) return;
+    // Baseline capture (loadClientSession does the same, ~line 8035) is set further below, only once
+    // every refusal check below has actually passed — see the comment at each setter for why setting
+    // it on a path that then refuses would be its own, separate bug (moves the conflict baseline
+    // forward for a resume that never actually happened).
+    const setBaseline = () => {
+      // This is the OTHER door into a build (Browse's "Resume"/"Continue build", used far more often
+      // than a fresh Load), and it was the one door that never set buildSaveBaselineRef at all. A tab
+      // that only ever arrives here keeps a null baseline for its whole life, and the staleness
+      // guard's very first check is `!!(baseline && ...)` — null reads as "nothing to compare
+      // against", so that tab's own autosave could silently overwrite ANY newer save, no matter how
+      // stale it got, with no warning ever shown. Confirmed as a real incident, not a theoretical one:
+      // a different salesperson's tab, resumed this way and never reloaded since, re-saved a ₹16L+
+      // state over someone else's ₹14L+ edit made minutes earlier.
+      // The baseline MUST be the client's actual current sessions[0] — NOT `session` itself. A
+      // deliberate Resume routinely loads an OLDER session on purpose (rolling back to a past build),
+      // exactly like loadClientSession's own comment already warns about — sessions[0] on the server
+      // stays whatever it already was. Baselining on the (older) resumed session instead made the very
+      // next save look like a conflict against yourself every single time: the live remote (the actual
+      // newest session) always reads as "newer than my baseline", and whoever saved it was flagged as
+      // having "overwritten" you — even though resuming an old build and re-saving it IS the feature.
+      // That is exactly the red "not auto-saved" toast seen immediately after a legitimate rollback.
+      const curTop = (clientLedgerRef.current || clientLedger).find(c => c.id === activeClientIdRef.current)?.sessions?.[0] || null;
+      buildSaveBaselineRef.current = { savedAt: Number(curTop?.savedAt) || 0, savedBy: curTop?.savedBy || null };
+    };
     const idx = Number.isInteger(targetFnIdx) ? targetFnIdx : activeFnIdx;
+    // A history row's target index comes from an OLDER session's own numbering
+    // (bestFnIdxForSession/findLatestBuild), which can point past the deal's current function
+    // count after a function was removed since that session was saved. Silently letting
+    // setActiveFnIdx clamp it would land the old build under whatever function the clamp lands
+    // on instead, mislabeling it — refuse instead of guessing.
+    const totalFns = 1 + (extraFunctions || []).length;
+    if (idx < 0 || idx >= totalFns) { showMsg("That function no longer exists in this deal", "red"); return; }
+    // ── CAPTURE THE OUTGOING FUNCTION'S LIVE BUILD BEFORE TOUCHING ANYTHING ──
+    // The exact failure switchActiveFn's own top comment documents ("the outgoing snapshot was filed
+    // under the stale index, so it could overwrite a DIFFERENT function's build with this one's"),
+    // except this door into function-switching never got the fix at all: it went straight to
+    // restoreBuildState/setFnBuilds without ever snapshotting whatever was live on screen for the
+    // function being LEFT (committedFnIdxRef.current — see that ref's own comment for why it, not
+    // activeFnIdx, is the one that agrees with what's actually rendered). Confirmed live (Rakesh
+    // Taneja, 2026-11-12): Function 1's real content was clobbered by Function 2's saved session the
+    // moment Browse's "Continue build" jumped to Function 2 — because fnBuilds[curIdx] still held
+    // whatever was last committed there (stale, or nothing), and the merge below then overwrote it
+    // outright with this session's OWN (unrelated) snapshot for that same index.
+    const curIdx = committedFnIdxRef.current;
+    const outgoingSnap = curIdx !== idx ? snapshotFnRef.current() : null;
     if (session.fnSnapshots && typeof session.fnSnapshots === "object" && Object.keys(session.fnSnapshots).length > 0) {
       const activeSnap = session.fnSnapshots[idx] || session.fnSnapshots[String(idx)] || null;
+      // ── REFUSE A SNAPSHOT WHOSE IDENTITY NOW BELONGS TO A DIFFERENT FUNCTION ──
+      // idx is only ever a POSITION, and removing a function shifts every later position down —
+      // every session saved before that removal still uses the old numbering, with no way to tell
+      // the shift happened. Every snapshot since saveSession started stamping fnType/fnDate per
+      // function (see its own "fnDate/fnVenue" comment, ~line 8651) carries which function it was
+      // ACTUALLY saved for.
+      // NOT a plain "doesn't match idx's current type/date" check — that was the first cut of this
+      // fix, and a regression review caught it blocking a completely normal workflow: Event Info's
+      // Continue is explicitly built to carry a date/type edit just typed on screen (its own comment,
+      // "leaving the details just typed on this screen exactly as they are"), and rolling back to an
+      // old build under a function's NEW name/date is a deliberate, supported move (this function's
+      // own baseline comment above calls it "the feature"). Only refuse when the snapshot's stamp
+      // matches a DIFFERENT function that's still actually on this order right now — the same
+      // "belongsToAnother" collision test persistDeptSnapshot already uses for the identical problem
+      // on the metadata side (its own "REFUSE TO STAMP A DIFFERENT FUNCTION'S IDENTITY" comment,
+      // ~line 4411) — not a mismatch against idx's own, possibly since-edited, identity. Older
+      // snapshots saved before this stamp existed carry neither field and are let through unverified.
+      if (activeSnap && activeSnap.fnType && activeSnap.fnDate) {
+        const liveMeta = fnMetaRef.current || {};
+        const curFns = [
+          { i: 0, type: liveMeta.fn || "", date: liveMeta.clientDate || "" },
+          ...((liveMeta.extraFunctions || []).map((ef, k) => ({ i: k + 1, type: ef?.type || "", date: ef?.date || "" }))),
+        ];
+        // A tie that INCLUDES idx is never a collision: two functions legitimately sharing a
+        // type+date (a same-day Lunch and Dinner sitting, two family Haldis the same morning) is
+        // common, and idx's own identity still legitimately matching its own stamp means this is
+        // ambiguous-but-fine, not drift — a regression review caught the first cut of this check
+        // refusing BOTH such functions' own, correct resumes every time, since it only ever checked
+        // "does some OTHER index match", never whether idx itself was among the matches. But a tie
+        // that EXCLUDES idx entirely is still exactly as suspicious as a unique one: a second
+        // regression review caught this version letting that case through unrefused (e.g. an old
+        // session saved when the deal had two same-stamped functions neither of which is the one
+        // being resumed into now). Refuse whenever there's at least one match and idx isn't one of
+        // them — allow only when idx is itself among the matches, or there are no matches at all
+        // (the function this stamp names no longer exists anywhere, a plain rename/removal, not drift).
+        const matchIdxs = curFns.filter((c) => c.type && c.date && c.type === activeSnap.fnType && c.date === activeSnap.fnDate).map((c) => c.i);
+        const belongsToAnother = matchIdxs.length > 0 && !matchIdxs.includes(idx);
+        if (belongsToAnother) {
+          showMsg(`This save was for "${activeSnap.fnType}" (${activeSnap.fnDate}) — that now matches a DIFFERENT function on this deal, not Function ${idx + 1}. Not resuming; functions may have been reordered since this was saved.`, "red");
+          return;
+        }
+      }
+      setBaseline();
       if (idx !== activeFnIdx) setActiveFnIdx(idx);
       restoreBuildState(activeSnap);
-      // MERGE onto the current fnBuilds, never replace it outright. This session's own fnSnapshots
-      // only cover the functions that existed AT THE TIME it was saved — a function added to the
-      // deal since then has no entry here at all, and replacing the whole map silently blanked it
-      // (its only copy of its build was the live one in fnBuilds, which this just threw away). Each
-      // OTHER function this session DOES carry a snapshot for is still restored to that past state,
-      // same as before — only a function this session never touched now survives untouched instead
-      // of vanishing.
-      setFnBuilds(prev => {
-        const next = { ...prev };
-        Object.entries(session.fnSnapshots).forEach(([k, v]) => {
-          const i = parseInt(k);
-          if (!isNaN(i) && i !== idx && v) next[i] = v;
-        });
-        return next;
-      });
+      // ── TOUCH ONLY idx (the function being entered) AND curIdx (the one being left) ──
+      // This used to also MERGE every OTHER function this session carried a snapshot for onto
+      // fnBuilds, on the theory that it was only ever filling in a function added to the deal
+      // after this session was saved — but such a function has no key in session.fnSnapshots at
+      // all, so that merge never actually served that purpose. What it really did: overwrote a
+      // SIBLING function's already-real content with whatever this unrelated, often-older session
+      // happened to record for that same index. Confirmed live (Rakesh Taneja, 2026-11-12) on the
+      // single most common path in the app — Browse's main "Continue build" card, which always
+      // targets the function ALREADY on screen (bannerSaved only ever badges a card with
+      // activeFnIdx, "THIS PILL ONLY" — see its own comment) — so idx === curIdx there every time,
+      // outgoingSnap is null, and this merge was the ONLY thing touching any other function; it had
+      // nothing to do with resuming Fn X yet silently rewrote a sibling elsewhere in the deal. An
+      // attempted "only backfill if currently empty" compromise still had real failure modes (a
+      // deliberately-cleared function getting its old content silently restored; index drift after
+      // removeFunction stamping a deleted function's build onto whatever function now holds that
+      // number) with no actual benefit — a function this session never touched is already correct
+      // sitting untouched in fnBuilds, same as it was a moment ago.
+      setFnBuilds(prev => (outgoingSnap ? { ...prev, [curIdx]: outgoingSnap } : prev));
       setStep(2);
       showMsg("Resumed Fn" + (idx + 1) + " from " + new Date(session.savedAt).toLocaleDateString("en-IN"), "green");
       return;
     }
-    if (idx !== 0) setActiveFnIdx(0);   // legacy sessions are flat — their data belongs to Fn1
+    setBaseline();
+    // legacy sessions are flat — their data belongs to Fn1. Tested against curIdx (what's actually
+    // committed/on screen right now), not idx: every caller already passes idx=0 for a legacy
+    // session regardless of which function is active, so checking idx here never actually caught
+    // the case that matters — Fn2 (say) was active, this still skipped setActiveFnIdx, and the
+    // legacy build loaded into the raw state while the UI stayed labelled Fn2.
+    // Same capture as the fnSnapshots branch above: the function actually being left behind is
+    // whatever was committed just before this call (curIdx). Without this, switching to a legacy
+    // session from any other function silently drops that function's live, uncommitted content.
+    if (curIdx !== 0) {
+      setActiveFnIdx(0);
+      const legacyOutgoing = snapshotFnRef.current();
+      setFnBuilds(prev => ({ ...prev, [curIdx]: legacyOutgoing }));
+    }
+    // Blank every raw-state field first, THEN apply the legacy session's own flat fields below.
+    // A legacy session predates itemQty/itemGrades/customMode/activeZones/zoneOrder/customZones/
+    // elInspo/elCostOpen/savedInsps/customGensets/genset62/customTripRate entirely, so without this
+    // reset, switching INTO a legacy session from a non-zero function left all of those holding the
+    // OUTGOING function's own values — which then feed pricing (allFunctionData) and autosave right
+    // back out under Fn1's identity.
+    restoreBuildState(null);
     setEnabledEls(session.enabledEls || {});
     setElTiers(session.elTiers || {});
     setZoneConfig(session.zoneConfig || {});
@@ -11572,6 +12013,39 @@ export default function StudioApp() {
       }
     }
     if (cfg) {
+      // Scale By has to reach the incoming photo's truss/platform/print quantities the same way it
+      // already reaches elements (curScale/finalEls above), or picking ANY new photo on a scaled zone
+      // silently reset Truss Qty/Platform Qty/print qty back to that photo's own un-scaled recipe —
+      // confirmed live (2026-11-12): "Scale By only scales the elements tab, not truss/platform/
+      // carpet/print" (carpet rides on Platform Qty — platformRowCost bills carpet area as
+      // floorArea × plQty, so scaling plQty already scales carpet too). An explicit 0 is Truss/
+      // Platform Qty's own "no rental, dims/colour only" placeholder and must stay 0 regardless of
+      // scale; everything else floors at 1 — same convention setZoneScale/rescaleQty (StudioBuild.jsx)
+      // already uses when the scale FIELD itself changes; this applies the identical rule at
+      // photo-pick time instead, and stamps the same *Base fields so a LATER scale-field change
+      // composes from the true base rather than re-multiplying an already-scaled number.
+      const scaleQtyForPick = (q) => {
+        // q != null/"" guards the explicit-0 check specifically — Number(null) and Number("") are
+        // both 0 too, but neither writer of these fields ever stores null/"" (NumField commits real
+        // numbers, buildZoneConfig normalises), and every OTHER reader (rescaleQty, trussRowCost's
+        // own `row.trussQty === 0` check) treats null/undefined as "unset" (→ floor of 1), never as
+        // the explicit placeholder — so this must match that, not silently unbill a legacy null.
+        if (q != null && q !== "" && Number(q) === 0) return { base: 0, qty: 0 };
+        const n = Number(q);
+        const base = Number.isFinite(n) && n > 0 ? n : 1;
+        return { base, qty: curScale > 1 ? Math.max(1, Math.round(base * curScale)) : base };
+      };
+      const scaleRowForPick = (row) => {
+        if (!row) return row;
+        const t = scaleQtyForPick(row.trussQty); const p2 = scaleQtyForPick(row.plQty);
+        return { ...row, trussQty: t.qty, trussQtyBase: t.base, plQty: p2.qty, plQtyBase: p2.base };
+      };
+      cfg = scaleRowForPick(cfg);
+      if (Array.isArray(cfg.extraTrussRows) && cfg.extraTrussRows.length) cfg.extraTrussRows = cfg.extraTrussRows.map(scaleRowForPick);
+      if (Array.isArray(cfg.extraPlatformRows) && cfg.extraPlatformRows.length) cfg.extraPlatformRows = cfg.extraPlatformRows.map(scaleRowForPick);
+      if (Array.isArray(cfg.prints) && cfg.prints.length) {
+        cfg.prints = cfg.prints.map((pr) => { const r = scaleQtyForPick(pr.qty); return { ...pr, qty: r.qty, qtyBase: r.base }; });
+      }
       // Same reason as above — scale/repeat are live deal choices, not part of what a reference
       // photo's config describes. Preserve them across the replace instead of losing them.
       // repeatCats rides alongside repeat — the per-chip (Elements/Truss & Masking/Platform/Print)
@@ -12486,15 +12960,27 @@ export default function StudioApp() {
     }, { pickHint: `Pick the item to use for ${f.partName} inside ${f.name}` });
   }, [openAvailModal, imsInventory, setZoneElements, persistDcKitEditsNow]);
   const openOosFix = useCallback((f) => {
+    // Bail out BEFORE stashing/pending anything if a switch is already mid-flight — switchActiveFn
+    // would silently no-op below (it refuses to start a second switch while one is in progress), and
+    // if that in-flight switch is headed somewhere other than f.fnIdx, oosFixPending would be set
+    // with nothing left to ever clear it: the effect that opens the picker only fires once
+    // activeFnIdx actually reaches f.fnIdx, which this click can no longer make happen.
+    if (switchingRef.current) { showMsg("Still switching functions — try again in a moment", "red"); return; }
     oosGateStashRef.current = oosGateModal;
     setOosGateModal(null);
     if (f.fnIdx === activeFnIdx) {
       openOosPicker(f);
     } else {
       setOosFixPending(f);
-      setActiveFnIdx(f.fnIdx);
+      // switchActiveFn, not a bare setActiveFnIdx: this used to relabel the live canvas without ever
+      // snapshotting the OUTGOING function's content first — the exact failure class fixed in
+      // resumeSavedSession (see project_rakesh_taneja_resumesavedsession_incident memory), just a
+      // third, separate door into it. switchActiveFn already captures the outgoing build and batches
+      // the restore — the oosFixPending effect below still fires once its transition actually commits
+      // activeFnIdx.
+      switchActiveFn(f.fnIdx);
     }
-  }, [activeFnIdx, openOosPicker, oosGateModal]);
+  }, [activeFnIdx, openOosPicker, oosGateModal, switchActiveFn]);
   useEffect(() => {
     if (oosFixPending && oosFixPending.fnIdx === activeFnIdx) {
       const f = oosFixPending;
@@ -13826,11 +14312,22 @@ export default function StudioApp() {
     // again right after would just be redundant friction.
     selectElPhoto(r.elKey, photo, { skipConfirm: true });
     if (r.dims) {
-      const cfg = buildZoneConfig(r.elKey, r.dims);
-      if (cfg) {
-        setZoneConfig(p => ({ ...p, [r.elKey]: { ...cfg, prints: r.prints || [] } }));
-        setEnabledEls(p => ({ ...p, [r.elKey]: true }));
-      }
+      // Merge into whatever selectElPhoto just built above instead of wholesale-replacing it. This
+      // used to re-derive buildZoneConfig(r.elKey, r.dims) again — the exact same dims selectElPhoto
+      // itself builds from (photo.dims === libImg.dims === r.dims) — and overwrite selectElPhoto's
+      // result with that redundant copy, silently dropping scale/repeat/repeatCats/photoStash and
+      // resetting Truss Qty/Platform Qty back to ×1 on an already-scaled zone (confirmed live,
+      // 2026-11-12 — the same Scale By gap just fixed in selectElPhoto, reached a second way here).
+      // The only thing this block actually needs to add is the review modal's own picked prints,
+      // scaled by the same Scale By multiplier every other print-qty path already uses.
+      const curScale = Math.max(1, Math.round(Number(zoneConfig[r.elKey]?.scale) || 1));
+      const scaledPrints = (r.prints || []).map((pr) => {
+        const n = Number(pr.qty);
+        const base = Number.isFinite(n) && n > 0 ? n : 1;
+        return { ...pr, qty: curScale > 1 ? Math.max(1, Math.round(base * curScale)) : base, qtyBase: base };
+      });
+      setZoneConfig(p => (p[r.elKey] ? { ...p, [r.elKey]: { ...p[r.elKey], prints: scaledPrints } } : p));
+      setEnabledEls(p => ({ ...p, [r.elKey]: true }));
     }
     showMsg("✓ Applied to " + (zoneLabelsD[r.elKey]?.label || r.elKey) + " with " + r.elements.length + " elements", "green");
     setZoneUploadReview(null);
@@ -13969,6 +14466,8 @@ export default function StudioApp() {
     deleteSessionRows: designDeleteSessionRows,
     showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger: designSaveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
+    pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval, reindexEventOrderDeptOpsForRemoval,
+    lastFnRemoval, setLastFnRemoval,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS
     lmsLeads, setLmsLeads, lmsLoading, setLmsLoading, lmsError, setLmsError, lmsFilling, setLmsFilling, lmsRefreshCounter, setLmsRefreshCounter,

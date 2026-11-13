@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, calcZoneFabric, buildTopology, pillarCountForSpan, pillarCountForSpanRaw, nearestCleanSpans, nearestCleanHeights, trussPillarCount, buildPlatformPlan, trussInvForMaterial, zoneTrussStandingDiscountDetail, platformStandingDiscount } from "./pricing";
+import { snapRowDimsForProduction, trussRowCost, calcZoneTrussPreview, scaleTrussPreview, calcZoneFabric, buildTopology, pillarCountForSpan, pillarCountForSpanRaw, nearestCleanSpans, nearestCleanHeights, trussPillarCount, buildPlatformPlan, trussInvForMaterial, zoneTrussStandingDiscountDetail, platformStandingDiscount } from "./pricing";
 
 // §23 Phase 7 (2026-11-04, owner-confirmed worked examples): the sales team pads a zone's entered
 // width/depth themselves by a round 1ft per pillar (easy mental math) BEFORE typing it — a true
@@ -87,17 +87,19 @@ describe("buildTopology — 1ft/pillar budget, stock-resolved beams, footprint =
 describe("buildTopology — pole uses the raw span (no 1ft/pillar padding), owner decision 2026-11-05", () => {
   const poleEng = { maxSpanFt: 15, pillarWidthFt: 0.3 };
 
-  it("owner's worked example, no stock: 16x16x10 box splits every 16ft side into 2x8ft beams, 3 pillar positions per side, 8 distinct pillars total", () => {
+  it("owner's worked example, no stock: 16x16x10 box splits every 16ft side into 2x8ft beams, 3 pillar positions per side, 8 perimeter pillars + 1 shared center post (cross-bracing, 2026-11-12 — the mid-pillar pair on each axis is tied together by its own cross line, and since this box needs exactly one mid-pillar per axis, both cross lines share a single center post instead of two stacked pillars)", () => {
     const topo = buildTopology("full_box", 16, 16, 10, 16, 0, poleEng, undefined, "pole");
-    expect(topo.pillarCount).toBe(8);
+    expect(topo.pillarCount).toBe(9);
     expect(topo.pillars.every((p) => p.H === 10)).toBe(true);
-    expect(topo.beamCount).toBe(8);
-    expect(topo.beams.map((b) => b.lengthFt)).toEqual([8, 8, 8, 8, 8, 8, 8, 8]);
+    expect(topo.beamCount).toBe(12);
+    expect(topo.beams.map((b) => b.lengthFt)).toEqual([8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]);
     expect(topo.beams.map((b) => b.side)).toEqual([
       "front-1", "front-2", "back-1", "back-2", "left-1", "left-2", "right-1", "right-2",
+      "cross-NS-1", "cross-NS-2", "cross-WE-1", "cross-WE-2",
     ]);
     const pillarIds = topo.pillars.map((p) => p.id);
-    expect(pillarIds).toEqual(expect.arrayContaining(["P-N-mid1", "P-S-mid1", "P-W-mid1", "P-E-mid1"]));
+    expect(pillarIds).toEqual(expect.arrayContaining(["P-N-mid1", "P-S-mid1", "P-W-mid1", "P-E-mid1", "P-center"]));
+    expect(topo.pillars.filter((p) => p.interior).map((p) => p.id)).toEqual(["P-center"]);
     expect(topo.physicalL).toBeCloseTo(16 + 3 * 0.3);
     expect(topo.physicalW).toBeCloseTo(16 + 3 * 0.3);
     expect(topo.stockResolved).toBe(false);
@@ -155,12 +157,69 @@ describe("buildTopology — pole uses the raw span (no 1ft/pillar padding), owne
       },
     };
     const out = calcZoneTrussPreview(zc, trussInv);
-    expect(out.topology.pillarCount).toBe(8);
-    expect(out.topology.beams.map((b) => b.lengthFt)).toEqual([8, 8, 8, 8, 8, 8, 8, 8]);
+    expect(out.topology.pillarCount).toBe(9); // 8 perimeter + 1 shared center post (cross-bracing)
+    expect(out.topology.beams.map((b) => b.lengthFt)).toEqual([8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]);
 
     const ironOut = calcZoneTrussPreview({ ...zc, trussMaterial: "iron" }, trussInv);
     expect(ironOut.topology.pillarCount).toBe(4);
     expect(ironOut.topology.beams.map((b) => b.lengthFt)).toEqual([14, 14, 14, 14]);
+  });
+});
+
+describe("scaleTrussPreview — a row's Truss Qty > 1 reaching Deal Check/IMS Planning/manpower (2026-11-12)", () => {
+  const zc = { dims: { L: 0, W: 14, H: 10 } };
+  const trussInv = {
+    settings: { maxSpanFt: 30, pillarWidthFt: 0.75 },
+    rates: { pillarRftRate: 20, beamRftRate: 15, battaRftRate: 7 },
+    batta: { bufferPct: 10 },
+  };
+  const base = calcZoneTrussPreview(zc, trussInv);
+
+  it("qty 1 (and undefined/blank) is a true no-op — same object reference, nothing recomputed", () => {
+    expect(scaleTrussPreview(base, 1)).toBe(base);
+    expect(scaleTrussPreview(base, undefined)).toBe(base);
+    expect(scaleTrussPreview(base, "")).toBe(base);
+  });
+
+  it("qty 3 scales every physical-structure field by 3, leaving config/spanFt alone", () => {
+    const out = scaleTrussPreview(base, 3);
+    expect(out.topology.pillars.length).toBe(base.topology.pillars.length * 3);
+    expect(out.topology.beams.length).toBe(base.topology.beams.length * 3);
+    expect(out.topology.pillarCount).toBe(base.topology.pillarCount * 3);
+    expect(out.topology.beamCount).toBe(base.topology.beamCount * 3);
+    expect(out.costs.actual).toBe(base.costs.actual * 3);
+    expect(out.costs.pillarCost).toBe(base.costs.pillarCost * 3);
+    expect(out.costs.beamCost).toBe(base.costs.beamCost * 3);
+    expect(out.costs.battaCost).toBe(base.costs.battaCost * 3);
+    expect(out.costs.pillarRft).toBe(base.costs.pillarRft * 3);
+    expect(out.costs.beamRft).toBe(base.costs.beamRft * 3);
+    expect(out.batta.rftWithBuffer).toBe(base.batta.rftWithBuffer * 3);
+    expect(out.config).toBe(base.config); // shape fields, not quantities — untouched
+  });
+
+  it("does not mutate the original (unscaled) preview", () => {
+    scaleTrussPreview(base, 3);
+    expect(base.topology.pillarCount).toBe(2); // u_only, single span under maxSpanFt
+  });
+
+  it("an explicit Truss Qty 0 stays a no-op pass-through — calcZoneTrussPreview already zeroed costs.actual for it, and topology stays per-unit for calcZoneFabric's own dims-based math", () => {
+    const zeroQtyZc = { ...zc, trussQty: 0 };
+    const zeroBase = calcZoneTrussPreview(zeroQtyZc, trussInv);
+    expect(zeroBase.costs.actual).toBe(0);
+    const zeroScaled = scaleTrussPreview(zeroBase, 0);
+    expect(zeroScaled.costs.actual).toBe(0);
+    expect(zeroScaled.topology.pillars.length).toBe(zeroBase.topology.pillars.length);
+  });
+
+  it("null/missing pv passes through untouched", () => {
+    expect(scaleTrussPreview(null, 3)).toBe(null);
+  });
+
+  it("zoneTrussStandingDiscountDetail's own cap now scales with Truss Qty too — a venue with ample standing stock credits more at qty 3 than at qty 1", () => {
+    const venueTruss = { pillars: { 8: 50 }, beams: { 15: 50 }, pillarDiscountPct: 25, beamDiscountPct: 25 };
+    const d1 = zoneTrussStandingDiscountDetail(zc, trussInv, venueTruss);
+    const d3 = zoneTrussStandingDiscountDetail({ ...zc, trussQty: 3 }, trussInv, venueTruss);
+    expect(d3.pillarStandingCost).toBeGreaterThan(d1.pillarStandingCost);
   });
 });
 

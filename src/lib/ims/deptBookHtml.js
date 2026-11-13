@@ -1005,11 +1005,20 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // Deal Check's whole-event fabric lines ("Liza Fabric (Old)", "Wall Masking (New)"...) and truss lines ("Truss pillar 12ft", sub
     // "truss structure") are no zone's item, so they used to land here as "Also on site" (owner report 2026-11-11) - but each zone page
     // already shows them (the fabric strip, the truss table) and the loading list carries the totals. Left out wherever those show.
+    // Same reasoning as the fabric/truss lines just above: Deal Check's whole-event artificial
+    // flower/green bunch rows (deptInv.Floral's "Artificial flowers"/"Artificial greens", both
+    // sub "Artificial Flowers") are no zone's item either. In the single-department Floral book the
+    // dedicated section just above (artRows, built straight off floralPlan.artificial) already names
+    // them with their real colour split, and the Loading list still carries their totals. In the
+    // combined (all-departments) book neither of those prints (artPlan is always null there, and the
+    // Loading list itself is Floral-book-only, owner call) — excluded unconditionally anyway, since
+    // the alternative there is worse: printing as a loose "no zone" card with no explanation at all.
     const shownOnZones = (b) => (isFabricLine(b) && (showStruct || inBook("Fabric")))
       || (String(b.sub || "").trim().toLowerCase() === "truss structure" && showTrussTable) // truss pillars / beams and Batta
       // Platform (the zone's PLATFORM chip) and a carpet line (sqft, with the zones it covers - each zone's carpet card shows it)
       || (/^platform structure/i.test(String(b.sub || "").trim()) && showStruct)
-      || (b.qtyUnit === "sqft" && Array.isArray(b.parts) && b.parts.length > 0 && showStruct);
+      || (b.qtyUnit === "sqft" && Array.isArray(b.parts) && b.parts.length > 0 && showStruct)
+      || String(b.sub || "").trim().toLowerCase() === "artificial flowers";
     const unplaced = blockedItemsGrouped.filter(b => !placed.has(b.id) && b.sub !== "print" && !shownOnZones(b)).map(b => {
       const inv = (b.invId && invById.get(String(b.invId))) || invByName.get(String(b.name || "").trim().toLowerCase()) || null;
       const kitOf = String(b.fromKit || "").trim();
@@ -1290,10 +1299,15 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // A zone's artificial flowers and greens used to print as a block of their own ("Ulta Pulta Pot — flowers 10.8
       // bunches"), apart from the arrangement they go into. They now sit in that arrangement's own block, in whole bunches
       // (owner ask 2026-10-31). Matched by name; an arrangement with no recipe of its own gets a block for them.
+      // A recipe EXPANDED OUT of a kit (floralCost.js's _kitParent) is keyed here by the KIT's own
+      // name, not its own decorated "Tree · recipe" display name — so it matches the kit's `it.name`
+      // below and folds into the kit's own 📦 card, instead of never matching anything and falling
+      // through to a confusing standalone "Tree · recipe" card of its own (owner report, 2026-11-12:
+      // Tree is a kit, its recipe showed as a separate loose card instead of inside the kit's card).
       const zArt = artPlan ? (sel?.floralDetail?.[pg.fnIdx]?.artZones || []).filter(a => a.zone === pg.zk) : [];
       const artKey = (n) => String(n || "").trim().toLowerCase();
       const artLeft = new Map();
-      zArt.forEach(a => { const k = artKey(a.el); artLeft.set(k, [...(artLeft.get(k) || []), a]); });
+      zArt.forEach(a => { const k = artKey(a.kitParent || a.el); artLeft.set(k, [...(artLeft.get(k) || []), a]); });
       const artLines = (list) => {
         const fl = list.reduce((t, a) => t + artBunches(a.flower), 0), gr = list.reduce((t, a) => t + artBunches(a.green), 0);
         return [...(fl > 0 ? [{ name: t("Artificial flowers"), qty: fl, unit: t("bunches") }] : []), ...(gr > 0 ? [{ name: t("Artificial greens"), qty: gr, unit: t("bunches") }] : [])];
@@ -1355,18 +1369,41 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
             const k = partKey(p.name);
             if ((!p.size && sizeOf.has(k)) || (!p.mix && mixOf.has(k))) parts[i] = { ...p, ...(!p.size && sizeOf.has(k) ? { size: sizeOf.get(k) } : null), ...(!p.mix && mixOf.has(k) ? { mix: mixOf.get(k) } : null) };
           });
+          // This kit's own attached flower recipe (e.g. Tree's Chandelier Floral Recipe), keyed above
+          // by the kit's own name — folds its bunch breakdown in as one more line on THIS card, right
+          // alongside the kit's real inventory parts, instead of a separate standalone card. `artPlan`
+          // being null (the combined book) already leaves `zArt`/`artLeft` empty, so this is a no-op
+          // there, same as every other flower section in that book.
+          parts.push(...takeArt(it.name));
+          // Same for the recipe's REAL flowers (Morya Patti, banglore daisy, …) — realTaker is ALSO
+          // keyed by the kit's own name for a kit-sourced row (realLineTaker, fixed alongside). Before
+          // this, a kit's attached recipe never matched the `it.mix` branch above (a kit element is
+          // never `it.mix`) and had no fallback either, so its real flowers never printed anywhere in
+          // the book at all (owner report, 2026-11-13).
+          if (!combined && realTaker.has(it.name)) parts.push(...realTaker.take(it.name));
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : (kb?.qty || zq), "", parts) });
         }
       });
-      // An arrangement whose name matched no card on this page (renamed since, or on another department's sheet) still gets
-      // its bunches - as a block under its own name, never as a loose "Artificial flowers & greens" list.
-      artLeft.forEach(list => {
-        const parts = artLines(list);
-        const q = list.reduce((t, a) => t + (Number(a.qty) || 0), 0);
+      // An arrangement whose name matched no card on this page (renamed since, moved to another
+      // department's sheet, or — a kit's attached recipe whose KIT belongs to a DIFFERENT
+      // department entirely, so that kit's own card never appears on THIS page at all) still gets
+      // its own card, under its own real name — real flowers AND artificial bunches TOGETHER, never
+      // the artificial side alone (owner report, 2026-11-13: Chandelier Tree Floral Recipe's real
+      // flowers — Morya Patti, banglore daisy, … — never printed anywhere at all, because there used
+      // to be no leftover fallback for the real side the way the artificial side already had one).
+      const realLeftover = new Map(realTaker.remaining().map(r => [r.key, r]));
+      const leftoverKeys = new Set([...artLeft.keys(), ...realLeftover.keys()]);
+      leftoverKeys.forEach(k => {
+        const artList = artLeft.get(k) || [];
+        const realEntry = realLeftover.get(k);
+        const parts = [...(realEntry?.lines || []), ...artLines(artList)];
+        if (!parts.length) return;
+        const name = artList[0]?.el || realEntry?.el || t("Arrangement");
         // its split as Deal Check worked it (realPct, snapshot v19) - "Artificial 100%" like every other flower card; an older
         // snapshot without it still says just "Artificial" until the deal re-syncs
-        const rp = list.find(a => typeof a.realPct === "number")?.realPct;
-        if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", list[0].el || t("Arrangement"), q || "", "", parts, typeof rp === "number" ? mixText(rp) : t("Artificial")) });
+        const rp = artList.find(a => typeof a.realPct === "number")?.realPct;
+        const q = artList.reduce((t, a) => t + (Number(a.qty) || 0), 0);
+        blocks.push({ h: detailH(parts), html: detailCard("🌸", name, q || "", "", parts, typeof rp === "number" ? mixText(rp) : (realEntry ? undefined : t("Artificial"))) });
       });
       // The truss cut list (pillars / beams / batta) is on the zone's own page now, under the truss strip (trussCard) - not repeated here.
       if (!blocks.length) return [];

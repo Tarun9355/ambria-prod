@@ -36,12 +36,16 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   const _factorMap = (rcFactorByKey && typeof rcFactorByKey === "object" && !Array.isArray(rcFactorByKey)) ? rcFactorByKey : {};
   // Migration 059: a merged (live + deleted-catalogue-snapshot) inventory list, for PRICE LOOKUPS
   // ONLY — never for the add-component search box below, which must stay live-only (a deleted item
-  // must never become newly addable to a kit). Same idea for patternLookup (flower-recipe add-ons).
+  // must never become newly addable to a kit).
   const invForPricing = deletedCatalogue ? withDeletedInventory(imsInventory, deletedCatalogue.inventoryById) : (imsInventory || []);
+  // LIVE ONLY (owner decision, 2026-11-12: a deleted flower pattern is gone everywhere, reversing
+  // this lookup's own former deleted-catalogue-snapshot fallback) — a recipe add-on whose pattern
+  // was deleted from the Flower Patterns library now renders as "(recipe missing)" below and prices
+  // at ₹0, same as any other unresolvable patternId, instead of still showing its last-known name/
+  // rate with a "⚠ deleted" chip. Inventory items (invForPricing above) keep their own fallback.
   const patternLookup = (id) => {
     if (!id) return null;
-    const live = (flowerPatterns || []).find((p) => p.id === id);
-    return live || (deletedCatalogue ? deletedCatalogue.patternsById.get(id) : null) || null;
+    return (flowerPatterns || []).find((p) => p.id === id) || null;
   };
   // Hover-to-zoom on a component thumbnail — same fixed-position enlarged-preview pattern as the
   // Element Breakdown's own thumbnail (ManageLibrary.jsx's elHoverImg), kept local to this component
@@ -222,10 +226,12 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
         )}
         {comps.map((c, ci) => {
           if (c.patternId) {
-            // patternLookup (live-first, deleted-catalogue-fallback, migration 059) — a recipe
-            // add-on since deleted from IMS still shows its real last-known name instead of
-            // "(recipe missing)", with a small "⚠ deleted" chip explaining it's still priced at
-            // its last known rate.
+            // patternLookup is live-only (owner decision, 2026-11-12: a deleted flower pattern is
+            // gone everywhere) — a recipe add-on since deleted from the Flower Patterns library
+            // renders below as "(recipe missing)" at ₹0, same as any other unresolvable patternId.
+            // patDeleted/the "⚠ deleted" chip are now permanently unreachable (patternLookup never
+            // returns a catalogueDeleted-flagged pattern), kept rather than stripped out since the
+            // inventory-item side just below still does use its own deleted-catalogue fallback.
             const pat = patternLookup(c.patternId);
             const patDeleted = !!pat?.catalogueDeleted;
             const patQty = Number(c.qty) || 0;

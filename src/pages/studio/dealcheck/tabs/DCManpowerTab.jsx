@@ -6,7 +6,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { useEffect } from "react";
 import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP_BG, INK, INK_2, INK_3, GOLD, GOLD_SOFT, NUM } from "../../../../lib/studio/dcTokens";
-import { freshFnForManpower } from "../../../../lib/studio/pricing";
+import { freshFnForManpower, scaleTrussPreview } from "../../../../lib/studio/pricing";
 import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS, SIT_MULT_DEFAULTS } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat, walkKitUnits, aggregateEventManpower, hasAnyMpEdits } from "../../../../lib/ims/helpers";
@@ -572,15 +572,21 @@ export default function DCManpowerTab({ ctx }) {
                       const en = fn.enabledEls || {};
                       Object.keys(zc).forEach(zk => {
                         if (!en[zk] || !zc[zk]) return;
-                        try {
-                          const pv = calcZoneTrussPreview(zc[zk], tInv);
-                          if (pv?.topology?.pillarCount) {
-                            const zLabel = (zoneMeta?.[zk]?.label) || ((fn.customZones || []).find(cz => cz.id === zk)?.name) || zk;
-                            const cfg = pv.config === "u_only" ? "U Truss" : pv.config === "half_box" ? "Half Box" : "Full Box";
-                            items.push({ name: `${zLabel} (${cfg})`, sub: "(zone-derived)", qty: pv.topology.pillarCount });
-                            pillars += pv.topology.pillarCount;
-                          }
-                        } catch {}
+                        // Every truss structure in the zone (its own row, plus any "+ Add Truss" extras)
+                        // — a zone with 2+ truss structures used to only ever count the first one here.
+                        [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach((row, ri) => {
+                          try {
+                            // Scaled by THIS row's own Truss Qty — without it, raising Truss Qty above
+                            // 1 in Build never grew the Truss Labour crew estimate shown here.
+                            const pv = scaleTrussPreview(calcZoneTrussPreview(row, tInv), row?.trussQty);
+                            if (pv?.topology?.pillarCount) {
+                              const zLabel = (zoneMeta?.[zk]?.label) || ((fn.customZones || []).find(cz => cz.id === zk)?.name) || zk;
+                              const cfg = pv.config === "u_only" ? "U Truss" : pv.config === "half_box" ? "Half Box" : "Full Box";
+                              items.push({ name: `${zLabel}${ri > 0 ? ` #${ri + 1}` : ""} (${cfg})`, sub: "(zone-derived)", qty: pv.topology.pillarCount });
+                              pillars += pv.topology.pillarCount;
+                            }
+                          } catch {}
+                        });
                       });
                     }
                     let total = 0, rangeLabel = "—";

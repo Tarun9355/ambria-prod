@@ -4,7 +4,7 @@
 // is just a constructor argument, so the "read on first use" comments below are historical but the
 // lazy-cache behavior itself is kept, since re-deriving a truss/carpet/element plan is not free).
 import { ZONE_META, trussBaseArea } from "../studio/taxonomy";
-import { calcZoneTrussPreview, calcZoneFabric, repeatCatFor } from "../studio/pricing";
+import { calcZoneTrussPreview, calcZoneFabric, repeatCatFor, scaleTrussPreview } from "../studio/pricing";
 import { carpetFloorsOf, planCarpets } from "./carpetPlan";
 import { planElements } from "./elementPlan";
 
@@ -28,7 +28,10 @@ export function makeEventPlans({ sel, inventory, blocks, eventOrders, settings, 
         const zc = zones[zk]; if (!en[zk] || !zc) return;
         [zc, ...(Array.isArray(zc.extraTrussRows) ? zc.extraTrussRows : [])].forEach((row, ri) => {
           if (!row || !((trussBaseArea(row).area || 0) > 0) || row.trussQty === 0) return;
-          let pv = null; try { pv = calcZoneTrussPreview(row, trussInv); } catch { pv = null; }
+          // Scaled by this row's own Truss Qty — calcZoneTrussPreview describes ONE truss unit;
+          // without this, Dept Ops' own Truss plan (Customer demand vs Physical footprint, pillars/
+          // beams/batta) never moved when a salesperson raised Truss Qty above 1 in Build.
+          let pv = null; try { pv = scaleTrussPreview(calcZoneTrussPreview(row, trussInv), row.trussQty); } catch { pv = null; }
           if (!pv || !pv.topology) return;
           let fab = null; try { fab = calcZoneFabric(row, trussInv, row.drapeDensity || "moderate"); } catch { fab = null; }
           const zLabel = (fn?.zoneNames?.[zk]) || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());

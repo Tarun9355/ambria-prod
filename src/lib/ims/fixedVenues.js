@@ -110,6 +110,52 @@ export function fixedVenueFor(settings, venueName) {
   return fvs.find((v) => candNorms.includes(normVenue(v.name))) || null;
 }
 
+// Calendar chip colors matching the separate "Ambria Calendar" app's own venue legend (owner ask,
+// 2026-11-12): a deal at one of Ambria's own venues gets that venue's legend color; everything else
+// (the client's own outdoor/home venue — no fixed venue matches) gets the same color that app uses
+// for "ADD" (its own outdoor/decor-only bucket). Keyed on the SAME normalized name fixedVenueFor
+// itself matches on, so a Fixed Venue configured as "Ambria Pushpanjali" or just "Pushpanjali" both
+// resolve the same way. "Emerald Green" is this app's own internal name for the venue LMS calls
+// "Manaktala Farm" (see LMS_VENUE_MAP, lib/ims/lms.js) — both keys are kept here since it's not
+// certain which string an admin actually typed into this venue's Fixed Venue config.
+// Every class name is written out literally (never built via string concatenation/`.replace`) —
+// Tailwind's content scanner only generates CSS for class names it finds as literal substrings
+// somewhere in the source, so a dynamically-assembled one (e.g. `"ring-" + "amber-400"`) would
+// silently produce no style at all in the production build.
+// `code` is the short tag shown on each calendar chip (owner's own shorthand: AP/MKT/AE/AR, plus VIL
+// for Villa which wasn't in that list but already had its own color from the first pass — kept
+// rather than silently folded into ADD, since dropping it would make a Villa deal display red
+// (its dot/border color) while tagged ADD (meaning "no in-house venue"), which is just wrong).
+const VENUE_LEGEND_COLORS = {
+  "pushpanjali": { code: "AP", label: "Pushpanjali", border: "border-amber-400", bg: "bg-amber-50/80", text: "text-amber-900", dot: "bg-amber-400", ring: "ring-amber-400" },
+  "emerald green": { code: "MKT", label: "Manaktala", border: "border-orange-500", bg: "bg-orange-50/80", text: "text-orange-900", dot: "bg-orange-500", ring: "ring-orange-500" },
+  "manaktala farm": { code: "MKT", label: "Manaktala", border: "border-orange-500", bg: "bg-orange-50/80", text: "text-orange-900", dot: "bg-orange-500", ring: "ring-orange-500" },
+  "manaktala": { code: "MKT", label: "Manaktala", border: "border-orange-500", bg: "bg-orange-50/80", text: "text-orange-900", dot: "bg-orange-500", ring: "ring-orange-500" },
+  "exotica": { code: "AE", label: "Exotica", border: "border-rose-800", bg: "bg-rose-50/80", text: "text-rose-900", dot: "bg-rose-800", ring: "ring-rose-800" },
+  "restro": { code: "AR", label: "Restro", border: "border-blue-900", bg: "bg-blue-50/80", text: "text-blue-900", dot: "bg-blue-900", ring: "ring-blue-900" },
+  "villa": { code: "VIL", label: "Villa", border: "border-red-600", bg: "bg-red-50/80", text: "text-red-900", dot: "bg-red-600", ring: "ring-red-600" },
+};
+// "ADD" — the external calendar app's own color/code for a decor-only job with no Ambria venue attached.
+export const OUTDOOR_VENUE_COLOR = { code: "ADD", label: "Outdoor", border: "border-sky-400", bg: "bg-sky-50/80", text: "text-sky-900", dot: "bg-sky-400", ring: "ring-sky-400" };
+
+// For rendering a legend strip — one entry per DISTINCT code (the 3 Manaktala aliases above all
+// collapse to one MKT entry here), in the order the owner listed them, ADD last since it's the
+// catch-all rather than a specific venue.
+export const VENUE_CALENDAR_LEGEND = [
+  VENUE_LEGEND_COLORS["pushpanjali"],
+  VENUE_LEGEND_COLORS["emerald green"],
+  VENUE_LEGEND_COLORS["exotica"],
+  VENUE_LEGEND_COLORS["restro"],
+  VENUE_LEGEND_COLORS["villa"],
+  OUTDOOR_VENUE_COLOR,
+];
+
+export function venueCalendarColor(settings, venueName) {
+  const fv = fixedVenueFor(settings, venueName);
+  if (!fv) return OUTDOOR_VENUE_COLOR;
+  return VENUE_LEGEND_COLORS[normVenue(fv.name)] || OUTDOOR_VENUE_COLOR;
+}
+
 // Standing qty of a specific inventory item at a venue (0 if venue isn't fixed or item isn't standing)
 // — BOTH buckets combined (qty + fullQty): either one means the unit is already installed, so
 // neither needs rebuild labour. Use standingDiscQty below for just the discount-eligible bucket.

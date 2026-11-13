@@ -27,6 +27,7 @@ import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { newSplitGroupId, reconcileDealCheckIntoBuild } from "../../../lib/studio/dealCheckSync.js";
 import { eventOrderFor, ownEventOrderIds } from "../../../lib/studio/eventOrderFor.js";
+import { reindexFnIdxPrefixedSet } from "../../../lib/studio/dealCheckReindex.js";
 
 // ══ THE PAGE'S GROUND ══
 // A glob, not an import, for the same reason every other background in this app uses one: if the file
@@ -100,7 +101,7 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor, combineAvailability, fixedVenueOverlap, fixedVenueOverlapOnDate } from "../../../lib/ims/fixedVenues";
-import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial, platformStandingDiscount } from "../../../lib/studio/pricing";
+import { calcZoneFabric, resolveFabricAllocation, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial, platformStandingDiscount, scaleTrussPreview } from "../../../lib/studio/pricing";
 import { resolveBeamSegment, resolvePillarHeight } from "../../../lib/ims/trussEngine";
 import { platformAvgRatePerSqft } from "../../../lib/ims/platformEngine";
 import { carpetPricingFor, CARPET_OFF, carpetTakesStockPick } from "../../../lib/studio/taxonomy";
@@ -220,6 +221,7 @@ export default function DealCheckOverlay({ ctx }) {
     eventOrders,
     // client + auth
     clientLedger, activeClientId, activeClient, clientName, clientDate, authUser, eventGrandTotal,
+    lastFnRemoval,
     // deal check state
     dcActiveTab, setDcActiveTab, dcGenerating, dcGenStatus,
     dcCards, dcInventoryCache, dcCarpetPick, setDcCarpetPick, dcCarpetSplit, setDcCarpetSplit,
@@ -520,6 +522,17 @@ export default function DealCheckOverlay({ ctx }) {
   const isSoldForSync = activeClient?.status === "booked";
   // "fnIdx::cardKey" of every kit whose parts were edited by hand in the kit editor below this session (lib/studio/dealCheckSync.js)
   const kitHandEditsRef = useRef(new Set());
+  // Local to this component, so removeFunction (StudioEventInfo.jsx) can't reach it directly to
+  // reindex it the way it does every other piece of Deal Check's own per-function state (see
+  // reindexDealCheckStateForRemoval's own comment, StudioApp.jsx) — watches lastFnRemoval instead,
+  // a fresh {idx} object StudioApp sets every time a function is removed, regardless of whether
+  // Deal Check happens to be open. Worst case if this were left unfixed: a kit's "don't let IMS's
+  // own definition changes overwrite my hand swap" flag drifts onto the wrong function after a
+  // removal — cosmetic/low-risk (never cross-function decor corruption), but fixed anyway.
+  useEffect(() => {
+    if (!lastFnRemoval) return;
+    kitHandEditsRef.current = reindexFnIdxPrefixedSet(kitHandEditsRef.current, lastFnRemoval.idx);
+  }, [lastFnRemoval]);
   useEffect(() => {
     if (isSoldForSync) return;
     if (isFnSwitching) return;
@@ -1097,7 +1110,11 @@ export default function DealCheckOverlay({ ctx }) {
                   // subtracted from a completely different formula).
                   const _venueTrussHere = fixedVenueFor({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "")?.truss;
                   [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach(row => {
-                    const pv = calcZoneTrussPreview(row, tInv);
+                    // Scaled by this row's own Truss Qty — calcZoneTrussPreview describes ONE truss
+                    // unit; without this, raising Truss Qty above 1 in Build never reached this
+                    // rollup's truss cost, the Tenting pull-list pillar/beam/batta quantities below, or
+                    // (transitively) Deal Check's Truss tab total.
+                    const pv = scaleTrussPreview(calcZoneTrussPreview(row, tInv), row.trussQty);
                     if (pv?.costs?.actual) {
                       // The venue's standing-truss discount and a Repeat zone's do not stack: each part
                       // takes only the bigger of the two (trussDiscountedCosts, pricing.js) — same as
@@ -1635,7 +1652,7 @@ export default function DealCheckOverlay({ ctx }) {
                   walkFn(fn, ({ rc, qty }) => { const s = String(rc.sub || "").toLowerCase(); if (s.includes("pillar") || s.includes("column") || s.includes("truss")) { const k = rc.name || rc.sub || "item"; recipeAgg[k] = (recipeAgg[k] || 0) + qty; } });
                   let recipeP = 0; Object.values(recipeAgg).forEach(v => { recipeP += v; });
                   const zoneRows = []; let zoneP = 0;
-                  try { const tInv = dealCheckData?.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const z = zc[zk]; const pv = calcZoneTrussPreview(z, tInv); const n = (pv?.topology?.pillars || []).length; if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)`, count: n, ...zoneShapeMeta(z, pv.config, pv.spanFt) }); zoneP += n; } }); } } catch {}
+                  try { const tInv = dealCheckData?.trussInv; if (tInv) { const zc = fn.zoneConfig || {}, en = fn.enabledEls || {}; Object.keys(zc).forEach(zk => { if (!en[zk] || !zc[zk]) return; const z = zc[zk]; [z, ...(z.extraTrussRows || [])].forEach((row, ri) => { const pv = scaleTrussPreview(calcZoneTrussPreview(row, tInv), row.trussQty); const n = (pv?.topology?.pillars || []).length; if (n > 0) { const zLabel = zoneLabelsD[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk; zoneRows.push({ sub: `${zLabel} (truss tool)${ri > 0 ? ` #${ri + 1}` : ""}`, count: n, ...zoneShapeMeta(row, pv.config, pv.spanFt) }); zoneP += n; } }); }); } } catch {}
                   const p = recipeP + zoneP; if (p <= 0 || !trussLabourRanges.length) return null;
                   let lab = trussLabourRanges[trussLabourRanges.length - 1]?.labour || 0; for (const r of trussLabourRanges) { if (p <= r.upTo) { lab = r.labour || 0; break; } }
                   const rows = [...Object.entries(recipeAgg).map(([name, count]) => ({ sub: name, count })), ...zoneRows];
@@ -2078,6 +2095,17 @@ export default function DealCheckOverlay({ ctx }) {
         const persistWithDetail = (snap) => (dcDataReady ? persistDeptSnapshot(snap && !snap.floralDetail ? { ...snap, floralDetail: floralDetailAll() } : snap) : Promise.resolve(false));
         const buildDeptSnapshot = () => {
           let floralPlan = { projected: 0, flowers: [] };
+          // Artificial flowers/greens used to exist only inside floralPlan (the Deal Check breakdown
+          // panel's own read) — never as a line in deptInv, so Dept Ops' Floral truck-loading list and
+          // Planning never saw them as an actual item to load/count (owner report, 2026-11-12: Deal
+          // Check shows 974 bunches / 60.88kg of artificial flowers, but Floral's truck screen has no
+          // row for it at all — only the real inventory props like vases/stands). Built here (qty in
+          // BUNCHES, the physical countable unit — matches TruckCapacityEditor's own "bunch" unit for
+          // this pseudo-sub, not the derived kg figure) and folded into `inventory` below, non-
+          // mutating: buildDeptSnapshot can run more than once per render (two different "push to IMS"
+          // buttons both call it against the same render's dcCostRollup), so a `.push()` straight onto
+          // dcCostRollup.deptInv.Floral would duplicate the row on a second push in the same render.
+          let floralArtificialExtra = null;
           try {
             // Artificial sourcing rates (bunches→kg→₹) — captured so IMS Dept Ops can show the "how".
             const afBPK = Number(dealCheckData?.artificialFlowerBunchesPerKg ?? 16) || 16;
@@ -2128,6 +2156,43 @@ export default function DealCheckOverlay({ ctx }) {
             // Billed floral income split (what the client pays at real vs artificial rates).
             const income = { real: Math.round(incReal), artificial: Math.round(incArt), total: Math.round(incReal + incArt) };
             floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, artificial, income, season: dcSeasonInfo, capturedAt: Date.now() };
+            // `sub: "Artificial Flowers"` on BOTH rows (greens included) — Studio's own guest-facing
+            // truck/transport cost (StudioApp.jsx's addSub call sites) already lumps flower + green
+            // bunches into that ONE sub-category's capacity; a separate "Artificial Greens" capacity
+            // would only ever be read by IMS's own truck count here, never by Studio's, so the two
+            // would silently disagree on how many trucks a Floral load needs (caught by review,
+            // 2026-11-12). Sharing the one sub keeps both sides reading the same number.
+            // total/unit are deliberately 0 — DepartmentOpsTab.jsx's `invBlockedTotal` already adds
+            // this SAME ₹ figure on top of deptInv's own sum via its own `artStockTotal` (owner ask
+            // 2026-11-11, reads floralPlan.artificial.total directly) specifically because these
+            // weren't deptInv rows at all yet; giving these new rows a real ₹ total too would double
+            // it. The point of adding these rows is only the physical qty (bunches) — for the truck-
+            // loading checklist and its per-truck capacity math — not the cost, which is already
+            // tracked and shown correctly elsewhere (Deal Check's own Floral breakdown).
+            // qty rounds UP from the raw (pre-display-rounded) bunch count, not artificial.flowerBunches/
+            // greenBunches (Math.round) — a 10.4-bunch total rounds down to 10 there, but genuinely
+            // needs an 11th bunch physically pulled and loaded (same "round up, never down" rule the
+            // Dept PDF's own artBunches already applies, deptBookHtml.js, 2026-10-31 owner ask). This
+            // ceils the WHOLE-EVENT sum, not per-ARRANGEMENT like the PDF's own artBunches does (that
+            // needs floralDetailAll()'s artZones, too costly to re-derive here on every render) — so it
+            // can still undercount slightly versus the PDF's own more precise per-arrangement total
+            // (e.g. ten 10.4-bunch arrangements ceils to 104 here but 110 there), but it is strictly no
+            // WORSE than the plain Math.round this replaces, never better to round down and short a load.
+            // stockOnly: true — flags the row to DepartmentOpsTab.jsx so its card hides Rate/Total
+            // (both genuinely 0 here) and its "💡 How" popup, instead of showing a confusing
+            // "Rate ₹0 × 974 … synced before the breakdown existed" that reads as a bug it isn't
+            // (review finding, 2026-11-12).
+            // qty is in KG (owner ask, 2026-11-13 — truck planning reads kg, not bunches, same unit
+            // the Deal Check breakdown panel's own kg figure already uses). qtyUnit carries the label
+            // through for any card that reads it, matching artificial.flowerKg/greenKg exactly (both
+            // already rounded to 2dp there) — no separate rounding/ceiling needed here the way the
+            // whole-bunch count used to (a kg amount doesn't round up to a "whole bunch" unit).
+            if (artificial) {
+              const rows = [];
+              if (artificial.flowerKg > 0) rows.push({ name: "Artificial flowers", photo: "", qty: artificial.flowerKg, qtyUnit: "kg", unit: 0, total: 0, sub: "Artificial Flowers", stockOnly: true });
+              if (artificial.greenKg > 0) rows.push({ name: "Artificial greens", photo: "", qty: artificial.greenKg, qtyUnit: "kg", unit: 0, total: 0, sub: "Artificial Flowers", stockOnly: true });
+              if (rows.length) floralArtificialExtra = rows;
+            }
           } catch {}
           // Manpower plan + per-dept detail are computed once in dcCostRollup (so the actuals delta and
           // this snapshot stay identical). Reuse them here rather than recomputing.
@@ -2241,7 +2306,10 @@ export default function DealCheckOverlay({ ctx }) {
             Object.values(byDept).forEach(v => { v.trucks = Math.round(v.trucks * 100) / 100; });
             transportPlan = { byDept, totalTrucks: Math.round(totalTrucks * 100) / 100, truckTotal: Math.round(totalCost), tierLabel: [...tiers].join(", "), capturedAt: Date.now() };
           } catch { /* a book extra — never fail the whole department sync over it */ }
-          return { income: incomeRounded, inventory: dcCostRollup.deptInv, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan, mpPhases: dcCostRollup.mpPhases || null, dealValue, transportPlan };
+          const inventory = floralArtificialExtra
+            ? { ...dcCostRollup.deptInv, Floral: [...(dcCostRollup.deptInv.Floral || []), ...floralArtificialExtra] }
+            : dcCostRollup.deptInv;
+          return { income: incomeRounded, inventory, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan, mpPhases: dcCostRollup.mpPhases || null, dealValue, transportPlan };
         };
         if (isSold && persistDeptSnapshot) {
           // Department $ totals alone miss a flower SWAP that happens to leave a department's
