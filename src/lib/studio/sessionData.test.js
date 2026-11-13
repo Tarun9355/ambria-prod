@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual, findLatestBuild, sessionToRows, suspiciousDuplicateFnIdxs, mergeLmsFunctions } from "./sessionData";
+import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual, findLatestBuild, sessionToRows, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions } from "./sessionData";
 
 const withVideo = { sourceVideo: { id: "vid_1", title: "Poolside Haldi" } };
 const withZones = { zoneElements: { stage: ["truss"] } };
@@ -262,6 +262,29 @@ describe("suspiciousDuplicateFnIdxs", () => {
     expect(suspiciousDuplicateFnIdxs([], 0).size).toBe(0);
     expect(suspiciousDuplicateFnIdxs(null, 0).size).toBe(0);
     expect(suspiciousDuplicateFnIdxs([fn(0, { stage: ["chair"] })], undefined).size).toBe(0);
+  });
+});
+
+describe("duplicateSourceVideoFnIdxs — early-warning only, never a write-refusal (Sahiba, 2026-11-13: a function matched a sibling's content without ever becoming byte-identical, so suspiciousDuplicateFnIdxs above never caught it)", () => {
+  const withVid = (fnIdx, id) => ({ fnIdx, sourceVideo: id ? { id } : null });
+
+  it("flags a pair sharing the same non-empty sourceVideo id, even with otherwise-distinct content (the exact gap suspiciousDuplicateFnIdxs leaves open)", () => {
+    expect(duplicateSourceVideoFnIdxs([withVid(0, "v1"), withVid(1, "v2"), withVid(2, "v1")])).toEqual([[0, 2]]);
+  });
+
+  it("does not flag two functions that both simply have no sourceVideo yet", () => {
+    expect(duplicateSourceVideoFnIdxs([withVid(0, null), withVid(1, null)])).toEqual([]);
+  });
+
+  it("does not flag genuinely distinct videos", () => {
+    expect(duplicateSourceVideoFnIdxs([withVid(0, "v1"), withVid(1, "v2")])).toEqual([]);
+  });
+
+  it("flags every pair when 3+ functions share one video, and handles empty/null input without throwing", () => {
+    expect(duplicateSourceVideoFnIdxs([withVid(0, "v1"), withVid(1, "v1"), withVid(2, "v1")]))
+      .toEqual([[0, 1], [0, 2], [1, 2]]);
+    expect(duplicateSourceVideoFnIdxs([])).toEqual([]);
+    expect(duplicateSourceVideoFnIdxs(null)).toEqual([]);
   });
 });
 
