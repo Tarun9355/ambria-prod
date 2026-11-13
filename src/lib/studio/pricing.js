@@ -177,10 +177,12 @@ export const pillarCountForSpan = (spanLen, maxSpan = 30) => Math.max(2, Math.ce
 // Two different questions, two different tolerances, both against the SAME resolveBeamSegment
 // (trussEngine.js) the card's own cost preview builds from:
 //   - Whether to show a tip AT ALL: resolveBeamSegment's own joints === 0 — which tolerates a single
-//     piece up to 1ft short of budget as clean, not just an exact match. Requiring an exact match
-//     here flagged plenty of spans the engine was already building cleanly (e.g. a 13ft entry's 11ft
-//     budget quietly builds from one 10ft beam, no joint — confirmed by this session's own regression
-//     pass, which caught the mismatch before this shipped).
+//     piece up to its own MAX_GAP short of budget as clean, not just an exact match (0.5ft for a
+//     padded material (Iron/Aluminium), 1ft for Pole, as of owner decision 2026-11-13 — see
+//     resolveBeamSegment's own comment for why a true exact-match-only rule broke fractional
+//     pillar-gap budgets). Requiring an exact match here flagged plenty of spans the engine was
+//     already building cleanly — confirmed by this session's own regression pass, which caught the
+//     mismatch before this shipped.
 //   - What to SUGGEST: an exact (zero-gap) stock match only — the point of nudging the typed value is
 //     landing flush on a stock size, not trading the gap it already has for a different one.
 // piecesNeeded (default 1): how many of the SAME beam size this axis actually needs — a Full Box's
@@ -212,7 +214,8 @@ export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piec
 
   // Already builds from one clean piece, so there's nothing to suggest — resolveBeamSegment's own
   // joints === 0 (the SAME resolver buildTopology/the card's own cost preview actually build from,
-  // which tolerates a single piece up to 1ft short of budget as clean, not just an exact match), AND
+  // which tolerates a single piece up to its own MAX_GAP short of budget as clean, not just an exact
+  // match — 0.5ft for a padded material, 1ft for Pole), AND
   // genuinely enough real stock for every copy this axis needs (a Full Box's front+back / left+right
   // beams reuse the same segment length, so 1 unit isn't enough there — see piecesNeeded). joints,
   // not pieces.length === 1 — two pieces of the SAME size still collapse into one pieces[] entry
@@ -266,7 +269,7 @@ export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piec
 // lands flush on real stock) but against resolvePillarHeight's own model: a height is "clean" when
 // it matches an in-stock PILLAR SIZE EXACTLY (joints: 0, no ground-spacer needed) — a pillar is one
 // piece or it needs an extra ground-spacer joint, there's no "almost clean" middle ground the way a
-// beam segment has its 1ft gap tolerance.
+// beam segment has its own gap tolerance (0.5ft/1ft, material-dependent).
 // Picks DIRECTLY from the configured pillar-size list rather than walking foot-by-foot — a pillar
 // size can be fractional (7.5ft), and the clean set here IS just that list, not a derived budget
 // target, so a 1ft-step search could both waste steps and step past a valid fractional size.
@@ -584,7 +587,15 @@ export const trussInvForMaterial = (trussInv, material) => {
   if (mat === "iron") return trussInv;
   const m = trussInv.materials && trussInv.materials[mat];
   const batta = m?.batta != null ? m.batta : trussInv.batta;
-  if (!m || !m.pillars || Object.keys(m.pillars).length === 0) return { ...trussInv, batta }; // skeleton not configured yet → Iron
+  // `material` (stamped here, read by resolveBeamSegment's own materialHasSpanPadding check — owner
+  // decision, 2026-11-13: the resolver's old 1ft-short-still-counts-as-clean tolerance was always
+  // material-agnostic; now only Pole keeps that full 1ft, since it has no span-padding cushion of
+  // its own — Iron/Aluminium already get a full 1ft/pillar budget cushion before a beam is even
+  // picked, so a SECOND ft of slack at the beam-resolution step on top of that was never meant to be
+  // there, and is tightened to 0.5ft for them instead) — the "iron" case above (returns the raw,
+  // un-stamped object, no new field) is fine left as-is: materialHasSpanPadding's own default
+  // ("iron" when unset) already resolves the same way.
+  if (!m || !m.pillars || Object.keys(m.pillars).length === 0) return { ...trussInv, batta, material: mat }; // skeleton not configured yet → Iron
   return {
     ...trussInv,                                                   // shared: liza, fabricFactors, fabricFreshMarkup, lizaStock, platforms…
     pillars: m.pillars || {},                                     // per-material skeleton
@@ -592,6 +603,7 @@ export const trussInvForMaterial = (trussInv, material) => {
     rates: { ...(trussInv.rates || {}), ...(m.rates || {}) },     // per-material pillar/beam/batta rates
     settings: { ...(trussInv.settings || {}), ...(m.settings || {}) },
     batta,
+    material: mat,
   };
 };
 

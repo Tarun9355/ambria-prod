@@ -1343,7 +1343,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                             <tr>
                               <th className="px-2 py-1.5 text-left font-medium w-16">📷</th>
                               <th className="px-2 py-1.5 text-left font-medium">Variant Name</th>
-                              {type === "flower" && (
+                              {(type === "flower" || type === "real_only") && (
                                 <th className="px-2 py-1.5 text-left font-medium" title="Which Build Flower Palette colour(s) this variant counts as, for cross-function flower-reuse matching. A variant can match more than one.">Palette</th>
                               )}
                               <th className="px-2 py-1.5 text-center font-medium">Prev</th>
@@ -1392,7 +1392,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                                       onCommit={(nv) => { updateRow("mandi_flowers", p.id, { color_variants: (p.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, name: nv } : cv) }).catch(() => {}); }}
                                       className="border rounded px-2 py-1 text-xs w-44" />
                                   </td>
-                                  {type === "flower" && (() => {
+                                  {(type === "flower" || type === "real_only") && (() => {
                                     const vPalette = Array.isArray(v.palette) ? v.palette : [];
                                     const togglePalette = (c) => {
                                       const next = vPalette.includes(c) ? vPalette.filter((x) => x !== c) : [...vPalette, c];

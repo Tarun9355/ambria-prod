@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTopology, buildEventAllocation, pillarCountForSpanRaw, materialHasSpanPadding, reservedTrussStockOnDate, skeletonMaterialKey } from "./trussEngine";
+import { buildTopology, buildEventAllocation, pillarCountForSpanRaw, materialHasSpanPadding, reservedTrussStockOnDate, skeletonMaterialKey, resolveBeamSegment } from "./trussEngine";
 
 // §23 Phase 7 mirror — this file's buildTopology must never drift from pricing.js's own copy
 // (pricing.test.js has the full Phase 7 padded-span suite; these three cases are repeated here just
@@ -170,5 +170,32 @@ describe("reservedTrussStockOnDate — Build's truss tip reading real per-date c
   it("no date entry at all: empty, no throw", () => {
     expect(reservedTrussStockOnDate(undefined, { trussInv: {} })).toEqual({});
     expect(reservedTrussStockOnDate(null, {})).toEqual({});
+  });
+});
+
+describe("resolveBeamSegment — material-dependent gap tolerance (owner decision, 2026-11-13: a single beam a full 1ft short of budget used to be silently called \"clean\" for every material; now only Pole keeps that full 1ft, since it has no span-padding cushion of its own — Iron/Aluminium get 0.5ft instead)", () => {
+  it("Pole keeps the original 1ft tolerance as its only cushion — a 1ft-short single beam is still clean", () => {
+    const poleInv = { beams: { 12: { stock: 10 } }, material: "pole" };
+    const r = resolveBeamSegment(13, poleInv); // budget 13, only a 12ft beam in stock: 1ft short
+    expect(r).toMatchObject({ joints: 0, shortage: false, gap: 1 });
+  });
+  it("Iron (and anything else non-Pole, including no material tag at all) only tolerates 0.5ft — the SAME 1ft-short single beam now correctly shows a shortage", () => {
+    const ironInv = { beams: { 12: { stock: 10 } } }; // no material tag — defaults to iron via materialHasSpanPadding
+    const r = resolveBeamSegment(13, ironInv);
+    expect(r).toMatchObject({ joints: 0, shortage: true, gap: 1 });
+    const aluminiumInv = { beams: { 12: { stock: 10 } }, material: "aluminium" };
+    expect(resolveBeamSegment(13, aluminiumInv)).toMatchObject({ joints: 0, shortage: true, gap: 1 });
+  });
+  it("a genuine shortage still builds the CLOSEST real multi-piece combo the stock allows, not a single far-short piece (review finding, 2026-11-13: the first version of this fix ranked the fallback pool fewest-joints-first, the same priority the in-tolerance case correctly uses, which kept picking a lone beam with an 11ft gap over a 2-piece combo landing 10x closer — the fallback needs its OWN ranking, gap first)", () => {
+    const sparseAluminium = { beams: { 6: { stock: 20 }, 10: { stock: 20 } }, material: "aluminium" }; // Aluminium's real, sparse catalogue
+    // 21ft budget: no combo of {6,10} sums to within 0.5ft of 21 (21 is odd, 6/10 are both even).
+    // Two 10ft beams (20ft, 1ft gap) is the closest real build — not a lone 10ft beam (11ft gap).
+    expect(resolveBeamSegment(21, sparseAluminium)).toMatchObject({
+      pieces: [{ type: "beam", size: 10, qty: 2 }], joints: 1, shortage: true, gap: 1,
+    });
+    // 13ft budget: two 6ft beams (12ft, 1ft gap) beats a lone 10ft beam (3ft gap).
+    expect(resolveBeamSegment(13, sparseAluminium)).toMatchObject({
+      pieces: [{ type: "beam", size: 6, qty: 2 }], joints: 1, shortage: true, gap: 1,
+    });
   });
 });

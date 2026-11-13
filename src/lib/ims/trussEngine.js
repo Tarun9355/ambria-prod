@@ -232,10 +232,11 @@ export const pillarCountForSpanRaw = (spanLen, maxSpan = 30) => Math.max(2, Math
 // Resolves each segment's budget-target length against REAL beam stock to get what will actually
 // get built, which isn't always the theoretical target: a 22.5ft target with only 15/12/10/8ft
 // stock on hand builds as 12+10=22ft, not 22.5 (used stock purely illustrative — whatever's in
-// trussInv). Uses whatever resolveBeamSegment actually finds EVEN in its own shortage fallback (a
-// single undersized piece short of the target) — the footprint should reflect what stock can truly
-// deliver, not a falsely optimistic number stock can't back up. Only falls back to the raw target
-// itself when there's no stock to check against at all (trussInv not given) or NOTHING is
+// trussInv). Uses whatever resolveBeamSegment actually finds EVEN in its own shortage fallback (the
+// closest real combo the stock allows, which may still fall short of the target) — the footprint
+// should reflect what stock can truly deliver, not a falsely optimistic number stock can't back up.
+// Only falls back to the raw target itself when there's no stock to check against at all (trussInv
+// not given) or NOTHING is
 // buildable (resolveBeamSegment returns zero pieces, e.g. no beam sizes configured) — the physical
 // footprint still needs SOME number either way.
 export const builtBeamTotal = (segLens, trussInv) => {
@@ -485,7 +486,8 @@ export const resolvePillarHeight = (H, trussInv) => {
 //
 // §23 Phase 5 (28 May 2026) — Tolerance rule per Tarun:
 //   1. combo_sum MUST be ≤ targetLength (never exceed — would push truss past requested span)
-//   2. (targetLength − combo_sum) MUST be ≤ 1ft (no big visible gap)
+//   2. (targetLength − combo_sum) MUST be ≤ 1ft for Pole, ≤ 0.5ft for padded materials (Iron/
+//      Aluminium) as of owner decision 2026-11-13 — see MAX_GAP's own comment below for why.
 //   3. Among valid combos: minimize joints (= pieces − 1)
 //   4. Tie-break: smaller gap (closer to target)
 //   5. Tie-break: prefer larger inventory pieces (better stock utilization)
@@ -499,9 +501,29 @@ export const resolvePillarHeight = (H, trussInv) => {
 // and resolves to 12+10=22ft, 0.5ft under target — the auto-shrink that used to pre-adjust a span
 // before it got here (pickCleanSpan) is disabled (owner decision, 2026-11-04), so whatever the team
 // typed reaches this resolver unmodified.
+//
+// MAX_GAP (owner decision, 2026-11-13 — reverses half of Tarun's own May 2026 rule above for
+// padded materials): Iron/Aluminium already get a full 1ft/pillar budget cushion before a beam is
+// even picked (the §23 Phase 7 padding above) — a FULL SECOND ft of slack at THIS step, on top of
+// that, silently called a single beam sitting 1ft short of budget "already clean, nothing to
+// suggest", which was deemed "bogus" (e.g. a 15ft span's 13ft budget quietly building from one
+// 12ft beam, no joint, no tip, no indication it's short). A true ZERO tolerance was tried first and
+// rejected: pillar-gap budgets routinely land on a half-foot (an odd total split across 2 gaps,
+// e.g. 45ft ÷ 2 = 22.5ft), and beam stock is whole-foot only, so zero tolerance made EVERY such
+// segment fail to find any combo at all and collapse to a single far-short fallback piece (a 22.5ft
+// segment resolving to one 15ft beam with a 7.5ft gap, instead of a clean 12+10=22ft two-piece
+// combo) — a much worse regression than the 1ft case this was meant to fix. 0.5ft keeps the normal
+// half-foot fractional-budget case working (still finds 12+10 for a 22.5ft target, 0.5ft gap) while
+// still catching the "silently clean" bogus case above (13ft budget: a 12ft-only combo is now 1ft
+// out of tolerance, so the resolver is forced to find 10+3=13, an exact 2-piece match, instead).
+// Pole has no padding of its own (materialHasSpanPadding), so it keeps the original 1ft tolerance
+// here as its only cushion. Read off `trussInv.material` — stamped by trussInvForMaterial
+// (lib/studio/pricing.js) and its own IMS-side mirror, trussInvForMaterialIms (below) — unset (a
+// raw, never-per-material-resolved trussInv) defaults to "iron" via materialHasSpanPadding's own
+// default, same as everywhere else in this file that reads a material string.
 export const resolveBeamSegment = (targetLength, trussInv) => {
   if (!targetLength || targetLength <= 0) return { pieces: [], joints: 0, shortage: false, gap: 0 };
-  const MAX_GAP = 1.0; // ft — no combo with a larger gap than this is considered valid
+  const MAX_GAP = materialHasSpanPadding(trussInv?.material) ? 0.5 : 1.0; // ft — no combo with a larger gap than this is considered valid
   const inv = trussInv || {};
   const beamSizes = Object.keys(inv.beams || {}).map(Number).filter(n => n > 0).sort((a,b) => b - a);   // desc, largest first
   if (beamSizes.length === 0) return { pieces: [], joints: 0, shortage: true, reason: "No beam sizes" };
@@ -511,12 +533,23 @@ export const resolveBeamSegment = (targetLength, trussInv) => {
   const targetFloor = Math.floor(targetLength + 1e-9); // tiny epsilon for float safety (e.g. 22.5 → 22)
   const minAcceptable = Math.max(0, Math.ceil(targetLength - MAX_GAP - 1e-9));
 
-  const candidates = []; // [{ combo:[...], sum }]
+  const candidates = []; // [{ combo:[...], sum }] within [minAcceptable, targetFloor] — "clean enough"
+  // Every combo found anywhere ≤ targetFloor, regardless of MAX_GAP — tracked in the SAME traversal
+  // purely as a fallback pool for when nothing lands within tolerance (review finding, 2026-11-13:
+  // tightening MAX_GAP for Iron/Aluminium made the OLD "genuinely impossible" fallback — a single
+  // largest-piece-under-target, ignoring any multi-piece combo — trigger far more often, especially
+  // for a sparser catalogue like Aluminium's {6,10}: a 21ft target has no in-tolerance match, but the
+  // search itself already finds 10+10=20 along the way; the old fallback discarded that and returned
+  // a bare 10ft piece with an 11ft gap instead of 20ft's 1ft gap. Both `calcZoneFabric`'s masking/
+  // ceiling-liza figures and every re-resolving consumer's own pull list read the stock-RESOLVED
+  // built total, not the ideal target, so that discarded combo was real under-billed fabric and a
+  // wrong Setup Book pull list, not just a cosmetic rounding difference.
+  const allUnderTarget = [];
   const MAX_DEPTH = 6;
   const search = (remainingBudget, combo, startIdx, currentSum) => {
-    // Record any combo whose sum is in [minAcceptable, targetFloor]
-    if (currentSum >= minAcceptable && currentSum <= targetFloor) {
-      candidates.push({ combo: [...combo], sum: currentSum });
+    if (currentSum > 0 && currentSum <= targetFloor) {
+      if (currentSum >= minAcceptable) candidates.push({ combo: [...combo], sum: currentSum });
+      allUnderTarget.push({ combo: [...combo], sum: currentSum });
     }
     if (combo.length >= MAX_DEPTH) return;
     if (remainingBudget < beamSizes[beamSizes.length - 1]) return; // can't fit smallest piece
@@ -530,23 +563,8 @@ export const resolveBeamSegment = (targetLength, trussInv) => {
   };
   search(targetFloor, [], 0, 0);
 
-  if (candidates.length === 0) {
-    // Genuinely impossible (e.g. target < smallest beam). Degraded fallback: largest single under target.
-    const fallback = beamSizes.find(s => s <= targetFloor);
-    if (fallback) {
-      return {
-        pieces: [{ type: "beam", size: fallback, qty: 1 }],
-        joints: 0, shortage: true,
-        gap: targetLength - fallback,
-        reason: `No combo within ${MAX_GAP}ft of ${targetLength}ft; closest under = ${fallback}ft`,
-      };
-    }
-    return { pieces: [], joints: 0, shortage: true, reason: `No combo possible for ${targetLength}ft` };
-  }
-
-  // Rank candidates by: fewer joints → smaller gap → larger pieces (abundance)
-  let best = null;
-  for (const cand of candidates) {
+  // Scores shared between both rankings below: joints, gap, grouped piece sizeCounts, abundance.
+  const scoreOf = (cand) => {
     const joints = cand.combo.length - 1;
     const gap = targetLength - cand.sum;
     const sizeCounts = {};
@@ -559,28 +577,63 @@ export const resolveBeamSegment = (targetLength, trussInv) => {
       if (ratio < abundance) abundance = ratio;
     });
     if (!isFinite(abundance)) abundance = 0;
-    // Composite cost (lower = better):
-    //   joints dominate (weight 100, can't be beaten by gap or pieces)
-    //   then gap (weight 10 per ft, so 0.5ft gap = 5 cost)
-    //   then piece count (weight 1, penalizes more small pieces over fewer large)
-    //   then abundance discount (weight 0.1, small influence)
-    const cost = (100 * joints) + (10 * gap) + (1 * cand.combo.length) - (0.1 * abundance);
-    if (!best || cost < best.cost) {
-      best = { cost, joints, gap, sizeCounts, sum: cand.sum };
-    }
-  }
-
-  const piecesArr = Object.entries(best.sizeCounts)
+    return { joints, gap, sizeCounts, abundance, sum: cand.sum };
+  };
+  const toPieces = (best) => Object.entries(best.sizeCounts)
     .map(([sz, qty]) => ({ type: "beam", size: parseFloat(sz), qty }))
     .sort((a, b) => b.size - a.size);
-  return {
-    pieces: piecesArr,
-    joints: best.joints,
-    shortage: false,
-    cost: best.cost,
-    gap: best.gap,
-    rounded: best.sum !== targetLength,
-  };
+
+  if (candidates.length > 0) {
+    // In-tolerance ranking: fewer joints → smaller gap → fewer pieces → more abundant stock.
+    // Every candidate here is already "close enough" (within MAX_GAP), so simplicity (fewest
+    // joints/pieces) is what actually distinguishes them — gap barely varies between candidates by
+    // definition of this pool.
+    let best = null;
+    for (const cand of candidates) {
+      const s = scoreOf(cand);
+      // Composite cost (lower = better):
+      //   joints dominate (weight 100, can't be beaten by gap or pieces)
+      //   then gap (weight 10 per ft, so 0.5ft gap = 5 cost)
+      //   then piece count (weight 1, penalizes more small pieces over fewer large)
+      //   then abundance discount (weight 0.1, small influence)
+      const cost = (100 * s.joints) + (10 * s.gap) + (1 * cand.combo.length) - (0.1 * s.abundance);
+      if (!best || cost < best.cost) best = { cost, ...s };
+    }
+    return {
+      pieces: toPieces(best),
+      joints: best.joints,
+      shortage: false,
+      cost: best.cost,
+      gap: best.gap,
+      rounded: best.sum !== targetLength,
+    };
+  }
+
+  // Nothing within MAX_GAP — genuinely short. The best REAL combo found anywhere under target is
+  // still a better physical answer than a single far-short piece, even though both get flagged
+  // shortage: true — see allUnderTarget's own comment above. Ranked DIFFERENTLY from the
+  // in-tolerance case above: gap now dominates, not joints (review finding, 2026-11-13 — a
+  // joints-first ranking here kept picking a single far-short piece over a 2-piece combo landing
+  // 10x closer to target, since one extra joint "cost" less than closing most of the gap did under
+  // the in-tolerance weights; the whole point of this fallback is minimizing the physical gap, an
+  // extra joint is a small price for that).
+  let fallbackBest = null;
+  for (const cand of allUnderTarget) {
+    const s = scoreOf(cand);
+    const cost = (100 * s.gap) + (10 * s.joints) + (1 * cand.combo.length) - (0.1 * s.abundance);
+    if (!fallbackBest || cost < fallbackBest.cost) fallbackBest = { cost, ...s };
+  }
+  if (fallbackBest) {
+    return {
+      pieces: toPieces(fallbackBest),
+      joints: fallbackBest.joints,
+      shortage: true,
+      gap: fallbackBest.gap,
+      reason: `No combo within ${MAX_GAP}ft of ${targetLength}ft; closest built = ${targetLength - fallbackBest.gap}ft`,
+    };
+  }
+  // Genuinely impossible — not even a single piece fits under target (e.g. target < smallest beam).
+  return { pieces: [], joints: 0, shortage: true, reason: `No combo possible for ${targetLength}ft` };
 };
 
 // ─── §23 Phase 2 — Allocator (single-event, no multi-fn pool yet) ────────────
@@ -712,7 +765,10 @@ const trussInvForMaterialIms = (trussInv, material) => {
   if (mat === "iron") return trussInv;
   const m = trussInv.materials && trussInv.materials[mat];
   const batta = m?.batta != null ? m.batta : trussInv.batta;
-  if (!m || !m.pillars || Object.keys(m.pillars).length === 0) return { ...trussInv, batta }; // skeleton not configured yet → Iron
+  // `material` stamped here too, same reason as pricing.js's own copy — resolveBeamSegment's
+  // MAX_GAP reads it, and this IMS-side re-resolver must agree with Studio's on whether a given
+  // zone's material gets the 1ft gap tolerance (Pole only, as of 2026-11-13) or not.
+  if (!m || !m.pillars || Object.keys(m.pillars).length === 0) return { ...trussInv, batta, material: mat }; // skeleton not configured yet → Iron
   return {
     ...trussInv,                                                   // shared: liza, fabricFactors, fabricFreshMarkup, lizaStock, platforms…
     pillars: m.pillars || {},                                     // per-material skeleton
@@ -720,6 +776,7 @@ const trussInvForMaterialIms = (trussInv, material) => {
     rates: { ...(trussInv.rates || {}), ...(m.rates || {}) },     // per-material pillar/beam/batta rates
     settings: { ...(trussInv.settings || {}), ...(m.settings || {}) },
     batta,
+    material: mat,
   };
 };
 
