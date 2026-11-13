@@ -5101,17 +5101,19 @@ undefined
                     {(zoneElSearch[k]||"").length>=1&&(()=>{
                       const q=(zoneElSearch[k]||"").toLowerCase();
                       // A kit's own components (and a kit-inside-a-kit's grandchild components —
-                      // kitDescendantIds recurses the whole tree via walkKitUnits, not just one
-                      // level) are already covered by that kit — don't offer adding one separately
-                      // (would double the item and double its cost).
-                      const kitCoveredIds=new Set((zoneElements[k]||[]).filter(el=>el.invId).flatMap(el=>{
+                      // kitDescendantIds recurses the whole tree via walkKitUnits) used to be hidden here
+                      // as "already covered by the kit". They can be added now (owner ask 2026-11-13): a
+                      // separate element is an extra piece on top of the kit's own, priced and blocked as its
+                      // own. The pick list marks them "IN KIT" (with the kit's name) so it is a choice, not a slip.
+                      const kitOfPart=new Map();
+                      (zoneElements[k]||[]).filter(el=>el.invId).forEach(el=>{
                         const it=(imsInventory||[]).find(i=>i.id===el.invId);
-                        return it?[...kitDescendantIds(it,imsInventory,el.kitOverrides)]:[];
-                      }));
+                        if(it) kitDescendantIds(it,imsInventory,el.kitOverrides).forEach(id=>{ if(!kitOfPart.has(id)) kitOfPart.set(id,el.name||it.name); });
+                      });
                       // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                       // (Rate Card is not consulted here — see getElPriceFromInventory /
                       // getElPriceFromPattern in StudioApp.jsx).
-                      const invMatches=smartFilter((imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)),q,it=>[it.name,it.cat,it.subCat||it.subcategory]);
+                      const invMatches=smartFilter((imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!isHiddenSubcat(it,rcSubcatFactors)),q,it=>[it.name,it.cat,it.subCat||it.subcategory]);
                       const patMatches=smartFilter((recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)),q,pt=>[pt.name]);
                       // A raw mandi commodity is directly addable as its own element (by the kg,
                       // variant picked afterward on the element card), unlike every other mandi
@@ -5201,6 +5203,7 @@ undefined
                               <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>
                                 {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>KIT</span>}
+                                {kitOfPart.has(it.id)&&<span title={`Already inside "${kitOfPart.get(it.id)}" in this zone — adding it here is an extra piece on top of the kit's own`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(14,165,233,0.15)",color:"#0284C7",fontWeight:700,flexShrink:0}}>IN KIT</span>}
                                 {isDateUnavail
                                   ? <span title={(canMake?"0 free for this event date — will price at cost% instead of rental":"0 free for this event date and can't be made in production — will show Out of stock")+(_fa?.why?"\n\n"+_fa.why:"")} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>{canMake?"0 free — not available":"0 free — out of stock"}</span>
                                   : (isFullyUsed
