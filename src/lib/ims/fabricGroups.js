@@ -68,7 +68,15 @@ function applicationText(kind, fab, row) {
     if (pillars > 0 && pieces > 0) return `${pillars} pillar${pillars === 1 ? "" : "s"} × ${Math.round(pieces / pillars)} curtains`;
     return "";
   }
-  const walls = Object.entries(row?.mkWalls || {}).filter(([, v]) => v).map(([k]) => k);
+  // Only the walls the masking FABRIC goes on - the rule the pieces are counted by (pricing.js calcZoneFabric wallIsFabric): masking
+  // switched on, the wall ticked, and the wall's own material (else the truss's) fabric. An Acrylic / Flex wall or a custom panel used to
+  // be named here too, so "Back + left walls" read as fabric on a wall that takes none.
+  const wallIsFabric = (w) => {
+    if (!row?.mkOn || !(row.mkWalls || {})[w]) return false;
+    const ov = (row.mkWallMat || {})[w];
+    return /fabric/i.test(String(ov?.matKey || (ov?.customItemId ? "" : row.mkT) || ""));
+  };
+  const walls = ["back", "left", "right"].filter(wallIsFabric);
   const side = walls.length ? `${walls.map((w, i) => (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w)).join(" + ")} wall${walls.length === 1 ? "" : "s"}` : "";
   return `${side ? side + " · " : ""}13 ft panels`;
 }

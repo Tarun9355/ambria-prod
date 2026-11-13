@@ -60,3 +60,15 @@ describe("shared Fabric & Tenting book", () => {
     expect(html).toContain(">2.5</td>");
   });
 });
+
+describe("book: masking says which walls, and non-fabric masking prints too (owner report 2026-11-13)", () => {
+  it("fabric masking names its walls; an Acrylic wall gets its own Masking chip", () => {
+    const zc = { mkOn: true, mkT: "fabric", mkWalls: { back: true, right: true }, mkWallMat: { right: { matKey: "acrylic" } } };
+    const sel2 = { ...sel, functionsDetail: [{ ...sel.functionsDetail[0], zones: { stage: zc } }] };
+    const c = { ...ctx("Tenting", [row(inventory[0], "Fabric")]), sel: sel2, fabricEntriesOf: () => [{ fi: 0, ri: 0, zk: "stage", zLabel: "Stage", fab: { maskingPieces: 2 }, row: zc }] };
+    const html = buildDeptBookHtml(c, {}, {}, { depts: ["Fabric", "Tenting"] });
+    expect(html).toContain("Back wall");
+    expect(html).toContain("Acrylic · Right wall");
+    expect(html).not.toContain("Back wall + Right wall");
+  });
+});
