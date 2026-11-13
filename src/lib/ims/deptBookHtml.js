@@ -600,19 +600,29 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       const zc = f?.zones?.[zk];
       const out = { fabric: [], other: new Map() }; // other: material label -> its walls
       if (!zc) return out;
+      const addOther = (label, w) => { const list = out.other.get(label) || []; if (w && !list.includes(w)) list.push(w); out.other.set(label, list); };
       [zc, ...(Array.isArray(zc.extraTrussRows) ? zc.extraTrussRows : [])].forEach(row => {
-        if (!row?.mkOn || row.noFabric) return;
+        if (!row) return;
+        const wallMatAll = row.mkWallMat || {};
+        const hasWallOverride = ["back", "left", "right"].some(w => wallMatAll[w] && (wallMatAll[w].matKey || wallMatAll[w].customItemId));
+        // A custom panel for the whole truss (no per-wall picks) is priced as one panel whether or not masking is switched on or walls
+        // are ticked (pricing.js trussRowCost) - so it prints the same way: its name, with the ticked walls when there are any.
+        if (row.customMaskingItemId && !hasWallOverride) {
+          const label = invById.get(String(row.customMaskingItemId))?.name || t("Custom panel");
+          const ticked = ["back", "left", "right"].filter(w => (row.mkWalls || {})[w]);
+          if (!ticked.length) addOther(label, null); else ticked.forEach(w => addOther(label, w));
+          return;
+        }
+        if (!row.mkOn) return;
         ["back", "left", "right"].forEach(w => {
           if (!(row.mkWalls || {})[w]) return;
           const ov = (row.mkWallMat || {})[w];
           const custom = ov?.customItemId || (!ov?.matKey && row.customMaskingItemId);
           const key = ov?.matKey || (ov?.customItemId ? null : row.mkT);
-          if (!custom && /fabric/i.test(String(key || ""))) { if (!out.fabric.includes(w)) out.fabric.push(w); return; }
+          // a "No fabric" truss takes no masking FABRIC (no pieces) - but its Acrylic / Flex / panel masking is still priced, so it still prints
+          if (!custom && /fabric/i.test(String(key || ""))) { if (!row.noFabric && !out.fabric.includes(w)) out.fabric.push(w); return; }
           const label = custom ? (invById.get(String(custom))?.name || t("Custom panel")) : maskMatName(key);
-          if (!label) return;
-          const list = out.other.get(label) || [];
-          if (!list.includes(w)) list.push(w);
-          out.other.set(label, list);
+          if (label) addOther(label, w);
         });
       });
       return out;
@@ -625,7 +635,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const { other } = maskWallsOf(fi, zk);
           if (!other.size) return;
           const key = `${fi}|${zk}`;
-          const html = [...other].map(([mat, ws]) => `<b class="fpc">${esc(hn(mat))} · ${esc(ws.map(w => t(WALL_LBL[w])).join(" + "))}</b>`).join("");
+          const html = [...other].map(([mat, ws]) => `<b class="fpc">${esc(hn(mat))}${ws.length ? ` · ${esc(ws.map(w => t(WALL_LBL[w])).join(" + "))}` : ""}</b>`).join("");
           fabricByZone.set(key, [...(fabricByZone.get(key) || []), { k: t("Masking"), html }]);
         });
       });

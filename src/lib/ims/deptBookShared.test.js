@@ -72,3 +72,18 @@ describe("book: masking says which walls, and non-fabric masking prints too (own
     expect(html).not.toContain("Back wall + Right wall");
   });
 });
+
+describe("book: masking edge cases priced the same way", () => {
+  const bookFor = (zc) => {
+    const sel2 = { ...sel, functionsDetail: [{ ...sel.functionsDetail[0], zones: { stage: zc } }] };
+    const inv2 = [...inventory, { id: "p1", name: "Printed Floral Panel", category: "Fabric" }];
+    return buildDeptBookHtml({ ...ctx("Tenting", [row(inventory[0], "Fabric")]), sel: sel2, inventory: inv2 }, {}, {}, { depts: ["Fabric", "Tenting"] });
+  };
+  it("a custom panel for the whole truss prints by name even with masking switched off (it is still priced)", () => {
+    expect(bookFor({ mkOn: false, customMaskingItemId: "p1", mkT: "", mkWalls: {} })).toContain("Printed Floral Panel");
+  });
+  it("a 'No fabric' truss still prints its Acrylic masking, but no fabric walls", () => {
+    const html = bookFor({ mkOn: true, noFabric: true, mkT: "acrylic", mkWalls: { back: true } });
+    expect(html).toContain("Acrylic · Back wall");
+  });
+});
