@@ -350,16 +350,27 @@ Rules:
   // for that day. Map: { [invId]: qtyBlockedOnDate }, plus which functions block it (for the tooltip).
   const dateBlock = useMemo(() => {
     if (!availDate) return null;
-    const m = {}, byItem = {};
+    // One deal's functions on the same day share the same pieces (set up once at the venue), so per deal an item counts at the MOST
+    // any one of its functions needs, not the sum - the rule Studio's own reservation (`blocks`) uses. Summing made a deal with two
+    // rows on one date read 110 blocked of 55 (owner report 2026-11-13). Different deals still add up.
+    const perDeal = {}; // dealKey -> { invId -> { qty, names[] } }
     (functions || []).forEach((f) => {
       if (f.date !== availDate) return;
+      const dealKey = f.eventOrderId || f.projectId || f.id;
+      const d = perDeal[dealKey] || (perDeal[dealKey] = {});
       (f.items || []).forEach((it) => {
         if (it.invId == null) return;
         const q = Number(it.qty) || 0; if (q <= 0) return;
-        m[it.invId] = (m[it.invId] || 0) + q;
-        (byItem[it.invId] = byItem[it.invId] || []).push({ name: f.name || "Function", qty: q });
+        const cur = d[it.invId] || (d[it.invId] = { qty: 0, names: [] });
+        cur.qty = Math.max(cur.qty, q);
+        cur.names.push(f.name || "Function");
       });
     });
+    const m = {}, byItem = {};
+    Object.values(perDeal).forEach((d) => Object.entries(d).forEach(([invId, { qty, names }]) => {
+      m[invId] = (m[invId] || 0) + qty;
+      (byItem[invId] = byItem[invId] || []).push({ name: [...new Set(names)].join(" + "), qty });
+    }));
     return { qty: m, fns: byItem };
   }, [availDate, functions]);
   const blockedOf = (i) => dateBlock ? (dateBlock.qty[i.id] || 0) : (i.blocked || 0);
