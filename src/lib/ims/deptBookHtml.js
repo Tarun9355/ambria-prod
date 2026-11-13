@@ -1370,6 +1370,12 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           // being null (the combined book) already leaves `zArt`/`artLeft` empty, so this is a no-op
           // there, same as every other flower section in that book.
           parts.push(...takeArt(it.name));
+          // Same for the recipe's REAL flowers (Morya Patti, banglore daisy, …) — realTaker is ALSO
+          // keyed by the kit's own name for a kit-sourced row (realLineTaker, fixed alongside). Before
+          // this, a kit's attached recipe never matched the `it.mix` branch above (a kit element is
+          // never `it.mix`) and had no fallback either, so its real flowers never printed anywhere in
+          // the book at all (owner report, 2026-11-13).
+          if (!combined && realTaker.has(it.name)) parts.push(...realTaker.take(it.name));
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : (kb?.qty || zq), "", parts) });
         }
       });

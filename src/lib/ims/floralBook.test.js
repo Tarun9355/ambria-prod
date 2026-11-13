@@ -43,4 +43,14 @@ describe("realLineTaker — the Floral PDF prints Deal Check's real flower lines
     const t = realLineTaker(realZones, "btr", swap);
     expect(t.take("Terracotta Fibre Pot")).toEqual([{ name: "carnation himachal", qty: 0.75, unit: "bundle" }, { name: "baby breath", qty: 1.2, unit: "bunch" }]);
   });
+
+  it("a kit-sourced row (kitParent set) is matched by the KIT's own name, not the recipe's decorated label (bug fixed 2026-11-13: a kit's attached recipe never matched any card and had no fallback, so its real flowers never printed anywhere)", () => {
+    const kitZones = [
+      { zone: "btr", el: "Chandelier Tree Floral Recipe", kitParent: "Tree", lines: [{ name: "Morya Patti", qty: 10.5, unit: "bundle" }] },
+    ];
+    const t = realLineTaker(kitZones, "btr", new Map());
+    expect(t.has("Tree")).toBe(true);
+    expect(t.has("Chandelier Tree Floral Recipe")).toBe(false); // only the kit's own name resolves
+    expect(t.take("Tree")).toEqual([{ name: "Morya Patti", qty: 10.5, unit: "bundle" }]);
+  });
 });
