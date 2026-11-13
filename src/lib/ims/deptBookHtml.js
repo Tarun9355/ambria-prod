@@ -29,7 +29,7 @@ import { swatchHexFor } from "../studio/colours";
 import { buildFabricGroups, isFabricLine } from "./fabricGroups";
 import { mandiHow } from "./floralHow";
 import { buildEventSwap, swappedRecipeFlower } from "./mandiSwap";
-import { realLineTaker } from "./floralBook";
+import { realLineTaker, fullRecipeLines } from "./floralBook";
 import { pdfT, pdfUnit, pdfDate, pdfDateTime, hindiReportHtml, HI_FONT_FAMILIES } from "./pdfI18n";
 import { nameKey, normName, needsHindi } from "./hindiNames";
 import { toHindi } from "./hindiTranslit";
@@ -1309,14 +1309,16 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         const art = !combined && it.mix ? takeArt(it.name) : [];
         const snapReal = !combined && it.mix && realTaker.has(it.name) ? realTaker.take(it.name) : null;
         if (!combined && ((Array.isArray(it.recipe) && it.recipe.length) || art.length || (snapReal && snapReal.length))) {
-          // The flower lines are the REAL flowers - the amount Deal Check and the mandi list have (the whole recipe used to print,
-          // 2.5 where Deal Check said 0.75 at 30% real). Without a snapshot line: the recipe times the piece's real share, real-only
-          // flowers and inventory ingredients at full. The artificial share follows as the bunches; the header still says the mix.
+          // Each flower line is the whole recipe amount, its tag saying how much of it is real (the amount Deal Check and the mandi
+          // list have) and how much artificial; real-only flowers and inventory ingredients at full, untagged. The artificial
+          // bunches to pull follow; the header still says the mix.
           const tag = !it.mix ? "" : t("Real");
           const realShare = typeof it.realPct === "number" ? it.realPct / 100 : 1;
-          const realParts = snapReal
-            ? snapReal.map(f => ({ ...f, tag }))
-            : (it.recipe || []).map(f => ({ name: f.name, qty: Math.round((Number(f.qty) || 0) * (Number(it.qty) || 0) * (f.full ? 1 : realShare) * 100) / 100, unit: f.unit, tag }));
+          // The FULL recipe, each flower with its real / artificial split (owner report 2026-11-13: a 100% artificial piece printed only
+          // its Oasis - the real share alone, 0 there, hid every flower). The real figure stays Deal Check's (snapReal) when it has it.
+          const realParts = (Array.isArray(it.recipe) && it.recipe.length)
+            ? fullRecipeLines(it.recipe, Number(it.qty) || 0, realShare, snapReal, { real: t("Real"), art: t("Artificial") }, !!it.mix)
+            : (snapReal || []).map(f => ({ ...f, tag }));
           const parts = [...realParts.filter(f => f.qty > 0), ...art];
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts, it.mix, it.size) });
         }

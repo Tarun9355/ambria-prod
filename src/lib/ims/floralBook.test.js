@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { realLineTaker } from "./floralBook.js";
+import { realLineTaker, fullRecipeLines } from "./floralBook.js";
 import { buildEventSwap } from "./mandiSwap.js";
 
 const realZones = [
@@ -42,5 +42,33 @@ describe("realLineTaker — the Floral PDF prints Deal Check's real flower lines
     ]);
     const t = realLineTaker(realZones, "btr", swap);
     expect(t.take("Terracotta Fibre Pot")).toEqual([{ name: "carnation himachal", qty: 0.75, unit: "bundle" }, { name: "baby breath", qty: 1.2, unit: "bunch" }]);
+  });
+});
+
+describe("fullRecipeLines - the whole recipe on the card, each flower with its split", () => {
+  const recipe = [
+    { name: "Oasis", qty: 1, unit: "pc", full: true },
+    { name: "Rose", qty: 1.25, unit: "bundle" },
+    { name: "Gypsy", qty: 0.5, unit: "bunch" },
+  ];
+  it("a 100% artificial piece still lists every flower (Satyapal Rana, 20 Nov), tagged Artificial; Oasis whole", () => {
+    expect(fullRecipeLines(recipe, 2, 0, [])).toEqual([
+      { name: "Oasis", qty: 2, unit: "pc", tag: "" },
+      { name: "Rose", qty: 2.5, unit: "bundle", tag: "Artificial" },
+      { name: "Gypsy", qty: 1, unit: "bunch", tag: "Artificial" },
+    ]);
+  });
+  it("a mixed piece: whole amount, real from Deal Check's line when it has one, else recipe × share", () => {
+    const out = fullRecipeLines(recipe, 2, 0.3, [{ name: "rose", qty: 0.6, unit: "bundle" }, { name: "Moss", qty: 1, unit: "kg" }]);
+    expect(out).toEqual([
+      { name: "Oasis", qty: 2, unit: "pc", tag: "" },
+      { name: "Rose", qty: 2.5, unit: "bundle", tag: "Real 0.6 · Artificial 1.75" },
+      { name: "Gypsy", qty: 1, unit: "bunch", tag: "Real 0.3 · Artificial 0.7" },
+      { name: "Moss", qty: 1, unit: "kg", tag: "Real" },
+    ]);
+  });
+  it("all real: tagged Real; no mix on the piece: no tags at all", () => {
+    expect(fullRecipeLines(recipe.slice(1, 2), 1, 1, null)[0].tag).toBe("Real");
+    expect(fullRecipeLines(recipe.slice(1, 2), 1, 1, null, undefined, false)[0].tag).toBe("");
   });
 });
