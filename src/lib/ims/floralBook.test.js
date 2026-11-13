@@ -67,6 +67,10 @@ describe("fullRecipeLines - the whole recipe on the card, each flower with its s
       { name: "Moss", qty: 1, unit: "kg", tag: "Real" },
     ]);
   });
+  it("Oasis written as \"pc\" by Deal Check and \"\" in the recipe is listed once", () => {
+    const out = fullRecipeLines([{ name: "Oasis", qty: 1, unit: "", full: true }], 3, 0, [{ name: "Oasis", qty: 3, unit: "pc" }]);
+    expect(out).toEqual([{ name: "Oasis", qty: 3, unit: "", tag: "" }]);
+  });
   it("all real: tagged Real; no mix on the piece: no tags at all", () => {
     expect(fullRecipeLines(recipe.slice(1, 2), 1, 1, null)[0].tag).toBe("Real");
     expect(fullRecipeLines(recipe.slice(1, 2), 1, 1, null, undefined, false)[0].tag).toBe("");

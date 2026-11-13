@@ -19,13 +19,22 @@ const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 //   Snapshot lines the recipe does not name (added since) follow as they are, as real.
 export function fullRecipeLines(recipe, pieces, realShare, snapReal, words = { real: "Real", art: "Artificial" }, mixed = true) {
   const share = Math.min(1, Math.max(0, Number.isFinite(Number(realShare)) ? Number(realShare) : 1));
-  const snap = new Map((Array.isArray(snapReal) ? snapReal : []).map((l) => [key(l.name) + "|" + (l.unit || ""), l]));
+  // matched by name (the same unit first): Deal Check writes an inventory ingredient with no unit as "pc", the recipe leaves it "",
+  // and a unit-keyed match listed such an Oasis twice
+  const snap = new Map();
+  (Array.isArray(snapReal) ? snapReal : []).forEach((l) => snap.set(key(l.name), [...(snap.get(key(l.name)) || []), l]));
+  const takeSnap = (f) => {
+    const list = snap.get(key(f.name));
+    if (!list || !list.length) return null;
+    const i = Math.max(0, list.findIndex((l) => (l.unit || "") === (f.unit || "")));
+    const [hit] = list.splice(i, 1);
+    if (!list.length) snap.delete(key(f.name));
+    return hit;
+  };
   const out = [];
   (Array.isArray(recipe) ? recipe : []).forEach((f) => {
     const total = r2((Number(f.qty) || 0) * (Number(pieces) || 0));
-    const sk = key(f.name) + "|" + (f.unit || "");
-    const fromSnap = snap.get(sk);
-    snap.delete(sk);
+    const fromSnap = takeSnap(f);
     if (!(total > 0)) return;
     if (f.full || !mixed) { out.push({ name: f.name, qty: total, unit: f.unit || "", tag: "" }); return; }
     const real = fromSnap ? r2(fromSnap.qty) : r2(total * share);
@@ -33,7 +42,7 @@ export function fullRecipeLines(recipe, pieces, realShare, snapReal, words = { r
     const tag = real <= 0 ? words.art : art <= 0 ? words.real : `${words.real} ${real} · ${words.art} ${art}`;
     out.push({ name: f.name, qty: total, unit: f.unit || "", tag });
   });
-  snap.forEach((l) => { if (Number(l.qty) > 0) out.push({ name: l.name, qty: r2(l.qty), unit: l.unit || "", tag: mixed ? words.real : "" }); });
+  [...snap.values()].flat().forEach((l) => { if (Number(l.qty) > 0) out.push({ name: l.name, qty: r2(l.qty), unit: l.unit || "", tag: mixed ? words.real : "" }); });
   return out;
 }
 
