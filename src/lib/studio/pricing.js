@@ -1377,12 +1377,18 @@ export const calcZoneFabricCost = (zCfg, trussInv, paletteAnchors, density, mult
 // chip never touches it (calcStructCost); instead each Fabric-card icon carries its own Repeat flag
 // (row.fabLizaRep / row.fabCurtainRep), and only that part's share of the guest price (× mult, the
 // IMS guest multiplier) comes off at `pct`. Wall-masking pieces are not a part and stay full price.
-export const fabricRepeatDiscount = (row, trussInv, density, mult, pct) => {
-  if (!row || !trussInv || row.noFabric || !(row.fabLizaRep || row.fabCurtainRep)) return 0;
+// Owner ask (2026-11-14): marking the zone's Truss & Masking chip Repeat marks Liza and curtains Repeat
+// too, the way masking follows it (maskingRepeatOn): a flag left untouched follows `trussRepeat`, true
+// is Repeat regardless, false is an explicit "not Repeat" even with the chip on.
+export const fabricPartRepeatOn = (row, repKey, trussRepeat) => !!row && row[repKey] !== false && (row[repKey] === true || !!trussRepeat);
+export const fabricRepeatDiscount = (row, trussInv, density, mult, pct, trussRepeat = false) => {
+  const lizaRep = fabricPartRepeatOn(row, "fabLizaRep", trussRepeat);
+  const curtainRep = fabricPartRepeatOn(row, "fabCurtainRep", trussRepeat);
+  if (!row || !trussInv || row.noFabric || !(lizaRep || curtainRep)) return 0;
   const whole = calcZoneFabricCost(row, trussInv, [], density);
   let off = 0;
-  if (row.fabLizaRep && row.fabLiza !== false) off += whole - calcZoneFabricCost({ ...row, fabLiza: false }, trussInv, [], density);
-  if (row.fabCurtainRep && row.fabCurtain !== false) off += whole - calcZoneFabricCost({ ...row, fabCurtain: false }, trussInv, [], density);
+  if (lizaRep && row.fabLiza !== false) off += whole - calcZoneFabricCost({ ...row, fabLiza: false }, trussInv, [], density);
+  if (curtainRep && row.fabCurtain !== false) off += whole - calcZoneFabricCost({ ...row, fabCurtain: false }, trussInv, [], density);
   return Math.round(off * (Number(mult) || 0) * (Number(pct) || 0) / 100);
 };
 

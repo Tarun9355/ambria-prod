@@ -392,12 +392,14 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
     // Masking: per truss row, Repeat if the row's own Repeat button says so, else if the zone's Truss &
     // Masking chip is on (the way masking has always been discounted) — see maskingRepeatOn.
     r.masking = maskingAfterRepeat(trussRows, maskingByRow, flags.truss, pct);
-    // Fabric is NOT part of any discount group — the truss's Repeat chip never touches it (a truss is
-    // reused, drape fabric is consumed). Only a part the salesperson marked Repeat on the Fabric card
-    // (Liza / velvet curtains, fabLizaRep / fabCurtainRep) takes the same flat pct off its own share.
+    // Fabric is NOT part of a discount group as a whole: only Liza / velvet curtains marked Repeat on the
+    // Fabric card (fabLizaRep / fabCurtainRep) take the same flat pct off their own share. A part never
+    // touched follows the zone's Truss & Masking Repeat chip (owner ask 2026-11-14) — the Repeat chip
+    // only, not a Fixed Venue: the truss stands there, but the drape fabric is still consumed.
     if (rates?.trussInv) {
       const mult = guestFabricMultiplier(rates);
-      const off = trussRows.reduce((s, row) => s + fabricRepeatDiscount(row, rates.trussInv, row.drapeDensity || "moderate", mult, pct), 0);
+      const chipRep = !!flags.truss && repeatCatFor(zc, "truss");
+      const off = trussRows.reduce((s, row) => s + fabricRepeatDiscount(row, rates.trussInv, row.drapeDensity || "moderate", mult, pct, chipRep), 0);
       r.fabric = Math.max(0, r.fabric - off);
     }
     r.total = r.truss + r.masking + r.platform + r.carpet + r.arches + r.pillars + r.glass + r.print + r.fabric;
