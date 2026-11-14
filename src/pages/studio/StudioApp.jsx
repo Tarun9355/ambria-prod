@@ -53,7 +53,7 @@ import { zoneDimLabel } from "../../lib/studio/zoneDims";
 import { withKitEdit } from "../../lib/studio/dealCheckSync";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
-import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows, effectiveColorPrefRows } from "../../lib/studio/floralCost";
+import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows, effectiveColorPrefRows, floralPlanByFn } from "../../lib/studio/floralCost";
 import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements, tentingZoneUsage, fabricBangaliZone } from "../../lib/studio/manpowerCount";
 import { rowToClient } from "../../lib/studio/clientRow";
 import { DELETED_CATALOGUE_TABLE, EMPTY_DELETED_CATALOGUE, assembleDeletedCatalogue, withDeletedRates, withDeletedInventory, deletedKitParts } from "../../lib/studio/deletedCatalogue";
@@ -10023,7 +10023,10 @@ export default function StudioApp() {
         total: Math.round(artTotal),
       } : null;
       const income = { real: Math.round(incReal), artificial: Math.round(incArt), total: Math.round(incReal + incArt) };
-      floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, artificial, income, capturedAt: Date.now() };
+      // byFn — see floralPlanByFn's own header (lib/studio/floralCost.js) for why: Dept Ops' Mandi
+      // Shopping List reads this to show one tab per function instead of one combined total.
+      const byFn = floralPlanByFn(allFns, calcFnFloralSourcingCost);
+      floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, artificial, income, byFn, capturedAt: Date.now() };
     } catch {}
     // Snapshot the system manpower plan (counts + how each was derived) so dept heads see it.
     let manpowerPlan = [];

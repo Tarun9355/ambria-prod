@@ -776,6 +776,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const [swatchView, setSwatchView] = useState(null);
   // 🔁 Mandi swap on the Floral real-shopping list — { i, q, toName, qty, price, note } while open.
   const [mandiSwap, setMandiSwap] = useState(null);
+  // Which Mandi Shopping List tab is open — "legacy" (already-logged, pre-this-feature flat data) or
+  // "fn:<fnIdx>" (one per function). Resets to null on every event switch so a stale tab key from a
+  // DIFFERENT event (e.g. "fn:1" when this event only has one function) never sticks; the derived
+  // activeMandiTabKey below falls back to the first real tab whenever this doesn't match one.
+  const [mandiActiveTab, setMandiActiveTab] = useState(null);
   // Which kits have their components showing. Collapsed by default: a kit's own line already
   // carries the qty, the rate and the total that matter, and six components under each of four
   // kits buried the ordinary items between them.
@@ -1617,56 +1622,114 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     saveDept({ expenses: expenses.filter((_, j) => j !== i) });
   };
 
-  // ── Floral: editable real-mandi shopping list (projected vs actual, side-by-side) ──
+  // ── Floral: editable real-mandi shopping list — one tab per function (owner ask, 2026-11-14,
+  // Loveleen, a 2-venue deal: "I don't want the flower quantities combined, separate them into
+  // tabs, 1 per function" — two functions never share flowers physically anyway, no reuse credit
+  // either, dealAvailability.js's own bug 7/8 fix) ──
   const fp = sel?.floralPlan || {};
-  const fpFlowers = Array.isArray(fp.flowers) ? fp.flowers : [];
-  const artificialProj = fpFlowers.filter(f => f.artificial).reduce((s, f) => s + (Number(f.cost) || 0), 0);
+  // fp.byFn (floralPlanByFn, lib/studio/floralCost.js) is new — an already-booked deal whose
+  // floralPlan was captured before this feature shipped has no byFn at all. Already-logged real
+  // shopping (deptData.mandiLines, the old flat array) is preserved exactly as-is under its own
+  // "Already logged" tab rather than silently split or guessed at — nobody can know which function
+  // an already-bought flower was really for. New shopping goes per function from here on
+  // (deptData.mandiLinesByFn[fnIdx]).
+  const fpByFn = Array.isArray(fp.byFn) ? fp.byFn : [];
+  const legacyMandiLines = Array.isArray(deptData.mandiLines) ? deptData.mandiLines : null;
+  const mandiLinesByFn = (deptData.mandiLinesByFn && typeof deptData.mandiLinesByFn === "object") ? deptData.mandiLinesByFn : {};
+  const legacyFlowers = (Array.isArray(fp.flowers) ? fp.flowers : []).filter(f => !f.artificial);
+  // fpByFn empty means this floralPlan was captured BEFORE this feature shipped (an already-booked
+  // deal not yet re-synced) — fall back to one single "Combined" tab seeded from the old whole-event
+  // fp.flowers, exactly the old single-list behaviour, rather than showing nothing just because
+  // there's no per-function split to offer yet.
+  const mandiTabs = fpByFn.length > 0
+    ? [
+        ...(legacyMandiLines ? [{ key: "legacy", label: "Already logged", flowers: legacyFlowers }] : []),
+        ...fpByFn.map(e => ({ key: `fn:${e.fnIdx}`, label: e.fnLabel + (e.fnVenue ? ` · ${e.fnVenue}` : "") + (e.fnDate ? ` · ${e.fnDate}` : ""), flowers: e.flowers, fnIdx: e.fnIdx })),
+      ]
+    : [{ key: "legacy", label: legacyMandiLines ? "Already logged" : "Combined", flowers: legacyFlowers }];
+  const activeMandiTabKey = mandiTabs.some(t => t.key === mandiActiveTab) ? mandiActiveTab : (mandiTabs[0]?.key ?? null);
+  const activeMandiTab = mandiTabs.find(t => t.key === activeMandiTabKey) || null;
+
+  const fpFlowers = activeMandiTab?.flowers || []; // the OPEN tab's own flowers — everything below is scoped to it
+  const artificialProj = (Array.isArray(fp.flowers) ? fp.flowers : []).filter(f => f.artificial).reduce((s, f) => s + (Number(f.cost) || 0), 0);
   // Floral's artificial flowers & greens are blocked stock too (shown on Inventory blocked's artificial card), so their ₹ adds to the
   // blocked total (owner ask 2026-11-11). Whole-event figure only - Deal Check does not split it by function.
   const artStockTotal = dept === "Floral" && fp.artificial && ((fp.artificial.flowerBunches || 0) > 0 || (fp.artificial.greenBunches || 0) > 0) ? Number(fp.artificial.total) || 0 : 0;
   const invBlockedTotal = rentalIncome + artStockTotal;
-  const seedMandi = fpFlowers.filter(f => !f.artificial && (Number(f.qty) || 0) > 0)
+  // colorVariant — the salesperson's colour pick in Deal Check (ranked preference or the legacy
+  // single pick), carried through calcFnFloralSourcingCost's own breakdown (StudioApp.jsx) so the
+  // purchase manager sees WHICH colour to actually buy, not just a bare flower name.
+  // price: f.rate IS the real mandi rate this flower costed at (qty already whole-unit — f.cost =
+  // qty × rate at the source). Older snapshots captured before `rate` existed have no such field,
+  // so those fall back to the previous cost÷qty approximation rather than showing no price at all —
+  // only ever a stand-in for a snapshot nobody has regenerated since.
+  const seedRowsFromFlowers = (flowersArr) => (flowersArr || []).filter(f => !f.artificial && (Number(f.qty) || 0) > 0)
     .map(f => {
-      // colorVariant — the salesperson's colour pick in Deal Check (ranked preference or the
-      // legacy single pick), carried through calcFnFloralSourcingCost's own breakdown
-      // (StudioApp.jsx) so the purchase manager sees WHICH colour to actually buy, not just a
-      // bare flower name.
-      // price: f.rate IS the real mandi rate this flower costed at (qty already whole-unit —
-      // f.cost = qty × rate at the source). Older snapshots captured before `rate` existed have
-      // no such field, so those fall back to the previous cost÷qty approximation rather than
-      // showing no price at all — only ever a stand-in for a snapshot nobody has regenerated since.
       const price = (typeof f.rate === "number" && f.rate > 0) ? f.rate : (f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0);
-      const row = { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
-      return row;
+      return { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
     });
-  // Once shopping has started, mandiLines (the logged qty/price/swap data) is the source of truth
-  // for everything EXCEPT colour — re-merging colorVariant/colorPrefs fresh from seedMandi (i.e.
-  // from whatever floralPlan currently says) on every render means a colour picked in Deal Check
-  // AFTER shopping began still reaches the purchase manager, instead of being frozen out until
-  // someone remembers to click "↺ Reset to system plan" (which would also wipe the logged qty/price
-  // nobody wants touched). Matched by name; a row with no live match (e.g. a swap replacement) is
-  // left exactly as it was.
-  // Keyed by name + colour, matching how StudioApp.jsx's floralPlan builder now keys its own
-  // aggregation (same flower name ordered in two different colours across two functions is two
-  // separate rows there, not one) — matching by name alone here would re-collapse them right back
-  // down to a single colour on every render, the same bug just moved one file over.
+  const seedMandi = seedRowsFromFlowers(fpFlowers);
+  // Once shopping has started, the tab's own logged rows are the source of truth for everything
+  // EXCEPT colour — re-merging colorVariant/colorPrefs fresh from the seed (i.e. from whatever
+  // floralPlan currently says) on every render means a colour picked in Deal Check AFTER shopping
+  // began still reaches the purchase manager, instead of being frozen out until someone remembers
+  // to click "↺ Reset to system plan" (which would also wipe the logged qty/price nobody wants
+  // touched). Matched by name; a row with no live match (e.g. a swap replacement) is left exactly
+  // as it was.
+  // Keyed by name + colour, matching how StudioApp.jsx's/DealCheckOverlay.jsx's floralPlan builders
+  // key their own aggregation (same flower name ordered in two different colours is two separate
+  // rows there, not one) — matching by name alone here would re-collapse them right back down to a
+  // single colour on every render, the same bug just moved one file over.
   const mandiKey = (r) => `${r.name}¦${r.colorVariant?.label || (Array.isArray(r.colorPrefs) ? r.colorPrefs.map(p => p.label).join("/") : "") || ""}`;
   const seedColourByName = {};
   seedMandi.forEach(r => { const k = mandiKey(r); if (!seedColourByName[k]) seedColourByName[k] = { colorVariant: r.colorVariant, colorPrefs: r.colorPrefs }; });
-  const mandiRows = Array.isArray(deptData.mandiLines)
-    ? deptData.mandiLines.map(r => seedColourByName[mandiKey(r)] ? { ...r, ...seedColourByName[mandiKey(r)] } : r)
+  const activeStoredLines = activeMandiTabKey === "legacy" ? legacyMandiLines : (activeMandiTab ? mandiLinesByFn[activeMandiTab.fnIdx] : undefined);
+  const mandiRows = Array.isArray(activeStoredLines)
+    ? activeStoredLines.map(r => seedColourByName[mandiKey(r)] ? { ...r, ...seedColourByName[mandiKey(r)] } : r)
     : seedMandi;
   // Real shopping hasn't been logged until someone actually edits a row — until then, mandiRows is
-  // just seedMandi (the plan's own quantities/prices mirrored in as a starting point), so the "Real
-  // shopping" numbers can look fully filled in even though nobody has been to the mandi yet.
-  const mandiShopped = Array.isArray(deptData.mandiLines);
+  // just this tab's own seedMandi (the plan's own quantities/prices mirrored in as a starting
+  // point), so the "Real shopping" numbers can look fully filled in even though nobody has been to
+  // the mandi yet.
+  const mandiShopped = Array.isArray(activeStoredLines);
+  // This OPEN TAB's own totals — the editing table's footer below must match the rows actually on
+  // screen, never the grand total across every tab (mandiGrandReal/mandiGrandTotal, further below).
   const mandiActualReal = mandiRows.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0);
   // Real flowers only (owner ask 2026-11-11): artificial bunches come out of our own stock, so they are not an actual spend - they
   // show, with their kg and ₹, under Inventory blocked instead. (Was real + the artificial projection.)
   const mandiActualTotal = mandiActualReal;
   const projMandiReal = mandiRows.reduce((s, r) => s + (Number(r.projCost) || 0), 0);
-  // Persist the list AND the headline actual (realMandi) so Studio's P&L reflection picks it up.
-  const saveMandi = (next) => saveDept({ mandiLines: next, realMandi: next.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0) }); // real only - artificial is stock, not spend
+  const realTotalOf = (rows) => (Array.isArray(rows) ? rows : []).reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0);
+  // Every tab's own effective rows (its logged rows if any, else its own seed) — the active tab's
+  // live in-memory rows are used for ITSELF (so an unsaved edit reflects immediately), the persisted
+  // ones for every other tab.
+  const mandiRowsOfTab = (t) => {
+    if (t.key === activeMandiTabKey) return mandiRows;
+    const stored = t.key === "legacy" ? legacyMandiLines : mandiLinesByFn[t.fnIdx];
+    return Array.isArray(stored) ? stored : seedRowsFromFlowers(t.flowers);
+  };
+  // The ONE figure billing (the Actuals card/PDF, Studio's P&L via realMandi) must ever use — every
+  // tab summed, never just whichever one happens to be open on screen.
+  const mandiGrandReal = mandiTabs.reduce((s, t) => s + realTotalOf(mandiRowsOfTab(t)), 0);
+  const mandiGrandTotal = mandiGrandReal;
+  // Persist the list AND the headline actual (realMandi, summed across EVERY tab) so Studio's P&L
+  // reflection picks it up. This total comes out identical whether computed from one combined list
+  // or summed across per-function tabs — the real spend hasn't changed, only how it's organised.
+  const saveMandi = (next) => {
+    const isLegacy = activeMandiTabKey === "legacy";
+    const nextByFn = isLegacy || !activeMandiTab ? mandiLinesByFn : { ...mandiLinesByFn, [activeMandiTab.fnIdx]: next };
+    const nextLegacy = isLegacy ? next : legacyMandiLines;
+    // Every tab counts, not just ones with their own logged rows so far — an untouched tab (nobody's
+    // gone shopping for THAT function yet) still contributes its own projected seed, same as the
+    // single-list code this replaced always did before any edit existed at all. Using next directly
+    // for the tab being saved (not yet reflected in mandiRowsOfTab/mandiRows this same tick).
+    const grandReal = mandiTabs.reduce((s, t) => {
+      if (t.key === activeMandiTabKey) return s + realTotalOf(next);
+      const stored = t.key === "legacy" ? nextLegacy : nextByFn[t.fnIdx];
+      return s + realTotalOf(Array.isArray(stored) ? stored : seedRowsFromFlowers(t.flowers));
+    }, 0);
+    saveDept({ ...(isLegacy ? { mandiLines: next } : { mandiLinesByFn: nextByFn }), realMandi: grandReal }); // real only - artificial is stock, not spend
+  };
   const setMandi = (i, key, val) => saveMandi(mandiRows.map((r, j) => j === i ? { ...r, [key]: val } : r));
   // Deleting a swap's replacement row undoes the swap on its original too, so the original is not
   // left at qty 0 still claiming it was swapped.
@@ -1729,7 +1792,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
         + `<td class="blank"></td><td class="blank"></td></tr>`;
     }).join("");
     w.document.write(`<html><head><title>Mandi List — ${esc(sel?.clientName || "Event")}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:6px 8px;font-size:12px;vertical-align:top}th{background:#f5f5f5;text-align:left}td.c{text-align:center}td.r,th.r{text-align:right;white-space:nowrap}td.blank{min-width:70px}img{width:44px;height:44px;object-fit:cover;border-radius:5px;display:block;margin:auto}tr.off img{opacity:.45}.s{color:#777;font-size:10.5px;margin-top:2px}.sw{color:#B45309;font-weight:bold}tr.off td{color:#999}tr.off b{text-decoration:line-through}tr{break-inside:avoid}tfoot td{font-weight:bold;background:#ECFDF5}@media print{button{display:none}body{padding:0}@page{size:A4;margin:10mm}}</style></head><body>
-      <h2>🌸 Ambria — Mandi Shopping List</h2>
+      <h2>🌸 Ambria — Mandi Shopping List${mandiTabs.length > 1 && activeMandiTab ? ` — ${esc(activeMandiTab.label)}` : ""}</h2>
       <p>Event: ${esc(sel?.clientName || "-")} &nbsp;|&nbsp; ${esc(dateVenueLineOf(sel) || "-")}</p>
       <table><tr><th class="c">#</th><th class="c">Photo</th><th>Flower</th><th class="r">Planned</th><th class="r">To buy</th><th class="r">₹/unit</th><th class="r">Total</th><th>Bought qty</th><th>Paid ₹/unit</th></tr>${rows || '<tr><td colspan="9" style="text-align:center;color:#999">No flowers on the list</td></tr>'}
       <tfoot><tr><td colspan="6">Total (real flowers)</td><td class="r">₹${num(mandiActualReal)}</td><td></td><td></td></tr></tfoot></table>
@@ -2045,7 +2108,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // Actual spend logged by the head → exact P&L (mandi list + on-site expenses). Manpower is
   // tracked in its own Manpower plan card (mpCost, above) — folding it in here too double-counted
   // the same crew cost under two headings, so it's deliberately left out of Actuals.
-  const mandiSpend = dept === "Floral" ? mandiActualTotal : 0;
+  const mandiSpend = dept === "Floral" ? mandiGrandTotal : 0; // every tab summed, not just the one open on screen
   const actualCost = mandiSpend + expenseTotal;
   const hasActuals = mandiSpend > 0 || expenseTotal > 0;
 
@@ -2079,17 +2142,30 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       pdf.setFontSize(9.5);
       if (dept === "Floral") {
         // artificial flowers/greens are our own stock - shown under Inventory blocked, not an actual spend (owner ask 2026-11-11)
-        row([["Floral cost to source", M + 6], [rs(mandiActualTotal), W - M - 6, "right"]], { bold: true, fill: [236, 253, 245] });
-        row([["Real flowers (mandi)", M + 6], [rs(mandiActualReal), W - M - 6, "right"]]);
+        row([["Floral cost to source", M + 6], [rs(mandiGrandTotal), W - M - 6, "right"]], { bold: true, fill: [236, 253, 245] });
+        row([["Real flowers (mandi)", M + 6], [rs(mandiGrandReal), W - M - 6, "right"]]);
         if (fp.season && fp.season.mult && fp.season.mult !== 1) row([[`${fp.season.label} date - mandi flower prices x${fp.season.mult}`, M + 6]]);
         y += 10;
         const cx = { name: M + 6, plan: M + 230, proj: M + 320, qty: M + 375, rate: M + 440, tot: W - M - 6 };
-        row([["Flower", cx.name], ["Planned", cx.plan, "right"], ["Projected", cx.proj, "right"], ["Qty", cx.qty, "right"], ["Rs/unit", cx.rate, "right"], ["Total", cx.tot, "right"]], { bold: true, fill: [209, 250, 229] });
-        mandiRows.forEach(r => {
-          const line = (Number(r.qty) || 0) * (Number(r.price) || 0);
-          row([[r.swapFor ? `${r.name} (bought for ${r.swapFor})` : r.swappedTo ? `${r.name} (not in mandi -> ${r.swappedTo})` : r.name, cx.name], [r.projQty > 0 ? `${r.projQty} ${r.unit || ""}`.trim() : "", cx.plan, "right"], [r.projCost > 0 ? rs(r.projCost) : "extra", cx.proj, "right"], [Number(r.qty) || 0, cx.qty, "right"], [Number(r.price) || 0, cx.rate, "right"], [rs(line), cx.tot, "right"]]);
+        // One table per tab (function) — the full accounting record, not just whichever tab happens
+        // to be open on screen.
+        let grandProj = 0;
+        mandiTabs.forEach((t) => {
+          const rows = mandiRowsOfTab(t);
+          if (!rows.length) return;
+          row([[t.label, M + 6]], { bold: true, fill: [243, 244, 246] });
+          row([["Flower", cx.name], ["Planned", cx.plan, "right"], ["Projected", cx.proj, "right"], ["Qty", cx.qty, "right"], ["Rs/unit", cx.rate, "right"], ["Total", cx.tot, "right"]], { bold: true, fill: [209, 250, 229] });
+          let tabProj = 0, tabReal = 0;
+          rows.forEach(r => {
+            const line = (Number(r.qty) || 0) * (Number(r.price) || 0);
+            tabProj += Number(r.projCost) || 0; tabReal += line;
+            row([[r.swapFor ? `${r.name} (bought for ${r.swapFor})` : r.swappedTo ? `${r.name} (not in mandi -> ${r.swappedTo})` : r.name, cx.name], [r.projQty > 0 ? `${r.projQty} ${r.unit || ""}`.trim() : "", cx.plan, "right"], [r.projCost > 0 ? rs(r.projCost) : "extra", cx.proj, "right"], [Number(r.qty) || 0, cx.qty, "right"], [Number(r.price) || 0, cx.rate, "right"], [rs(line), cx.tot, "right"]]);
+          });
+          row([[`${t.label} total`, cx.name], [rs(tabProj), cx.proj, "right"], [rs(tabReal), cx.tot, "right"]], { bold: true });
+          grandProj += tabProj;
+          y += 6;
         });
-        row([["Total", cx.name], [rs(Number(fp.projected) || 0), cx.proj, "right"], [rs(mandiActualTotal), cx.tot, "right"]], { bold: true, fill: [236, 253, 245] });
+        row([["Grand total", cx.name], [rs(grandProj), cx.proj, "right"], [rs(mandiGrandReal), cx.tot, "right"]], { bold: true, fill: [236, 253, 245] });
         y += 14;
       }
       if (expenses.length) {
@@ -5231,15 +5307,33 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                         </div>
                       )}
                       <div className="bg-white border border-emerald-100 rounded-lg overflow-hidden text-xs">
-                        <div className="px-3 py-2 bg-emerald-50 font-semibold text-emerald-900 flex justify-between"><span>🌸 Floral cost to source</span><span>{fmt(mandiActualTotal)}</span></div>
+                        <div className="px-3 py-2 bg-emerald-50 font-semibold text-emerald-900 flex justify-between"><span>🌸 Floral cost to source</span><span>{fmt(mandiGrandTotal)}</span></div>
                         <div className="">
-                          <div className="flex justify-between px-3 py-1.5"><span className="text-gray-600">🌿 Real flowers (mandi) <span className="text-[10px] text-gray-400">— see shopping list below</span></span><span className="font-medium text-gray-800">{fmt(mandiActualReal)}</span></div>
+                          <div className="flex justify-between px-3 py-1.5"><span className="text-gray-600">🌿 Real flowers (mandi) <span className="text-[10px] text-gray-400">— every tab below, combined</span></span><span className="font-medium text-gray-800">{fmt(mandiGrandReal)}</span></div>
                           {/* Artificial flowers & greens are our own stock, not bought: they moved to Inventory blocked (bunches, kg, ₹/kg and
                               by colour) and are not an actual spend any more (owner ask 2026-11-11). */}
                           {(fp.artificial || artificialProj > 0) && <div className="px-3 pb-1.5 text-[10px] text-gray-400">Artificial flowers &amp; greens come from our stock — see Inventory blocked.</div>}
                         </div>
                       </div>
                       {fp.season && fp.season.mult && fp.season.mult !== 1 && <div className="px-3 py-1.5 rounded-lg text-[10px] text-emerald-700 bg-emerald-100/50 border border-emerald-100">📅 {fp.season.label} date — mandi flower prices ×{fp.season.mult} (e.g. a ₹1000 flower bills at ₹{Math.round(1000 * fp.season.mult)})</div>}
+                      {/* One tab per function — each has its own projected/real shopping list below.
+                          "Already logged" (when present) is pre-existing flat data from before this
+                          feature shipped, kept exactly as it was, never auto-split per function. */}
+                      {mandiTabs.length > 1 && (
+                        <div className="flex flex-wrap gap-1.5 px-0.5">
+                          {mandiTabs.map((t) => {
+                            const rows = mandiRowsOfTab(t);
+                            const tabReal = realTotalOf(rows);
+                            const active = t.key === activeMandiTabKey;
+                            return (
+                              <button key={t.key} onClick={() => { setMandiActiveTab(t.key); setMandiSwap(null); }}
+                                className={"px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors " + (active ? "bg-emerald-600 border-emerald-600 text-white" : "bg-white border-emerald-200 text-emerald-800 hover:bg-emerald-50")}>
+                                {t.label}{tabReal > 0 && <span className={active ? "opacity-80" : "text-emerald-500"}> · {fmt(tabReal)}</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                       {/* Projected vs real mandi — side by side, editable real shopping list */}
                       {/* Projected and Real are two fixed columns (w-28 + w-[264px]) and Real holds
                           qty × ₹/unit × total × delete — ~210px of content that cannot compress
@@ -5372,7 +5466,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       </div>
                       {mandiActualReal > 0 && projectedTotal > 0 && (
                         <div className={"text-xs font-semibold " + (variance > 0 ? "text-red-600" : "text-emerald-700")}>
-                          {variance > 0 ? "▲ Over" : variance < 0 ? "▼ Under" : "On"} plan by {fmt(Math.abs(variance))} — salesperson's P&L uses the real {fmt(mandiActualTotal)}.
+                          {variance > 0 ? "▲ Over" : variance < 0 ? "▼ Under" : "On"} plan by {fmt(Math.abs(variance))} (this tab) — salesperson's P&L uses the combined real {fmt(mandiGrandReal)}.
                         </div>
                       )}
                     </div>

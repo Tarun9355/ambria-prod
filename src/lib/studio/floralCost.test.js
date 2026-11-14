@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeFnFloralCost, computeFnRawFlowerUsage, buildMandiBreakdown, mergeSwapRows, findImmediatePrecedingFn, FLOWER_REUSE_RATE } from "./floralCost";
+import { computeFnFloralCost, computeFnRawFlowerUsage, buildMandiBreakdown, mergeSwapRows, findImmediatePrecedingFn, FLOWER_REUSE_RATE, floralPlanByFn } from "./floralCost";
 import { resolveMandiFlower } from "../ims/flowerHelpers";
 
 // Minimal fixtures. Recipes reference a bare SPECIES id only — exactly how real flower patterns
@@ -503,6 +503,51 @@ describe("buildMandiBreakdown", () => {
   it("skips flowers with nothing left to buy", () => {
     const flowerAgg = new Map([["rose", { name: "Rose", totalQty: 0, unitPrice: 100, unit: "kg" }]]);
     expect(buildMandiBreakdown(flowerAgg)).toHaveLength(0);
+  });
+});
+
+// Owner ask, 2026-11-14 (Loveleen, a 2-venue deal): "I don't want the flower quantities combined,
+// separate them into tabs, 1 per function" — Dept Ops' Mandi Shopping List reads floralPlan.byFn to
+// show one tab per function instead of one combined total.
+describe("floralPlanByFn", () => {
+  const fn = (fnIdx, fnType, fnDate, fnVenue) => ({ fnIdx, fnType, fnDate, fnVenue });
+
+  it("one entry per function, tagged with its own label/date/venue, carrying its own breakdown", () => {
+    const fns = [fn(0, "Haldi", "2026-11-15", "Aura"), fn(1, "Reception", "2026-11-16", "Emerald Green")];
+    const calcFn = (f) => ({ breakdown: f.fnIdx === 0 ? [{ name: "Marigold", qty: 5, cost: 500, unit: "kg" }] : [{ name: "Rose", qty: 3, cost: 900, unit: "kg" }] });
+    const out = floralPlanByFn(fns, calcFn);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ fnIdx: 0, fnLabel: "Haldi", fnDate: "2026-11-15", fnVenue: "Aura" });
+    expect(out[0].flowers).toEqual([{ name: "Marigold", qty: 5, cost: 500, unit: "kg" }]);
+    expect(out[1]).toMatchObject({ fnIdx: 1, fnLabel: "Reception", fnDate: "2026-11-16", fnVenue: "Emerald Green" });
+    expect(out[1].flowers).toEqual([{ name: "Rose", qty: 3, cost: 900, unit: "kg" }]);
+  });
+
+  it("omits a function with no real flower need at all — no empty tab", () => {
+    const fns = [fn(0, "Haldi", "2026-11-15", "Aura"), fn(1, "Mehendi", "2026-11-15", "Aura")];
+    const calcFn = (f) => ({ breakdown: f.fnIdx === 0 ? [{ name: "Marigold", qty: 5, cost: 500, unit: "kg" }] : [] });
+    const out = floralPlanByFn(fns, calcFn);
+    expect(out).toHaveLength(1);
+    expect(out[0].fnIdx).toBe(0);
+  });
+
+  it("drops a zero/negative-qty row from a function's own breakdown", () => {
+    const fns = [fn(0, "Haldi", "2026-11-15", "Aura")];
+    const calcFn = () => ({ breakdown: [{ name: "Marigold", qty: 5, cost: 500 }, { name: "Artificial flowers / greens", qty: 0, cost: 200, artificial: true }] });
+    const out = floralPlanByFn(fns, calcFn);
+    expect(out[0].flowers).toEqual([{ name: "Marigold", qty: 5, cost: 500 }]);
+  });
+
+  it("falls back to 'Function N' when fnType is blank, and fnIdx 0 when missing entirely", () => {
+    const out = floralPlanByFn([{ fnDate: "2026-11-15" }], () => ({ breakdown: [{ name: "Rose", qty: 1, cost: 100 }] }));
+    expect(out[0].fnLabel).toBe("Function 1");
+    expect(out[0].fnIdx).toBe(0);
+  });
+
+  it("no functions, or every function with zero flowers: empty array, no throw", () => {
+    expect(floralPlanByFn([], () => ({ breakdown: [] }))).toEqual([]);
+    expect(floralPlanByFn(undefined, () => ({ breakdown: [] }))).toEqual([]);
+    expect(floralPlanByFn([fn(0, "Haldi", "2026-11-15", "Aura")], () => ({ breakdown: [] }))).toEqual([]);
   });
 });
 
