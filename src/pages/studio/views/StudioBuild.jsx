@@ -206,6 +206,28 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   const fabricRepOff = fabricInv ? fabricRepeatDiscount(zc, fabricInv, zc.drapeDensity || "moderate", fabMult, guestFabricDiscPct, fabricChipRepeat) : 0;
   const fabricShown = fabricCost + wallPanelCost - fabricRepOff;
   const [fabMenu, setFabMenu] = useState(null); // which Fabric icon's menu is open ("fabLiza" | "fabCurtain")
+  // Where that menu sits on screen. It is drawn in a portal (fixed), not inside the card: the card clipped it, leaving two
+  // colours of the list visible (owner report 2026-11-14). Opens below the icon, or above it when there is more room there.
+  const [fabMenuPos, setFabMenuPos] = useState(null);
+  const fabMenuRef = useRef(null);
+  const openFabMenu = (key, el) => {
+    if (fabMenu === key) { setFabMenu(null); return; }
+    const r = el.getBoundingClientRect(), vh = window.innerHeight, vw = window.innerWidth, W = 240;
+    const below = vh - r.bottom - 12, above = r.top - 12;
+    const left = Math.max(8, Math.min(r.left, vw - W - 8));
+    setFabMenuPos(below >= 360 || below >= above ? { left, top: r.bottom + 4, maxHeight: below } : { left, bottom: vh - r.top + 4, maxHeight: above });
+    setFabMenu(key);
+  };
+  // a fixed menu does not follow the page: scrolling the page (not the menu's own list) or resizing closes it
+  useEffect(() => {
+    if (!fabMenu) return undefined;
+    const close = (e) => { if (e?.type === "scroll" && fabMenuRef.current && fabMenuRef.current.contains(e.target)) return; setFabMenu(null); };
+    const onKey = (e) => { if (e.key === "Escape") setFabMenu(null); };
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); window.removeEventListener("keydown", onKey); };
+  }, [fabMenu]);
   const [looseColourMenu, setLooseColourMenu] = useState(null); // which loose-fabric row's colour picker is open (its index)
   const [loosePreview, setLoosePreview] = useState(null); // { src, name } of the loose-fabric colour swatch currently hovered — the enlarge-on-hover
   // Width, Depth and Height all filled = a Box (the rule sD applies when a dimension is typed). A truss
@@ -507,15 +529,16 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         const colourOpts=[...new Set(((fabricInv?.[stockKey])||[]).map(x=>String(x?.colour||"").trim()).filter(Boolean))].sort((a,b)=>(palSet.has(b)-palSet.has(a))||a.localeCompare(b));
                         return(
                         <div key={key} className="relative inline-flex items-center gap-1">
-                          <span onClick={()=>setFabMenu(fabMenu===key?null:key)} title={`${lbl}: ${on?"on":"off"}${colour?` · ${colour}`:""}${rep?" · repeat":""} — click for options`}
+                          <span role="button" tabIndex={0} aria-haspopup="menu" aria-expanded={fabMenu===key} onClick={(e)=>openFabMenu(key,e.currentTarget)} onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();openFabMenu(key,e.currentTarget);}}} title={`${lbl}: ${on?"on":"off"}${colour?` · ${colour}`:""}${rep?" · repeat":""} — click for options`}
                             style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:6,cursor:"pointer",fontSize:12,
                               border:`1px solid ${on?accent:border}`,background:on?`${accent}18`:"transparent",opacity:on?1:0.4,filter:on?"none":"grayscale(1)"}}>{ic}</span>
                           {rep&&<span className="absolute -top-1.5 left-4 text-[10px] leading-none text-emerald-600 pointer-events-none">♻</span>}
                           {colour?<span style={{fontSize:10,fontWeight:600,color:accent,whiteSpace:"nowrap"}}>{colour}</span>
                             :paletteCols.length>0&&<span title="From the function's Fabric Palette - pick a colour in this icon's menu to change it for this truss" style={{fontSize:10,color:textS,whiteSpace:"nowrap"}}>{paletteCols.join(", ")}</span>}
-                          {fabMenu===key&&<>
-                            <div className="fixed inset-0 z-40" onClick={()=>setFabMenu(null)} />
-                            <div className={`absolute left-0 top-7 z-50 w-60 rounded-lg border shadow-lg p-1 flex flex-col ${isDark?"bg-gray-800 border-gray-600 text-gray-100":"bg-white border-gray-200 text-gray-800"}`}>
+                          {fabMenu===key&&fabMenuPos&&createPortal(<>
+                            <div style={{position:"fixed",inset:0,zIndex:9998}} onClick={()=>setFabMenu(null)} />
+                            <div ref={fabMenuRef} role="menu" style={{position:"fixed",zIndex:9999,width:240,left:fabMenuPos.left,top:fabMenuPos.top,bottom:fabMenuPos.bottom,maxHeight:Math.max(160,fabMenuPos.maxHeight),overflowY:"auto"}}
+                              className={`rounded-lg border shadow-lg p-1 flex flex-col ${isDark?"bg-gray-800 border-gray-600 text-gray-100":"bg-white border-gray-200 text-gray-800"}`}>
                               <button type="button" className="text-left text-[12px] px-2 py-1.5 rounded hover:bg-black/5" onClick={()=>{sZ({[key]:on?false:undefined,...(on?{[repKey]:undefined}:{})});setFabMenu(null);}}>
                                 {on?"✓ Selected":"Select"}
                               </button>
@@ -528,7 +551,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                                   onPick={(c)=>{sZ({[colKey]:c||undefined});setFabMenu(null);}} />
                               </div>}
                             </div>
-                          </>}
+                          </>, document.body)}
                         </div>);})}
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
