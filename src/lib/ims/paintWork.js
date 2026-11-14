@@ -34,6 +34,7 @@ export function paintWorkOf({ functionsDetail = [], inventory = [], zoneLabel = 
     Object.entries(fn.elements || {}).forEach(([zk, els]) => {
       if (fn.enabledEls && fn.enabledEls[zk] === false) return; // a zone switched off in Build is not built
       (Array.isArray(els) ? els : []).forEach((el) => {
+        if (el?.foc) return; // left at the venue — nothing gets repainted
         const id = el?.invId || el?.imsId;
         const inv = (id != null && byId.get(String(id))) || byName.get(nameKey(el?.name)) || null;
         const baseColour = String(inv?.baseColour || "Ivory");

@@ -20,6 +20,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { normalizeSizeClass, sizeClassToPatternKey } from "./flowerHelpers";
 import { lookupBySubcat } from "./helpers";
 import { supabase } from "../supabase";
+import { isFoc } from "../studio/foc.js";
 
 export const resolveRealPct = (el, rcItem, fnFloralRatio) => {
   if (typeof el?.realPct === "number") return Math.max(0, Math.min(100, el.realPct));
@@ -150,6 +151,7 @@ export async function aiMatchEvent(eventOrder, inventory, blocks, opts){
       const zoneEls=Array.isArray(zoneData)?zoneData:(elements[zoneKey]||[]);
       if(!Array.isArray(zoneEls)) continue;
       for(const el of zoneEls){
+        if(typeof el==="object"&&isFoc(el)) continue; // left at the venue — never blocked/matched, even pre-sale
         const elName=typeof el==="string"?el:(el.name||el.label||"");
         const elCat=typeof el==="object"?(el.cat||el.category||""):"";
         const elQty=typeof el==="object"?(el.qty||1):1;
@@ -174,6 +176,7 @@ export async function aiMatchEvent(eventOrder, inventory, blocks, opts){
           results.push({zone:"general",element:key,qty:1,sizeClass:"M",realPct:30,floralMode:"",isFloral:false,...fnTag,...result});
         }else if(Array.isArray(elData)){
           for(const el of elData){
+            if(typeof el==="object"&&isFoc(el)) continue; // left at the venue — never blocked/matched, even pre-sale
             const elName=typeof el==="string"?el:(el.name||"");
             if(!elName) continue;
             const elQty=typeof el==="object"?(el.qty||1):1;
@@ -481,6 +484,30 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
         ...(!paintAllocation && paintOverride ? {paintOverride} : {})
       });
     });
+    // FOC elements never reach aiMatchEvent/blockedItems (they're skipped there on purpose — never
+    // blocked, even pre-sale), so ops would otherwise see nothing for them until Studio's own sold-
+    // deal reconcile first runs and backfills functions.data.focItems. Seed it here too, best-effort,
+    // so ops' "FOC — leave at venue" view is populated from day one — only covers elements already
+    // carrying an invId (the Library "+Add element" path); a Rate-Card-name element with no invId yet
+    // isn't resolvable to a physical item until Deal Check matches it, same limit as items above.
+    const focItemsByFn=new Map();
+    if(fnsDetail&&fnsDetail.length){
+      fnsDetail.forEach((fnDet,fnIdx)=>{
+        const list=[];
+        const en=fnDet?.enabledEls||{};
+        Object.entries(fnDet?.elements||{}).forEach(([zk,zoneEls])=>{
+          if(en[zk]===false) return; // a zone switched off in Build is not part of the deal
+          if(!Array.isArray(zoneEls)) return;
+          zoneEls.forEach(el=>{
+            if(!el||typeof el!=="object"||!isFoc(el)||!el.invId) return;
+            const qty=Number(el.qty)||0;
+            if(qty<=0) return;
+            list.push({invId:el.invId, qty, dept:(inventory.find(i=>i.id===el.invId)||{}).cat||""});
+          });
+        });
+        if(list.length) focItemsByFn.set(typeof fnDet.fnIdx==="number"?fnDet.fnIdx:fnIdx, list);
+      });
+    }
 
     // Auto-derive flowerOrders per fn from EO elements (Tier 1.6 Phase 2)
     // For each function detail's elements, find Florals items in recipe-driven subs
@@ -495,6 +522,7 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
         for (const [zoneKey, zoneEls] of Object.entries(elementsByZone)) {
           if (!Array.isArray(zoneEls)) continue;
           for (const el of zoneEls) {
+            if (typeof el === "object" && isFoc(el)) continue; // left at the venue — nothing bought, zero floral cost
             const elName = typeof el === "string" ? el : (el?.name || "");
             if (!elName) continue;
             const normalizedName = elName.trim().toLowerCase();
@@ -591,6 +619,7 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
         budget:p.fnBudget||0,
         venue:p.fnVenue,
         items:fnItems,
+        focItems:focItemsByFn.get(p.fnIdx)||[], // best-effort day-one seed — Studio's own reconcile is the source of truth after this
         flowerOrders:fnFlowerOrders, // Tier 1.6 Phase 2 — derived from EO florals at ingestion time
         floralRatio: (typeof p.fnFloralRatio === "number") ? p.fnFloralRatio : (typeof eo.floralRatio === "number" ? eo.floralRatio : 70),
         manpower:[],

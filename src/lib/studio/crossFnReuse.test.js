@@ -1,5 +1,18 @@
 import { describe, it, expect } from "vitest";
-import { groupConsecutiveFns } from "./crossFnReuse";
+import { groupConsecutiveFns, computeFnInvQty } from "./crossFnReuse";
+
+describe("computeFnInvQty — FOC never earns reuse credit for a different function", () => {
+  it("skips a FOC'd element entirely, counts an ordinary one normally", () => {
+    const fnData = {
+      enabledEls: { stage: true },
+      zoneElements: { stage: [
+        { invId: "chair1", qty: 20 },
+        { invId: "sofa1", qty: 4, foc: true },
+      ] },
+    };
+    expect(computeFnInvQty(fnData)).toEqual({ chair1: 20 });
+  });
+});
 
 // Regression coverage for the Dept Ops "Inventory blocked" bug: three (or more) same-day/adjacent-
 // day functions at one venue must land in ONE group, not three independent pairwise ones — that's

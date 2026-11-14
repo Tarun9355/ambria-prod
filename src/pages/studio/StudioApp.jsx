@@ -150,6 +150,7 @@ import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CA
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions } from "../../lib/studio/sessionData.js";
 import { reqByDateFrom, ownedIds, planStudioBlocks, SRC_STUDIO_CARD } from "../../lib/studio/soldBlocksPlan.js";
+import { isFoc, cardIsFoc as sharedCardIsFoc } from "../../lib/studio/foc.js";
 import { reindexFnIdxObject, reindexFnIdxArray, reindexCompositeKeyObject, ZONE_PIPE_KEY, TRUSS_ZONE_PIPE_KEY, TRANSPORT_COLLAPSE_KEY, FLORAL_CALC_OPEN_KEY } from "../../lib/studio/dealCheckReindex.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
@@ -456,6 +457,7 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
   Object.entries(fZoneElements).forEach(([zk, elems]) => {
     if (!fEnabledElsFresh[zk] || !elems) return;
     elems.forEach((el) => {
+      if (el.foc) return; // left at the venue — nothing to truck in
       if (elRepeat(zk, el)) return;
       const invItem = el.invId ? imsInventory.find((i) => i.id === el.invId) : null;
       if (invItem) {
@@ -583,6 +585,15 @@ function parseCardKey(key) {
     return { kind: "fl", zoneKey: parts[1], rcName: parts[2], idx: Number(parts[3]) || 0, propType: parts[4] };
   }
   return null;
+}
+
+// Is a Deal Check card's underlying Build element marked FOC? Thin wrapper over the shared
+// lib/studio/foc.js implementation (same one DealCheckOverlay.jsx, dealAvailability.js and
+// fixedVenues.js now use too — regression review 2026-11-14 found the fail-safe rcName check was
+// being duplicated inconsistently, some call sites skipping it entirely) — kept as a 2-arg
+// (fn, cardKey) helper here since every call site in this file already has `fn` in scope.
+function cardIsFoc(fn, cardKey) {
+  return sharedCardIsFoc(fn?.zoneElements, cardKey);
 }
 
 // §7.9.6 #5 — dirty-zone-only re-runs.
@@ -930,6 +941,7 @@ export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems,
     // the Elements chip decides for elements, an element's own repeatOverride first.
     const zoneElRepeat = repeatCatFor(zoneConfig?.[zk], "elements");
     elems.forEach(el => {
+      if (el.foc) return; // left at the venue — nothing to truck in, unconditionally
       if (guestDiscountOn && (typeof el.repeatOverride === "boolean" ? el.repeatOverride : zoneElRepeat)) return;
       // An element's sub-category for truck-capacity purposes comes ONLY from live IMS identity —
       // el.invId (Inventory, the normal path for anything added via "+ Add element" today) or
@@ -1303,6 +1315,11 @@ async function fetchClientHeavyFields(clientId) {
   if (error) throw error;
   return data || null;
 }
+
+// A FOC'd element is priced at zero everywhere — guest, internal cost/margin, and everything
+// downstream of it (paint/manpower/transport each have their own guard). Shared by both
+// getElPriceRaw and getElPriceForFnRaw so they never drift on what "free" returns.
+const FOC_PRICE = Object.freeze({ rc: null, unitPrice: 0, fullUnitPrice: 0, lineCost: 0, area: 0, warning: null, isFloralBlend: false, realPct: null, foc: true });
 
 // ═══════════════════════════════════════════════════════════════
 // COMPONENT
@@ -5924,6 +5941,7 @@ export default function StudioApp() {
   // existing caller of getElPrice/calcElsCost prices the active function's live canvas, so this
   // default is always correct for them without having to pass it explicitly at each call site.
   const getElPriceRaw = useCallback((el, zc, opts, venueName) => {
+    if (isFoc(el)) return FOC_PRICE; // left at the venue from a previous event — billed nothing, guest or internal
     if (el.invId) return getElPriceFromInventory(el, { ...opts, zc, venueName: venueName ?? activeFnMeta.venue }); // IMS inventory-sourced element — Rate Card never consulted
     if (el.mandiId) return floralRepeatDiscount(getElPriceFromMandi(el), el, zc); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
     if (el.patternId) return floralRepeatDiscount(getElPriceFromPattern(el), el, zc); // pure flower-recipe element, no inventory item
@@ -6051,6 +6069,7 @@ export default function StudioApp() {
   // so inventory/recipe pricing uses THIS function's own flower mix and own stock reservation, not
   // the active tab's — that fallback made the event total change with whichever tab was open.
   const getElPriceForFnRaw = useCallback((el, zc, fnRatio, checkAvail, venueName, blocksForDate, crossFnReusePool, fnIdx, zoneKey, elIdx, fnDate) => {
+    if (isFoc(el)) return FOC_PRICE; // left at the venue from a previous event — billed nothing, guest or internal
     if (el.invId) return getElPriceFromInventory(el, { checkAvailability: !!checkAvail, zc, venueName, blocksForDate, crossFnReusePool, fnRatio, fnIdx, zoneKey, elIdx, fnDate }); // zoneKey+elIdx → the same booking-wide shortfall allocation Build's own cards use // IMS inventory-sourced element — Rate Card never consulted
     if (el.mandiId) return floralRepeatDiscount(getElPriceFromMandi(el), el, zc); // raw mandi commodity (e.g. Loose Petals), no recipe/inventory
     if (el.patternId) return floralRepeatDiscount(getElPriceFromPattern(el, fnRatio, fnIdx), el, zc); // pure flower-recipe element, no inventory item
@@ -6701,6 +6720,7 @@ export default function StudioApp() {
         // chip (RC-30): the Elements chip decides for elements, an element's own repeatOverride first.
         const zoneElRepeat = repeatCatFor(fZoneConfig[zk], "elements");
         elems.forEach(el => {
+          if (el.foc) return; // left at the venue — nothing to truck in, unconditionally (not gated on hideDiscountFromClient like Repeat)
           if (!hideDiscountFromClient && (typeof el.repeatOverride === "boolean" ? el.repeatOverride : zoneElRepeat)) return;
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
           if (invItem) {
@@ -7031,7 +7051,7 @@ export default function StudioApp() {
         const sm = 1.0;
         const adj = Math.ceil(base * sm);
         const sc = {}; walkFnElements(fn, imsInventory, ({ rc, qty }) => { const s = itemImsSubcat(rc); sc[s] = (sc[s] || 0) + qty; });
-        const reduction = standingReductionBySubcat(fvCfgMP, venueName, (dcCards || {})[fn.fnIdx], d.inventory || []);
+        const reduction = standingReductionBySubcat(fvCfgMP, venueName, (dcCards || {})[fn.fnIdx], d.inventory || [], fn.zoneElements);
         const heavyRows = []; let he = 0;
         heavyElementRanges.forEach(her => {
           const count = Math.max(0, (lookupBySubcat(sc, her.subCat) || 0) - (lookupBySubcat(reduction, her.subCat) || 0));
@@ -7430,6 +7450,7 @@ export default function StudioApp() {
         // precedence its rent uses), not the zone toggle alone.
         const zoneElRepeat = repeatCatFor(fZoneConfig[zk], "elements");
         elems.forEach(el => {
+          if (el.foc) return; // left at the venue — nothing trucked, cost side or guest side
           const zoneRepeat = typeof el.repeatOverride === "boolean" ? el.repeatOverride : zoneElRepeat;
           const invItem = el.invId ? imsInventory.find(i => i.id === el.invId) : null;
           if (invItem) {
@@ -12169,7 +12190,9 @@ export default function StudioApp() {
       // repeatOverride (like baseQty/prefs/pid): deal-specific, never part of a photo's recipe — an
       // older master saved before the save-side strip (review finding, 2026-11-13, "L1") could still
       // carry one; stripped here too so picking that photo into a brand-new deal never inherits it.
-      const rawEls = JSON.parse(JSON.stringify(photo.elements)).map(({ baseQty: _drop, prefs: _c, pid: _p, repeatOverride: _ro, ...e }) => e); // eslint-disable-line no-unused-vars
+      // foc is the same class — "already at THIS venue from a previous event" is specific to one
+      // client's deal and must never ride along into a different client's brand-new build.
+      const rawEls = JSON.parse(JSON.stringify(photo.elements)).map(({ baseQty: _drop, prefs: _c, pid: _p, repeatOverride: _ro, foc: _fo, focAt: _fa, focBy: _fb, ...e }) => e); // eslint-disable-line no-unused-vars
       finalEls = curScale > 1
         ? rawEls.map(e => { const base = Number(e.qty) || 0; return { ...e, baseQty: base, qty: Math.max(0, Math.round(base * curScale)) }; })
         : rawEls;
@@ -12296,7 +12319,7 @@ export default function StudioApp() {
     // Strip any stray baseQty the photo's saved elements carry — see the matching note in
     // selectElPhoto; a photo corrected mid-scale can bake in a leftover ratio that has nothing to do
     // with this build.
-    const tagged = (photo.isLibrary ? (photo.elements || []) : []).map(({ baseQty: _drop, prefs: _c, pid: _p, repeatOverride: _ro, ...it }) => ({ ...JSON.parse(JSON.stringify(it)), _srcPhotoKey: photoKey })); // eslint-disable-line no-unused-vars
+    const tagged = (photo.isLibrary ? (photo.elements || []) : []).map(({ baseQty: _drop, prefs: _c, pid: _p, repeatOverride: _ro, foc: _fo, focAt: _fa, focBy: _fb, ...it }) => ({ ...JSON.parse(JSON.stringify(it)), _srcPhotoKey: photoKey })); // eslint-disable-line no-unused-vars
     setZoneElements(p => ({ ...p, [elKey]: [...(p[elKey] || []), ...tagged] }));
     if (!current.length) {
       setElSelectedPhoto(p => ({ ...p, [elKey]: photo }));
@@ -12380,7 +12403,17 @@ export default function StudioApp() {
           // deleted-from-IMS element keeps the name it was saved with rather than going blank.
           const liveInv = el2.invId ? (imsInventory || []).find(i => i.id === el2.invId) : null;
           const displayName = liveInv?.name || el2.name;
-          if (lt > 0) {
+          // FOC always gets its own ₹0/"FOC" line — lt is already 0 for it (FOC_PRICE), so without
+          // this it would simply vanish from the quote (the `lt > 0` gate below exists to drop a
+          // genuinely zero-cost non-FOC row, which never otherwise happens) — the owner explicitly
+          // wants the guest to still see it was included, just not billed.
+          if (isFoc(el2)) {
+            items.push({
+              name: displayName, size: el2.size || "", qty: el2.qty || 0, unit: el2.unit || "pc", rate: 0, total: 0,
+              src: { fnIdx: fnData.fnIdx, zoneKey: k, elIdx: ei, key: el2.invId || el2.patternId || el2.mandiId || el2.name || "" },
+              maxQty: null, isFloral: false, hasDiscount: false, foc: true,
+            });
+          } else if (lt > 0) {
             // `up` is the full, pre-discount unit rate (rental × sub-category factor) — `lt` already
             // has any Fixed-Venue standing-item discount baked in (repeatAdjustedLineCost, inside
             // getElPriceForFn). Surfacing both, plus the delta, lets the cost sheet show the guest the
@@ -13729,27 +13762,36 @@ export default function StudioApp() {
     // nested inside this kit, so nothing about "what counts as this kit's parts" can drift from
     // what pricing/transport/crew already agree on. dcKitEdits is this card's own per-instance
     // component override, same lookup syncKitOverridesToBuild/effKitRental already use.
+    // FOC'd cards (cardIsFoc — resolved live off the Build element the card's zoneKey/idx backlinks
+    // to) are split into their own focByFn map instead of requiredByFn: they still become cards, so
+    // Deal Check/ops keep the matched IMS item's identity (functions.data.focItems below), but they
+    // never contribute to requiredByFn/cardReq, so they're never blocked (planStudioBlocks only ever
+    // sees them via focReq, which releases rather than reserves — see further down).
     const requiredByFn = {};
+    const focByFn = {};
     fnsToProcess.forEach((fn, i) => {
       const fnIdx = fn.fnIdx ?? i;
       const byItem = {};
+      const focByItem = {};
       Object.entries(newCards[fnIdx] || {}).forEach(([cardKey, c]) => {
         if (!c.imsId) return;
         const qty = Number(c.qty) || 0;
         if (qty <= 0) return;
+        const tgt = cardIsFoc(fn, cardKey) ? focByItem : byItem;
         const topItem = (inventoryList || []).find((x) => x.id === c.imsId);
         if (topItem && Array.isArray(topItem.subItems) && topItem.subItems.length > 0) {
           const edited = dcKitEdits?.[fnIdx]?.[cardKey];
           const overrideSubItems = Array.isArray(edited) ? edited : undefined;
           walkKitUnits(topItem, qty, inventoryList, overrideSubItems, (node, nodeQty) => {
             if (!node?.id) return;
-            byItem[node.id] = (byItem[node.id] || 0) + nodeQty;
+            tgt[node.id] = (tgt[node.id] || 0) + nodeQty;
           });
         } else {
-          byItem[c.imsId] = (byItem[c.imsId] || 0) + qty;
+          tgt[c.imsId] = (tgt[c.imsId] || 0) + qty;
         }
       });
       requiredByFn[fnIdx] = byItem;
+      focByFn[fnIdx] = focByItem;
     });
 
     const prevByFn = (cli.dcReservedInventory && typeof cli.dcReservedInventory === "object") ? cli.dcReservedInventory : {};
@@ -13805,6 +13847,16 @@ export default function StudioApp() {
     // apart from a Deal Check manual item, an IMS ops manual Block, or an IMS AI-fuzzy match that
     // Studio's own matcher never resolved into a card — see soldBlocksPlan.js's file comment).
     const itemsSyncIds = rowsById ? [...new Set([...legacyScopeIds, ...ownedIds(rowsById, eo.id, SRC_STUDIO_CARD)])] : [...legacyScopeIds];
+    // FOC's own widening is PER-FUNCTION, not folded into the deal-wide itemsSyncIds above — a
+    // stale functions.items row for an item marked FOC in FUNCTION A must get dropped there, but
+    // itemsSyncIds is read identically for every function this run processes, so folding it in
+    // globally would also force a resync of that same item id in an unrelated FUNCTION B — wrongly
+    // dropping an entry B's row legitimately holds for its own reason (an IMS ops manual Block,
+    // InventoryTab.jsx's blockItem/submitBulk, DOES write directly into functions.items, independent
+    // of Studio's own card match — regression review 2026-11-14 caught this cross-function leak).
+    const itemsSyncIdsFor = (fnIdx) => focByFn[fnIdx] && Object.keys(focByFn[fnIdx]).length
+      ? [...new Set([...itemsSyncIds, ...Object.keys(focByFn[fnIdx])])]
+      : itemsSyncIds;
 
     // What Studio's build needs, by date — processedDates only has fresh information this run; dates
     // belonging to a live function this deal has that simply wasn't part of THIS run are left alone
@@ -13813,6 +13865,7 @@ export default function StudioApp() {
     // run touches anything else — functions.items, the blocks ledger, and the department log must
     // never disagree about whether this run is trusted or frozen.
     const cardReq = reqByDateFrom(fnsToProcess, requiredByFn);
+    const focReq = reqByDateFrom(fnsToProcess, focByFn);
     const processedDates = new Set(fnsToProcess.map((fn) => fn?.fnDate).filter(Boolean));
     const liveRaw = collectAllFunctionDataRef.current?.();
     const liveList = (Array.isArray(liveRaw) && liveRaw.length) ? liveRaw : fnsToProcess;
@@ -13832,8 +13885,11 @@ export default function StudioApp() {
     // mid-edit autosave).
     if (rowsById) {
       const totalCardReq = Object.values(cardReq).reduce((s, m) => s + Object.keys(m).length, 0);
+      // A build that's gone entirely FOC is a deliberate unblock, not an empty-build glitch — count
+      // it as "has requirement" so the freeze below doesn't wrongly trigger on it.
+      const totalFocReq = Object.values(focReq).reduce((s, m) => s + Object.keys(m).length, 0);
       const ownedCardOnProcessed = [...rowsById.values()].some((arr) => (arr || []).some((b) => b?.eventId === eo.id && b?.source === SRC_STUDIO_CARD && processedDates.has(b.date)));
-      if (totalCardReq === 0 && ownedCardOnProcessed) {
+      if (totalCardReq === 0 && totalFocReq === 0 && ownedCardOnProcessed) {
         console.warn("[reconcile] build resolved to ZERO required items but event", eo.id, "holds Studio-owned reservations on a processed date — refusing to touch blocks, functions.items or notifications this run (empty-build glitch guard).");
         return;
       }
@@ -13892,10 +13948,18 @@ export default function StudioApp() {
         const fn = fnsToProcess[i];
         const fnIdx = fn.fnIdx ?? i;
         const req = requiredByFn[fnIdx] || {};
+        // Studio fully owns this key end to end (nothing else ever writes it), so a full replace
+        // every run is correct — unlike `items`, which merges with whatever `kept` preserves from
+        // other sources (ops' own manpower/expenses live elsewhere on the row, untouched by either).
+        const focItems = Object.entries(focByFn[fnIdx] || {}).map(([invId, qty]) => {
+          const item = (inventoryList || []).find((x) => x.id === invId);
+          return { invId, qty, dept: item?.cat || item?.category || "" };
+        });
         const date = fn.fnDate || "";
         if (!date) continue;
         const row = rowByDate.get(fnRowKey(date, fn.fnType));
-        const nextItems = itemsSyncIds.reduce((acc, id) => {
+        const fnSyncIds = itemsSyncIdsFor(fnIdx);
+        const nextItems = fnSyncIds.reduce((acc, id) => {
           const qty = req[id] || 0;
           if (qty <= 0) return acc;
           const existingItems = row ? (Array.isArray(row.data?.items) ? row.data.items : []) : [];
@@ -13906,7 +13970,7 @@ export default function StudioApp() {
         }, []);
         if (row) {
           const existingItems = Array.isArray(row.data?.items) ? row.data.items : [];
-          const kept = existingItems.filter((it) => !itemsSyncIds.includes(it.invId));
+          const kept = existingItems.filter((it) => !fnSyncIds.includes(it.invId));
           // venue/shift/pax resync — this row's own venue object used to be written ONCE, whenever
           // the row was first created, and never touched again: editing the venue in Event Info
           // afterward updated event_orders (and the `blocks` table's own event lookups, which read
@@ -13924,11 +13988,11 @@ export default function StudioApp() {
           const identityOk = !row.data?.type || !fn.fnType || row.data.type === fn.fnType;
           if (!identityOk) {
             console.warn(`[reconcile] functions row ${row.id} is "${row.data.type}" but this sync is for "${fn.fnType}" (date ${date}) — leaving its venue/shift/pax untouched this run.`);
-            retryingUpdate("functions", row.id, { data: { ...row.data, items: [...kept, ...nextItems] } }, "id", { report: false })
+            retryingUpdate("functions", row.id, { data: { ...row.data, items: [...kept, ...nextItems], focItems } }, "id", { report: false })
               .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); });
             continue;
           }
-          retryingUpdate("functions", row.id, { data: { ...row.data, items: [...kept, ...nextItems], venue: { ...prevVenueObj, name: fn.fnVenue || "" }, shift: fn.fnShift || row.data?.shift || "", pax: fn.fnPax || row.data?.pax || "" } }, "id", { report: false })
+          retryingUpdate("functions", row.id, { data: { ...row.data, items: [...kept, ...nextItems], focItems, venue: { ...prevVenueObj, name: fn.fnVenue || "" }, shift: fn.fnShift || row.data?.shift || "", pax: fn.fnPax || row.data?.pax || "" } }, "id", { report: false })
             .then(({ error }) => { if (error) console.error("[reconcile] functions.items sync failed for fn", row.id, ":", error.message); else console.info("[reconcile] synced functions.items for fn", row.id, "date", date); });
           continue;
         }
@@ -13945,7 +14009,7 @@ export default function StudioApp() {
         const fnId = `fn_bck_${eo.id}_${date}_${(fn.fnType || "fn").toLowerCase().replace(/[^a-z0-9]+/g, "")}`;
         const fnData = {
           id: fnId, projectId: p.id, name: fn.fnType || "Function", type: fn.fnType || "Function", date,
-          budget: 0, venue: { type: "outdoor", name: fn.fnVenue || "", fullAddress: "" }, items: nextItems, flowerOrders: [],
+          budget: 0, venue: { type: "outdoor", name: fn.fnVenue || "", fullAddress: "" }, items: nextItems, focItems, flowerOrders: [],
           floralRatio: 70, manpower: [], manpowerPhases: [{ phase: "event", date, crew: [], status: "planned" }],
           expenses: [], transport: { planned: [], actual: [] }, breakage: { provision: [], actual: [] },
           status: "Confirmed", adminApproval: null, eventOrderId: eo.id, shift: fn.fnShift || "", pax: fn.fnPax || "",
@@ -13987,8 +14051,9 @@ export default function StudioApp() {
       if (allFnKeys.size) {
         (fnRows || []).forEach((r) => {
           const items = Array.isArray(r?.data?.items) ? r.data.items : [];
-          if (!items.length || allFnKeys.has(fnRowKey(r.date || r.data?.date, r.data?.type || r.name))) return;
-          retryingUpdate("functions", r.id, { data: { ...r.data, items: [] } }, "id", { report: false })
+          const focItemsStale = Array.isArray(r?.data?.focItems) ? r.data.focItems : [];
+          if ((!items.length && !focItemsStale.length) || allFnKeys.has(fnRowKey(r.date || r.data?.date, r.data?.type || r.name))) return;
+          retryingUpdate("functions", r.id, { data: { ...r.data, items: [], focItems: [] } }, "id", { report: false })
             .then(({ error }) => { if (error) console.error("[reconcile] stale functions row clear failed for", r.id, ":", error.message); else console.info("[reconcile] cleared items of stale functions row", r.id, "(no function of the deal is", r.data?.type || r.name, "on", r.date || r.data?.date, "any more)"); });
         });
       }
@@ -14053,7 +14118,7 @@ export default function StudioApp() {
     if (!rowsById) return;   // the blocks fetch above failed — same posture as the old code's own fetch failure.
 
     const plan = planStudioBlocks({
-      eventId: eo.id, rowsById, cardReq, manualReq: {}, processedDates, liveDates,
+      eventId: eo.id, rowsById, cardReq, manualReq: {}, focReq, processedDates, liveDates,
       legacyScopeIds, manualReady: false, freezeCard: false, now: Date.now(),
     });
 

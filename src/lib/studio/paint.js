@@ -40,6 +40,7 @@ export function maxRepaintCostInSubcat(rcSub, imsInventory, fallback) {
 // Not scaled by the guest price level or the date category: paint is charged at its plain rate, as the cost
 // sheet has always shown it.
 export function paintLinesFor(el, { rcSub, inventory, defaultPaintCost } = {}) {
+  if (el?.foc) return []; // left at the venue, not repainted for this event
   if (!(Number(el?.qty) > 0)) return [];
   const inv = Array.isArray(inventory) ? inventory : [];
   const invItem = inv.find(i => i.name === el.name);

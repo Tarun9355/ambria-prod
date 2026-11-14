@@ -149,6 +149,7 @@ export function walkFnElements(fn, dcInventoryCache, cb) {
     (ze[zk] || []).forEach((el) => {
       const qty = el.qty || 0;
       if (qty <= 0) return;
+      if (el.foc) return; // left at the venue — no crew needed to move or install it
       if (el.invId) {
         const invItem = (dcInventoryCache || []).find((i) => i.id === el.invId);
         if (invItem) {
@@ -241,7 +242,7 @@ function peopleTier3Labours(fn, ctx) {
   if (tentingUsage.platform > 0) subCounts["Platform"] = (subCounts["Platform"] || 0) + tentingUsage.platform;
   if (tentingUsage.carpet > 0) subCounts["Carpet"] = (subCounts["Carpet"] || 0) + tentingUsage.carpet;
   const fvCfg = { fixedVenues: ctx.fixedVenues || [], venueParents: ctx.venueParents || {} };
-  const reduction = standingReductionBySubcat(fvCfg, venueName, ctx.cardsForFn, ctx.inventory || []);
+  const reduction = standingReductionBySubcat(fvCfg, venueName, ctx.cardsForFn, ctx.inventory || [], fn.zoneElements);
   let heavyExtra = 0;
   (ctx.heavyElementRanges || []).forEach((her) => {
     const count = Math.max(0, (lookupBySubcat(subCounts, her.subCat) || 0) - (lookupBySubcat(reduction, her.subCat) || 0));

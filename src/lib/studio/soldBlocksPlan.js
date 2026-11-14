@@ -24,6 +24,17 @@
 // the first place). An untagged/ims-autoconfirm entry on a DEAD date (no live function of this deal uses
 // that date at all) is released, same as today's existing "function moved date" cleanup. Any other source
 // ("ims-manual", "amend", anything unrecognised) is never touched, full stop.
+//
+// ── THE ONE EXCEPTION: FOC ──
+// FOC ("free of cost" — an element left at the venue from a previous event, see lib/studio/foc.js) is a
+// second, POSITIVE signal, not a zero-requirement release: the salesperson explicitly said "don't block
+// this item for this event", for this exact (event, date, item). focReq carries that signal the same
+// shape as cardReq ({ [date]: { [itemId]: qty } }). It only matters for an ADOPTABLE entry (untagged
+// legacy, or ims-autoconfirm) — a "card"/"manual" entry already gets released by manage() the ordinary
+// way whenever cardReq's own want for it drops to 0, FOC or not. An adoptable entry is released on FOC
+// only when cardReq has NO positive need for the same (date, item) — a non-FOC need on the same date from
+// a different function still adopts/resizes it as before, since two functions can share one date's
+// physical reservation.
 
 export const SRC_STUDIO_CARD = "studio-incremental";
 export const SRC_STUDIO_MANUAL = "studio-manual";
@@ -91,7 +102,7 @@ export function ownedIds(rowsById, eventId, cls) {
 //   all, but this event still holds Studio-owned ("card") reservations on a date this run processed, do
 //   NOT release them. A genuinely emptied build is rare and should be confirmed by a human, not by a
 //   possibly-transient glitch (a stale card list, a mid-edit autosave) wiping every reservation at once.
-export function planStudioBlocks({ eventId, rowsById, cardReq, manualReq, processedDates, liveDates, legacyScopeIds, manualReady, freezeCard, now }) {
+export function planStudioBlocks({ eventId, rowsById, cardReq, manualReq, focReq, processedDates, liveDates, legacyScopeIds, manualReady, freezeCard, now }) {
   const allIds = new Set(rowsById.keys());
   Object.values(cardReq || {}).forEach((m) => Object.keys(m).forEach((id) => allIds.add(id)));
   if (manualReady) Object.values(manualReq || {}).forEach((m) => Object.keys(m).forEach((id) => allIds.add(id)));
@@ -143,6 +154,8 @@ export function planStudioBlocks({ eventId, rowsById, cardReq, manualReq, proces
       if (freezeCard) { next.push(b); continue; }
       const wantCard = processedDates.has(b.date) && (cardReq[b.date]?.[id] || 0) > 0;
       if (wantCard) { log.adopted.push({ id, date: b.date, qty: b.qty, source: b.source ?? null }); continue; }
+      const wantFoc = processedDates.has(b.date) && (focReq?.[b.date]?.[id] || 0) > 0;
+      if (wantFoc) { log.released.push({ id, date: b.date, qty: b.qty, source: b.source ?? null, reason: "foc" }); continue; }
       if (!liveDates.has(b.date) && legacyScopeIds.has(id)) {
         log.released.push({ id, date: b.date, qty: b.qty, source: b.source ?? null });
         continue;

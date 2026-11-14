@@ -60,6 +60,14 @@ describe("findImmediatePrecedingFn", () => {
   });
 });
 
+describe("computeFnFloralCost — FOC elements are never bought", () => {
+  it("a FOC'd floral element contributes nothing to the breakdown at all", () => {
+    const f1 = fn({ fnIdx: 0, zoneElements: { stage: [{ ...elRose(20), foc: true }] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f1, [f1], baseOpts([pRose]));
+    expect(result.elementBreakdown).toEqual([]);
+  });
+});
+
 describe("computeFnFloralCost — palette-based flower reuse", () => {
   it("0 reuse when the two functions' palettes don't overlap at all", () => {
     const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)] }, enabledEls: { stage: true } });

@@ -74,6 +74,19 @@ export function IconBox({ size = 15 }) {
   );
 }
 
+// Gift box with ribbon — FOC (free of cost): an element left behind, free, with nothing to give.
+export function IconGift({ size = 15 }) {
+  return (
+    <svg {...svg(size)}>
+      <rect x="3.5" y="10" width="17" height="10" rx="1" />
+      <path d="M3.5 10h17v3.5h-17z" />
+      <path d="M12 10v10" />
+      <path d="M12 10c-1.6 0-3-1.2-3-3s1.1-2.3 2-2.1c1.2.3 1 2.3 1 5.1" />
+      <path d="M12 10c1.6 0 3-1.2 3-3s-1.1-2.3-2-2.1c-1.2.3-1 2.3-1 5.1" />
+    </svg>
+  );
+}
+
 // Clipboard with ruled lines — a form/brief still being filled in.
 export function IconClipboard({ size = 15 }) {
   return (

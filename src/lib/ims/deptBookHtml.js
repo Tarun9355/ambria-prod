@@ -85,6 +85,7 @@ export function buildFinish(fnList, inventory, printMaterials) {
     Object.entries(fd.elements || {}).forEach(([zk, els]) => {
       if (!on(zk)) return;
       (Array.isArray(els) ? els : []).forEach(el => {
+        if (el?.foc) return; // left at the venue — nothing gets repainted
         const id = el?.invId || el?.imsId;
         const inv = id ? invMap.get(String(id)) : null;
         const allocs = elPaint(el, inv);
@@ -668,7 +669,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     const DAY = 24 * 60 * 60 * 1000;
     const normV = (v) => String(v || "").trim().toLowerCase();
     const usedIdsOf = (f) => { const ids = new Set(); const en = f?.enabledEls || {};
-      Object.entries(f?.elements || {}).forEach(([zk, list]) => { if (en[zk] === false || !Array.isArray(list)) return; list.forEach(e => { const id = e?.invId || e?.imsId; if (id) ids.add(String(id)); }); });
+      Object.entries(f?.elements || {}).forEach(([zk, list]) => { if (en[zk] === false || !Array.isArray(list)) return; list.forEach(e => { if (e?.foc) return; const id = e?.invId || e?.imsId; if (id) ids.add(String(id)); }); });
       return ids; };
     const reuseSourceOf = (fi) => {
       const f = fns[fi]; const d = Date.parse(f?.date || ""); if (!Number.isFinite(d) || !f?.venue) return null;
@@ -683,6 +684,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     };
     const itemStatusOf = (fn, reuseSrc, zk, el, inv) => { // eslint-disable-line no-unused-vars
       const out = [];
+      // FOC — left at the venue from a previous event, never blocked/trucked/billed for this one.
+      if (el?.foc) out.push("🎁 " + t("FOC – leave at venue, do not pick up"));
       // Only a Repeat set by hand on the item in Build (owner ask 2026-11-03) - not the zone's Elements chip nor the automatic
       // reuse from an earlier function, which marked most of a booking "Repeat" without anyone choosing it.
       if (el?.repeatOverride === true) out.push("♻ " + t("Repeat"));
@@ -1283,6 +1286,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     (fns || []).forEach(fn => Object.entries(fn?.elements || {}).forEach(([zk, list]) => {
       if (fn.enabledEls && fn.enabledEls[zk] === false) return;
       (Array.isArray(list) ? list : []).forEach(el => {
+        if (el?.foc) return; // left at the venue — nothing to find/build in any zone, no qty to carry
         const n = String(el?.name || "").trim().toLowerCase();
         if (!n) return;
         if (!zonesByName.has(n)) zonesByName.set(n, new Set());

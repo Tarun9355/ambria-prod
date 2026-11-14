@@ -37,6 +37,11 @@ describe("paint — what it costs", () => {
     expect(paintLinesFor(el, ctx).map(l => l.total)).toEqual([400, 600]);
     expect(paintTotalFor(el, ctx)).toBe(1000);
   });
+  it("a FOC'd element is never repainted, even with an explicit colour override", () => {
+    const el = { name: "Round Fibre Pot Medium", qty: 4, paintOverride: "Red", foc: true };
+    expect(paintLinesFor(el, ctx)).toEqual([]);
+    expect(paintTotalFor(el, ctx)).toBe(0);
+  });
   it("the item's own base colour decides what counts as a repaint", () => {
     expect(paintTotalFor({ name: "Stand", qty: 2, paintOverride: "Black" }, ctx)).toBe(0);
     expect(paintTotalFor({ name: "Stand", qty: 2, paintOverride: "Ivory" }, ctx)).toBe(700);

@@ -279,6 +279,7 @@ export default function DCManpowerTab({ ctx }) {
                         // used to silently override the element's real Inventory sub-category.
                         const qty = el.qty || 0;
                         if (qty <= 0) return;
+                        if (el.foc) return; // left at the venue — no crew needed (MUST match manpowerCount.js's shared walkFnElements)
                         if (el.invId) {
                           const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
                           if (invItem) {
@@ -465,7 +466,7 @@ export default function DCManpowerTab({ ctx }) {
                     if (_tu.truss > 0) subCounts["Truss"] = (subCounts["Truss"] || 0) + _tu.truss;
                     if (_tu.platform > 0) subCounts["Platform"] = (subCounts["Platform"] || 0) + _tu.platform;
                     if (_tu.carpet > 0) subCounts["Carpet"] = (subCounts["Carpet"] || 0) + _tu.carpet;
-                    const reductionB = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
+                    const reductionB = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || [], fn.zoneElements);
                     const rows = []; let usageSum = 0, heavyFloor = 0;
                     heavyElementRanges.forEach(her => {
                       const per = Number(her.perCount) || 0; if (per <= 0) return;

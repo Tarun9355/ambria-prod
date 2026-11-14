@@ -22,6 +22,7 @@ export function choiceElementsOf(functionsDetail, zoneLabelOf) {
       if (!en[zk] || !Array.isArray(list)) return; // the same rule Build uses: only a zone that is switched on has anything to plan
       const seen = {};
       list.forEach((el, ei) => {
+        if (el?.foc) return; // left at the venue — no design to choose, uses no stock
         const zoneName = typeof zoneLabelOf === "function" ? zoneLabelOf(fn, zk) : zk;
         const prefs = elementChoices(el);
         const qty = Number(el.qty) || 0;
@@ -65,6 +66,7 @@ function useByDateItem(functionsDetail, rows, choice) {
       list.forEach((el, ei) => {
         const qty = Number(el?.qty) || 0;
         if (!(qty > 0) || !el?.invId) return;
+        if (el?.foc) return; // left at the venue — uses no stock
         // a kit's parts that carry choices count by the design decided for them (an undecided part holds nothing yet), like an element of their own
         if (Array.isArray(el?.kitOverrides)) {
           rows.filter((r) => r.fi === fi && r.zk === zk && r.ei === ei && r.part !== undefined).forEach((pr) => {

@@ -179,6 +179,57 @@ describe("planStudioBlocks — freezeCard (empty-build glitch guard)", () => {
   });
 });
 
+describe("planStudioBlocks — FOC (an item left at the venue, never blocked for this event)", () => {
+  const base = { eventId: EO, processedDates: new Set([D]), liveDates: new Set([D]), legacyScopeIds: new Set(["T"]), manualReady: false, freezeCard: false, now: NOW };
+
+  it("a studio-incremental entry whose item is now FOC is released (ordinary zero-requirement release, nothing FOC-specific needed)", () => {
+    const rowsById = new Map([["T", [{ date: D, eventId: EO, qty: 8, status: "confirmed", createdAt: 1, source: SRC_STUDIO_CARD }]]]);
+    const r = planStudioBlocks({ ...base, rowsById, cardReq: {}, manualReq: {}, focReq: { [D]: { T: 8 } } });
+    expect(r.nextById.get("T")).toEqual([]);
+  });
+
+  it("an ims-autoconfirm entry whose item is FOC-only on a processed date is released via the FOC rule", () => {
+    const rowsById = new Map([["T", [{ date: D, eventId: EO, qty: 4, status: "confirmed", createdAt: 1, source: SRC_IMS_AUTOCONFIRM }]]]);
+    const r = planStudioBlocks({ ...base, rowsById, cardReq: {}, manualReq: {}, focReq: { [D]: { T: 4 } } });
+    expect(r.nextById.get("T")).toEqual([]);
+    expect(r.log.released).toEqual([{ id: "T", date: D, qty: 4, source: SRC_IMS_AUTOCONFIRM, reason: "foc" }]);
+  });
+
+  it("an ims-autoconfirm entry with FOC need 50 plus a non-FOC card need 20 on the same date is adopted at 20, not released", () => {
+    const rowsById = new Map([["T", [{ date: D, eventId: EO, qty: 50, status: "confirmed", createdAt: 1, source: SRC_IMS_AUTOCONFIRM }]]]);
+    const r = planStudioBlocks({ ...base, rowsById, cardReq: { [D]: { T: 20 } }, manualReq: {}, focReq: { [D]: { T: 50 } } });
+    expect(r.nextById.get("T")).toEqual([{ date: D, eventId: EO, qty: 20, status: "confirmed", createdAt: NOW, source: SRC_STUDIO_CARD }]);
+  });
+
+  it("an ims-manual entry whose item is FOC is never touched — FOC is not a positive signal for a protected entry", () => {
+    const entry = { date: D, eventId: EO, qty: 3, status: "confirmed", createdAt: 1, source: "ims-manual" };
+    const rowsById = new Map([["T", [entry]]]);
+    const r = planStudioBlocks({ ...base, rowsById, cardReq: {}, manualReq: {}, focReq: { [D]: { T: 3 } } });
+    expect(r.changedIds).toEqual([]);
+  });
+
+  it("a foreign-event entry is never touched by FOC, whatever its source or date", () => {
+    const rowsById = new Map([["T", [{ date: D, eventId: "eo_other", qty: 7, status: "confirmed", createdAt: 1, source: SRC_IMS_AUTOCONFIRM }]]]);
+    const r = planStudioBlocks({ ...base, rowsById, cardReq: {}, manualReq: {}, focReq: { [D]: { T: 7 } } });
+    expect(r.changedIds).toEqual([]);
+  });
+
+  it("FOC on an unprocessed live date leaves the entry untouched (a partial run must not release a sibling function's date)", () => {
+    const otherDate = "2026-12-01";
+    const rowsById = new Map([["T", [{ date: otherDate, eventId: EO, qty: 6, status: "confirmed", createdAt: 1, source: SRC_IMS_AUTOCONFIRM }]]]);
+    const r = planStudioBlocks({ ...base, rowsById, cardReq: {}, manualReq: {}, focReq: { [otherDate]: { T: 6 } }, processedDates: new Set([D]), liveDates: new Set([D, otherDate]) });
+    expect(r.changedIds).toEqual([]);
+  });
+
+  it("function A's FOC need and function B's non-FOC need on the same date/item leave the full non-FOC qty blocked", () => {
+    const rowsById = new Map([["T", [{ date: D, eventId: EO, qty: 50, status: "confirmed", createdAt: 1, source: SRC_IMS_AUTOCONFIRM }]]]);
+    // reqByDateFrom already takes the max across functions sharing a date — cardReq here represents
+    // function B's own 50 non-FOC need having already won that max against function A's 0.
+    const r = planStudioBlocks({ ...base, rowsById, cardReq: { [D]: { T: 50 } }, manualReq: {}, focReq: { [D]: { T: 50 } } });
+    expect(r.nextById.get("T")).toEqual([{ date: D, eventId: EO, qty: 50, status: "confirmed", createdAt: NOW, source: SRC_STUDIO_CARD }]);
+  });
+});
+
 describe("planStudioBlocks — manual items (Phase 2 plumbing, inert until manualReady)", () => {
   const base = { eventId: EO, processedDates: new Set([D]), liveDates: new Set([D]), legacyScopeIds: new Set(["T"]), freezeCard: false, now: NOW };
 

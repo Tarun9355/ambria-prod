@@ -39,7 +39,9 @@ const DC_BG = Object.values(
   import.meta.glob("../../../assets/ambria-dealcheck-bg.{jpg,jpeg,png,webp}", { eager: true, query: "?url", import: "default" })
 )[0] || null;
 // The zone-row action marks, taken from Build so one action does not have two pictures.
-import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron, IconBox, IconRepeat, IconSparkle } from "../../../components/icons.jsx";
+import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron, IconBox, IconRepeat, IconSparkle, IconGift } from "../../../components/icons.jsx";
+import { cardIsFoc } from "../../../lib/studio/foc.js";
+import { todayStr } from "../../../lib/ims/attendance";
 
 // ═══ SURFACES ═══
 // Deal Check sits on a wedding-artwork ground, so a translucent fill reads as a different colour on
@@ -845,6 +847,35 @@ export default function DealCheckOverlay({ ctx }) {
             // one lookup per function, reused for every card's availability check below.
             const fnBlocks = (dealCheckData?.blocksByDate || {})[fn.fnDate || clientDate] || {};
             Object.entries(cards).forEach(([ck, c]) => {
+              // FOC — resolved the same way the per-card chip above does, live off this card's own
+              // zoneKey/idx backlink into fn.zoneElements. Bypasses rental/shortfall/crossFnTake
+              // entirely (adds no rental, never touches the reuse frontier) but still shows up in
+              // deptInv — ops needs to know the item is logically part of this function (so Dept Ops
+              // can label it "leave at venue") even though nothing is billed, trucked or blocked for it.
+              const _cardFoc = cardIsFoc(fn.zoneElements, ck);
+              if (_cardFoc) {
+                // Not gated on c.imsId — a split-fulfilled FOC card (qty spread across several
+                // simple items, c.split) must be caught here too, same as a plain one, or it falls
+                // through to the splitArr branch below and gets billed for real (regression review
+                // 2026-11-14: the original `_cardFoc && c.imsId` condition missed this).
+                const splitForFoc = Array.isArray(c.split) ? c.split.filter(s => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
+                if (splitForFoc.length) {
+                  splitForFoc.forEach(s => {
+                    const focItem = dcInventoryCache.find(x => x.id === s.imsId); if (!focItem) return;
+                    const focQty = Number(s.qty) || 0;
+                    const focDept = catToDept(imsField.category(focItem));
+                    if (deptInv[focDept]) deptInv[focDept].push({ name: focItem.name, photo: imsField.photos(focItem)[0] || "", qty: focQty, rentalQty: focQty, unit: 0, total: 0, sub: imsField.subcategory(focItem) || "", imsId: focItem.id, fnIdx: fi, foc: true });
+                  });
+                } else if (c.imsId) {
+                  const focItem = dcInventoryCache.find(x => x.id === c.imsId);
+                  if (focItem) {
+                    const focQty = c.qty || 1;
+                    const focDept = catToDept(imsField.category(focItem));
+                    if (deptInv[focDept]) deptInv[focDept].push({ name: focItem.name, photo: imsField.photos(focItem)[0] || "", qty: focQty, rentalQty: focQty, unit: 0, total: 0, sub: imsField.subcategory(focItem) || "", imsId: focItem.id, fnIdx: fi, foc: true, ...(Array.isArray(focItem.subItems) && focItem.subItems.length > 0 ? { isKit: true } : {}) });
+                  }
+                }
+                return;
+              }
               // Split fulfilment: the card's qty is spread across several simple items ({imsId,qty}) — each
               // bills + reserves as its own line (repeat discount per its own sub-category). Overrides the single item.
               const splitArr = Array.isArray(c.split) ? c.split.filter(s => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
@@ -1372,8 +1403,12 @@ export default function DealCheckOverlay({ ctx }) {
               // prodOrBuy in the key too — a Production/Buying item can reference the SAME imsId as
               // a genuinely rented item (CustomItemModal now requires a real inventory match), and
               // those are different transactions (make/buy new vs. reserve the stocked one) that
-              // must never blend into one merged line.
-              const key = (it.name || "") + "|" + (it.sub || "") + "|" + (it.imsId || "") + "|" + (it.prodOrBuy || "");
+              // must never blend into one merged line. foc too, for the same reason: a FOC row and an
+              // ordinary row of the same item (a different zone/function) are a different transaction
+              // (nothing billed/blocked vs. a real reservation) — merging them under whichever row
+              // happened to be seen first would wrongly stamp the whole combined qty with one row's
+              // foc value, telling ops to either load billed stock or leave blocked stock at the venue.
+              const key = (it.name || "") + "|" + (it.sub || "") + "|" + (it.imsId || "") + "|" + (it.prodOrBuy || "") + "|" + (it.foc ? "foc" : "");
               // rentalQty: the raw per-function qty this line was actually billed against, summed
               // straight across every function with NO cross-function dedup — unlike `qty` ("to
               // load"), which nets out the same physical units a sibling function already reuses.
@@ -1492,6 +1527,7 @@ export default function DealCheckOverlay({ ctx }) {
                   // doesn't track IMS's live Sub-Categories master.
                   const qty = el.qty || 0;
                   if (qty <= 0) return;
+                  if (el.foc) return; // left at the venue — no crew needed (MUST match manpowerCount.js's shared walkFnElements)
                   if (el.invId) {
                     const invItem = (dcInventoryCache || []).find(i => i.id === el.invId);
                     if (invItem) {
@@ -1618,7 +1654,7 @@ export default function DealCheckOverlay({ ctx }) {
                   if (_tuFn.truss > 0) sc["Truss"] = (sc["Truss"] || 0) + _tuFn.truss;
                   if (_tuFn.platform > 0) sc["Platform"] = (sc["Platform"] || 0) + _tuFn.platform;
                   if (_tuFn.carpet > 0) sc["Carpet"] = (sc["Carpet"] || 0) + _tuFn.carpet;
-                  const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || []);
+                  const reduction = standingReductionBySubcat(fvCfg, venueName, (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || [], fn.zoneElements);
                   // Per-sub-category rows for the heavy-element add-on, same as manpowerPlanForBooking's
                   // heavyRows — the base figure above stays a flat venue-min line (nothing item-level to
                   // break down there), only the add-on is item-driven.
@@ -3153,6 +3189,9 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                         const _crossFnTakePill = (invId, qty) => { if (!_crossFnPoolPill || !invId) return 0; const t = Math.min(qty, _crossFnPoolPill.get(invId) || 0); if (t > 0) _crossFnPoolPill.set(invId, (_crossFnPoolPill.get(invId) || 0) - t); return t; };
                         let zoneRentalTotal = 0;
                         zoneCards.forEach(c => {
+                          // FOC — same cardKey backlink as the main rollup's own FOC branch; adds nothing
+                          // to the zone's rental pill, same reason it adds nothing to the main total.
+                          if (cardIsFoc(fns[fnIdx]?.zoneElements, c._cardKey)) return;
                           const splitArr = Array.isArray(c.split) ? c.split.filter(s => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
                           if (splitArr.length) {
                             const _rep = _zoneIsRepeat(c._cardKey);
@@ -3601,6 +3640,10 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                                   const _rep = typeof _repOverride === "boolean" ? _repOverride : repeatCatFor(fns[fnIdx]?.zoneConfig?.[card.zoneKey], "elements");
                                   const _venue = fns[fnIdx]?.fnVenue;
                                   const _cardQty = Number(card.qty) || 1;
+                                  // Resolved the same way _repOverride is, live off the card's own zoneKey/idx backlink —
+                                  // FOC wins over everything below: short-circuits the whole owned/shortfall/repeat split
+                                  // before it runs, same way StudioApp.jsx's own pricing guards put the FOC check first.
+                                  const _cardFoc = cardIsFoc(fns[fnIdx]?.zoneElements, card._cardKey);
                                   // This card's own total used to price its WHOLE qty at the plain owned
                                   // rate regardless of the ⚠ shortage badge right next to it — the badge
                                   // was purely decorative, never affecting the number shown. Same owned/
@@ -3609,7 +3652,9 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                                   // recurses into its own components (kitShortfallSplit), same as both.
                                   const _isCardKit = item && Array.isArray(item.subItems) && item.subItems.length > 0;
                                   let _lineTotal = 0;
-                                  if (item && _isCardKit) {
+                                  if (_cardFoc) {
+                                    // left at the venue — nothing to add, owned or short
+                                  } else if (item && _isCardKit) {
                                     const _kitCostPctForC = (subcat) => { const key = String(subcat || "").trim().toLowerCase(); const row = (rcSubcatFactors || []).find(r => r?.id === key); const v = row ? Number(row.cost_percent) : undefined; return (typeof v === "number" && isFinite(v) && v >= 0) ? v : 100; };
                                     const _fvCfgC = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
                                     const splitC = kitShortfallSplit(item, _cardQty, card._cardKey, {
@@ -3677,7 +3722,27 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                                               {_rep ? <IconRepeat size={11}/> : <IconSparkle size={11}/>}
                                             </span>
                                           )}
-                                          {item && (()=>{ const cq=Number(card.qty)||1; const _fvCfgPlain4={ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }; const av=combineAvailability(Number(item?.qty ?? item?.qtyOwned) || 0, dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue(_fvCfgPlain4, fns[fnIdx]?.fnVenue, item), dcOverlap(item, fnIdx, fns[fnIdx]?.fnVenue, _fvCfgPlain4)); if (cq<=av) return null; const canMake = canFulfillShortfall(item, fns[fnIdx]?.fnDate); return <span title={canMake?undefined:"Out of stock and can't be made in production"} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>{canMake?`⚠ ${av}`:"⚠ out of stock"}</span>; })()}
+                                          {/* FOC — same cardKey zoneKey/idx backlink as the Repeat chip above, so toggling it
+                                              here works post-sale too (Deal Check is the editing surface once a deal is sold).
+                                              Same write pattern: active function writes zoneElements live, any other function
+                                              writes its fnBuilds snapshot. */}
+                                          {_repParsed?.idx != null && (
+                                            <span onClick={() => {
+                                              const isActiveFn = fnIdx === activeFnIdxCommitted;
+                                              const was = _cardFoc;
+                                              const patch = (el) => was ? (({ foc: _f, focAt: _a, focBy: _b, ...rest }) => rest)(el) : { ...el, foc: true, focAt: todayStr(), focBy: authUser?.name || "" };
+                                              if (isActiveFn) {
+                                                setZoneElements(prev => { const arr = [...(prev[card.zoneKey] || [])]; if (!arr[_repParsed.idx]) return prev; arr[_repParsed.idx] = patch(arr[_repParsed.idx]); return { ...prev, [card.zoneKey]: arr }; });
+                                              } else {
+                                                setFnBuilds(prev => { const snap = prev[fnIdx] || {}; const curZE = snap.zoneElements || {}; const arr = [...(curZE[card.zoneKey] || [])]; if (!arr[_repParsed.idx]) return prev; arr[_repParsed.idx] = patch(arr[_repParsed.idx]); return { ...prev, [fnIdx]: { ...snap, zoneElements: { ...curZE, [card.zoneKey]: arr } } }; });
+                                              }
+                                            }}
+                                              title={_cardFoc ? "FOC — free, not blocked, left at venue. Click to bill it normally again." : "Mark FOC (free of cost) — not billed, no cost/manpower/transport, and NOT blocked: it's already at the venue from an earlier event."}
+                                              style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:20,height:20,borderRadius:6,flexShrink:0,cursor:"pointer",color:_cardFoc?"#7C3AED":IV.ink,background:_cardFoc?"rgba(124,58,237,0.15)":"transparent",border:_cardFoc?"1px solid #7C3AED66":"1px solid transparent",opacity:_cardFoc?1:0.55}}>
+                                              <IconGift size={11}/>
+                                            </span>
+                                          )}
+                                          {item && !_cardFoc && (()=>{ const cq=Number(card.qty)||1; const _fvCfgPlain4={ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }; const av=combineAvailability(Number(item?.qty ?? item?.qtyOwned) || 0, dcAvailable(item, fnBlocksForChip, fnIdx), availableAtVenue(_fvCfgPlain4, fns[fnIdx]?.fnVenue, item), dcOverlap(item, fnIdx, fns[fnIdx]?.fnVenue, _fvCfgPlain4)); if (cq<=av) return null; const canMake = canFulfillShortfall(item, fns[fnIdx]?.fnDate); return <span title={canMake?undefined:"Out of stock and can't be made in production"} style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(239,68,68,0.18)",color:"#EF4444",fontWeight:700,letterSpacing:0.4}}>{canMake?`⚠ ${av}`:"⚠ out of stock"}</span>; })()}
                                           {card.imsId && reuseFnCount[card.imsId]?.size >= 2 && <span style={{fontSize:11,padding:"2px 6px",borderRadius:4,background:"rgba(16,185,129,0.18)",color:"#10B981",fontWeight:700,letterSpacing:0.4}}>♻ {reuseFnCount[card.imsId].size} fns</span>}
                                           <span onClick={()=>setDcCards(prev=>{const fn={...(prev[fnIdx]||{})}; delete fn[card._cardKey]; return {...prev,[fnIdx]:fn};})} title="Remove from Deal Check" style={{marginLeft:"auto",cursor:"pointer",color:"#EF4444",fontSize:15.5,fontWeight:700,padding:"0 4px",lineHeight:1,flexShrink:0,opacity:0.6,transition:"opacity 0.15s"}} onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.6}>×</span>
                                         </div>
@@ -3694,10 +3759,14 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                                           return (
                                             <div style={{fontSize:12,lineHeight:1.5,color:IV.ink2,marginBottom:7}}>
                                               {!sameName && <>→ <span style={{color:IV.ink,fontWeight:700}}>{resolvedName}</span>{" "}</>}
-                                              {/* Green whenever the discounted rate actually differs from list — a quiet
-                                                  "this line got a discount" signal, not just a caption that happens to
-                                                  add up. */}
-                                              <span style={{...NUM,marginLeft:sameName?0:8,color:_effRate<rental?"#10B981":IV.ink,fontWeight:700}}>₹{_effRate.toLocaleString("en-IN")}{card.qty>1?` × ${card.qty} = ₹${_lineTotal.toLocaleString("en-IN")}`:""}</span>
+                                              {_cardFoc ? (
+                                                <span style={{...NUM,marginLeft:sameName?0:8,color:"#7C3AED",fontWeight:700,background:"rgba(124,58,237,0.12)",padding:"1px 7px",borderRadius:5}}>FOC · ₹0</span>
+                                              ) : (
+                                                // Green whenever the discounted rate actually differs from list — a quiet
+                                                // "this line got a discount" signal, not just a caption that happens to
+                                                // add up.
+                                                <span style={{...NUM,marginLeft:sameName?0:8,color:_effRate<rental?"#10B981":IV.ink,fontWeight:700}}>₹{_effRate.toLocaleString("en-IN")}{card.qty>1?` × ${card.qty} = ₹${_lineTotal.toLocaleString("en-IN")}`:""}</span>
+                                              )}
                                               {dims && <span style={{marginLeft:8,color:IV.ink3}}>· {dims}</span>}
                                             </div>
                                           );

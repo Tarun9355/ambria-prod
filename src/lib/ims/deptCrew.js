@@ -81,6 +81,7 @@ export const flowerTraceForFn = (fn, { inventory, invByIdMp, flowerPatterns }) =
   const en = fn?.enabledEls || {}, ze = fn?.elements || {};
   Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk] || []).forEach(el => {
     const qty = el?.qty || 0; if (qty <= 0) return;
+    if (el.foc) return; // left at the venue — no crew needed
     const inv = el.invId ? invByIdMp.get(el.invId) : null;
     if (inv) {
       if (Array.isArray(inv.subItems) && inv.subItems.length > 0) walkKitUnits(inv, qty, inventory || [], el.kitOverrides, (node, nodeQty) => add({ name: node.name, cat: node.cat || node.category || "", sub: node.subCat || node.subcategory || "" }, el, nodeQty));

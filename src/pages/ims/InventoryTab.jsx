@@ -1628,6 +1628,40 @@ Rules:
                 });
             })()}
           </div>
+          {(() => {
+            // FOC — functions.data.focItems, a separate key Studio fully owns (see
+            // reconcileSoldInventoryBlocks' focByFn split): an item logically part of a function
+            // but never blocking, trucked or billed, because it's already sitting at this venue
+            // from an earlier event. Shown as its own sub-block, never folded into "Blocked for
+            // Functions" above — that heading means blocking, and an FOC row isn't.
+            const focFns = functions
+              .filter((f) => {
+                if (!f.focItems?.some((it) => it.invId === selItem.id)) return false;
+                if (availDate && !selAllDates && f.date !== availDate) return false;
+                return !fnCancelled(f);
+              })
+              .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+            if (!focFns.length) return null;
+            return (
+              <div className="mt-1">
+                <h4 className="font-semibold text-gray-700 text-sm mb-2">Left at venue — FOC, not blocked:</h4>
+                {focFns.map((f) => {
+                  const it = f.focItems.find((it) => it.invId === selItem.id);
+                  const eo = f.eventOrderId ? eventOrders.find((e) => e.id === f.eventOrderId) : null;
+                  const guestName = eo?.clientName || f.brideGroom || f.clientName || "";
+                  const venueRaw = eo?.venue ?? f.venue;
+                  const venueName = typeof venueRaw === "string" ? venueRaw : (venueRaw?.name || "");
+                  return <div key={f.id} className="flex items-center gap-3 py-2 border-b text-sm flex-wrap">
+                    <span className="font-medium">{f.name}</span><span className="text-gray-500">{f.date}</span>
+                    {guestName && <span className="text-gray-700">{guestName}</span>}
+                    {venueName && <span className="text-gray-500 text-xs">{venueName}</span>}
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 ring-1 ring-violet-200">🎁 FOC – leave at venue, do not pick up</span>
+                    <span className="ml-auto font-medium">×{it.qty}</span>
+                  </div>;
+                })}
+              </div>
+            );
+          })()}
           <div className="flex justify-end pt-3 border-t">
             <button onClick={() => openEdit(selItem.id)}
               className="text-xs bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 rounded-lg font-medium">
