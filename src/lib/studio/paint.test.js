@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintTotalFor } from "./paint.js";
+import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintTotalFor, paintColoursOf, joinPaintColours, paintCoatsOf } from "./paint.js";
 
 // Test 2, Entry & Passage: Round Fibre Pot Medium ×4, Ivory → Red at ₹200 a unit = ₹800. That ₹800 sat on the
 // cost sheet but not in the totals; both now read the same helper.
@@ -29,7 +29,7 @@ describe("paint — which units are repainted", () => {
 describe("paint — what it costs", () => {
   it("the Test 2 pot: 4 × ₹200 = ₹800", () => {
     const el = { name: "Round Fibre Pot Medium", qty: 4, paintOverride: "Red" };
-    expect(paintLinesFor(el, ctx)).toEqual([{ colour: "Red", baseColour: "Ivory", qty: 4, rate: 200, total: 800 }]);
+    expect(paintLinesFor(el, ctx)).toEqual([{ colour: "Red", baseColour: "Ivory", qty: 4, coats: 1, rate: 200, total: 800 }]);
     expect(paintTotalFor(el, ctx)).toBe(800);
   });
   it("two colours: one line each, the total is their sum", () => {
@@ -50,5 +50,23 @@ describe("paint — what it costs", () => {
   it("an element that is not painted costs nothing", () => {
     expect(paintTotalFor({ name: "Round Fibre Pot Medium", qty: 4 }, ctx)).toBe(0);
     expect(paintTotalFor({ name: "Round Fibre Pot Medium", qty: 4 }, { inventory: [] })).toBe(0);
+  });
+});
+
+describe("paint — one piece in more than one colour (owner ask 2026-11-14)", () => {
+  it("a combination is its colours joined with ' + ', no repeats", () => {
+    expect(joinPaintColours(["Gold", "Maroon", "Gold"])).toBe("Gold + Maroon");
+    expect(paintColoursOf("Gold + Maroon")).toEqual(["Gold", "Maroon"]);
+    expect(paintColoursOf("Red")).toEqual(["Red"]);
+  });
+  it("each colour on a piece is charged; the base colour in a combination is not", () => {
+    expect(paintCoatsOf("Gold + Maroon", "Ivory")).toBe(2);
+    expect(paintCoatsOf("Ivory + Gold", "Ivory")).toBe(1);
+    const el = { name: "Round Fibre Pot Medium", qty: 1, paintAllocation: [{ qty: 1, colour: "Gold + Maroon" }] };
+    expect(paintLinesFor(el, ctx)).toEqual([{ colour: "Gold + Maroon", baseColour: "Ivory", qty: 1, coats: 2, rate: 200, total: 400 }]);
+  });
+  it("an Inventory element with no paint cost of its own takes its own sub-category's highest", () => {
+    const inv = [...inventory, { id: "j", name: "J Arch", subCat: "pot", paintCost: 0 }];
+    expect(paintTotalFor({ invId: "j", name: "J Arch", qty: 1, paintOverride: "Red" }, { inventory: inv, defaultPaintCost: 400 })).toBe(350);
   });
 });

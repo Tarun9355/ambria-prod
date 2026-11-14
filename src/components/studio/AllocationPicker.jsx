@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { paintColoursOf, joinPaintColours, paintCoatsOf } from "../../lib/studio/paint.js";
 
 // AllocationPicker — replaces ColourPicker for paintable elements.
 // User allocates units of an element across colours. Base colour = "no override" (the unallocated remainder).
@@ -13,6 +14,9 @@ export default function AllocationPicker({ open, onClose, elName, totalQty, base
   // so that effect re-ran on every single render while the modal was open and clobbered whatever
   // colour the user had just clicked back to the last-saved allocation a moment later.
   const [draft, setDraft] = useState(() => (Array.isArray(initialAllocation) ? initialAllocation.map(a => ({...a})) : []));
+  // Multi-colour pieces (owner ask 2026-11-14): the row whose pieces get one more colour from the next swatch click —
+  // null = a swatch click starts a new row, as before. Each colour on a piece is charged (paintCoatsOf).
+  const [addTo, setAddTo] = useState(null);
   if (!open) return null;
   const catalogue = Array.isArray(colourCatalogue) ? colourCatalogue : [];
   const palettes = Array.isArray(paletteCatalogue) ? paletteCatalogue : [];
@@ -23,6 +27,19 @@ export default function AllocationPicker({ open, onClose, elName, totalQty, base
   const remaining = totalQty - allocated;
   const canSave = remaining >= 0;
   const addColour = (cname) => {
+    if (addTo !== null) {
+      setDraft(prev => {
+        const row = prev[addTo];
+        if (!row) return prev;
+        const colour = joinPaintColours([...paintColoursOf(row.colour), cname]);
+        // the same combination already has a row of its own: one row for it, its pieces added together
+        const twin = prev.findIndex((a, i) => i !== addTo && a.colour === colour);
+        if (twin >= 0) return prev.map((a, i) => i === twin ? { ...a, qty: (Number(a.qty)||0) + (Number(row.qty)||0) } : a).filter((_, i) => i !== addTo);
+        return prev.map((a, i) => i === addTo ? { ...a, colour } : a);
+      });
+      setAddTo(null);
+      return;
+    }
     if (draft.some(a => a.colour === cname)) return; // already added
     if (remaining <= 0) return; // no qty left
     // Owner ask: picking a colour moves the WHOLE remaining base-colour qty to it, not just 1 —
@@ -44,9 +61,15 @@ export default function AllocationPicker({ open, onClose, elName, totalQty, base
   };
   const removeAlloc = (idx) => {
     setDraft(prev => prev.filter((_, i) => i !== idx));
+    setAddTo(null);
+  };
+  // Take one colour off a multi-colour row (the row stays, with the colours left).
+  const removeColourFrom = (idx, cname) => {
+    setDraft(prev => prev.map((a, i) => i === idx ? { ...a, colour: joinPaintColours(paintColoursOf(a.colour).filter(c => c !== cname)) } : a));
   };
   const groupedColours = (() => {
-    const used = new Set(draft.map(d => d.colour));
+    // adding to a row: hide the colours that row already has; a new row: hide the colours that are a row already
+    const used = new Set(addTo !== null && draft[addTo] ? paintColoursOf(draft[addTo].colour) : draft.map(d => d.colour));
     const available = catalogue.filter(c => !used.has(c.name));
     return {
       anchors: available.filter(c => anchorSet.has(c.name)),
@@ -57,6 +80,7 @@ export default function AllocationPicker({ open, onClose, elName, totalQty, base
   // The Colour Catalogue's own reference photo (IMS Admin → Library → Palettes), when one is
   // uploaded — what the colour actually looks like on fabric/flowers, a closer match than a flat
   // hex square for a paint colour someone is choosing against a real finished piece.
+  const swatchOff = remaining <= 0 && addTo === null;
   const Swatch = ({c, disabled}) => (
     <button onClick={() => !disabled && addColour(c.name)} disabled={disabled} title={c.name}
       style={{display:"flex",alignItems:"center",gap:5,padding:"5px 9px",borderRadius:6,border:"1px solid #e5e7eb",background:disabled?"#f3f4f6":"#fff",cursor:disabled?"not-allowed":"pointer",fontSize:11,opacity:disabled?0.4:1}}>
@@ -92,20 +116,38 @@ export default function AllocationPicker({ open, onClose, elName, totalQty, base
             <span style={{fontSize:10,color:"#999",minWidth:50,textAlign:"right"}}>no charge</span>
           </div>
           {draft.map((a, idx) => {
-            const cObj = catalogue.find(c => c.name === a.colour);
+            const parts = paintColoursOf(a.colour);
+            const coats = paintCoatsOf(a.colour, baseColour);
+            const picking = addTo === idx;
             return (
-              <div key={a.colour} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,background:"#FDF2F8",border:"1px solid #F9A8D4",marginBottom:6}}>
-                {cObj?.refImages?.[0]
-                  ? <img src={cObj.refImages[0]} alt="" style={{width:16,height:16,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",objectFit:"cover",flexShrink:0}} />
-                  : <span style={{width:16,height:16,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",background:cObj?.hex||"#ccc",flexShrink:0}} />}
-                <span style={{flex:1,fontSize:12,fontWeight:600,color:"#9D174D"}}>{a.colour}</span>
+              <div key={`${idx}-${a.colour}`} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,background:"#FDF2F8",border:picking?"2px solid #EC4899":"1px solid #F9A8D4",marginBottom:6}}>
+                <span style={{flex:1,display:"flex",flexWrap:"wrap",alignItems:"center",gap:4,minWidth:0}}>
+                  {parts.map((pc, pi) => {
+                    const cObj = catalogue.find(c => c.name === pc);
+                    return (
+                      <span key={pc} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,color:"#9D174D"}}>
+                        {pi > 0 && <span style={{color:"#BE185D",fontWeight:700}}>+</span>}
+                        {cObj?.refImages?.[0]
+                          ? <img src={cObj.refImages[0]} alt="" style={{width:16,height:16,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",objectFit:"cover",flexShrink:0}} />
+                          : <span style={{width:16,height:16,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",background:cObj?.hex||"#ccc",flexShrink:0}} />}
+                        {pc}
+                        {parts.length > 1 && <button onClick={() => removeColourFrom(idx, pc)} title={`Take ${pc} off these pieces`}
+                          style={{background:"none",border:"none",color:"#EC4899",cursor:"pointer",fontSize:12,padding:0,lineHeight:1}}>×</button>}
+                      </span>
+                    );
+                  })}
+                  <button onClick={() => setAddTo(picking ? null : idx)} title="Paint these same pieces in one more colour (each colour is charged)"
+                    style={{padding:"1px 7px",borderRadius:5,border:"1px dashed #F472B6",background:picking?"#FCE7F3":"#fff",fontSize:10.5,fontWeight:700,color:"#BE185D",cursor:"pointer"}}>
+                    {picking ? "Pick below…" : "+ colour"}
+                  </button>
+                </span>
                 <button onClick={()=>updateQty(idx, a.qty - 1)} disabled={a.qty <= 0}
                   style={{width:22,height:22,borderRadius:5,border:"1px solid #F9A8D4",background:a.qty<=0?"#f3f4f6":"#fff",fontSize:13,fontWeight:700,color:"#9D174D",cursor:a.qty<=0?"not-allowed":"pointer",opacity:a.qty<=0?0.4:1}}>−</button>
                 <input type="number" min="0" max={a.qty + remaining} value={a.qty} onChange={e => updateQty(idx, e.target.value)}
                   style={{width:42,padding:"3px 4px",borderRadius:5,border:"1px solid #F9A8D4",fontSize:12,fontWeight:700,textAlign:"center",color:"#9D174D"}} />
                 <button onClick={()=>updateQty(idx, a.qty + 1)} disabled={remaining <= 0}
                   style={{width:22,height:22,borderRadius:5,border:"1px solid #F9A8D4",background:remaining<=0?"#f3f4f6":"#fff",fontSize:13,fontWeight:700,color:"#9D174D",cursor:remaining<=0?"not-allowed":"pointer",opacity:remaining<=0?0.4:1}}>+</button>
-                <span style={{fontSize:10,color:"#666",minWidth:50,textAlign:"right"}}>+₹{(paintCost*a.qty).toLocaleString("en-IN")}</span>
+                <span style={{fontSize:10,color:"#666",minWidth:50,textAlign:"right"}} title={coats > 1 ? `${coats} colours × ₹${Number(paintCost||0).toLocaleString("en-IN")} per piece` : undefined}>+₹{(paintCost*a.qty*coats).toLocaleString("en-IN")}</span>
                 <button onClick={()=>removeAlloc(idx)} style={{background:"none",border:"none",color:"#EC4899",cursor:"pointer",fontSize:14,marginLeft:2}}>×</button>
               </div>
             );
@@ -122,12 +164,17 @@ export default function AllocationPicker({ open, onClose, elName, totalQty, base
         {/* Picker — group by palette/compatible/other */}
         {(groupedColours.anchors.length + groupedColours.neutrals.length + groupedColours.other.length) > 0 && (
           <div style={{marginBottom:14}}>
-            <div style={{fontSize:10,fontWeight:700,color:"#666",letterSpacing:0.5,textTransform:"uppercase",marginBottom:6}}>+ Add Colour to Allocation</div>
+            {addTo !== null && draft[addTo]
+              ? <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"6px 10px",borderRadius:7,background:"#FCE7F3",marginBottom:8,fontSize:11,fontWeight:600,color:"#9D174D"}}>
+                  <span>Pick one more colour for the {draft[addTo].qty} piece{draft[addTo].qty === 1 ? "" : "s"} in {draft[addTo].colour}</span>
+                  <button onClick={() => setAddTo(null)} style={{background:"none",border:"none",color:"#9D174D",cursor:"pointer",fontSize:11,fontWeight:700,textDecoration:"underline"}}>Cancel</button>
+                </div>
+              : <div style={{fontSize:10,fontWeight:700,color:"#666",letterSpacing:0.5,textTransform:"uppercase",marginBottom:6}}>+ Add Colour to Allocation{draft.length > 0 && <span style={{textTransform:"none",letterSpacing:0,fontWeight:500,color:"#999"}}> · more than one colour on a piece? use + colour on its row</span>}</div>}
             {groupedColours.anchors.length > 0 && (
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:9,color:"#999",marginBottom:4}}>⭐ Matches Palette</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                  {groupedColours.anchors.map(c => <Swatch key={c.name} c={c} disabled={remaining<=0} />)}
+                  {groupedColours.anchors.map(c => <Swatch key={c.name} c={c} disabled={swatchOff} />)}
                 </div>
               </div>
             )}
@@ -135,7 +182,7 @@ export default function AllocationPicker({ open, onClose, elName, totalQty, base
               <div style={{marginBottom:8}}>
                 <div style={{fontSize:9,color:"#999",marginBottom:4}}>Compatible (neutrals)</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                  {groupedColours.neutrals.map(c => <Swatch key={c.name} c={c} disabled={remaining<=0} />)}
+                  {groupedColours.neutrals.map(c => <Swatch key={c.name} c={c} disabled={swatchOff} />)}
                 </div>
               </div>
             )}
@@ -143,7 +190,7 @@ export default function AllocationPicker({ open, onClose, elName, totalQty, base
               <div>
                 <div style={{fontSize:9,color:"#999",marginBottom:4}}>Other Colours</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                  {groupedColours.other.map(c => <Swatch key={c.name} c={c} disabled={remaining<=0} />)}
+                  {groupedColours.other.map(c => <Swatch key={c.name} c={c} disabled={swatchOff} />)}
                 </div>
               </div>
             )}

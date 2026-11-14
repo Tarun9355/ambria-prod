@@ -19,6 +19,18 @@ export function normalizePaintAllocation(el, baseColour) {
   return [];
 }
 
+// A multi-colour piece (owner ask 2026-11-14 — e.g. one J Arch in Gold and Maroon) is one allocation row whose colour
+// joins its colours with " + " ("Gold + Maroon"), so every place that prints a colour name shows it as it is.
+export const PAINT_SEP = " + ";
+export const paintColoursOf = (colour) => String(colour || "").split("+").map(s => s.trim()).filter(Boolean);
+export const joinPaintColours = (colours) => [...new Set((colours || []).map(c => String(c || "").trim()).filter(Boolean))].join(PAINT_SEP);
+// Colours actually painted on each piece of a row: every colour but the item's base colour (it is already that
+// colour), at least 1. Each colour is charged — 2 colours = 2 × the paint cost per piece.
+export const paintCoatsOf = (colour, baseColour) => {
+  const cs = paintColoursOf(colour);
+  return Math.max(1, cs.filter(c => c !== (baseColour || "Ivory")).length);
+};
+
 // The highest repaint cost among the items of a sub-category — the rate used when the element's own item
 // carries none. `fallback` when the sub-category has no paint cost at all.
 export function maxRepaintCostInSubcat(rcSub, imsInventory, fallback) {
@@ -35,18 +47,22 @@ export function maxRepaintCostInSubcat(rcSub, imsInventory, fallback) {
   return mx > 0 ? mx : fallback;
 }
 
-// The paint lines for one element: one per colour it is repainted in — { colour, baseColour, qty, rate, total }.
-// rate = the item's own paint cost, else the sub-category's highest, else the IMS default (400).
+// The paint lines for one element: one per colour it is repainted in — { colour, baseColour, qty, coats, rate, total }.
+// rate = the item's own paint cost, else the sub-category's highest, else the IMS default (400); a multi-colour
+// row is charged once per painted colour (coats).
 // Not scaled by the guest price level or the date category: paint is charged at its plain rate, as the cost
 // sheet has always shown it.
 export function paintLinesFor(el, { rcSub, inventory, defaultPaintCost } = {}) {
   if (!(Number(el?.qty) > 0)) return [];
   const inv = Array.isArray(inventory) ? inventory : [];
-  const invItem = inv.find(i => i.name === el.name);
+  const invItem = (el.invId != null && inv.find(i => String(i.id) === String(el.invId))) || inv.find(i => i.name === el.name);
   const baseColour = invItem?.baseColour || "Ivory";
-  const rate = invItem?.paintCost ? invItem.paintCost : maxRepaintCostInSubcat(rcSub, inv, defaultPaintCost ?? 400);
+  // An element added from Inventory has no rate-card row (rcSub empty) — its own Inventory sub-category is the one
+  // to take the highest from, the same fallback Build's paint pill uses; it used to drop straight to the default.
+  const sub = rcSub || invItem?.subCat || invItem?.subcategory || "";
+  const rate = Number(invItem?.paintCost) > 0 ? Number(invItem.paintCost) : maxRepaintCostInSubcat(sub, inv, defaultPaintCost ?? 400);
   return normalizePaintAllocation(el, baseColour)
-    .map(a => ({ colour: a.colour, baseColour, qty: a.qty, rate, total: rate * a.qty }))
+    .map(a => { const coats = paintCoatsOf(a.colour, baseColour); return { colour: a.colour, baseColour, qty: a.qty, coats, rate, total: rate * a.qty * coats }; })
     .filter(l => l.total > 0);
 }
 

@@ -24,6 +24,7 @@ import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { AVAIL_THUMB } from "../../lib/studio/prefetchImages.js";
 import { reuseAwareAvail } from "../../lib/studio/carpetReuse.js";
 import { SkRows } from "../../components/studio/Skeleton.jsx";
+import { maxRepaintCostInSubcat } from "../../lib/studio/paint.js";
 
 // Short codes for the availability picker's per-venue idle-slack breakdown — substring match
 // (case-insensitive) rather than an exact one, so "Ambria Restro"/"Restro"/a future venue-group
@@ -1398,7 +1399,10 @@ export default function StudioModals({ ctx }) {
           ? (imsInventory || []).find(i => i.id === el.invId)
           : (imsInventory || []).find(i => i.name === el.name);
         const baseColour = invItem?.baseColour || "Ivory";
-        const paintCost = invItem?.paintCost ?? imsDefaultPaintCost;
+        // Same rate the bill charges (lib/studio/paint.js paintLinesFor): the item's own paint cost, else the highest
+        // in its sub-category, else the IMS default — `paintCost ?? default` showed +₹0 for an item with a 0 cost.
+        const paintCost = Number(invItem?.paintCost) > 0 ? Number(invItem.paintCost)
+          : maxRepaintCostInSubcat(invItem?.subCat || invItem?.subcategory || "", imsInventory || [], imsDefaultPaintCost ?? 400);
         // Pick active function's palette
         const activePalette = activeFnIdx === 0 ? clientPalette : (extraFunctions[activeFnIdx - 1]?.palette || "Custom");
         // Initial allocation from current state (normalized from legacy paintOverride if needed)

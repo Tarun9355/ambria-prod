@@ -165,7 +165,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // A unit after a quantity ("1.5 bundle") in the book's language - lib/ims/pdfI18n's fixed list, a unit not in it as given.
     const hu = (u) => pdfUnit(lang, u);
     // A paint line ("Gold ×2, Silver ×1") with each colour through hn().
-    const paintHn = (txt) => lang !== "hi" ? txt : String(txt || "").split(", ").map(part => part.replace(/^(.*) ×(\S+)$/, (m, c, q) => `${hn(c)} ×${q}`)).join(", ");
+    const paintHn = (txt) => lang !== "hi" ? txt : String(txt || "").split(", ").map(part => part.replace(/^(.*) ×(\S+)$/, (m, c, q) => `${String(c).split(" + ").map(hn).join(" + ")} ×${q}`)).join(", ");
     const bookTitle = combined ? t("All departments") : bookDepts.map(d => t(d)).join(" & ");
     // A flower piece's real / artificial split in numbers, the share that is 0 left out (owner ask 2026-11-11): "Real 100%",
     // "Artificial 100%", else both - "Artificial 70% · Real 30%". `real` is the real share, 0-100.

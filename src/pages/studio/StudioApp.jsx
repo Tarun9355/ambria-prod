@@ -12409,7 +12409,8 @@ export default function StudioApp() {
               size: "",
               qty: pl.qty,
               unit: "item",
-              rate: pl.rate,
+              // a multi-colour piece is charged per colour, so the rate shown is per piece (rate × colours) and qty × rate = total
+              rate: pl.rate * (pl.coats || 1),
               total: pl.total,
               isPaint: true
             });
