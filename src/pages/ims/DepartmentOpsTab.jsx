@@ -831,6 +831,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const eventDate = (eo) => eo?.functionsDetail?.[0]?.date || eo?.date || eo?.eventDate || "";
   // The event's venue with its property — "Valencia › Poolside", not a bare "Poolside".
   const venueOf = (eo) => venueWithParent(settings, eo?.functionsDetail?.[0]?.venue || eo?.venue || "");
+  // This event's OWN function that falls on `date` — for anywhere a specific calendar day is already
+  // known (the date picker below), so a multi-venue deal (Haldi at one venue, Reception at another,
+  // different dates) shows THAT day's own venue/shift, not always functionsDetail[0]'s (owner report
+  // 2026-11-14: a Night function at "Emerald Green" read as "Aura" — Function 1's venue — under its
+  // own date in this picker, because every row here used to read functionsDetail[0] unconditionally
+  // regardless of which day was actually being shown). Falls back to functionsDetail[0] only when no
+  // function actually matches `date` (shouldn't happen — pickByDate only ever buckets an event under
+  // its own functions' real dates — but never renders nothing for a date that got it into the list).
+  const fnForDate = (eo, date) => {
+    const fns = Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : [];
+    return fns.find((f) => String(f?.date || "").slice(0, 10) === date) || fns[0] || null;
+  };
   const today = new Date().toISOString().slice(0, 10);
   // A "live" event for ops = confirmed/finalised. Excludes pending (not yet auto-confirmed), cancelled,
   // and review — so cancelled/dead deals never clutter the list or the transfer pickers.
@@ -845,7 +857,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     return allEvents
       // Ops plans only for SOLD/finalised events — hide pending, cancelled and review deals.
       .filter(({ eo }) => isLiveEvent(eo))
-      .filter(({ eo }) => !q || (eo.clientName || "").toLowerCase().includes(q) || (eo.functionsDetail?.[0]?.venue || eo.venue || "").toLowerCase().includes(q))
+      // Every function's own venue, not just functionsDetail[0]'s — a multi-venue deal must be
+      // findable by searching ANY of its venues, not only its first function's.
+      .filter(({ eo }) => !q || (eo.clientName || "").toLowerCase().includes(q)
+        || [eo.venue, ...(Array.isArray(eo.functionsDetail) ? eo.functionsDetail.map((f) => f?.venue) : [])].some((v) => (v || "").toLowerCase().includes(q)))
       .sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999"));
   }, [allEvents, search]);
 
@@ -3806,7 +3821,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                           </div>
                           <div className="space-y-2.5">
                             {dayEvs.map(eo => {
-                              const vc = venueCalendarColor(settings, eo.functionsDetail?.[0]?.venue || eo.venue || "");
+                              // THIS day's own function — a multi-venue deal (different venue per
+                              // function) must show that function's own venue/shift here, not always
+                              // functionsDetail[0]'s (owner report 2026-11-14 — see fnForDate's comment).
+                              const dayFn = fnForDate(eo, pickDay);
+                              const vc = venueCalendarColor(settings, dayFn?.venue || eo.venue || "");
                               return (
                                 <button key={eo.id} onClick={() => setSelId(eo.id)}
                                   className="w-full text-left rounded-xl bg-gray-50 ring-1 ring-gray-100 hover:bg-blue-50 hover:ring-blue-100 active:bg-blue-100 px-4 py-3.5 flex items-center gap-3.5 cursor-pointer transition-colors">
@@ -3819,8 +3838,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                     {/* Venue and shift, because that is what an event_order actually
                                         carries — there are no start/end times on one to show. */}
                                     <span className="mt-0.5 block text-xs text-gray-500 truncate">
-                                      {venueOf(eo) || "—"}
-                                      {eo.functionsDetail?.[0]?.shift ? ` · ${eo.functionsDetail[0].shift}` : ""}
+                                      {venueWithParent(settings, dayFn?.venue || eo.venue || "") || "—"}
+                                      {dayFn?.shift ? ` · ${dayFn.shift}` : ""}
                                     </span>
                                     {/* Own line, not tacked onto venue/shift above — that span already
                                         truncates, and venue+shift alone was often long enough to push
@@ -3862,7 +3881,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                               // Same color legend as the separate Ambria Calendar app: one of
                               // Ambria's own venues gets that venue's color, a client's own outdoor
                               // venue gets "ADD"'s color (lib/ims/fixedVenues.js's venueCalendarColor).
-                              const vc = venueCalendarColor(settings, eo.functionsDetail?.[0]?.venue || eo.venue || "");
+                              // THIS cell's own date's function — see fnForDate's comment.
+                              const vc = venueCalendarColor(settings, fnForDate(eo, ds)?.venue || eo.venue || "");
                               return (
                                 <button key={eo.id} onClick={() => setSelId(eo.id)} title={`Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
                                   className={`w-full flex items-center gap-1 text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
