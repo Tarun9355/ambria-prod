@@ -496,15 +496,21 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         see calcZoneFabric's fabLiza / fabCurtain. */}
                     <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
                       <span style={rowCap}>Fabric</span>
-                      {!zc.noFabric&&[["fabLiza","fabLizaRep","🧣","Liza"],["fabCurtain","fabCurtainRep","🎀","Velvet curtains"]].map(([key,repKey,ic,lbl])=>{const on=zc[key]!==false;const rep=on&&fabricPartRepeatOn(zc,repKey,fabricChipRepeat);return(
-                        <div key={key} className="relative inline-flex">
-                          <span onClick={()=>setFabMenu(fabMenu===key?null:key)} title={`${lbl}: ${on?"on":"off"}${rep?" · repeat":""} — click for options`}
+                      {!zc.noFabric&&[["fabLiza","fabLizaRep","🧣","Liza","lizaColour","lizaStock"],["fabCurtain","fabCurtainRep","🎀","Velvet curtains","curtainColour","curtainStock"]].map(([key,repKey,ic,lbl,colKey,stockKey])=>{const on=zc[key]!==false;const rep=on&&fabricPartRepeatOn(zc,repKey,fabricChipRepeat);
+                        // The colour this part goes in (owner ask 2026-11-14), like masking's 🎨 Colour: one colour from IMS's own stock of
+                        // that fabric. Unset = the Fabric Palette decides, as before (fabricAnchorsForRow).
+                        const colour=on?String(zc[colKey]||"").trim():"";
+                        const colourOpts=[...new Set(((fabricInv?.[stockKey])||[]).map(x=>String(x?.colour||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+                        return(
+                        <div key={key} className="relative inline-flex items-center gap-1">
+                          <span onClick={()=>setFabMenu(fabMenu===key?null:key)} title={`${lbl}: ${on?"on":"off"}${colour?` · ${colour}`:""}${rep?" · repeat":""} — click for options`}
                             style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:6,cursor:"pointer",fontSize:12,
                               border:`1px solid ${on?accent:border}`,background:on?`${accent}18`:"transparent",opacity:on?1:0.4,filter:on?"none":"grayscale(1)"}}>{ic}</span>
-                          {rep&&<span className="absolute -top-1.5 -right-1.5 text-[10px] leading-none text-emerald-600 pointer-events-none">♻</span>}
+                          {rep&&<span className="absolute -top-1.5 left-4 text-[10px] leading-none text-emerald-600 pointer-events-none">♻</span>}
+                          {colour&&<span style={{fontSize:10,fontWeight:600,color:accent,whiteSpace:"nowrap"}}>{colour}</span>}
                           {fabMenu===key&&<>
                             <div className="fixed inset-0 z-40" onClick={()=>setFabMenu(null)} />
-                            <div className={`absolute left-0 top-7 z-50 w-32 rounded-lg border shadow-lg p-1 flex flex-col ${isDark?"bg-gray-800 border-gray-600 text-gray-100":"bg-white border-gray-200 text-gray-800"}`}>
+                            <div className={`absolute left-0 top-7 z-50 w-44 rounded-lg border shadow-lg p-1 flex flex-col ${isDark?"bg-gray-800 border-gray-600 text-gray-100":"bg-white border-gray-200 text-gray-800"}`}>
                               <button type="button" className="text-left text-[12px] px-2 py-1.5 rounded hover:bg-black/5" onClick={()=>{sZ({[key]:on?false:undefined,...(on?{[repKey]:undefined}:{})});setFabMenu(null);}}>
                                 {on?"✓ Selected":"Select"}
                               </button>
@@ -512,6 +518,14 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                                 title={guestFabricDiscPct>0?`${lbl} is reused — ${guestFabricDiscPct}% off its price`:"Repeat is marked; the discount shows once the client discount toggle is on"}>
                                 {rep?"♻ Repeat on":"♻ Repeat"}
                               </button>
+                              {colourOpts.length>0&&<label className={`flex flex-col gap-1 text-[11px] px-2 pt-1.5 pb-1 border-t mt-1 ${isDark?"border-gray-600":"border-gray-100"} ${on?"":"opacity-40"}`}>
+                                <span>🎨 Colour</span>
+                                <select value={colour} disabled={!on} onChange={e=>{sZ({[colKey]:e.target.value||undefined});setFabMenu(null);}} title={`Pick the colour this truss's ${lbl} goes in (IMS ${lbl} stock)`}
+                                  className={`w-full text-[12px] rounded border px-1.5 py-1 ${isDark?"bg-gray-900 border-gray-600 text-gray-100":"bg-white border-gray-200 text-gray-800"}`}>
+                                  <option value="">— From Fabric Palette —</option>
+                                  {colourOpts.map(c=><option key={c} value={c}>{c}</option>)}
+                                </select>
+                              </label>}
                             </div>
                           </>}
                         </div>);})}

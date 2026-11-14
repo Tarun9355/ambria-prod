@@ -1221,9 +1221,12 @@ export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, q
 // The colour(s) a truss row's fabric of one material is meant to go in: for Wall Masking, the ONE colour the salesperson picked on the
 // truss in Build (zc.mkColour, "🎨 Colour") when there is one - it was read only by Build itself, so Deal Check, Planning and the Setup
 // Book split the masking over the Fabric Palette's colours instead (owner report 2026-11-13: "masking in pdf incorrect"). Else the
-// palette's anchors for that material, as before.
+// palette's anchors for that material, as before. Liza and velvet curtains have their own pick on the Fabric card's icon menu
+// (zc.lizaColour / zc.curtainColour, owner ask 2026-11-14), read the same way.
+const PICKED_COLOUR_FIELD = { masking: "mkColour", liza: "lizaColour", curtain: "curtainColour" };
 export const fabricAnchorsForRow = (row, material, paletteAnchors) => {
-  const picked = material === "masking" ? String(row?.mkColour || "").trim() : "";
+  const field = PICKED_COLOUR_FIELD[material];
+  const picked = field ? String(row?.[field] || "").trim() : "";
   return picked ? [picked] : (Array.isArray(paletteAnchors) ? paletteAnchors : []);
 };
 
