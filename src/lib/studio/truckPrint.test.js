@@ -107,4 +107,23 @@ describe("printFlatForZone — the flat charge sits in one zone's Print cost", (
     expect(printFlatForZone({ stage: { prints: [{ material: "vinyl", areaW: 20, areaD: 10, qty: 1 }] } }, { stage: true }, mats, "stage")).toBe(0);
     expect(printFlatForZone({}, {}, mats, "stage")).toBe(0);
   });
+  // Owner correction, 2026-11-13: a Repeat/Fixed-Venue zone waives its own print transport, but the
+  // ₹400 is a per-FUNCTION charge, not per-zone — it still has to land on whichever zone genuinely
+  // owes it. Without isZoneWaived, the charge used to sit on the first small print regardless, so a
+  // waived carrier zone's own waiver check zeroed it out and the function lost the fee entirely even
+  // though a different, non-waived zone's small print should still bring it.
+  it("a waived carrier zone does not keep the charge — it falls to the next eligible zone", () => {
+    const cfg = { stage: small, entry: small };
+    const on = { stage: true, entry: true };
+    const stageWaived = (zk) => zk === "stage";
+    expect(printFlatForZone(cfg, on, mats, "stage", stageWaived)).toBe(0);
+    expect(printFlatForZone(cfg, on, mats, "entry", stageWaived)).toBe(400);
+  });
+  it("every zone with a small print waived: the charge is genuinely gone, not just moved", () => {
+    const cfg = { stage: small, entry: small };
+    const on = { stage: true, entry: true };
+    const allWaived = () => true;
+    expect(printFlatForZone(cfg, on, mats, "stage", allWaived)).toBe(0);
+    expect(printFlatForZone(cfg, on, mats, "entry", allWaived)).toBe(0);
+  });
 });

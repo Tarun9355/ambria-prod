@@ -6,7 +6,16 @@
 //  2. Every other print is trucked by its area: width x depth x quantity, summed, under the truck-capacity row named PRINT_TRUCK_SUB
 //     ("Print", sqft per truck, Manage > Transport — like Platform or Carpet). With no such row set up nothing is trucked for them.
 //
-// A print is made fresh for each event, so a repeat setup never waives either.
+// A print is physically made fresh for each event — both rules above used to hold regardless of
+// Repeat because of that. Overridden by explicit owner request, 2026-11-13: a Repeat zone's print
+// (or one at a Fixed Venue) now waives BOTH — the big-print truck line (StudioApp.jsx's truck-calc
+// functions, gated on repeatCatFor(cfg,"print")/fvStruct) and this file's own small-print flat charge
+// (printFlatForZone's callers now pass an `isZoneWaived(zk)` predicate, built from the same
+// structDiscountFor(...).print check calcStructCost's own guest-facing print discount already uses —
+// a PREDICATE over every zone, not just one flag, since this charge is per-function, carried by
+// whichever zone has the first small print: a waived carrier must let the charge fall through to the
+// next eligible zone rather than lose it entirely) — same treatment as truss/platform/elements, even
+// though the physical reasoning for why it used to be exempt still holds.
 
 export const PRINT_TRUCK_SUB = "Print";
 export const SMALL_PRINT_LIMIT = 2000;   // a print that costs less than this (₹) is "small"
@@ -52,9 +61,17 @@ export function smallPrintFlat(zoneConfig, enabledEls, printMaterials) {
 
 // Which small print carries the function's flat charge on screen: the first one, going through the switched-on zones in order. The charge is
 // once per function, so it is shown on that one job only. { zk, index } (index = the job's position in its zone's prints), or null.
-export function firstSmallPrint(zoneConfig, enabledEls, printMaterials) {
+// `isZoneWaived(zk)` (optional, owner correction 2026-11-13): a Repeat/Fixed-Venue zone's print
+// transport is waived, but the charge itself is a PER-FUNCTION flat fee, not a per-zone one — it still
+// has to land on whichever zone genuinely owes it. Picking the first small print regardless of waiver
+// used to let a waived zone "carry" the charge and then zero it out via its own waiver check, losing
+// the fee entirely even when a DIFFERENT, non-waived zone in the same function has its own small print
+// that should still bring it. Skipping a waived zone here lets the charge fall through to the next
+// eligible one instead of disappearing.
+export function firstSmallPrint(zoneConfig, enabledEls, printMaterials, isZoneWaived) {
   for (const [zk, cfg] of Object.entries(zoneConfig || {})) {
     if (!cfg || !enabledEls?.[zk]) continue;
+    if (isZoneWaived && isZoneWaived(zk)) continue;
     const jobs = Array.isArray(cfg.prints) ? cfg.prints : [];
     for (let index = 0; index < jobs.length; index++) {
       if (splitPrints({ prints: [jobs[index]] }, printMaterials).smallJobs > 0) return { zk, index };
@@ -64,8 +81,8 @@ export function firstSmallPrint(zoneConfig, enabledEls, printMaterials) {
 }
 
 // The flat charge sits in ONE zone's Print cost: the one that carries the first small print (see firstSmallPrint), so the Print tile, the zone's total, the
-// function's decor and every export count it exactly once. Returns the charge for that zone, 0 for every other zone.
-export function printFlatForZone(zoneConfig, enabledEls, printMaterials, zk) {
-  const first = firstSmallPrint(zoneConfig, enabledEls, printMaterials);
+// function's decor and every export count it exactly once. Returns the charge for that zone, 0 for every other zone. `isZoneWaived` — see firstSmallPrint.
+export function printFlatForZone(zoneConfig, enabledEls, printMaterials, zk, isZoneWaived) {
+  const first = firstSmallPrint(zoneConfig, enabledEls, printMaterials, isZoneWaived);
   return first && first.zk === zk ? SMALL_PRINT_CHARGE : 0;
 }
