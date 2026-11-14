@@ -60,6 +60,7 @@
 import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass, convertFlowerQty, walkKitFloralParts } from "../ims/flowerHelpers";
 import { repeatCatFor, parseFlowerPalette, fuzzyColourMatch } from "./pricing";
 import { shiftToTiming } from "./manpowerCount";
+import { venueKey } from "../venueKey.js";
 
 // The one reuse rate — credited the same way against both real (fresh) quantity and
 // artificial-bunch-equivalent quantity, per the owner's own call (no separate real/artificial
@@ -87,14 +88,14 @@ function fnSortKey(f) {
  */
 export function findImmediatePrecedingFn(fn, allFns) {
   if (!fn?.fnVenue || !fn?.fnDate) return null;
-  const venue = fn.fnVenue.toLowerCase().trim();
+  const venue = venueKey(fn.fnVenue);
   const myKey = fnSortKey(fn);
   if (myKey == null) return null;
   const myDay = Math.floor(myKey / 10);
   let best = null, bestKey = -Infinity;
   (allFns || []).forEach((f) => {
     if (f === fn || f.fnIdx === fn.fnIdx || !f.fnVenue || !f.fnDate) return;
-    if (f.fnVenue.toLowerCase().trim() !== venue) return;
+    if (venueKey(f.fnVenue) !== venue) return;
     const k = fnSortKey(f);
     if (k == null || k >= myKey) return; // must be strictly chronologically before fn
     const fDay = Math.floor(k / 10);

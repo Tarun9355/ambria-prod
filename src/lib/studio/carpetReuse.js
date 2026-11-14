@@ -6,8 +6,7 @@
 import { prefsOf, floorSqftOf } from "./carpetPrefs.js";
 import { CARPET_OFF } from "./taxonomy.js";
 import { isCancelledEO, isLiveBlockStatus } from "../ims/liveBlocks.js";
-
-const norm = (v) => String(v || "").trim().toLowerCase();
+import { venueKey as norm } from "../venueKey.js";
 
 // Holds on one carpet for `date` by OTHER events whose venue that day is `venue`. entries: [{ eventId, qty, date?, status? }] (a
 // date's own list, or an item's all-dates list — entries for another date are skipped when they carry one). An event whose order is

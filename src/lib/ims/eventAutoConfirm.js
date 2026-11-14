@@ -22,6 +22,7 @@ import { lookupBySubcat } from "./helpers";
 import { supabase } from "../supabase";
 import { isFoc } from "../studio/foc.js";
 import { filterLiveBlocks, heldOnDate, isLiveBlockStatus } from "./liveBlocks.js";
+import { venueKey } from "../venueKey.js";
 
 export const resolveRealPct = (el, rcItem, fnFloralRatio) => {
   if (typeof el?.realPct === "number") return Math.max(0, Math.min(100, el.realPct));
@@ -927,7 +928,7 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
       // Find most recent prior fn with same (date, venue)
       let prior=null;
       for(let j=i-1;j>=0;j--){
-        if(fnList[j].fnDate===fn.fnDate&&(fnList[j].fnVenue||"")===(fn.fnVenue||"")){
+        if(fnList[j].fnDate===fn.fnDate&&venueKey(fnList[j].fnVenue)===venueKey(fn.fnVenue)){
           prior=fnList[j]; break;
         }
       }

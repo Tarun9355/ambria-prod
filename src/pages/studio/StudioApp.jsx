@@ -5493,16 +5493,26 @@ export default function StudioApp() {
         // genuinely different venues cannot share the same installed stock (see
         // qtyUsedElsewhereInBuild's own comment, lib/studio/dealAvailability.js); without this, a
         // second same-day function at a different venue competed for the SAME pool as the first,
-        // exactly as if it were a completely different client's deal on that date.
-        const alloc = allocateRowAvailability(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName);
+        // exactly as if it were a completely different client's deal on that date. Falls back to the
+        // deal's main function's own venue (fns[0], same rule fnVenueKey applies) when this row's own
+        // function never got its own venue explicitly set — an "extra function" defaults to "" (never
+        // the main venue) — otherwise it read as a genuinely different venue from its own main
+        // function and lost its own row entirely to competingRows' finding-#1 collapsing (regression
+        // review, 2026-11-14, finding B).
+        const _venueName = opts?.venueName || _fnsForAlloc?.[0]?.fnVenue || "";
+        const alloc = allocateRowAvailability(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, _venueName);
         // crossFnSiblingsFree (last arg, only when a venue is known — see maxQtyForRow's own
         // comment): a sibling FUNCTION at this exact same date+venue is, by this deal's own
         // cross-function reuse rule (findCrossFnReuseSource, dayDiff === 0), always reuse-eligible —
         // its units were never really "someone else's" demand, just this deal's own stock already
         // standing here. allocateRowAvailability (ownedQty/shortQty, for pricing) is untouched —
         // pricing's own reuse credit (crossFnTake/crossFnBonus below) already handles that
-        // separately and correctly; this only affects the typed-quantity CEILING.
-        rowMaxQty = maxQtyForRow(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName, !!opts?.venueName);
+        // separately and correctly; this only affects the typed-quantity CEILING. (2026-11-14
+        // regression review: giving allocateRowAvailability this SAME exclusion was tried and
+        // reverted — it double-counts against crossFnBonus/kitPartShortfalls' own reusePool credit
+        // for the same-day case, since those can't yet tell same-day and previous-day reuse apart;
+        // see dealAvailability.js's own comment on allocateRowAvailability.)
+        rowMaxQty = maxQtyForRow(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, _venueName, !!_venueName);
         ownedQty = alloc.ownedQty; shortQty = alloc.shortQty;
       } else {
         ownedQty = Math.min(qty, otherEventsAvail);
@@ -5644,8 +5654,12 @@ export default function StudioApp() {
     const rawBlocks = opts.blocksForDate ?? activeBlocksForDate;
     const detail = opts.blocksDetailForDate ?? (opts.fnDate ? blocksDetailByDate[opts.fnDate] : undefined) ?? activeBlocksDetailForDate;
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
-    const venueName = opts.venueName ?? activeFnMeta?.venue;
     const fns = collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [];
+    // Falls back all the way to the deal's main function's own venue (fns[0] — same rule fnVenueKey
+    // applies) when neither opts.venueName nor the active function has one of its own: an "extra
+    // function" defaults to "" rather than ever inheriting the main venue, which otherwise read as a
+    // genuinely different venue from its own main function (regression review, 2026-11-14, finding B).
+    const venueName = opts.venueName || activeFnMeta?.venue || fns?.[0]?.fnVenue || "";
     const target = opts.zoneKey != null && opts.elIdx != null ? { fnIdx: opts.fnIdx ?? activeFnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx } : null;
     const ownIds = [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)];
     const freeFor = (part) => combineAvailability(Number(part?.qty ?? part?.qtyOwned) || 0,
@@ -6076,7 +6090,7 @@ export default function StudioApp() {
       if (!Array.isArray(els) || !els.length) return;
       const zc = zoneConfig[zk];
       out[zk] = els.map((el, i) => {
-        const r = getElPrice(el, zc, { checkAvailability: true, zoneKey: zk, elIdx: i }, venue);
+        const r = getElPrice(el, zc, { checkAvailability: true, zoneKey: zk, elIdx: i }, activeFnMeta?.venue || venue);
         return { unitPrice: r.unitPrice, lineCost: r.lineCost, fullUnitPrice: r.fullUnitPrice ?? null, warning: r.warning || null };
       });
     });

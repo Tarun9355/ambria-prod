@@ -43,6 +43,33 @@ describe("reqByDateFrom", () => {
   it("a function with no date contributes nothing", () => {
     expect(reqByDateFrom([{ fnIdx: 0, fnDate: "" }], { 0: { X: 4 } })).toEqual({});
   });
+
+  // bug 8 (2026-11-14 audit): two functions sharing a date at GENUINELY DIFFERENT venues cannot
+  // physically share one pool — their needs must add, not collapse to a single max the way two
+  // functions sharing both date AND venue correctly still do.
+  it("two functions sharing a date at DIFFERENT venues ADD UP, not max", () => {
+    const fns = [{ fnIdx: 0, fnDate: D, fnVenue: "Pushpanjali" }, { fnIdx: 1, fnDate: D, fnVenue: "Exotica" }];
+    const req = { 0: { X: 12 }, 1: { X: 12 } };
+    expect(reqByDateFrom(fns, req)).toEqual({ [D]: { X: 24 } });
+  });
+  it("two functions sharing a date AND venue still take the max, unchanged", () => {
+    const fns = [{ fnIdx: 0, fnDate: D, fnVenue: "Pushpanjali" }, { fnIdx: 1, fnDate: D, fnVenue: "Pushpanjali" }];
+    expect(reqByDateFrom(fns, { 0: { X: 4 }, 1: { X: 12 } })).toEqual({ [D]: { X: 12 } });
+  });
+  it("a stray-whitespace/case variant of the same venue name still shares one key (venueKey)", () => {
+    const fns = [{ fnIdx: 0, fnDate: D, fnVenue: "Pushpanjali" }, { fnIdx: 1, fnDate: D, fnVenue: "  PUSHPANJALI " }];
+    expect(reqByDateFrom(fns, { 0: { X: 4 }, 1: { X: 12 } })).toEqual({ [D]: { X: 12 } });
+  });
+  it("three functions: two at venue A (max), one at venue B (own), sum over venues", () => {
+    const fns = [
+      { fnIdx: 0, fnDate: D, fnVenue: "A" }, { fnIdx: 1, fnDate: D, fnVenue: "A" }, { fnIdx: 2, fnDate: D, fnVenue: "B" },
+    ];
+    expect(reqByDateFrom(fns, { 0: { X: 4 }, 1: { X: 9 }, 2: { X: 5 } })).toEqual({ [D]: { X: 14 } }); // max(4,9)=9, +5
+  });
+  it("an extra function with no venue of its own set (fnVenue: '') shares the MAIN function's venue, not a separate blank one (regression review, 2026-11-14)", () => {
+    const fns = [{ fnIdx: 0, fnDate: D, fnVenue: "Pushpanjali" }, { fnIdx: 1, fnDate: D, fnVenue: "" }];
+    expect(reqByDateFrom(fns, { 0: { X: 4 }, 1: { X: 9 } })).toEqual({ [D]: { X: 9 } }); // max(4,9), not 4+9
+  });
 });
 
 describe("planStudioBlocks — the Harpal Singh scenario: a card entry dropped from the build", () => {

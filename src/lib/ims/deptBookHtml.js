@@ -15,6 +15,7 @@ import { walkKitUnits, flowerPaletteHexFor } from "./helpers";
 import { DEPTS } from "./deptClassify";
 import { venueWithParent, standingQty, fixedVenueFor } from "./fixedVenues";
 import { ZONE_META, trussBaseArea, CARPET_OFF, carpetPricingFor, carpetTakesStockPick } from "../studio/taxonomy";
+import { venueKey } from "../venueKey.js";
 import { prefsOf, floorSqftOf } from "../studio/carpetPrefs";
 import { carpetKey, carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "./carpetPlan";
 import { elementStockFor, elementKey, choiceNotesForRows, preferenceNotesForRows } from "./elementPlan";
@@ -667,7 +668,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // function of the deal at the same venue the same or the day before (the earlier one is not tagged - it is the one that brings
     // them), and 📌 Fixed when the item is standing stock at this venue.
     const DAY = 24 * 60 * 60 * 1000;
-    const normV = (v) => String(v || "").trim().toLowerCase();
+    const normV = venueKey;
     const usedIdsOf = (f) => { const ids = new Set(); const en = f?.enabledEls || {};
       Object.entries(f?.elements || {}).forEach(([zk, list]) => { if (en[zk] === false || !Array.isArray(list)) return; list.forEach(e => { if (e?.foc) return; const id = e?.invId || e?.imsId; if (id) ids.add(String(id)); }); });
       return ids; };

@@ -36,6 +36,8 @@
 // a different function still adopts/resizes it as before, since two functions can share one date's
 // physical reservation.
 
+import { fnVenueKey } from "../venueKey.js";
+
 export const SRC_STUDIO_CARD = "studio-incremental";
 export const SRC_STUDIO_MANUAL = "studio-manual";
 export const SRC_IMS_AUTOCONFIRM = "ims-autoconfirm";
@@ -53,20 +55,41 @@ export function classifyEntry(b, eventId) {
   return "protected";
 }
 
-// { [date]: { [itemId]: qty } } — the larger of what any one function sharing a date needs (same rule
-// the existing reconcile's own reqByDate already used: two functions on one day reuse the same physical
-// pieces set up once, so the true reservation is the max, not each function's own number added together).
-// Only positive quantities are kept.
+// { [date]: { [itemId]: qty } } — per date, the SUM OVER VENUES of the largest single-function need
+// AT EACH venue (bug 8, 2026-11-14 audit): two functions sharing a date AND venue reuse the same
+// physical pieces set up once (the true reservation there is the max, not each function's own number
+// added together — unchanged from before this fix) — but two functions sharing a date at GENUINELY
+// DIFFERENT venues cannot share one physical pool at all, so their needs must add, not collapse to a
+// single max. Before this fix, the max was taken across EVERY function sharing a date regardless of
+// venue, which silently under-reserved: two same-day functions at different venues, each needing all
+// 12 of a 12-owned item, reserved only 12 total instead of the real 24 needed, with no warning either
+// (dealAvailability.js's own availability CHECK already scoped per-venue via targetVenue — only the
+// LEDGER itself disagreed with it). venueKey (lib/venueKey.js) is the SAME normalisation
+// dealAvailability.js's own venue-scoped checks now use, so the ledger and the gate can never
+// disagree about how much a date really needs again. Only positive quantities are kept.
 export function reqByDateFrom(fns, reqByFnIdx) {
-  const out = {};
+  const byDateVenue = {}; // date -> venueKey -> itemId -> max qty across functions sharing that (date, venue)
   (fns || []).forEach((fn, i) => {
     const fnIdx = fn?.fnIdx ?? i;
     const date = fn?.fnDate || "";
     if (!date) return;
-    const slot = out[date] || (out[date] = {});
+    // fnVenueKey, not plain venueKey (regression review, 2026-11-14): an extra function with no venue
+    // of its own explicitly set defaults to "" (StudioApp.jsx's allFunctionData memo), which must
+    // share the MAIN function's venue bucket, not become its own separate "blank" venue competing
+    // against (or summed with) it.
+    const vk = fnVenueKey(fn, fns);
+    const byVenue = byDateVenue[date] || (byDateVenue[date] = {});
+    const slot = byVenue[vk] || (byVenue[vk] = {});
     Object.entries(reqByFnIdx?.[fnIdx] || {}).forEach(([id, q]) => {
       const n = Number(q) || 0;
       if (n > 0) slot[id] = Math.max(slot[id] || 0, n);
+    });
+  });
+  const out = {};
+  Object.entries(byDateVenue).forEach(([date, byVenue]) => {
+    const slot = out[date] || (out[date] = {});
+    Object.values(byVenue).forEach((venueSlot) => {
+      Object.entries(venueSlot).forEach(([id, q]) => { slot[id] = (slot[id] || 0) + q; });
     });
   });
   return out;
