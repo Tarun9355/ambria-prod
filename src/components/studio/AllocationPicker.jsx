@@ -131,12 +131,12 @@ export default function AllocationPicker({ open, onClose, elName, totalQty, base
                           ? <img src={cObj.refImages[0]} alt="" style={{width:16,height:16,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",objectFit:"cover",flexShrink:0}} />
                           : <span style={{width:16,height:16,borderRadius:3,border:"1px solid rgba(0,0,0,0.15)",background:cObj?.hex||"#ccc",flexShrink:0}} />}
                         {pc}
-                        {parts.length > 1 && <button onClick={() => removeColourFrom(idx, pc)} title={`Take ${pc} off these pieces`}
+                        {parts.length > 1 && <button type="button" onClick={() => removeColourFrom(idx, pc)} title={`Take ${pc} off these pieces`} aria-label={`Remove ${pc}`}
                           style={{background:"none",border:"none",color:"#EC4899",cursor:"pointer",fontSize:12,padding:0,lineHeight:1}}>×</button>}
                       </span>
                     );
                   })}
-                  <button onClick={() => setAddTo(picking ? null : idx)} title="Paint these same pieces in one more colour (each colour is charged)"
+                  <button type="button" aria-pressed={picking} onClick={() => setAddTo(picking ? null : idx)} title="Paint these same pieces in one more colour (each colour is charged)"
                     style={{padding:"1px 7px",borderRadius:5,border:"1px dashed #F472B6",background:picking?"#FCE7F3":"#fff",fontSize:10.5,fontWeight:700,color:"#BE185D",cursor:"pointer"}}>
                     {picking ? "Pick below…" : "+ colour"}
                   </button>
