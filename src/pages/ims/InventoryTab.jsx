@@ -15,7 +15,7 @@ import { itemDimsText } from "../../lib/ims/helpers";
 import { catToDept, canSeeDept } from "../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb";
 import { getAvailableQty } from "../../lib/ims/eventAutoConfirm";
-import { filterLiveBlocks } from "../../lib/ims/liveBlocks";
+import { filterLiveBlocks, heldForEventOnDate } from "../../lib/ims/liveBlocks";
 import { appendOp, shortfallsOf } from "../../lib/ims/blocksRpc";
 
 export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [], authUser, eventOrders = [], blocks, applyBlocksRpc }) {
@@ -1647,13 +1647,20 @@ Rules:
                   // without it. The row's own shift, else the deal's function on that date and type.
                   const shiftRaw = f.shift || (Array.isArray(eo?.functionsDetail) ? eo.functionsDetail.find((x) => x?.date === f.date && (!f.type || x?.fnType === f.type || x?.type === f.type))?.shift : "") || "";
                   const shift = String(shiftRaw).trim();
+                  // The live `blocks` ledger, not this row's own static qty, whenever there's a real
+                  // entry to read it from (bug 10/15, 2026-11-14 audit) — see heldForEventOnDate's own
+                  // comment for why. Falls back to f.items' snapshot only when no live record matches
+                  // at all (the known fallback-id gap, liveBlocks.js's own header comment).
+                  const live = heldForEventOnDate(readBlocks[selItem.id], f.eventOrderId || f.id, f.date);
+                  const shownQty = live.found ? live.qty : it.qty;
                   return <div key={f.id} className="flex items-center gap-3 py-2 border-b text-sm flex-wrap">
                     <span className="font-medium">{f.name}</span><span className="text-gray-500">{f.date}</span>
                     {shift && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 ring-1 ring-amber-200">{shift}</span>}
                     {guestName && <span className="text-gray-700">{guestName}</span>}
                     {venueName && <span className="text-gray-500 text-xs">{venueName}</span>}
                     <Badge color="indigo">{it.dept}</Badge><span className="text-gray-500 text-xs">{it.remark}</span>
-                    <span className="ml-auto font-medium">×{it.qty}</span>
+                    {live.qtyToProduce > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 ring-1 ring-orange-200" title="Allowed past real stock — still needs to be produced, not pulled from stock on hand">🏭 {live.qtyToProduce} to produce</span>}
+                    <span className="ml-auto font-medium">×{shownQty}</span>
                   </div>;
                 });
             })()}

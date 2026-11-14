@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isCancelledEO, cancelledEventIds, isLiveBlockEntry, filterLiveBlocks, liveDateBlocks, isLiveBlockStatus, blockEntryQty, heldOnDate } from "./liveBlocks.js";
+import { isCancelledEO, cancelledEventIds, isLiveBlockEntry, filterLiveBlocks, liveDateBlocks, isLiveBlockStatus, blockEntryQty, heldOnDate, blockEntryQtyToProduce, heldForEventOnDate } from "./liveBlocks.js";
 
 describe("isCancelledEO / cancelledEventIds", () => {
   it("only status === 'cancelled' counts, pending/confirming/review/null are left alone", () => {
@@ -161,5 +161,39 @@ describe("liveDateBlocks", () => {
     const totalOwned = 12;
     const freeNow = totalOwned - (next.blocksForDate.it1 || 0);
     expect(freeNow).toBe(12); // was 2 before filtering (12 - 10)
+  });
+});
+
+describe("blockEntryQtyToProduce", () => {
+  it("a missing/non-numeric/non-positive value counts as 0, mirroring blockEntryQty", () => {
+    expect(blockEntryQtyToProduce({})).toBe(0);
+    expect(blockEntryQtyToProduce({ qtyToProduce: 0 })).toBe(0);
+    expect(blockEntryQtyToProduce({ qtyToProduce: -3 })).toBe(0);
+    expect(blockEntryQtyToProduce({ qtyToProduce: "nope" })).toBe(0);
+    expect(blockEntryQtyToProduce(null)).toBe(0);
+  });
+  it("a real positive value counts", () => expect(blockEntryQtyToProduce({ qtyToProduce: 4 })).toBe(4));
+});
+
+describe("heldForEventOnDate — bug 10/15 (2026-11-14): the live ledger, matched to one function's own (eventId, date)", () => {
+  it("sums qty and qtyToProduce across every live entry matching this exact event+date", () => {
+    const entries = [
+      { eventId: "eo1", date: "2026-12-01", qty: 4, status: "confirmed" },
+      { eventId: "eo1", date: "2026-12-01", qty: 2, qtyToProduce: 3, status: "confirmed", source: "ims-autoconfirm" },
+      { eventId: "eo1", date: "2026-12-02", qty: 99, status: "confirmed" }, // different date — excluded
+      { eventId: "eo2", date: "2026-12-01", qty: 99, status: "confirmed" }, // different event — excluded
+    ];
+    expect(heldForEventOnDate(entries, "eo1", "2026-12-01")).toEqual({ qty: 6, qtyToProduce: 3, found: true });
+  });
+  it("a released/cancelled-status entry still counts as `found` (there IS a live-ledger record), but contributes 0 qty — the caller must trust that 0, not fall back to a stale snapshot", () => {
+    const entries = [{ eventId: "eo1", date: "2026-12-01", qty: 10, status: "released" }];
+    expect(heldForEventOnDate(entries, "eo1", "2026-12-01")).toEqual({ qty: 0, qtyToProduce: 0, found: true });
+  });
+  it("found is false when nothing matches this (eventId, date) at all — the caller should fall back to the function row's own static qty", () => {
+    expect(heldForEventOnDate([{ eventId: "other", date: "2026-12-01", qty: 5 }], "eo1", "2026-12-01")).toEqual({ qty: 0, qtyToProduce: 0, found: false });
+    expect(heldForEventOnDate(undefined, "eo1", "2026-12-01")).toEqual({ qty: 0, qtyToProduce: 0, found: false });
+  });
+  it("an unrecognised status still fails closed (counts as live), matching isLiveBlockStatus elsewhere", () => {
+    expect(heldForEventOnDate([{ eventId: "eo1", date: "d", qty: 5, status: "weird" }], "eo1", "d")).toEqual({ qty: 5, qtyToProduce: 0, found: true });
   });
 });

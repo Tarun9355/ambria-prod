@@ -90,9 +90,38 @@ export function isLiveBlockStatus(b) { return !!b && !RELEASED_BLOCK_STATUSES.in
 // A blocks entry's qty, coerced the same way everywhere — a missing/non-numeric/non-positive qty
 // counts as 0 rather than silently defaulting to 1 the way some older write-side code does (that
 // default belongs at WRITE time, if anywhere; at READ time a qty-less entry holding nothing is the
-// safer assumption). qtyToProduce (bug 10, if/when it ships) is deliberately never counted here —
-// units still to be produced are not units already held.
+// safer assumption). qtyToProduce is deliberately never counted here — units still to be produced
+// are not units already held (see blockEntryQtyToProduce/heldForEventOnDate, below, for surfacing it).
 export function blockEntryQty(b) { const n = Number(b?.qty); return Number.isFinite(n) && n > 0 ? n : 0; }
+
+// A blocks entry's qtyToProduce, coerced the same way blockEntryQty is. Units flagged here were
+// explicitly allowed past the real stock ceiling (apply_block_ops, migration 066's own allowOver
+// handling) — not already-held stock, so a caller must never fold this into a "how much do we
+// physically have" total; only ever show it alongside, as "N more still need producing."
+export function blockEntryQtyToProduce(b) { const n = Number(b?.qtyToProduce); return Number.isFinite(n) && n > 0 ? n : 0; }
+
+// Bug 10 (2026-11-14 audit) — qtyToProduce had no reader anywhere in the app. The one place ops
+// needs to see it is right next to a function's own blocked qty (InventoryTab.jsx's "Blocked for
+// Functions" list) — found by matching an entry's (eventId, date) against the function row already
+// being shown, not by threading it through `functions.items` itself (a point-in-time snapshot taken
+// once at auto-confirm time, never corrected again as a LATER writer — Studio's own reconcile
+// relabelling/capping the hold, a re-block — changes the real `blocks` entries). Reading straight
+// from live `blocks` here means the qty shown always reflects whatever is ACTUALLY reserved right
+// now, regardless of which writer most recently touched it, same reasoning as heldOnDate above.
+// `found` distinguishes "there is a live blocks record for this exact (eventId, date), trust its qty
+// even if that's genuinely 0 (fully released)" from "no blocks entry at all matches this function —
+// fall back to the function row's own static qty, the only information there is."
+export function heldForEventOnDate(entries, eventId, date) {
+  let qty = 0, qtyToProduce = 0, found = false;
+  (entries || []).forEach((b) => {
+    if (!b || b.eventId !== eventId || b.date !== date) return;
+    found = true;
+    if (!isLiveBlockStatus(b)) return;
+    qty += blockEntryQty(b);
+    qtyToProduce += blockEntryQtyToProduce(b);
+  });
+  return { qty, qtyToProduce, found };
+}
 
 // Sum of live-status, non-cancelled-event entries for one item's array, on one date. cancelledSet
 // (optional — a Set, or the raw eventOrders array to build one from) applies the same cancelled-
