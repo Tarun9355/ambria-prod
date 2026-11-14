@@ -10,7 +10,8 @@ import { SMALL_PRINT_LIMIT, SMALL_PRINT_CHARGE, firstSmallPrint, printFlatForZon
 import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform, IconCarpet, IconBulb, IconCheck,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
-  IconPlay, IconBox, IconSave, IconSliders, IconStar, IconCrown, IconFiller } from "../../../components/icons.jsx";
+  IconPlay, IconBox, IconSave, IconSliders, IconStar, IconCrown, IconFiller, IconGift } from "../../../components/icons.jsx";
+import { isFoc } from "../../../lib/studio/foc.js";
 import { getEffectivePricing, resolveDateCategory } from "../../../lib/inventory/helpers";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, CATEGORIES, venueTypeLabel,
@@ -4249,9 +4250,11 @@ undefined
         // same way selecting it would (saved full zone spec over the dims-derived one).
         const isSel = elSelectedPhoto[k]?.isLibrary && elSelectedPhoto[k]?.eventId === selP.eventId;
         const draft = isSel ? null : {
-          // repeatOverride is deal-specific, same as baseQty — never seed a draft of the master with
-          // one left over from an older, pre-strip save (review finding, 2026-11-13, "L1").
-          elements: JSON.parse(JSON.stringify(m.elements || [])).map(({ baseQty: _b, repeatOverride: _ro, ...e }) => e),
+          // repeatOverride and foc are deal-specific, same as baseQty — never seed a draft of the
+          // master with one left over from an older, pre-strip save (review finding, 2026-11-13,
+          // "L1"; foc added alongside it — equally "this item happens to already be at THIS venue
+          // for THIS event", meaningless carried into a different deal's draft).
+          elements: JSON.parse(JSON.stringify(m.elements || [])).map(({ baseQty: _b, repeatOverride: _ro, foc: _fo, focAt: _fa, focBy: _fb, ...e }) => e),
           cfg: { ...(ctx.buildZoneConfig?.(k, m.dims || {}) || {}), ...JSON.parse(JSON.stringify(m.zoneConfigByType?.[k] || {})) },
         };
         setCorrectPhoto({ libId: selP.eventId, zoneKey: k, name: m.name || "", tags: mt, draft });
@@ -5419,6 +5422,20 @@ undefined
                         })()}
                         {showCosts&&rc&&(rc.cat||"").toLowerCase()==="florals"&&floralRatio>0&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(0,0,0,0.05)",color:"#888",fontWeight:700}}>{"🌸"} {100-floralRatio}% real</span>}
                         {isTrussSqft&&priceInfo.area>0&&<span style={{fontSize:11,padding:"2px 7px",borderRadius:3,background:"rgba(59,130,246,0.12)",color:"#3B82F6",fontWeight:600}}>{priceInfo.area} sqft</span>}
+                        {/* FOC (free of cost) — an element left at the venue from a previous event: billed
+                            nothing (guest or internal), no manpower/transport/paint/floral cost, no reuse
+                            credit for a different function, and never blocked in the `blocks` ledger — see
+                            lib/studio/foc.js. A plain boolean (no zone-level default to override, unlike
+                            Repeat), so it just toggles. Deletes the key rather than writing foc:false, so
+                            isFoc(el) stays the only test anywhere this is read. Sits immediately before the
+                            Repeat chip, pinned top-right together (marginLeft:auto moved here from Repeat). */}
+                        <span onClick={e => { e.stopPropagation(); const elems = [...(zoneElements[k] || [])]; const was = isFoc(elems[idx]); if (was) { const { foc: _f, focAt: _a, focBy: _b, ...rest } = elems[idx]; elems[idx] = rest; } else { elems[idx] = { ...elems[idx], foc: true, focAt: todayStr(), focBy: authUser?.name || "" }; } setZoneElements(p => ({ ...p, [k]: elems })); }}
+                          title={isFoc(el)
+                            ? "FOC — free, not blocked, left at venue. Click to bill it normally again."
+                            : "Mark FOC (free of cost) — guest isn't billed, no cost/manpower/transport is counted, and the item is NOT blocked: it's already at the venue from an earlier event and stays there."}
+                          style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",justifyContent:"center",width:18,height:18,borderRadius:6,flexShrink:0,cursor:"pointer",color:isFoc(el)?"#7C3AED":textS,background:isFoc(el)?"#7C3AED18":"transparent",border:isFoc(el)?"1px solid #7C3AED66":"1px solid transparent",opacity:isFoc(el)?1:0.55}}>
+                          <IconGift size={11}/>
+                        </span>
                         {/* Per-element Repeat/Fresh override — same ✨Fresh/♻️Repeat convention as the
                             section header's own chip (isRepeatCat/toggleRepeatCat above), but scoped
                             to just this one element instead of the whole "Elements" section. Cycles
@@ -5427,17 +5444,18 @@ undefined
                             to undefined. Read by repeatAdjustedLineCost (el.repeatOverride) and Deal
                             Check's own zoneIsRepeat (via the card key's element index), so whichever
                             way a salesperson sets it here is what actually gets billed everywhere.
-                            marginLeft:auto pins it to the top-right of the title row regardless of
-                            how many badges came before it or how long the element's name is. */}
+                            Dimmed while FOC is on — Repeat has no effect on a FOC'd element (FOC wins,
+                            short-circuits before any repeat discount logic runs) — but stays clickable so
+                            its value is preserved and comes back the moment FOC is turned off. */}
                         {(() => {
                           const _repResolved = typeof el.repeatOverride === "boolean" ? el.repeatOverride : repeatCatFor(zoneConfig[k], "elements");
                           const _repManual = typeof el.repeatOverride === "boolean";
                           return (
                             <span onClick={e => { e.stopPropagation(); const elems = [...(zoneElements[k] || [])]; const cur = elems[idx].repeatOverride; const next = cur === undefined ? true : cur === true ? false : undefined; elems[idx] = { ...elems[idx], repeatOverride: next }; setZoneElements(p => ({ ...p, [k]: elems })); }}
-                              title={_repManual
+                              title={isFoc(el) ? `No effect while FOC — ${_repResolved ? "Repeat (discounted)" : "Fresh (full price)"}` : _repManual
                                 ? `Manually set: ${_repResolved ? "Repeat (discounted)" : "Fresh (full price)"} for just this element. Click to ${_repResolved ? "set Fresh" : "follow the zone default"}.`
                                 : `Following the zone/section default: ${_repResolved ? "Repeat (discounted)" : "Fresh (full price)"}. Click to override for just this element.`}
-                              style={{marginLeft:"auto",display:"inline-flex",alignItems:"center",justifyContent:"center",width:18,height:18,borderRadius:6,flexShrink:0,cursor:"pointer",color:_repResolved?"#059669":textS,background:_repResolved?"#05966918":"transparent",border:_repManual?`1px solid ${_repResolved?"#059669":textS}66`:"1px solid transparent",opacity:_repManual?1:0.55}}>
+                              style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:18,height:18,borderRadius:6,flexShrink:0,cursor:"pointer",color:_repResolved?"#059669":textS,background:_repResolved?"#05966918":"transparent",border:_repManual?`1px solid ${_repResolved?"#059669":textS}66`:"1px solid transparent",opacity:isFoc(el)?0.3:(_repManual?1:0.55)}}>
                               {_repResolved ? <IconRepeat size={11}/> : <IconSparkle size={11}/>}
                             </span>
                           );
@@ -6190,7 +6208,10 @@ undefined
         // repeatOverride:false this build now auto-stamps on anything added to an already-Repeat zone)
         // silently resurface against a completely different deal that later picks this photo (review
         // finding, 2026-11-13: without this, the new auto-stamp fix leaks into Library masters).
-        const elems=JSON.parse(JSON.stringify((ownsLive?(zoneElements[zk]||master?.elements):(correctPhoto.draft?.elsDirty?correctPhoto.draft.elements:master?.elements))||[])).map(({baseQty:_drop,repeatOverride:_ro,...e})=>e);
+        // foc is the same class of leak: "this item happens to already be at THIS venue, left over
+        // from THIS event" has nothing to do with the recipe and must never resurface as free for a
+        // different client who later picks this same photo.
+        const elems=JSON.parse(JSON.stringify((ownsLive?(zoneElements[zk]||master?.elements):(correctPhoto.draft?.elsDirty?correctPhoto.draft.elements:master?.elements))||[])).map(({baseQty:_drop,repeatOverride:_ro,foc:_fo,focAt:_fa,focBy:_fb,...e})=>e);
         // Save the FULL zone build spec — dimensions, truss, masking, plinth, carpet, prints,
         // materials, custom ceiling/masking items — everything the salesperson set on this zone, so
         // reselecting the photo restores it exactly. Deal-specific choices (repeat discount, quantity

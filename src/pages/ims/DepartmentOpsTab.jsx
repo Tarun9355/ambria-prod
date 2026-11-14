@@ -1029,12 +1029,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       // departments by each part's own category, so a row can be a component of a kit owned by
       // another department. It is the only record of that parent, and the PDF needs it to avoid
       // reporting a bolted-on part as a loose item.
-      const rows = snapD.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components.filter(cp => kitPartOfDept(cp, x.name, d)) : null, kitPartsTotal: Array.isArray(x.components) ? x.components.reduce((t, c) => t + (Number(c.total) || 0), 0) : 0, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swaps.has(x.name), swappedFrom: swaps.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null }));
+      const rows = snapD.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components.filter(cp => kitPartOfDept(cp, x.name, d)) : null, kitPartsTotal: Array.isArray(x.components) ? x.components.reduce((t, c) => t + (Number(c.total) || 0), 0) : 0, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swaps.has(x.name), swappedFrom: swaps.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null, foc: !!x.foc }));
       // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
-      // knowing apart from what's actually reserved), then everything else — the order requested
-      // for this list. Stable within each group: Array.prototype.sort is stable, so ties keep the
-      // snapshot's own order (whichever function/zone order dcCostRollup built them in).
-      const rank = (it) => (it.shortQty > 0 ? 0 : it.prodOrBuy ? 1 : 2);
+      // knowing apart from what's actually reserved), then everything else, FOC last (nothing to
+      // chase or load for it) — the order requested for this list. Stable within each group:
+      // Array.prototype.sort is stable, so ties keep the snapshot's own order (whichever function/
+      // zone order dcCostRollup built them in).
+      const rank = (it) => (it.foc ? 3 : it.shortQty > 0 ? 0 : it.prodOrBuy ? 1 : 2);
       return rows.sort((a, b) => rank(a) - rank(b));
     }
     const out = [];
@@ -1100,6 +1101,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     fnsV.forEach(f => Object.values(f?.elements || {}).forEach(list => (Array.isArray(list) ? list : []).forEach(el => {
       const id = el?.invId || el?.imsId;
       if (!id) return;
+      // A FOC'd instance of this item must not count as "fresh" here — it has its own, separate
+      // blockedItems row (never merged with a non-FOC row of the same id, see the merge key fix
+      // above) and is never loaded regardless. Folding it into freshIds would wrongly force a
+      // DIFFERENT, Repeat-marked instance of the same item id to lose its "already standing, don't
+      // load" status, since repeat only holds when EVERY use resolves non-fresh.
+      if (el?.foc) return;
       (el?.repeatOverride === true ? repeatIds : freshIds).add(String(id));
       const v = f?.venue || sel?.venue;
       if (v) (venuesOfItem.get(String(id)) || venuesOfItem.set(String(id), new Set()).get(String(id))).add(v);
@@ -1111,6 +1118,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     const memo = new Map();
     return (it) => {
       if (!it) return { fixed: 0, repeat: false, load: 0 };
+      // FOC — left at the venue from a previous event (dcCostRollup's own FOC branch tags the row,
+      // DealCheckOverlay.jsx): never loaded, same as Fixed/Repeat, but its own distinct reason so the
+      // "leave at venue" badge below can say so rather than claiming it's standing stock or reused.
+      if (it.foc) return { fixed: 0, repeat: false, foc: true, load: 0 };
       // keyed by the qty too: the same line can be read at the whole event's qty and at one function's
       const mk = `${it.id}|${it.invId}|${it.qty}`;
       if (memo.has(mk)) return memo.get(mk);
@@ -1126,7 +1137,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   }, [sel, fvSettings, inventory]);
   // What actually goes on a truck: each line at the qty still to load; lines with nothing to load are the "at the venue" list.
   const loadItems = useMemo(() => blockedItems.map(it => { const a = atVenueOf(it); return a.load === (Number(it.qty) || 0) ? it : { ...it, qty: a.load, fullQty: it.qty }; }).filter(it => (Number(it.qty) || 0) > 0), [blockedItems, atVenueOf]);
-  const atVenueItems = useMemo(() => blockedItems.filter(it => { const a = atVenueOf(it); return a.repeat || a.fixed > 0; }), [blockedItems, atVenueOf]);
+  const atVenueItems = useMemo(() => blockedItems.filter(it => { const a = atVenueOf(it); return a.repeat || a.fixed > 0 || a.foc; }), [blockedItems, atVenueOf]);
   const rentalIncome = blockedItemsGrouped.reduce((s, x) => s + x.total, 0);
 
   // ── Department-saved data on the event order ──
@@ -1300,6 +1311,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     Object.entries(fd?.elements || {}).forEach(([zk, els]) => {
       if (fd.enabledEls && fd.enabledEls[zk] === false) return;
       (Array.isArray(els) ? els : []).forEach(el => {
+        if (el?.foc) return; // left at the venue — its own separate FOC row, never part of a blocked row's per-function qty share
         const q = Number(el?.qty) || 1;
         const id = el?.invId || el?.imsId;
         const topItem = id ? (inventory || []).find(i => String(i.id) === String(id)) : null;
@@ -2144,7 +2156,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     setDraft(key, { qty: "" });
   };
   // Fast dismantle: route the FULL remaining qty of an item in one tap (no typing).
-  const unroutedQty = (it) => { const k = "inv:" + it.id; return Math.max(0, it.qty - (movedQty(k, "return") + movedQty(k, "transfer") + movedQty(k, "damage") + movedQty(k, "repair"))); };
+  // FOC: never this deal's own reservation to route anywhere — it stays at the venue regardless of
+  // what this deal does at teardown (owner's whole stated reason for FOC in the first place).
+  const unroutedQty = (it) => { if (it.foc) return 0; const k = "inv:" + it.id; return Math.max(0, it.qty - (movedQty(k, "return") + movedQty(k, "transfer") + movedQty(k, "damage") + movedQty(k, "repair"))); };
   const routeRemaining = (it, type, extra = {}) => { const q = unroutedQty(it); if (q > 0) addMovement(it, type, q, extra); };
   const routeAllToWarehouse = () => { const rest = blockedItems.filter(it => unroutedQty(it) > 0); if (!rest.length) return; saveDept({ movements: [...movements, ...rest.map(it => ({ id: "mv_" + Date.now() + "_" + Math.floor(Math.random() * 100000), itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, type: "return", qty: unroutedQty(it), at: Date.now(), by: authUser?.name || "—" }))] }); };
   // ── DISMANTLE PLAN IN PLANNING ──
@@ -2295,6 +2309,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     if (incomingTransfers.length === 0 && trucks.length === 0) return [];
     const rows = [], used = new Set();
     blockedItems.forEach(it => {
+      if (it.foc) return; // left at the venue — never trucked in, so never a Receiving shortfall
       const key = itemKeyFor(it.invId, it.name); used.add(key);
       const inc = incomingByItem[key]; const reused = inc?.total || 0;
       const whTrucks = trucks.map((t, ti) => ({ id: t.id, n: ti + 1, vehicle: t.vehicle, driver: t.driver, phone: t.phone || "", qty: Number(t.items?.["inv:" + it.id]) || 0 })).filter(x => x.qty > 0);
@@ -4621,7 +4636,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                   </div>}
                   {/* items already at the venue (📌 Fixed / ♻ Repeat, atVenueOf) go last - nothing to load for them; the rest keep their order */}
                   {invShown.filter(it => !fabricGroupInfo.groupedLineIds.has(it.id))
-                    .map((it, i) => { const a = atVenueOf(it.src || it); return { it, i, last: a.repeat || a.fixed > 0 ? 1 : 0 }; })
+                    .map((it, i) => { const a = atVenueOf(it.src || it); return { it, i, last: (a.repeat || a.fixed > 0) ? 1 : a.foc ? 2 : 0 }; })
                     .sort((x, y) => x.last - y.last || x.i - y.i).map(x => x.it).map(it => {
                     // ── TWO DIFFERENT QUANTITIES, ON PURPOSE ──
                     // `qty` ("To load") is the true physical peak: the most this item is ever
@@ -4698,6 +4713,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                 {/* already at the venue - not loaded (atVenueOf): set to Repeat in Build, or standing stock of the fixed venue */}
                                 {(() => {
                                   const a = atVenueOf(it.src || it);
+                                  if (a.foc) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-bold" title="FOC - left at venue from a previous event, not billed, not loaded">🎁 FOC – LEAVE AT VENUE</span>;
                                   if (a.repeat) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-bold" title="Set to Repeat - stays from before, not loaded">♻ REPEAT</span>;
                                   if (a.fixed > 0) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 font-bold" title="Standing stock at this fixed venue - not loaded">📌 FIXED{a.load > 0 ? ` · ${a.fixed}` : ""}</span>;
                                   return null;
@@ -5552,10 +5568,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                           <div className="min-w-0 flex-1">
                             <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={nm}>{nm}</div>
                             <div className="mt-0.5 text-[11px] text-gray-500 tabular-nums">
-                              {a.repeat ? `all ${it.qty} stay from before` : a.load > 0 ? `${a.fixed} of ${it.qty} standing here · ${a.load} loaded above` : `all ${it.qty} standing here`}
+                              {a.foc ? `all ${it.qty} FOC - leave at venue` : a.repeat ? `all ${it.qty} stay from before` : a.load > 0 ? `${a.fixed} of ${it.qty} standing here · ${a.load} loaded above` : `all ${it.qty} standing here`}
                             </div>
                           </div>
-                          <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (a.repeat ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700")}>{a.repeat ? "♻ REPEAT" : "📌 FIXED"}</span>
+                          <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (a.foc || a.repeat ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700")}>{a.foc ? "🎁 FOC" : a.repeat ? "♻ REPEAT" : "📌 FIXED"}</span>
                         </div>
                       );
                     })}

@@ -59,6 +59,12 @@ describe("computePeopleRaw — Electricians", () => {
     const ctx = { ...baseCtx(), dcInventoryCache: [{ id: "led1", name: "Warm LED", cat: "lighting", subCat: "LED String" }], electricianProd: { "LED String": { sizes: { medium: 10 } } } };
     expect(computePeopleRaw(f, "Electricians", ctx)).toBe(3); // 30/10
   });
+
+  it("a FOC'd element needs no crew at all — left at the venue, nothing to install", () => {
+    const f = fn({ zoneElements: { stage: [{ name: "Warm LED", invId: "led1", qty: 30, foc: true }] } });
+    const ctx = { ...baseCtx(), dcInventoryCache: [{ id: "led1", name: "Warm LED", cat: "lighting", subCat: "LED String" }], electricianProd: { "LED String": { sizes: { medium: 10 } } } };
+    expect(computePeopleRaw(f, "Electricians", ctx)).toBe(0);
+  });
 });
 
 describe("computePeopleRaw — Labours (Tier 3)", () => {

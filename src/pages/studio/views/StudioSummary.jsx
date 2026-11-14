@@ -565,7 +565,9 @@ ${fnObj.zones.map(z => `<div class="zone"><div class="zone-head"><h3>${z.label}<
 ${z.photo ? `<div style="padding:8px 12px;background:#FAFAF7;border-bottom:1px solid #E8E0D4"><img src="${z.photo}" style="width:100%;max-height:160px;object-fit:cover;border-radius:8px;display:block" onerror="this.style.display='none'"/>${z.photoName ? `<div style="font-size:9px;color:#8B7355;margin-top:4px;text-align:center">Reference: ${z.photoName}</div>` : ""}</div>` : ""}
 <table><tr><th>Item</th><th>Size</th><th>Qty</th><th>Rate</th><th>Disc. Rate</th><th>List Amt</th><th>Amount</th></tr>
 ${z.structItems.map(si => `<tr class="struct-row"><td>${si.name}</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>${f(si.total)}</td></tr>`).join("")}
-${z.items.map(it => `<tr><td>${it.name}</td><td>${it.size || "—"}</td><td>${it.qty}</td><td>${fRate(it.rate)}/${it.unit}</td><td${it.hasDiscount ? ' style="color:#15803D;font-weight:700"' : ""}>${it.hasDiscount ? `${fRate(it.discRate)}/${it.unit}` : "—"}</td><td${it.hasDiscount ? ' style="text-decoration:line-through"' : ""}>${it.hasDiscount ? f(it.noDiscTotal) : "—"}</td><td${it.hasDiscount ? ' style="color:#15803D;font-weight:700"' : ""}>${f(it.total)}</td></tr>`).join("")}
+${z.items.map(it => it.foc
+  ? `<tr><td>${it.name} <span style="color:#7C3AED;font-weight:700">FOC</span></td><td>${it.size || "—"}</td><td>${it.qty}</td><td style="color:#7C3AED">FOC</td><td>—</td><td>—</td><td style="color:#7C3AED;font-weight:700">₹0</td></tr>`
+  : `<tr><td>${it.name}</td><td>${it.size || "—"}</td><td>${it.qty}</td><td>${fRate(it.rate)}/${it.unit}</td><td${it.hasDiscount ? ' style="color:#15803D;font-weight:700"' : ""}>${it.hasDiscount ? `${fRate(it.discRate)}/${it.unit}` : "—"}</td><td${it.hasDiscount ? ' style="text-decoration:line-through"' : ""}>${it.hasDiscount ? f(it.noDiscTotal) : "—"}</td><td${it.hasDiscount ? ' style="color:#15803D;font-weight:700"' : ""}>${f(it.total)}</td></tr>`).join("")}
 <tr class="subtotal-row"><td colspan="6">${z.label} Subtotal</td><td>${f(z.zoneTotal)}</td></tr>
 ${z.note ? `<tr class="note-row"><td colspan="7">📝 ${z.note}</td></tr>` : ""}
 </table></div>`).join("")}
@@ -830,6 +832,18 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
             ]);
           });
           z.items.forEach(it => {
+            if (it.foc) {
+              rows.push([
+                { text: it.name + "  FOC", options: { fontSize: 9, color: "7C3AED", bold: true } },
+                { text: it.size || "—", options: { fontSize: 9, align: "center", color: gray } },
+                { text: String(it.qty), options: { fontSize: 9, align: "center", color: dark } },
+                { text: "FOC", options: { fontSize: 9, align: "right", color: "7C3AED" } },
+                { text: "—", options: { fontSize: 9, align: "right", color: "B0B0B0" } },
+                { text: "—", options: { fontSize: 9, align: "right", color: "B0B0B0" } },
+                { text: "₹0", options: { fontSize: 9, align: "right", color: "7C3AED", bold: true } }
+              ]);
+              return;
+            }
             rows.push([
               { text: it.name, options: { fontSize: 9, color: dark } },
               { text: it.size || "—", options: { fontSize: 9, align: "center", color: gray } },
@@ -1110,6 +1124,10 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
           row.getCell(5).font = { ...(row.getCell(5).font || {}), color: { argb: "FF15803D" }, bold: true };
           row.getCell(8).font = { ...(row.getCell(8).font || {}), color: { argb: "FF15803D" }, bold: true };
         }
+        if (opts.foc) {
+          row.getCell(4).font = { ...(row.getCell(4).font || {}), color: { argb: "FF7C3AED" }, bold: true };
+          row.getCell(8).font = { ...(row.getCell(8).font || {}), color: { argb: "FF7C3AED" }, bold: true };
+        }
         return row;
       };
 
@@ -1244,7 +1262,9 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
           addTableHeaderRow(ws);
           const itemStartRow = ws.rowCount + 1;
           z.structItems.forEach(si => addItemRow(ws, [si.name, si.size || "—", si.qty ?? "—", si.rate ?? "—", "—", si.unit || "—", "—", si.total], { italic: true }));
-          z.items.forEach(it => addItemRow(ws, [it.name, it.size || "—", it.qty, it.rate, it.hasDiscount ? it.discRate : "—", it.unit, it.hasDiscount ? it.noDiscTotal : "—", it.total], { discountGreen: it.hasDiscount }));
+          z.items.forEach(it => it.foc
+            ? addItemRow(ws, [`${it.name}  FOC`, it.size || "—", it.qty, "FOC", "—", it.unit, "—", 0], { foc: true })
+            : addItemRow(ws, [it.name, it.size || "—", it.qty, it.rate, it.hasDiscount ? it.discRate : "—", it.unit, it.hasDiscount ? it.noDiscTotal : "—", it.total], { discountGreen: it.hasDiscount }));
           const itemEndRow = ws.rowCount;
           const subtotalRow = addItemRow(ws, [`${z.label} Subtotal`, "", "", "", "", "", "", z.zoneTotal], { bold: true, fill: subtle, sumRange: itemEndRow >= itemStartRow ? [itemStartRow, itemEndRow] : null });
           totalRefRows.push(subtotalRow.number);
@@ -3577,10 +3597,17 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                             <div style={{fontWeight:500}}>{it.name}</div>
                             <div style={{textAlign:"center",color:textS}}>{it.size||"—"}</div>
                             <div style={{textAlign:"center"}}><NumField min={0} allowDecimal={false} commitOn="blur" value={it.qty} disabled={!it.src} title={it.src?undefined:"Paint and Deal Check lines are edited in Build / Deal Check"} onCommit={n=>csUpdateQty(fi,zi,ii,Math.round(n))} onFocus={e=>e.target.select()} style={{opacity:it.src?1:0.6,width:48,padding:"4px 6px",borderRadius:6,border:`1px solid ${accentText}40`,background:isDark?"#0A0A14":"#FFFDF7",color:isDark?"#fff":"#1a1a2e",fontSize:13,fontWeight:700,textAlign:"center",outline:"none",fontFamily:"inherit"}}/></div>
-                            <div style={{textAlign:"right",color:textS,fontSize:11}}>{fmt(it.rate)}/{it.unit}</div>
-                            <div style={{textAlign:"right",fontSize:11,fontWeight:it.hasDiscount?700:400,color:it.hasDiscount?"#15803D":textS}}>{it.hasDiscount?`${fmt(it.discRate)}/${it.unit}`:"—"}</div>
-                            <div style={{textAlign:"right",fontSize:11,color:textS,textDecoration:it.hasDiscount?"line-through":"none"}}>{it.hasDiscount?fmt(it.noDiscTotal):"—"}</div>
-                            <div style={{textAlign:"right",fontWeight:600,color:it.hasDiscount?"#15803D":(it.qty>0?accentText:textS)}}>{fmt(it.total)}</div>
+                            {it.foc ? (<>
+                              <div style={{textAlign:"right",color:"#7C3AED",fontSize:11,fontWeight:700}}>FOC</div>
+                              <div style={{textAlign:"right",fontSize:11,color:textS}}>—</div>
+                              <div style={{textAlign:"right",fontSize:11,color:textS}}>—</div>
+                              <div style={{textAlign:"right",fontWeight:700,color:"#7C3AED"}}>₹0</div>
+                            </>) : (<>
+                              <div style={{textAlign:"right",color:textS,fontSize:11}}>{fmt(it.rate)}/{it.unit}</div>
+                              <div style={{textAlign:"right",fontSize:11,fontWeight:it.hasDiscount?700:400,color:it.hasDiscount?"#15803D":textS}}>{it.hasDiscount?`${fmt(it.discRate)}/${it.unit}`:"—"}</div>
+                              <div style={{textAlign:"right",fontSize:11,color:textS,textDecoration:it.hasDiscount?"line-through":"none"}}>{it.hasDiscount?fmt(it.noDiscTotal):"—"}</div>
+                              <div style={{textAlign:"right",fontWeight:600,color:it.hasDiscount?"#15803D":(it.qty>0?accentText:textS)}}>{fmt(it.total)}</div>
+                            </>)}
                           </div>
                         ))}
                         <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0 4px",borderTop:`2px solid ${border}`,marginTop:4}}>

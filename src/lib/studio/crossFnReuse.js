@@ -66,7 +66,7 @@ export function computeFnInvQty(fnData) {
   const fEnabledEls = fnData?.enabledEls || {};
   Object.entries(fZoneElements).forEach(([zk, elems]) => {
     if (!fEnabledEls[zk] || !elems) return;
-    elems.forEach(el => { if (el.invId) m[el.invId] = (m[el.invId] || 0) + (Number(el.qty) || 0); });
+    elems.forEach(el => { if (el.invId && !el.foc) m[el.invId] = (m[el.invId] || 0) + (Number(el.qty) || 0); }); // FOC earns no reuse credit for a different function
   });
   return m;
 }

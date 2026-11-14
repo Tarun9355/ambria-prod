@@ -100,6 +100,7 @@ export const PDF_HI = {
   "Wall Masking": "वॉल मास्किंग",
   "Colour not picked": "रंग नहीं चुना",
   "Repeat": "रिपीट",
+  "FOC – leave at venue, do not pick up": "FOC – वेन्यू पर छोड़ें, न उठाएं",
   "Fixed at venue": "वेन्यू पर फिक्स",
   "Already standing here - not to be loaded": "यहाँ पहले से लगा है - लोड नहीं करना",
   "Reused from {fn}": "{fn} से दोबारा इस्तेमाल",

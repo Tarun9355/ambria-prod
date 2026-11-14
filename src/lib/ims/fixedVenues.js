@@ -4,6 +4,7 @@
 // built beyond the standing qty, a swapped design, or any other venue → full.
 import { heavyExtraLabour } from "./constants";
 import { walkKitUnits, kitDescendantIds } from "./helpers";
+import { cardIsFoc } from "../studio/foc.js";
 
 // Normalize a venue name for matching: lowercase, drop a leading "Ambria ", trim, and drop
 // trailing punctuation. The trailing-punctuation strip closes a real, confusing bug: a deal's own
@@ -460,10 +461,16 @@ export function locationBreakdown(settings, item) {
 // Standing-qty reduction per sub-category for a Studio Deal Check function, using the
 // matched cards (which carry the inventory id) — so a reused standing design is netted
 // but a swapped design (different id) is not. cards = { cardKey: { imsId, qty } }.
-export function standingReductionBySubcat(settings, venueName, cards, inventory) {
+// zoneElements (optional): this function's own fn.zoneElements, used only to exclude a FOC'd card
+// from the reduction — a FOC item left at the venue was never counted into the Labours headcount
+// in the first place (walkFnElements's own FOC skip), so crediting its "already standing" reduction
+// against OTHER, non-FOC items of the same sub-category would double-count the credit (regression
+// review 2026-11-14). Omitted, every card counts, same as before FOC existed.
+export function standingReductionBySubcat(settings, venueName, cards, inventory, zoneElements) {
   const out = {};
-  Object.values(cards || {}).forEach((c) => {
+  Object.entries(cards || {}).forEach(([cardKey, c]) => {
     if (!c?.imsId) return;
+    if (zoneElements && cardIsFoc(zoneElements, cardKey)) return;
     const inv = (inventory || []).find((i) => i.id === c.imsId);
     if (!inv) return;
     const qty = Number(c.qty) || 0;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { allocateRowAvailability, maxQtyForRow, qtyUsedElsewhereInBuild, kitPartShortfalls } from "./dealAvailability.js";
+import { allocateRowAvailability, maxQtyForRow, qtyUsedElsewhereInBuild, qtyUsedElsewhereInDealCheck, kitPartShortfalls, netOwnReservedBlocksLive } from "./dealAvailability.js";
 import { walkKitUnits } from "../ims/helpers";
 
 const inventory = [{ id: "pod", name: "Round Fibre Podium" }];
@@ -126,6 +126,30 @@ describe("a zone switched OFF in Build does not hold stock", () => {
   it("a booking that has recorded no enabled zones at all still counts every zone, as before", () => {
     const none = [{ fnDate: "2026-10-15", zoneElements: fns[0].zoneElements }];
     expect(maxQtyForRow("pod", none, inventory, { fnIdx: 0, zoneKey: "stage", elIdx: 0 }, "2026-10-15", 227)).toBe(206);
+  });
+});
+
+describe("qtyUsedElsewhereInDealCheck — a FOC'd card never competes for stock", () => {
+  it("skips a card whose backlinked Build element is FOC, counts an ordinary card normally", () => {
+    // cardKey's rcName must match the element's own name — same as production (buildElCardKey is
+    // built from el.name at card-generation time) — the shared cardIsFoc's fail-safe check requires it.
+    const fns = [{ fnDate: "2026-10-15", zoneElements: { stage: [{ name: "Round Fibre Podium", invId: "pod", qty: 20 }], entry: [{ name: "Round Fibre Podium", invId: "pod", qty: 21, foc: true }] } }];
+    const dcCards = { 0: { "el::stage::Round Fibre Podium::0": { zoneKey: "stage", imsId: "pod", qty: 20 }, "el::entry::Round Fibre Podium::0": { zoneKey: "entry", imsId: "pod", qty: 21 } } };
+    expect(qtyUsedElsewhereInDealCheck("pod", fns, dcCards, [], {}, inventory, {}, "2026-10-15")).toBe(20);
+  });
+});
+
+describe("a FOC'd element never competes for stock", () => {
+  const foc = [{
+    fnDate: "2026-10-15",
+    enabledEls: { stage: true, entry: true },
+    zoneElements: { stage: [{ invId: "pod", qty: 5 }], entry: [{ invId: "pod", qty: 21, foc: true }] },
+  }];
+  it("does not count as 'used elsewhere'", () => {
+    expect(qtyUsedElsewhereInBuild("pod", foc, inventory, { fnIdx: 0, zoneKey: "stage", elIdx: 0 }, "2026-10-15")).toBe(0);
+  });
+  it("does not shrink the ceiling for a sibling row's own stock check", () => {
+    expect(maxQtyForRow("pod", foc, inventory, { fnIdx: 0, zoneKey: "stage", elIdx: 0 }, "2026-10-15", 227)).toBe(227);
   });
 });
 
@@ -256,5 +280,26 @@ describe("allocateRowAvailability — index matches the old per-call walk", () =
       const id = ids[rnd(ids.length)], pool = rnd(60), date = rnd(3) ? "d1" : undefined;
       expect(allocateRowAvailability(id, fns, inv, { fnIdx, zoneKey, elIdx }, date, pool)).toEqual(oldAlloc(id, fns, { fnIdx, zoneKey, elIdx }, date, pool));
     }
+  });
+});
+
+describe("netOwnReservedBlocksLive — source-agnostic by design (soldBlocksPlan's provenance tags change WHO can release a blocks entry, never whether availability math counts it)", () => {
+  it("nets several of this event's own entries together regardless of source — a card-matched one, a Deal Check manual one, an IMS AI-matched one and an IMS ops manual Block all count toward the same deal's own stock", () => {
+    const blocksDetail = {
+      pod: [
+        { eventId: "eo_1", qty: 2, source: "studio-incremental" },
+        { eventId: "eo_1", qty: 1, source: "studio-manual" },
+        { eventId: "eo_1", qty: 3, source: "ims-autoconfirm" },
+        { eventId: "eo_1", qty: 4, source: "ims-manual" },
+        { eventId: "eo_other", qty: 99, source: "studio-incremental" }, // a different deal — never counted
+      ],
+    };
+    expect(netOwnReservedBlocksLive({ pod: 10 }, "pod", blocksDetail, "eo_1")).toEqual({ pod: 0 });
+    expect(netOwnReservedBlocksLive({ pod: 20 }, "pod", blocksDetail, "eo_1")).toEqual({ pod: 10 }); // 20 - (2+1+3+4)
+  });
+
+  it("an untagged legacy entry (no source at all) is counted exactly the same as a tagged one", () => {
+    const blocksDetail = { pod: [{ eventId: "eo_1", qty: 5 }] };
+    expect(netOwnReservedBlocksLive({ pod: 10 }, "pod", blocksDetail, "eo_1")).toEqual({ pod: 5 });
   });
 });

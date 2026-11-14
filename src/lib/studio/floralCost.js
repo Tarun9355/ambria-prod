@@ -233,6 +233,7 @@ export function computeFnRawFlowerUsage(fn, opts) {
     if (!fn.enabledEls?.[zk]) return;
     const expandedElems = [];
     (elems || []).forEach((el) => {
+      if (el.foc) return; // left at the venue from a previous event — nothing bought, no reuse credit earned
       expandedElems.push(el);
       const kitInvItem = findInv(el.invId);
       // Same rule as computeFnFloralCost below (kept in sync manually — fixed together, 2026-11-12):
@@ -426,6 +427,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
     // to know.
     const expandedElems = [];
     (elems || []).forEach(el => {
+      if (el.foc) return; // left at the venue from a previous event — nothing bought, zero floral cost
       expandedElems.push(el);
       const kitInvItem = findInv(el.invId);
       walkKitFloralParts(kitInvItem, el.qty || 0, [...imsInventory, ...dcInventoryCache], el.kitOverrides, (node) => {

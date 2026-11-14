@@ -1,5 +1,27 @@
 import { describe, it, expect } from "vitest";
-import { availableAtVenue, reservedByVenueToday, venueSlackFor, combineAvailability, standingQty, standingDiscQty, rentalSplit, venueWithParent, normalizedTrussCounts, standingPillarCount, fixedVenueOverlap, fixedVenueOverlapOnDate } from "./fixedVenues";
+import { availableAtVenue, reservedByVenueToday, venueSlackFor, combineAvailability, standingQty, standingDiscQty, rentalSplit, venueWithParent, normalizedTrussCounts, standingPillarCount, fixedVenueOverlap, fixedVenueOverlapOnDate, standingReductionBySubcat } from "./fixedVenues";
+
+describe("standingReductionBySubcat — a FOC'd card earns no standing-stock credit", () => {
+  const fvSettings = { fixedVenues: [{ name: "Taj Vivanta", items: [{ invId: "pod1", qty: 10 }] }] };
+  const inv = [{ id: "pod1", name: "Round Fibre Podium", subCat: "Podium" }];
+
+  it("without zoneElements (pre-FOC callers), every card counts, same as before", () => {
+    const cards = { "el::stage::Round Fibre Podium::0": { imsId: "pod1", qty: 5 } };
+    expect(standingReductionBySubcat(fvSettings, "Taj Vivanta", cards, inv)).toEqual({ Podium: 5 });
+  });
+
+  it("with zoneElements, a card whose backlinked element is FOC contributes no reduction", () => {
+    const cards = { "el::stage::Round Fibre Podium::0": { imsId: "pod1", qty: 5 } };
+    const zoneElements = { stage: [{ name: "Round Fibre Podium", invId: "pod1", qty: 5, foc: true }] };
+    expect(standingReductionBySubcat(fvSettings, "Taj Vivanta", cards, inv, zoneElements)).toEqual({});
+  });
+
+  it("with zoneElements, a non-FOC card still counts normally", () => {
+    const cards = { "el::stage::Round Fibre Podium::0": { imsId: "pod1", qty: 5 } };
+    const zoneElements = { stage: [{ name: "Round Fibre Podium", invId: "pod1", qty: 5 }] };
+    expect(standingReductionBySubcat(fvSettings, "Taj Vivanta", cards, inv, zoneElements)).toEqual({ Podium: 5 });
+  });
+});
 
 // Confirmed live bug this covers: an item with 300 total stock, 200 of it configured as standing
 // allocation across two Fixed Venues (Pushpanjali 150, Exotica 50), leaving a 100-unit outdoor pool.

@@ -8,6 +8,7 @@
 // Pure, synchronous, no Supabase calls — operates only on already-in-memory arrays.
 
 import { walkKitUnits } from "../ims/helpers";
+import { cardIsFoc } from "./foc.js";
 
 // A zone that is switched off in Build keeps its element list but is not part of the deal — it is not priced,
 // not on the PDFs, so it must not hold stock either. (enabledEls missing/empty = nothing recorded yet: every
@@ -44,6 +45,7 @@ export function qtyUsedElsewhereInBuild(invId, fns, imsInventory, exclude = {}, 
           (exclude.elIdx == null || elIdx === exclude.elIdx);
         if (isExcluded) return;
         if (!el?.invId) return; // pattern-only / recipe rows never consume real stock
+        if (el.foc) return; // left at the venue from a previous event — never competes for stock
         const elQty = Number(el.qty) || 0;
         if (elQty <= 0) return;
         // walkKitUnits (lib/ims/helpers.js) — same node-walker pricing/transport/reservation share —
@@ -87,6 +89,7 @@ function bookingRowIndex(fns, imsInventory, targetDate, targetVenue) {
       if (zoneIsOff(fn, zk)) return;
       (elems || []).forEach((el, elIdx) => {
         if (!el?.invId) return;
+        if (el.foc) return; // left at the venue from a previous event — never competes for stock
         const elQty = Number(el.qty) || 0;
         if (elQty <= 0) return;
         // walkKitUnits recurses through a nested kit-inside-a-kit — see qtyUsedElsewhereInBuild's own comment for why
@@ -219,6 +222,10 @@ export function qtyUsedElsewhereInDealCheck(imsId, fns, dcCards, dcManualItems, 
         ((exclude.zoneKey != null && card?.zoneKey === exclude.zoneKey && exclude.cardKey == null) ||
          (exclude.cardKey != null && ck === exclude.cardKey));
       if (excluded) return;
+      // FOC — resolved via the shared cardIsFoc (same helper StudioApp.jsx/DealCheckOverlay.jsx use,
+      // fail-safe rcName check included). A FOC'd card never competes for stock with a different row's
+      // own availability check.
+      if (cardIsFoc(fn?.zoneElements, ck)) return;
       const splitArr = Array.isArray(card?.split) ? card.split : null;
       if (splitArr) {
         splitArr.forEach((s) => { if (s.imsId === imsId) used += Number(s.qty) || 0; });
@@ -290,6 +297,7 @@ export function fnUnitQty(fnData, imsInventory) {
     elems.forEach((el) => {
       const q = Number(el?.qty) || 0;
       if (!el?.invId || !(q > 0)) return;
+      if (el.foc) return; // left at the venue from a previous event — earns no reuse credit for a different function
       const item = (imsInventory || []).find((i) => i.id === el.invId);
       if (item && Array.isArray(item.subItems) && item.subItems.length) walkKitUnits(item, q, imsInventory, el.kitOverrides, (node, nq) => add(node?.id, Number(nq) || 0));
       else add(el.invId, q);
