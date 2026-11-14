@@ -1403,7 +1403,12 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const parts = [...realParts.filter(f => f.qty > 0), ...art];
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts, it.mix, it.size) });
         }
-        if (it.kit > 0) {
+        // The combined "All departments" book carries no kit cards (owner ask 2026-11-14) - the kit sits on its zone page as one
+        // item. Its attached recipe's bunches / real lines are still taken here, so they do not come back as a loose card below.
+        if (it.kit > 0 && combined) {
+          takeArt(it.name);
+          if (realTaker.has(it.name)) realTaker.take(it.name);
+        } else if (it.kit > 0) {
           const key = String(it.name || "").trim().toLowerCase();
           const kb = kitBlocksByName.get(key);
           // kb holds the whole EVENT's kits (its parts are totals for all of them) — the zone's page needs this zone's own

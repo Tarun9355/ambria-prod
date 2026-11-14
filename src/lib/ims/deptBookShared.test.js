@@ -110,3 +110,20 @@ describe("book: flower cards in the combined book (owner report 2026-11-14)", ()
     expect(html).not.toContain("floral foam");
   });
 });
+
+describe("book: the combined book carries no kit cards (owner ask 2026-11-14)", () => {
+  const inv3 = [...inventory, { id: "k1", name: "Wooden Console", category: "Florals", subItems: [{ itemId: "f1", qty: 2 }] }];
+  const selK = {
+    ...sel,
+    functionsDetail: [{ fnType: "Wedding", date: "2026-12-01", venue: "", zones: ["stage"], elements: { stage: [{ name: "Wooden Console", invId: "k1", qty: 1 }] } }],
+    floralPlan: { artificial: { flowerBunches: 9, greenBunches: 7 } },
+    floralDetail: [{ realZones: [{ zone: "stage", el: "Chandelier Recipe", kitParent: "Wooden Console", lines: [{ name: "floral foam", qty: 2, unit: "pc" }] }],
+      artZones: [{ zone: "stage", el: "Chandelier Recipe", kitParent: "Wooden Console", flower: 9, green: 7, qty: 1 }] }],
+  };
+  it("no 📦 kit card, and its recipe's bunches / foam do not come back as a loose card", () => {
+    const html = buildDeptBookHtml({ ...ctx("Floral", []), sel: selK, inventory: inv3, floralModeBySub: new Map() }, {}, {}, { combined: true });
+    expect(html).not.toContain("📦");
+    expect(html).not.toContain("Chandelier Recipe");
+    expect(html).not.toContain("floral foam");
+  });
+});
