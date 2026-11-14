@@ -92,6 +92,14 @@ describe("removeFnFromEventOrderData — guards", () => {
     expect(r.changed).toBe(false);
   });
 
+  it("a gap elsewhere in the numbering (entries at 0 and 2, nothing at 1, removedIdx=0) is ALSO refused — target exists at removedIdx so the earlier gap check alone would miss this", () => {
+    const data = { functionsDetail: [fn(0, "Haldi", "2026-11-15", "Aura"), fn(2, "Wedding", "2026-11-17", "Aura")] };
+    const r = removeFnFromEventOrderData(data, 0, { type: "Haldi", date: "2026-11-15" });
+    expect(r.refused).toBe(true);
+    expect(r.changed).toBe(false);
+    expect(r.next).toBe(data);
+  });
+
   it("no functionsDetail at all: a no-op, not a refusal", () => {
     const r = removeFnFromEventOrderData({}, 0, { type: "Haldi", date: "2026-11-15" });
     expect(r.refused).toBe(false);
@@ -120,6 +128,52 @@ describe("removeFnFromEventOrderData — deptOps carpet/fabric choices reindexed
     };
     const r = removeFnFromEventOrderData(data, 1, { type: "Wedding", date: "2026-11-16" });
     expect(r.next.deptOps).toBe(data.deptOps);
+  });
+
+  it("trussPlan and trussFabric (dept head's own truss edits) reindex the same way as carpetChoice — a HIGH-severity regression found by independent review: left untouched, a survivor silently inherited a different function's pillar/beam/batta edits", () => {
+    const data = {
+      functionsDetail: [fn(0, "Haldi", "2026-11-15", "Aura"), fn(1, "Mehendi", "2026-11-16", "Aura"), fn(2, "Sangeet", "2026-11-16", "Aura")],
+      deptOps: {
+        Tenting: {
+          trussPlan: { "1|stage|0": { pillars: [{ len: 10, n: 2 }] }, "2|stage|0": { pillars: [{ len: 12, n: 4 }] } },
+          trussFabric: { "1|stage|0|liza": [{ colour: "Red", qty: 5 }], "2|stage|0|liza": [{ colour: "Blue", qty: 8 }] },
+        },
+      },
+    };
+    const r = removeFnFromEventOrderData(data, 1, { type: "Mehendi", date: "2026-11-16", venue: "Aura" });
+    expect(r.refused).toBe(false);
+    // Sangeet's own edits (previously keyed "2|...") now sit at "1|..." — Sangeet's own numbers, not Mehendi's
+    expect(r.next.deptOps.Tenting.trussPlan).toEqual({ "1|stage|0": { pillars: [{ len: 12, n: 4 }] } });
+    expect(r.next.deptOps.Tenting.trussFabric).toEqual({ "1|stage|0|liza": [{ colour: "Blue", qty: 8 }] });
+  });
+
+  it("mandiLinesByFn: the removed function's own logged real spend is ARCHIVED (never dropped), survivors reindex, meta reindexes alongside", () => {
+    const data = {
+      functionsDetail: [fn(0, "Haldi", "2026-11-15", "Aura"), fn(1, "Mehendi", "2026-11-16", "Aura"), fn(2, "Sangeet", "2026-11-16", "Aura")],
+      deptOps: {
+        Floral: {
+          mandiLinesByFn: { 1: [{ name: "Rose", qty: 10, price: 50 }], 2: [{ name: "Marigold", qty: 20, price: 10 }] },
+          mandiLinesByFnMeta: { 1: { date: "2026-11-16", venue: "Aura", label: "Mehendi" }, 2: { date: "2026-11-16", venue: "Aura", label: "Sangeet" } },
+        },
+      },
+    };
+    const r = removeFnFromEventOrderData(data, 1, { type: "Mehendi", date: "2026-11-16", venue: "Aura" });
+    expect(r.refused).toBe(false);
+    expect(r.next.deptOps.Floral.mandiLinesByFn).toEqual({ 1: [{ name: "Marigold", qty: 20, price: 10 }] });
+    expect(r.next.deptOps.Floral.mandiLinesByFnMeta).toEqual({ 1: { date: "2026-11-16", venue: "Aura", label: "Sangeet" } });
+    expect(r.next.deptOps.Floral.mandiLinesArchived).toEqual([
+      { fnIdx: 1, meta: { date: "2026-11-16", venue: "Aura", label: "Mehendi" }, rows: [{ name: "Rose", qty: 10, price: 50 }], archivedAt: expect.any(Number) },
+    ]);
+  });
+
+  it("mandiLinesByFn: removing a function with NOTHING logged doesn't create an archive entry at all", () => {
+    const data = {
+      functionsDetail: [fn(0, "Haldi", "2026-11-15", "Aura"), fn(1, "Mehendi", "2026-11-16", "Aura")],
+      deptOps: { Floral: { mandiLinesByFn: { 0: [{ name: "Rose", qty: 10, price: 50 }] } } },
+    };
+    const r = removeFnFromEventOrderData(data, 1, { type: "Mehendi", date: "2026-11-16" });
+    expect(r.next.deptOps.Floral.mandiLinesByFn).toEqual({ 0: [{ name: "Rose", qty: 10, price: 50 }] });
+    expect(r.next.deptOps.Floral.mandiLinesArchived).toBeUndefined();
   });
 });
 
