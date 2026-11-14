@@ -1633,8 +1633,21 @@ Rules:
                 })
                 .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
               if (blockedFns.length === 0) return <p className="text-sm text-gray-400 italic">{availDate && !selAllDates ? "Not blocked for any function on this date" : "Not blocked for any function"}</p>;
+              // The live `blocks` ledger has no per-function granularity — one entry covers the WHOLE
+              // event on one date, however many of this SAME deal's functions share that date (two
+              // functions, same night, different venues, is exactly why the shift chip above exists).
+              // Substituting the live figure into every such row showed the SAME day-level total on
+              // each one, letting ops double- (or N-) count it (confirmed regression, 2026-11-14,
+              // second review pass). Only trust it for a row that's the SOLE one of its (event, date)
+              // pair in this list; otherwise fall back to each row's own static snapshot, and surface
+              // the real combined live total once, as a shared note, instead of silently per row.
+              const eventDateCounts = new Map();
+              blockedFns.forEach((f) => { const k = `${f.eventOrderId || f.id}|${f.date}`; eventDateCounts.set(k, (eventDateCounts.get(k) || 0) + 1); });
+              const shownGroupNotes = new Set();
               return blockedFns.map((f) => {
                   const it = f.items.find((it) => it.invId === selItem.id);
+                  const groupKey = `${f.eventOrderId || f.id}|${f.date}`;
+                  const soleInGroup = eventDateCounts.get(groupKey) === 1;
                   // Guest name + venue — read from the linked event_order when there is one (the
                   // authoritative, always-plain-string copy), since a functions row's own blob carries
                   // neither reliably (only brideGroom + a {type,name,fullAddress} venue object on some
@@ -1648,20 +1661,32 @@ Rules:
                   const shiftRaw = f.shift || (Array.isArray(eo?.functionsDetail) ? eo.functionsDetail.find((x) => x?.date === f.date && (!f.type || x?.fnType === f.type || x?.type === f.type))?.shift : "") || "";
                   const shift = String(shiftRaw).trim();
                   // The live `blocks` ledger, not this row's own static qty, whenever there's a real
-                  // entry to read it from (bug 10/15, 2026-11-14 audit) — see heldForEventOnDate's own
-                  // comment for why. Falls back to f.items' snapshot only when no live record matches
-                  // at all (the known fallback-id gap, liveBlocks.js's own header comment).
+                  // entry to read it from AND this row is the sole function of its deal on this date
+                  // (bug 10/15, 2026-11-14 audit; see this block's own comment above for the
+                  // multi-function-same-date caveat) — see heldForEventOnDate's own comment for why.
+                  // Falls back to f.items' snapshot otherwise (several functions sharing the entry, or
+                  // no live record matching at all — the known fallback-id gap, liveBlocks.js's own
+                  // header comment).
                   const live = heldForEventOnDate(readBlocks[selItem.id], f.eventOrderId || f.id, f.date);
-                  const shownQty = live.found ? live.qty : it.qty;
-                  return <div key={f.id} className="flex items-center gap-3 py-2 border-b text-sm flex-wrap">
-                    <span className="font-medium">{f.name}</span><span className="text-gray-500">{f.date}</span>
-                    {shift && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 ring-1 ring-amber-200">{shift}</span>}
-                    {guestName && <span className="text-gray-700">{guestName}</span>}
-                    {venueName && <span className="text-gray-500 text-xs">{venueName}</span>}
-                    <Badge color="indigo">{it.dept}</Badge><span className="text-gray-500 text-xs">{it.remark}</span>
-                    {live.qtyToProduce > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 ring-1 ring-orange-200" title="Allowed past real stock — still needs to be produced, not pulled from stock on hand">🏭 {live.qtyToProduce} to produce</span>}
-                    <span className="ml-auto font-medium">×{shownQty}</span>
-                  </div>;
+                  const shownQty = soleInGroup && live.found ? live.qty : it.qty;
+                  const showGroupNote = !soleInGroup && live.found && !shownGroupNotes.has(groupKey);
+                  if (showGroupNote) shownGroupNotes.add(groupKey);
+                  return <React.Fragment key={f.id}>
+                    {showGroupNote && (
+                      <div className="w-full text-[11px] text-gray-400 italic -mb-1">
+                        📦 {live.qty} actually held for {f.date} across {eventDateCounts.get(groupKey)} functions of this deal{live.qtyToProduce > 0 ? ` (+${live.qtyToProduce} to produce)` : ""} — each function below shows its own planned qty, not a share of this total
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3 py-2 border-b text-sm flex-wrap">
+                      <span className="font-medium">{f.name}</span><span className="text-gray-500">{f.date}</span>
+                      {shift && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 ring-1 ring-amber-200">{shift}</span>}
+                      {guestName && <span className="text-gray-700">{guestName}</span>}
+                      {venueName && <span className="text-gray-500 text-xs">{venueName}</span>}
+                      <Badge color="indigo">{it.dept}</Badge><span className="text-gray-500 text-xs">{it.remark}</span>
+                      {soleInGroup && live.qtyToProduce > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 ring-1 ring-orange-200" title="Allowed past real stock — still needs to be produced, not pulled from stock on hand">🏭 {live.qtyToProduce} to produce</span>}
+                      <span className="ml-auto font-medium">×{shownQty}</span>
+                    </div>
+                  </React.Fragment>;
                 });
             })()}
           </div>
