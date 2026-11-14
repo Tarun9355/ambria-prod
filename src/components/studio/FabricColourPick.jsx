@@ -13,17 +13,37 @@ import { parseFlowerPalette, stringifyFlowerPalette } from "../../lib/studio/pri
 // colour opens a ratio between them (owner ask 2026-11-14, like the Flower Palette's): every share stays whole and the
 // shares always add up to 100 - changing one moves the others in proportion.
 const MAX_COLOURS = 4;
+// Every ticked colour keeps at least this share - a colour typed down to 0 vanished from the ratio while still ticked
+// (owner report 2026-11-14: "Air force 0 · Black 100").
+const MIN_SHARE = 5;
 
-// Whole-number shares adding up to exactly 100, in proportion to `weights` (largest remainder); all zero → even.
-const toHundred = (weights) => {
+// Whole numbers adding up to exactly `total`, in proportion to `weights` (largest remainder); all zero → even.
+const spread = (weights, total) => {
+  if (!weights.length) return [];
   const w = weights.map((x) => Math.max(0, Number(x) || 0));
   const sum = w.reduce((t, x) => t + x, 0);
   const base = sum > 0 ? w : w.map(() => 1);
-  const total = base.reduce((t, x) => t + x, 0);
-  const raw = base.map((x) => (x * 100) / total);
+  const bt = base.reduce((t, x) => t + x, 0);
+  const raw = base.map((x) => (x * total) / bt);
   const out = raw.map(Math.floor);
-  let left = 100 - out.reduce((t, x) => t + x, 0);
+  let left = total - out.reduce((t, x) => t + x, 0);
   raw.map((r, i) => [r - out[i], i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => { if (left > 0) { out[i] += 1; left -= 1; } });
+  return out;
+};
+const toHundred = (weights) => spread(weights, 100);
+// Shares adding to 100 with every colour at MIN_SHARE or more. `fixed` (an index) keeps the value given to it where it can;
+// the rest share what is left above their floor in proportion to what they had above it.
+const withFloor = (pcts, fixed = -1) => {
+  const n = pcts.length;
+  if (n < 2) return toHundred(pcts);
+  const cap = 100 - MIN_SHARE * (n - 1);
+  const fv = fixed >= 0 ? Math.max(MIN_SHARE, Math.min(cap, Math.round(Number(pcts[fixed]) || 0))) : null;
+  const idxs = pcts.map((_, i) => i).filter((i) => i !== fixed);
+  const room = (fv === null ? 100 : 100 - fv) - MIN_SHARE * idxs.length;
+  const above = spread(idxs.map((i) => Math.max(0, (Number(pcts[i]) || 0) - MIN_SHARE)), room);
+  const out = pcts.map(() => 0);
+  if (fv !== null) out[fixed] = fv;
+  idxs.forEach((i, k) => { out[i] = MIN_SHARE + above[k]; });
   return out;
 };
 
@@ -56,7 +76,7 @@ export default function FabricColourPick({ stock = [], paletteCols = [], value =
   const toggle = (name) => {
     if (pickedSet.has(name)) {
       const rest = picked.filter((c) => c.name !== name);
-      const pcts = toHundred(rest.map((c) => c.pct));
+      const pcts = withFloor(toHundred(rest.map((c) => c.pct)));
       save(rest.map((c, i) => ({ name: c.name, pct: pcts[i] })));
       return;
     }
@@ -64,15 +84,13 @@ export default function FabricColourPick({ stock = [], paletteCols = [], value =
     const n = picked.length + 1;
     const share = Math.round(100 / n);
     const others = toHundred(picked.map((c) => c.pct)).map((p) => (p * (100 - share)) / 100);
-    const pcts = toHundred([...others, share]);
+    const pcts = withFloor(toHundred([...others, share]), picked.length);
     save([...picked, { name, pct: 0 }].map((c, i) => ({ name: c.name, pct: pcts[i] })));
   };
   // one share typed: the others share what is left, in proportion to what they had
   const setPct = (idx, raw) => {
-    const v = Math.max(0, Math.min(100, Math.round(Number(raw) || 0)));
-    const others = picked.map((c, i) => (i === idx ? 0 : c.pct));
-    const restPcts = toHundred(others).map((p, i) => (i === idx ? 0 : (p * (100 - v)) / 100));
-    const pcts = toHundred(picked.map((c, i) => (i === idx ? v : restPcts[i])));
+    const v = Math.round(Number(raw) || 0);
+    const pcts = withFloor(picked.map((c, i) => (i === idx ? v : c.pct)), idx);
     save(picked.map((c, i) => ({ name: c.name, pct: pcts[i] })));
   };
 
@@ -133,14 +151,14 @@ export default function FabricColourPick({ stock = [], paletteCols = [], value =
         <div style={{ margin: "2px 4px", padding: "8px 8px 6px", borderRadius: 8, border: `1px solid ${border}`, display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: textS }}>Ratio</div>
           {/* the split at a glance */}
-          <div style={{ display: "flex", height: 6, borderRadius: 999, overflow: "hidden", background: border }}>
-            {picked.map((c) => <span key={c.name} title={`${c.name} ${c.pct}%`} style={{ width: `${c.pct}%`, background: swatchHexFor(c.name, null, byName.get(c.name)?.hex), transition: "width 160ms ease-out" }} />)}
+          <div style={{ display: "flex", gap: 2, height: 8 }}>
+            {picked.map((c) => <span key={c.name} title={`${c.name} ${c.pct}%`} style={{ width: `${c.pct}%`, minWidth: 6, borderRadius: 999, background: swatchHexFor(c.name, null, byName.get(c.name)?.hex), border: "1px solid rgba(0,0,0,0.12)", transition: "width 160ms ease-out" }} />)}
           </div>
           {picked.map((c, i) => (
             <div key={c.name} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: textP }}>
               <Swatch c={c.name} size={14} />
               <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
-              <input type="number" min={0} max={100} step={5} value={c.pct} aria-label={`${c.name} share, percent`}
+              <input type="number" min={MIN_SHARE} max={100 - MIN_SHARE * (picked.length - 1)} step={5} value={c.pct} aria-label={`${c.name} share, percent`}
                 onChange={(e) => setPct(i, e.target.value)}
                 style={{ width: 52, padding: "3px 6px", borderRadius: 6, border: `1px solid ${border}`, fontSize: 12, textAlign: "right", background: isDark ? "#111827" : "#fff", color: textP }} />
               <span style={{ color: textS, fontSize: 11 }}>%</span>
