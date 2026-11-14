@@ -150,7 +150,8 @@ import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CA
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions } from "../../lib/studio/sessionData.js";
-import { reqByDateFrom, ownedIds, planStudioBlocks, SRC_STUDIO_CARD } from "../../lib/studio/soldBlocksPlan.js";
+import { reqByDateFrom, ownedIds, planStudioBlocks, planToOps, SRC_STUDIO_CARD } from "../../lib/studio/soldBlocksPlan.js";
+import { applyBlockOps, shortfallsOf } from "../../lib/ims/blocksRpc.js";
 import { mergeManualSwaps } from "../../lib/studio/dealCheckCardMerge.js";
 import { isFoc, cardIsFoc as sharedCardIsFoc, parseCardKeyLite } from "../../lib/studio/foc.js";
 import { reindexFnIdxObject, reindexFnIdxArray, reindexCompositeKeyObject, ZONE_PIPE_KEY, TRUSS_ZONE_PIPE_KEY, TRANSPORT_COLLAPSE_KEY, FLORAL_CALC_OPEN_KEY } from "../../lib/studio/dealCheckReindex.js";
@@ -14224,29 +14225,56 @@ export default function StudioApp() {
     });
 
     if (plan.changedIds.length) {
+      // planToOps (bug 4, 2026-11-14): turns the plan into remove/add ops for apply_block_ops, the
+      // locked, availability-checking RPC — never a plain upsert of the whole computed array, which
+      // had no row lock and no stock check of its own (the exact root cause the "Roman Fibre pot"
+      // overbook traced back to). allowOver mirrors the SAME "is this item exempt from a stock
+      // ceiling" rule Build's own maxQty already uses (getElPriceFromInventoryCore, above) — an item
+      // with zero owned qty (made-to-order) or ticked "Can be made" may go past real stock as a
+      // tracked qtyToProduce; anything else is capped at what's really free and reported as short.
+      const allowOver = (id) => {
+        const item = (inventoryList || []).find((x) => x.id === id);
+        return item?.canBeMade === true || !(Number(item?.qty) > 0);
+      };
+      const ops = planToOps({ eventId: eo.id, rowsById, plan, allowOver });
+      let rpcResult = null;
       try {
-        // Scoped to THIS event's changed items, not per-item: unlike IMS's own per-item blocks writer,
-        // this is already one batched multi-row upsert (not a sequential loop with its own ordering
-        // race), so retrying the whole batch together as this event's own reconcile attempt is the
-        // proportionate fix. retryable:false: rowsById is a merge of a point-in-time read, not re-read
-        // fresh, same caution as every other blocks/event_orders write in this rollout.
+        // Scoped to THIS event's ops, not per-item: apply_block_ops already takes one lock per item
+        // inside a single transaction, so retrying the whole batch together as this event's own
+        // reconcile attempt is the proportionate fix. retryable:false: rowsById is a merge of a
+        // point-in-time read, not re-read fresh, same caution as every other blocks/event_orders
+        // write in this rollout — the RPC's OWN re-read under its lock is what's actually
+        // authoritative, this is only about which CLIENT-SIDE attempt gets to retry.
+        // factory returns {data, error} (writeWithRetry's own expected shape) — `data` is the FULL
+        // RPC result ({ok, applied, items, rows}); writeWithRetry's own top-level `ok`/`error` are
+        // about whether the WRITE ROUND-TRIP succeeded, not whether anything came back short (a
+        // 'cap' run can succeed perfectly while still reporting plenty of shortfalls in `data.items`).
         const res = await writeWithRetry(
-          () => supabase.from("blocks").upsert(plan.changedIds.map((id) => ({ id, item_id: id, data: plan.nextById.get(id) })), { onConflict: "id" }),
+          async () => { const r = await applyBlockOps(supabase, ops, { onShort: "cap" }); return { data: r, error: r.error }; },
           { target: `blocks:reconcile:${eo.id}`, label: "blocks reconcile", retryable: false },
         );
         if (res.superseded) {
           // A newer reconcile of this SAME event already took over and owns the ledger
-          // save/department notifications below — falling through here (res.error is undefined on a
-          // superseded result, so `if (error) throw` alone would wrongly read as success) would log a
-          // false "wrote blocks", save requiredByFn into dcReservedInventory as if it landed when the
-          // actual write never did, and double-send the department notifications.
+          // save/department notifications below — falling through here would log a false "wrote
+          // blocks", save requiredByFn into dcReservedInventory as if it landed when the actual write
+          // never did, and double-send the department notifications.
           console.info("[reconcile] blocks write superseded by a newer reconcile of event", eo.id);
           return;
         }
-        if (res.error) throw res.error;
+        if (!res.ok) throw res.error;
+        rpcResult = res.data;
       } catch (e) {
-        console.error("[reconcile] blocks upsert failed:", e?.message || e);
+        console.error("[reconcile] blocks RPC write failed:", e?.message || e);
         return;
+      }
+      const shorts = shortfallsOf(rpcResult);
+      if (shorts.length) {
+        console.warn("[reconcile] blocks: event", eo.id, "could not fully reserve", shorts.length, "item(s)/date(s) — other bookings hold the rest:", shorts);
+        const names = shorts.slice(0, 3).map((s) => {
+          const item = (inventoryList || []).find((x) => x.id === s.item_id);
+          return `${item?.name || s.item_id} short ${Math.round(s.short)} on ${s.date}`;
+        }).join("; ");
+        showMsg(`Couldn't fully reserve ${shorts.length} item${shorts.length > 1 ? "s" : ""} for this date — other bookings hold the rest: ${names}${shorts.length > 3 ? "…" : ""}`, "red");
       }
       console.info("[reconcile] blocks: event", eo.id, "changed", plan.changedIds.length, "item(s)", plan.log);
     }
@@ -14269,7 +14297,7 @@ export default function StudioApp() {
       }), status: "logged" };
       submitAmendRequest(amendReq);
     }
-  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, dcKitEdits, dcManualItems]);
+  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, dcKitEdits, dcManualItems, showMsg]);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   // `skipAi` runs the matcher deterministically — knowledge + name-match only, no vision calls.

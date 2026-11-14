@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyEntry, reqByDateFrom, planStudioBlocks, SRC_STUDIO_CARD, SRC_STUDIO_MANUAL, SRC_IMS_AUTOCONFIRM } from "./soldBlocksPlan.js";
+import { classifyEntry, reqByDateFrom, planStudioBlocks, planToOps, SRC_STUDIO_CARD, SRC_STUDIO_MANUAL, SRC_IMS_AUTOCONFIRM } from "./soldBlocksPlan.js";
 
 const EO = "eo_1";
 const D = "2026-11-25";
@@ -278,5 +278,88 @@ describe("planStudioBlocks — manual items (Phase 2 plumbing, inert until manua
     const rowsById = new Map([["T", [entry]]]);
     const r = planStudioBlocks({ ...base, rowsById, cardReq: {}, manualReq: { [D]: { T: 2 } }, manualReady: true });
     expect(r.nextById.get("T")).toEqual([{ date: D, eventId: EO, qty: 2, status: "confirmed", createdAt: NOW, source: SRC_STUDIO_MANUAL }]);
+  });
+});
+
+describe("planToOps — turning a plan into apply_block_ops' write ops (bug 4)", () => {
+  const allowOverNone = () => false;
+
+  it("an unchanged item (not in changedIds) produces no op at all", () => {
+    const rowsById = new Map([["T", [{ date: D, eventId: EO, qty: 3, status: "confirmed", source: SRC_STUDIO_CARD }]]]);
+    const plan = { changedIds: [], nextById: new Map() };
+    expect(planToOps({ eventId: EO, rowsById, plan, allowOver: allowOverNone })).toEqual([]);
+  });
+
+  it("a qty change produces one remove + one add for the changed group only", () => {
+    const rowsById = new Map([["T", [{ date: D, eventId: EO, qty: 3, status: "confirmed", createdAt: 1, source: SRC_STUDIO_CARD }]]]);
+    const plan = { changedIds: ["T"], nextById: new Map([["T", [{ date: D, eventId: EO, qty: 7, status: "confirmed", createdAt: 999, source: SRC_STUDIO_CARD }]]]) };
+    const ops = planToOps({ eventId: EO, rowsById, plan, allowOver: allowOverNone });
+    expect(ops).toEqual([{
+      item_id: "T", event_id: EO,
+      remove: [{ source: SRC_STUDIO_CARD, date: D }],
+      add: [{ date: D, qty: 7, status: "confirmed", source: SRC_STUDIO_CARD, allowOver: false }],
+    }]);
+  });
+
+  it("a release (no longer in next at all) produces a remove with no add", () => {
+    const rowsById = new Map([["T", [{ date: D, eventId: EO, qty: 3, status: "confirmed", source: SRC_STUDIO_CARD }]]]);
+    const plan = { changedIds: ["T"], nextById: new Map([["T", []]]) };
+    const ops = planToOps({ eventId: EO, rowsById, plan, allowOver: allowOverNone });
+    expect(ops).toEqual([{ item_id: "T", event_id: EO, remove: [{ source: SRC_STUDIO_CARD, date: D }], add: [] }]);
+  });
+
+  it("adoption (one source's key vanishes, another's appears) falls out of the plain per-key diff — no special-casing needed", () => {
+    const rowsById = new Map([["T", [{ date: D, eventId: EO, qty: 9, status: "confirmed", source: SRC_IMS_AUTOCONFIRM }]]]);
+    const plan = { changedIds: ["T"], nextById: new Map([["T", [{ date: D, eventId: EO, qty: 9, status: "confirmed", createdAt: 1, source: SRC_STUDIO_CARD }]]]) };
+    const ops = planToOps({ eventId: EO, rowsById, plan, allowOver: allowOverNone });
+    expect(ops[0].remove).toContainEqual({ source: SRC_IMS_AUTOCONFIRM, date: D });
+    expect(ops[0].add).toContainEqual({ date: D, qty: 9, status: "confirmed", source: SRC_STUDIO_CARD, allowOver: false });
+  });
+
+  it("foreign and protected entries never appear in an op — they're identical in cur and next, so they cancel out", () => {
+    const foreign = { date: D, eventId: "eo_other", qty: 50, status: "confirmed" };
+    const protectedEntry = { date: D, eventId: EO, qty: 2, status: "held", source: "ims-manual" };
+    const cur = [{ date: D, eventId: EO, qty: 3, status: "confirmed", source: SRC_STUDIO_CARD }, foreign, protectedEntry];
+    const next = [{ date: D, eventId: EO, qty: 7, status: "confirmed", createdAt: 1, source: SRC_STUDIO_CARD }, foreign, protectedEntry];
+    const rowsById = new Map([["T", cur]]);
+    const plan = { changedIds: ["T"], nextById: new Map([["T", next]]) };
+    const ops = planToOps({ eventId: EO, rowsById, plan, allowOver: allowOverNone });
+    expect(ops[0].remove).toEqual([{ source: SRC_STUDIO_CARD, date: D }]);
+    expect(ops[0].add).toEqual([{ date: D, qty: 7, status: "confirmed", source: SRC_STUDIO_CARD, allowOver: false }]);
+  });
+
+  it("an entry with qtyToProduce is re-sent as qty + qtyToProduce", () => {
+    const rowsById = new Map([["T", [{ date: D, eventId: EO, qty: 5, qtyToProduce: 3, status: "confirmed", source: SRC_STUDIO_CARD }]]]);
+    // unchanged — same group, same total (5+3=8) — must produce NO op
+    const sameNext = new Map([["T", [{ date: D, eventId: EO, qty: 5, qtyToProduce: 3, status: "confirmed", source: SRC_STUDIO_CARD }]]]);
+    expect(planToOps({ eventId: EO, rowsById, plan: { changedIds: ["T"], nextById: sameNext }, allowOver: allowOverNone })).toEqual([]);
+    // a real change (qty rises from 8 total to 10) — remove the old group, add the new, un-split (qtyToProduce rolled in)
+    const changedNext = new Map([["T", [{ date: D, eventId: EO, qty: 10, status: "confirmed", createdAt: 1, source: SRC_STUDIO_CARD }]]]);
+    const ops = planToOps({ eventId: EO, rowsById, plan: { changedIds: ["T"], nextById: changedNext }, allowOver: allowOverNone });
+    expect(ops[0].add).toEqual([{ date: D, qty: 10, status: "confirmed", source: SRC_STUDIO_CARD, allowOver: false }]);
+  });
+
+  it("allowOver(itemId, date, source) is consulted per add and threaded into the op", () => {
+    const rowsById = new Map([["T", []]]);
+    const plan = { changedIds: ["T"], nextById: new Map([["T", [{ date: D, eventId: EO, qty: 20, status: "confirmed", createdAt: 1, source: SRC_STUDIO_CARD }]]]) };
+    const ops = planToOps({ eventId: EO, rowsById, plan, allowOver: (id, date, source) => id === "T" && date === D && source === SRC_STUDIO_CARD });
+    expect(ops[0].add[0].allowOver).toBe(true);
+  });
+
+  it("entries belonging to a DIFFERENT event are never read as this event's own, even for an id in changedIds", () => {
+    const rowsById = new Map([["T", [{ date: D, eventId: "eo_other", qty: 50, status: "confirmed" }]]]);
+    const plan = { changedIds: ["T"], nextById: new Map([["T", [{ date: D, eventId: "eo_other", qty: 50, status: "confirmed" }, { date: D, eventId: EO, qty: 4, status: "confirmed", createdAt: 1, source: SRC_STUDIO_CARD }]]]) };
+    const ops = planToOps({ eventId: EO, rowsById, plan, allowOver: allowOverNone });
+    // remove still carries this event's own (source,date) selector, even though `cur` never saw a
+    // prior entry for it — a safety-net remove, not evidence one was read; see the idempotency test below.
+    expect(ops).toEqual([{ item_id: "T", event_id: EO, remove: [{ source: SRC_STUDIO_CARD, date: D }], add: [{ date: D, qty: 4, status: "confirmed", source: SRC_STUDIO_CARD, allowOver: false }] }]);
+  });
+
+  it("idempotency (regression review, 2026-11-14): a brand-new add still carries its own remove selector, so a retry/duplicate send can never append a second entry for the same group", () => {
+    const rowsById = new Map([["T", []]]); // nothing seen in the (possibly stale) read
+    const plan = { changedIds: ["T"], nextById: new Map([["T", [{ date: D, eventId: EO, qty: 6, status: "confirmed", createdAt: 1, source: SRC_STUDIO_CARD }]]]) };
+    const ops = planToOps({ eventId: EO, rowsById, plan, allowOver: allowOverNone });
+    expect(ops[0].remove).toEqual([{ source: SRC_STUDIO_CARD, date: D }]);
+    expect(ops[0].add).toEqual([{ date: D, qty: 6, status: "confirmed", source: SRC_STUDIO_CARD, allowOver: false }]);
   });
 });

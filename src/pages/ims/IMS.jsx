@@ -16,6 +16,7 @@ import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, DEFAULT_ROLE_TABS, assembleHeavyElem
 import SiteSupervisorTab from "./SiteSupervisorTab.jsx";
 import { assembleAttendanceLocationsFromRows, assembleAttendanceTrainingByDeptFromRows } from "../../lib/ims/attendance";
 import { filterLiveBlocks } from "../../lib/ims/liveBlocks";
+import { applyBlockOps, mergeBlockRows } from "../../lib/ims/blocksRpc";
 import { assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher";
 import { assembleMarkedDatesFromRows } from "../../lib/inventory/helpers";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
@@ -2513,6 +2514,22 @@ export default function IMS() {
     setBlocksState(next);
     trackWrite(persistBlocks(next, prev));
   }, [trackWrite]);
+  // The locked, availability-checking RPC (bug 4, 2026-11-14 inventory-blocks audit) — every writer
+  // migrated to it calls THIS instead of setBlocks/saveBlocks for an actual `blocks` reservation.
+  // Unlike setBlocks/saveBlocks (a plain read-modify-write of a local snapshot, racy against any
+  // other writer touching the same item), this never reads blocksRef at all before writing — the RPC
+  // re-reads under its own row lock, so the only local state this touches is the RESULT, merged in
+  // for immediate UI consistency once the write has already safely landed.
+  const applyBlocksRpc = useCallback(async (ops, opts) => {
+    const res = await applyBlockOps(supabase, ops, opts);
+    if (res.rows?.length) {
+      const next = mergeBlockRows(blocksRef.current, res.rows);
+      blocksRef.current = next;
+      setBlocksState(next);
+    }
+    if (res.error) setError(`Block reservation failed: ${res.error.message || res.error}`);
+    return res;
+  }, []);
   // Last-minute amendment requests — migrated off the AMEND_SK blob to the `amend_requests` TABLE.
   const amendReqRef = useRef([]);
   useEffect(() => { amendReqRef.current = amendRequests; }, [amendRequests]);
@@ -2671,7 +2688,7 @@ export default function IMS() {
     && settingsLoadedRef.current === true
     && trussInvLoadedRef.current === true;
   useEventOrderAutoConfirm({
-    eventOrders, setEventOrders, inventory: items, blocks, setBlocks, saveBlocks, saveEventOrders,
+    eventOrders, setEventOrders, inventory: items, blocks, setBlocks, saveBlocks, applyBlocksRpc, saveEventOrders,
     projects, setProjects, functions, setFunctions, purchase, setPurchase,
     settings, studio, trussInv, setTrussInv, ready: autoConfirmReady,
   });
@@ -2996,7 +3013,6 @@ export default function IMS() {
             onSyncLms={syncLms} lmsSyncing={lmsSyncing} settings={settings} setSettings={setSettings}
             mergeDatePricing={mergeDatePricing}
             eventOrders={eventOrders} setEventOrders={setEventOrders} saveEventOrders={saveEventOrders}
-            blocks={blocks} setBlocks={setBlocks} saveBlocks={saveBlocks}
           />
         ) : activeTab === "flowers" ? (
           <FlowersTab
@@ -3010,8 +3026,7 @@ export default function IMS() {
         ) : activeTab === "approvals" ? (
           <ApprovalsTab
             amendRequests={amendRequests} saveAmendRequests={saveAmendRequests}
-            authUser={user} inventory={items}
-            blocks={blocks} setBlocks={setBlocksState} saveBlocks={saveBlocks}
+            authUser={user}
           />
         ) : activeTab === "site" ? (
           <SiteSupervisorTab

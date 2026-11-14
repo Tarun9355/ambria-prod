@@ -21,7 +21,7 @@ import { normalizeSizeClass, sizeClassToPatternKey } from "./flowerHelpers";
 import { lookupBySubcat } from "./helpers";
 import { supabase } from "../supabase";
 import { isFoc } from "../studio/foc.js";
-import { filterLiveBlocks, heldOnDate } from "./liveBlocks.js";
+import { filterLiveBlocks, heldOnDate, isLiveBlockStatus } from "./liveBlocks.js";
 
 export const resolveRealPct = (el, rcItem, fnFloralRatio) => {
   if (typeof el?.realPct === "number") return Math.max(0, Math.min(100, el.realPct));
@@ -359,7 +359,7 @@ export function calcAutoCrew(fnObj, projObj, settings, inventory){
 }
 
 // ─── Background auto-confirm hook — call once, unconditionally, in IMS.jsx ──────────────────
-export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventory, blocks, setBlocks, saveBlocks, saveEventOrders, projects, setProjects, functions, setFunctions, purchase, setPurchase, settings, studio, trussInv, setTrussInv, ready = true }){
+export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventory, blocks, setBlocks, saveBlocks, applyBlocksRpc, saveEventOrders, projects, setProjects, functions, setFunctions, purchase, setPurchase, settings, studio, trussInv, setTrussInv, ready = true }){
   // §23 Phase 2.9f (26 May 2026) — Per-colour fabric stock blocking on SOLD + auto-PO for shortfalls.
   // Reads zoneConfig[zoneKey].{maskingAllocation, lizaAllocation, curtainAllocation} arrays from the EO,
   // sums qty per (fabricType, colour) across all functions × zones, decrements trussInv stock,
@@ -844,10 +844,12 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
     if(newPOs.length>0) setPurchase(prev=>[...prev,...newPOs]);
   }
 
-  // Core executor — does AI-match-results → dedup → blocks → Project/Function bridge.
-  function executeConfirmBlocks(eo, results, decisionsArg, manualItemsArg, opts){
+  // Core executor — does AI-match-results → dedup → blocks → Project/Function bridge. Async (bug 4,
+  // 2026-11-14): the actual `blocks` write now goes through the locked, availability-checking RPC
+  // (apply_block_ops) instead of a plain read-modify-write upsert — its one caller (autoConfirmEO)
+  // already awaits everything else in this flow, so this needed no other change to stay safe to await.
+  async function executeConfirmBlocks(eo, results, decisionsArg, manualItemsArg, opts){
     const clearReviewState = !!opts?.clearReviewState;
-    let newBlocks={...blocks};
     let accepted=0, skipped=0;
     const blockedItems=[]; // [{itemId, qty, sizeClass, zone, fnIdx, fnDate, fnVenue}]
     const skippedItems=[]; // [{element, qty, zone, category, fnIdx, fnDate}]
@@ -953,6 +955,11 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
     // Blocks track physical inventory (qty per item per date) — size-agnostic.
     // blockedItems carries sizeClass per row so createProjectFromEO can populate
     // multi-row fn.items (one row per (invId, sizeClass)).
+    // opsByItem: one RPC op per item, covering every date this run touches for it — each date's own
+    // remove+add pair makes a retry (bug 11: a partial failure after this write re-runs the whole
+    // function) idempotent: the SAME fresh qty replaces whatever "ims-autoconfirm" entry was there,
+    // rather than appending a second one on top of it.
+    const opsByItem = new Map();
     fnList.forEach(fn=>{
       const myFresh=freshByFn.get(fn.fnIdx)||new Map();
       // Group fresh by itemId (sum sizes) for block writing
@@ -963,19 +970,46 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
         // For project bridge — one entry per (itemId, sizeClass)
         blockedItems.push({itemId,qty,sizeClass:sc||"M",zone:"",fnIdx:fn.fnIdx,fnDate:fn.fnDate,fnVenue:fn.fnVenue});
       });
-      // Write block rows summed by itemId. For a Studio order (bug 6, 2026-11-14) `results` already
-      // came from studioOrderItems' exact-invId-only matching, never aiMatchEvent's own fuzzy stage-2
-      // — so this can't create a WRONG-item hold any more. It's kept as a fallback reservation
-      // (owner decision, same regression review): Studio's own reconcile relabels this engine's
-      // "ims-autoconfirm" entry into its own tag the next time it runs (planStudioBlocks' adoption
-      // rule, soldBlocksPlan.js), rather than this ever becoming a second, competing entry.
+      // For a Studio order (bug 6, 2026-11-14) `results` already came from studioOrderItems' exact-
+      // invId-only matching, never aiMatchEvent's own fuzzy stage-2 — so this can't create a WRONG-
+      // item hold any more. It's kept as a fallback reservation (owner decision, same regression
+      // review): Studio's own reconcile relabels this engine's "ims-autoconfirm" entry into its own
+      // tag the next time it runs (planStudioBlocks' adoption rule, soldBlocksPlan.js), rather than
+      // this ever becoming a second, competing entry.
       byInv.forEach((sumQty, itemId)=>{
-        newBlocks=addBlock(newBlocks,itemId,fn.fnDate,eo.id,sumQty,"confirmed","ims-autoconfirm");
+        // Already covered by Studio — claim NOTHING here (regression review, 2026-11-14): this
+        // engine's whole reservation is a fallback for the brief window before Studio's own reconcile
+        // runs. If a "studio-incremental"/"studio-manual" entry for THIS event already exists for
+        // this exact item+date, Studio has already reserved it — writing an additional
+        // "ims-autoconfirm" entry on top would be a second, redundant hold for the SAME event, which
+        // doesn't protect anyone but DOES look like extra competing demand to every OTHER deal trying
+        // to book this item/date until Studio's next reconcile adopts it away. Skipping the write
+        // entirely (not even a 0-qty op) means there is nothing to adopt in the first place.
+        const alreadyStudioHeld = ((blocks||{})[itemId]||[]).some((b) =>
+          b && b.eventId===eo.id && b.date===fn.fnDate && isLiveBlockStatus(b) &&
+          (b.source==="studio-incremental" || b.source==="studio-manual"));
+        if (alreadyStudioHeld) return;
+        if (!opsByItem.has(itemId)) opsByItem.set(itemId, { item_id: itemId, event_id: eo.id, remove: [], add: [] });
+        const op = opsByItem.get(itemId);
+        op.remove.push({ source: "ims-autoconfirm", date: fn.fnDate });
+        op.add.push({ date: fn.fnDate, qty: sumQty, status: "confirmed", source: "ims-autoconfirm" });
         accepted++;
       });
     });
-    setBlocks(newBlocks);
-    saveBlocks(newBlocks);
+    if (opsByItem.size) {
+      // 'cap' — grant what real stock covers, never a hard stop mid-auto-confirm; Studio's own
+      // reconcile (and its own Sold-gate, already run before this) is where a genuine shortfall gets
+      // surfaced to a human. A shortfall here just means this engine's own fallback reservation is
+      // partial — the same Sold deal Studio's reconcile will reserve correctly moments later anyway.
+      const res = await applyBlocksRpc([...opsByItem.values()], { onShort: "cap" });
+      // Throw (not just log) on a genuine write failure — regression review, 2026-11-14: this used
+      // to only log and carry on, so autoConfirmEO's own try/catch never saw it, returned `true`
+      // regardless, and the order was marked "blocked" with ZERO actual reservation and no retry (the
+      // one scenario this engine exists to prevent in the first place). Throwing here propagates to
+      // that same try/catch, which already returns false on any caught error — the existing
+      // retry-on-failure watcher picks it back up on the next tick.
+      if (res?.error) throw new Error(`blocks write failed: ${res.error.message || res.error}`);
+    }
     // A FUNCTIONAL updater, touching only THIS order — not `eventOrders.map(...)` off the hook's own
     // render-time closure. By the time this runs we've already awaited a server claim plus however
     // long aiMatchEvent/matching took, so that closure's `eventOrders` is stale. setEventOrders (and
@@ -1029,7 +1063,7 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
         : await aiMatchEvent(eo, inventory, filterLiveBlocks(blocks, eventOrders), {studioRcItems: studio?.rcItems || [], recipeSubcats: settings?.flowerRecipeSubcats || []});
       // eslint-disable-next-line no-console
       console.log("[auto-confirm]", studioOrder ? "studioOrderItems" : "aiMatchEvent", "done:", results.length, "results for", eo.id);
-      executeConfirmBlocks(eo, results, {}, studioOrder ? [] : (eo.manualItems || []), {clearReviewState: false});
+      await executeConfirmBlocks(eo, results, {}, studioOrder ? [] : (eo.manualItems || []), {clearReviewState: false});
       executeFabricBlocks(eo);  // §23 Phase 2.9f — auto-confirm path also blocks fabric stock + auto-PO
       // eslint-disable-next-line no-console
       console.log("[auto-confirm] ✓ confirmed", eo.id, eo.clientName);
@@ -1040,7 +1074,7 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
       return false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inventory, blocks, eventOrders, studio, settings, projects, functions, purchase, trussInv]);
+  }, [inventory, blocks, eventOrders, studio, settings, projects, functions, purchase, trussInv, applyBlocksRpc]);
 
   // Auto-confirm new pending EOs + any stuck legacy "review" EOs (§2.5.1 migration).
   // - Pending: run AI match → block.

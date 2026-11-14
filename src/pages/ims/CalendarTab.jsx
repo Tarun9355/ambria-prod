@@ -5,14 +5,13 @@ import { resolveDateCategory } from "../../lib/inventory/helpers";
 import { DATE_PRICING_LABELS, SETTINGS_DEFAULTS, hasIMSPerm, DATE_PRICING_OWNER_ID } from "../../lib/ims/constants";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
-import { releaseBlocks } from "../../lib/ims/eventAutoConfirm";
 import { useAuth } from "../../lib/AuthContext";
 
 // Faithful copy of the reference IMS CalendarTab — renders LMS/ERP contracts on a
 // month grid, colour-codes dates by Studio category, and exposes Date Pricing config.
 // Also the one place ops can cancel a Studio-booked event (releasing its held inventory) — the
 // old dedicated IMS "Events" tab is gone; that was its only manual control worth keeping.
-export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings, mergeDatePricing, eventOrders, setEventOrders, saveEventOrders, blocks, setBlocks, saveBlocks }) {
+export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings, mergeDatePricing, eventOrders, setEventOrders, saveEventOrders }) {
   const { user: authUser } = useAuth();
   // "Cancel booking" is IMS's only surviving whole-event release control (see cancelStudioEvent's
   // own comment below) — the nearest real target for block_release, which has no dedicated
@@ -97,24 +96,23 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
   };
   const fmtAmt = (n) => "₹" + (Number(n) || 0).toLocaleString("en-IN");
 
-  // Cancel a Studio-booked event: releases every inventory item it's holding and marks the
-  // event_orders row cancelled. This is the only surviving manual control from the old Events tab.
+  // Cancel a Studio-booked event: marks the event_orders row cancelled and releases every inventory
+  // item it's holding. The release itself is no longer a client-side write here (bug 4, 2026-11-14
+  // inventory-blocks audit) — migration 065's own AFTER UPDATE OF status trigger releases this
+  // event's `blocks` entries in the SAME transaction as the status change below, reliably, regardless
+  // of which code path (or a direct DB edit) caused the cancel. A client-side release here used to be
+  // the ONLY thing that did this, via a plain un-locked read-modify-write upsert — now that the
+  // trigger is the real mechanism, keeping that client-side write around would just be a second,
+  // stale-snapshot writer racing against every OTHER writer of the same item's `blocks` row, exactly
+  // the class of bug this whole phase exists to close off; removing it is a strict improvement, not
+  // a lost backstop. This is the only surviving manual control from the old Events tab.
   function cancelStudioEvent(eoId, guestName) {
     if (!canRelease) return;
-    if (!eoId || !setEventOrders || !setBlocks) return;
+    if (!eoId || !setEventOrders) return;
     if (!confirm(`Cancel booking for "${guestName}" and release all its held inventory?`)) return;
-    // Status saved FIRST, release second (reversed from this flow's original order, 2026-11-14):
-    // every reader of `blocks` now treats a cancelled event_order's own entries as not-there
-    // (lib/ims/liveBlocks.js), so status is the real source of truth and a release that fails or
-    // races after this point is now a harmless cleanup step, not a correctness gap — the opposite
-    // of the old order, where a failed/raced SECOND save (status) could leave stock released while
-    // the deal still looked live.
     const updated = (eventOrders || []).map((eo) => (eo.id === eoId ? { ...eo, status: "cancelled" } : eo));
     setEventOrders(updated);
     saveEventOrders?.(updated);
-    const newBlocks = releaseBlocks(blocks, eoId);
-    setBlocks(newBlocks);
-    saveBlocks?.(newBlocks);
     // Releasing the real stock hold above never touched the ops-side `functions` rows this event
     // created — those kept showing as blocked in IMS Inventory's own "Blocked for Functions" list
     // long after cancellation (the exact orphan InventoryTab.jsx had to start filtering out by the

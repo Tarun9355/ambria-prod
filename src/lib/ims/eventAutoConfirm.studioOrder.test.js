@@ -85,19 +85,44 @@ describe("autoConfirmEO's Studio-order path (source-reading wiring check)", () =
 
   it("studio orders use exact-match studioOrderItems, never aiMatchEvent's fuzzy matching, but the hold IS still written (owner decision: keep IMS as a fallback reservation)", () => {
     const start = src.indexOf("const autoConfirmEO = useCallback(");
-    const end = src.indexOf("}, [inventory, blocks, eventOrders, studio, settings, projects, functions, purchase, trussInv]);", start);
+    const end = src.indexOf("}, [inventory, blocks, eventOrders, studio, settings, projects, functions, purchase, trussInv, applyBlocksRpc]);", start);
+    expect(end).toBeGreaterThan(start);
     const body = src.slice(start, end);
     expect(body).toMatch(/const studioOrder = isStudioOrder\(eo\);/);
     expect(body).toMatch(/studioOrder\s*\n?\s*\?\s*studioOrderItems\(eo, inventory\)/);
     expect(body).toMatch(/executeConfirmBlocks\(eo, results, \{\}, studioOrder \? \[\] : \(eo\.manualItems \|\| \[\]\), \{clearReviewState: false\}\)/);
   });
 
-  it("executeConfirmBlocks always writes blocks — no writeBlocks gate (the fallback-reservation decision)", () => {
-    const start = src.indexOf("function executeConfirmBlocks(");
+  it("executeConfirmBlocks always writes blocks via the locked RPC — no writeBlocks gate (the fallback-reservation decision)", () => {
+    const start = src.indexOf("async function executeConfirmBlocks(");
     const end = src.indexOf("// Bridge: auto-create Project + Function for operations tabs", start);
     const body = src.slice(start, end);
+    expect(start).toBeGreaterThan(-1);
     expect(body).not.toMatch(/writeBlocks/);
-    expect(body).toMatch(/newBlocks=addBlock\(newBlocks,itemId,fn\.fnDate,eo\.id,sumQty,"confirmed","ims-autoconfirm"\);/);
-    expect(body).toMatch(/setBlocks\(newBlocks\);\s*saveBlocks\(newBlocks\);/);
+    expect(body).toMatch(/op\.add\.push\(\{ date: fn\.fnDate, qty: sumQty, status: "confirmed", source: "ims-autoconfirm" \}\);/);
+    expect(body).toMatch(/applyBlocksRpc\(\[\.\.\.opsByItem\.values\(\)\], \{ onShort: "cap" \}\);/);
+  });
+
+  it("skips an item/date entirely once a studio-incremental/studio-manual entry for this event already covers it (regression review, 2026-11-14: a fallback write shouldn't claim anything once the authoritative one already has it)", () => {
+    const start = src.indexOf("async function executeConfirmBlocks(");
+    const end = src.indexOf("// Bridge: auto-create Project + Function for operations tabs", start);
+    const body = src.slice(start, end);
+    expect(body).toMatch(/b\.source==="studio-incremental" \|\| b\.source==="studio-manual"/);
+    expect(body).toMatch(/if \(alreadyStudioHeld\) return;/);
+  });
+
+  it("throws (not just logs) on a genuine blocks-write failure, so autoConfirmEO's own catch returns false and the retry watcher picks it back up", () => {
+    const start = src.indexOf("async function executeConfirmBlocks(");
+    const end = src.indexOf("// Bridge: auto-create Project + Function for operations tabs", start);
+    const body = src.slice(start, end);
+    expect(body).toMatch(/if \(res\?\.error\) throw new Error\(/);
+    expect(body).not.toMatch(/console\.error\("\[auto-confirm\] blocks write failed/);
+  });
+
+  it("the write is idempotent — each item's op removes its own prior ims-autoconfirm entry for the date before re-adding, so a retry can't duplicate it (bug 11)", () => {
+    const start = src.indexOf("async function executeConfirmBlocks(");
+    const end = src.indexOf("// Bridge: auto-create Project + Function for operations tabs", start);
+    const body = src.slice(start, end);
+    expect(body).toMatch(/op\.remove\.push\(\{ source: "ims-autoconfirm", date: fn\.fnDate \}\);/);
   });
 });

@@ -190,3 +190,65 @@ export function planStudioBlocks({ eventId, rowsById, cardReq, manualReq, focReq
 
   return { nextById, changedIds, log };
 }
+
+// Turns planStudioBlocks' own in-memory decision into the write ops apply_block_ops (bug 4's locked
+// RPC, supabase/migrations/066_blocks_write_rpc.sql) actually understands — the plan itself only ever
+// computed WHAT this event's `blocks` array should look like; this is the one place that turns that
+// into HOW to get there without clobbering anything another writer did in the meantime (the RPC
+// re-reads under its own lock, so what matters is "remove exactly these (source,date) groups of MY
+// event, add exactly these" — never "replace the whole array", which is what the plain upsert this
+// RPC replaces used to do).
+//
+// For each changed item, this event's own entries (cur = what rowsById had, next = what the plan
+// decided) are grouped by (source, date) — foreign/protected entries never appear in either group
+// (planStudioBlocks passes those through unchanged, so they cancel out identically and are never
+// touched) — and diffed group-by-group: a group only in `cur` becomes a `remove`; a group only in
+// `next`, or present in both with a different qty/status, becomes a `remove` + `add` (sent with no
+// `createdAt`, so the RPC keeps the old one on an unchanged re-send). A group that adopts from one
+// source to another (e.g. an "ims-autoconfirm" entry becoming "studio-incremental") falls straight out
+// of this same per-key diff — its old key vanishes (→ remove) and a new key appears (→ add) — no
+// separate "adoption" case is needed. `allowOver(itemId, date, source)` lets the caller (Studio's own
+// reconcile) decide, per item/date, whether an over-commit becomes a tracked qtyToProduce (bug 10) or
+// is simply dropped by the RPC's own 'cap' handling — every existing caller that omits it gets `false`
+// everywhere, i.e. never over-commits, same as today's behaviour.
+function groupBlocksByKey(entries, eventId) {
+  const m = new Map();
+  (entries || []).forEach((b) => {
+    if (!b || b.eventId !== eventId) return;
+    const key = (b.source ?? "") + "|" + (b.date ?? "");
+    const qty = (Number(b.qty) || 0) + (Number(b.qtyToProduce) || 0);
+    const existing = m.get(key);
+    if (existing) { existing.qty += qty; return; }
+    m.set(key, { source: b.source, date: b.date, qty, status: b.status });
+  });
+  return m;
+}
+
+export function planToOps({ eventId, rowsById, plan, allowOver = () => false }) {
+  const ops = [];
+  (plan?.changedIds || []).forEach((id) => {
+    const curByKey = groupBlocksByKey(rowsById.get(id), eventId);
+    const nextByKey = groupBlocksByKey(plan.nextById.get(id), eventId);
+    const remove = [];
+    const add = [];
+    const allKeys = new Set([...curByKey.keys(), ...nextByKey.keys()]);
+    allKeys.forEach((key) => {
+      const c = curByKey.get(key);
+      const n = nextByKey.get(key);
+      if (c && n && c.qty === n.qty && (c.status || "confirmed") === (n.status || "confirmed")) return; // unchanged
+      const [source, date] = key.includes("|") ? [key.slice(0, key.indexOf("|")), key.slice(key.indexOf("|") + 1)] : ["", key];
+      // Always remove this exact (source, date) group when we're about to add it back — not only
+      // when `c` (this run's own, possibly-stale read) happened to have seen it (regression review,
+      // 2026-11-14: a retry after a lost response, or a second concurrent reconcile that read before
+      // either wrote, would otherwise send an ADD with no matching remove — the RPC has nothing to
+      // replace, so it appends a SECOND entry for the same group instead of replacing the first one
+      // it already wrote, double-counting this group's own qty from then on). A remove that matches
+      // nothing (the group genuinely wasn't there) is a harmless no-op inside the RPC.
+      if (c || n) remove.push({ source, date });
+      if (n) add.push({ date: n.date, qty: n.qty, status: n.status || "confirmed", source: n.source, allowOver: !!allowOver(id, n.date, n.source) });
+    });
+    if (!remove.length && !add.length) return;
+    ops.push({ item_id: id, event_id: eventId, remove, add });
+  });
+  return ops;
+}

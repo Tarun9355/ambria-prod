@@ -2,13 +2,14 @@
 // APPROVALS — last-minute amendment requests routed to department heads.
 // Structure head sees structure requests (truss / fabric / structure manpower);
 // Floral head sees floral requests (flowerist / flowers). Admin sees all.
-// Approve → auto-blocks matched inventory on the function date. Reject → reason
-// is recorded and surfaces back on the Studio amend entry.
+// Approve/Reject just record the decision — Studio's own reconcile already reserves whatever stock
+// the logged change needs (see decide()'s own comment, bug 13). Reject's reason is recorded and
+// surfaces back on the Studio amend entry.
 // ═══════════════════════════════════════════════════════════════════════════
 import { useMemo, useState } from "react";
 import { DEPTS, deptsHeadedBy } from "../../lib/ims/amend";
 
-export default function ApprovalsTab({ amendRequests, saveAmendRequests, authUser, inventory, blocks, setBlocks, saveBlocks }) {
+export default function ApprovalsTab({ amendRequests, saveAmendRequests, authUser }) {
   const [filter, setFilter] = useState("pending"); // pending | decided | all
   const isAdmin = (authUser?.role || "").toLowerCase() === "admin" || authUser?.id === "u_admin";
   const myDepts = isAdmin ? Object.keys(DEPTS) : deptsHeadedBy(authUser?.role);
@@ -27,40 +28,22 @@ export default function ApprovalsTab({ amendRequests, saveAmendRequests, authUse
   const fmtWhen = (ts) => { if (!ts) return ""; try { return new Date(ts).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
   const daysOut = (iso) => { try { const d = new Date(iso + "T00:00:00"); const n = new Date(); const t = new Date(n.getFullYear(), n.getMonth(), n.getDate()); return Math.round((d - t) / 86400000); } catch { return null; } };
 
-  // Auto-block matched inventory on the function date (held). Returns counts.
-  function applyBlocks(req) {
-    const next = { ...(blocks || {}) };
-    const eventId = req.eventOrderId || req.clientId || req.id;
-    let blocked = 0, unmatched = [];
-    (req.items || []).forEach((it) => {
-      const nm = (it.name || "").trim().toLowerCase();
-      if (!nm) return;
-      const inv = (inventory || []).find((i) => (i.name || "").trim().toLowerCase() === nm)
-        || (inventory || []).find((i) => (i.name || "").toLowerCase().includes(nm) || nm.includes((i.name || "").toLowerCase()));
-      if (inv) {
-        const arr = Array.isArray(next[inv.id]) ? [...next[inv.id]] : [];
-        arr.push({ date: req.fnDate, eventId, qty: Number(it.qty) || 1, status: "held", createdAt: Date.now(), source: "amend", amendId: req.id });
-        next[inv.id] = arr;
-        blocked++;
-      } else {
-        unmatched.push(it.name);
-      }
-    });
-    if (blocked > 0) { setBlocks(next); saveBlocks && saveBlocks(next); }
-    return { blocked, unmatched };
-  }
-
+  // Approving no longer auto-blocks inventory here (bug 13, 2026-11-14 inventory-blocks audit):
+  // Studio's own sold-deal reconcile already reserves the logged change the moment it's made (it
+  // reads the same amend-request data, tagged "studio-incremental"/"studio-manual" — see
+  // reconcileSoldInventoryBlocks, StudioApp.jsx) — this button's own auto-block was a SEPARATE,
+  // un-locked write race against that, matched items by fuzzy name `.includes()` (could pick the
+  // wrong item), and added its own qty on top of Studio's existing reservation for the same deal
+  // (double-counted). Confirmed dead in practice: the only producer of amend_requests
+  // (makeAmendRequest, StudioApp.jsx) always writes status:"logged", never "pending" — this button
+  // only ever rendered for a legacy "pending" row already in the database before that. If an old
+  // pending row like that is ever approved, ops blocks the item manually via IMS → Inventory's own
+  // Block button, same as any other manual reservation.
   function decide(req, status) {
     let note = "";
     if (status === "rejected") {
       note = window.prompt(`Reason for rejecting "${req.clientName}" request? (shown to the salesperson)`, "") || "";
       if (note === null) return;
-    }
-    let summary = "";
-    if (status === "approved") {
-      const { blocked, unmatched } = applyBlocks(req);
-      summary = `${blocked} item(s) blocked on ${fmtDate(req.fnDate)}` + (unmatched.length ? ` · ${unmatched.length} need manual blocking (${unmatched.join(", ")})` : "");
-      note = summary;
     }
     const next = (amendRequests || []).map((r) =>
       r.id === req.id ? { ...r, status, decidedBy: authUser?.name || authUser?.role || "Head", decidedAt: Date.now(), decisionNote: note } : r
@@ -135,7 +118,7 @@ export default function ApprovalsTab({ amendRequests, saveAmendRequests, authUse
               {req.status === "pending" ? (
                 <div className="flex gap-2 mt-3 justify-end">
                   <button onClick={() => decide(req, "rejected")} className="text-xs px-4 py-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 font-semibold">Reject</button>
-                  <button onClick={() => decide(req, "approved")} className="text-xs px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 font-semibold">Approve & Block</button>
+                  <button onClick={() => decide(req, "approved")} className="text-xs px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 font-semibold">Approve</button>
                 </div>
               ) : (
                 <div className="text-xs text-gray-500 mt-2">
