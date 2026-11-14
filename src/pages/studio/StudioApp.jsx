@@ -157,6 +157,7 @@ import { applyBlockOps, shortfallsOf } from "../../lib/ims/blocksRpc.js";
 import { mergeManualSwaps } from "../../lib/studio/dealCheckCardMerge.js";
 import { isFoc, cardIsFoc as sharedCardIsFoc, parseCardKeyLite } from "../../lib/studio/foc.js";
 import { reindexFnIdxObject, reindexFnIdxArray, reindexCompositeKeyObject, ZONE_PIPE_KEY, TRUSS_ZONE_PIPE_KEY, TRANSPORT_COLLAPSE_KEY, FLORAL_CALC_OPEN_KEY } from "../../lib/studio/dealCheckReindex.js";
+import { removeFnFromEventOrderData } from "../../lib/studio/eventOrderFnRemoval.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 import { thumbUrl } from "../../lib/studio/thumb.js";
@@ -2007,6 +2008,26 @@ export default function StudioApp() {
   // object literal (not a counter) so even two removals at the identical index still change
   // reference and re-fire the watching effect.
   const [lastFnRemoval, setLastFnRemoval] = useState(null);
+  // ── FUNCTION-REMOVAL SYNC GUARDS (2026-11-14) ──
+  // reindexEventOrderForRemoval (below) read-modifies-writes event_orders.functionsDetail — the
+  // SAME row persistDeptSnapshot/persistBuildLayoutSnapshot also read-modify-write on their own
+  // debounced/periodic cycles. A removal's own write landing in the middle of one of those cycles
+  // (or vice versa) is a plain last-writer-wins race: a sync that read the row BEFORE the removal's
+  // write landed, then writes AFTER it, silently puts the just-deleted function right back — the
+  // exact "reload the deal and it comes back" symptom this closes.
+  // Bumped synchronously the instant a removal STARTS (before its own read even begins) — any sync
+  // cycle whose own committed epoch is already behind this has a function list a removal is about
+  // to invalidate, and must skip this cycle rather than race it.
+  const fnRemovalEpochRef = useRef(0);
+  // Sampled once per commit, in the SAME useLayoutEffect as collectAllFunctionDataRef (both read
+  // "the current render's committed function list", so they must agree on which render that is).
+  const committedRemovalEpochRef = useRef(0);
+  // >0 while a removal's own read-modify-write is actually in flight — a sync cycle starting here
+  // would read the row WHILE the removal is mid-write, same race as above from the other direction.
+  const fnRemovalInFlightRef = useRef(0);
+  // Chains every removal's own read-modify-write onto the previous one — two quick removals (or one
+  // racing an in-flight one) must never interleave their reads/writes to the same row.
+  const fnRemovalChainRef = useRef(Promise.resolve());
   // Per-element/per-reference stock availability picker — { zoneKey, idx, elName, subcat, date,
   // loading, items, selectedId, onPick }. Lifted here (rather than staying local to StudioBuild)
   // so both Build's own 📦 icon AND the Add Production/Buying Item modal (StudioModals.jsx) can
@@ -4436,6 +4457,14 @@ export default function StudioApp() {
   const persistDeptSnapshot = useCallback(async (snap) => {
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     if (!eo) return;
+    // Epoch guard (2026-11-14, function-removal race — see fnRemovalEpochRef's own comment): this
+    // snap was built from a function list a removal might be about to invalidate (if this render
+    // hasn't committed past the removal yet) or a removal's own read-modify-write might still be
+    // landing right now. Either way, writing this whole-row snapshot could silently put a just-
+    // deleted function right back. Skip the cycle entirely rather than race it — the next sync
+    // (debounced edit, 15s periodic, or the removal's own trigger) re-evaluates from a clean state.
+    if (committedRemovalEpochRef.current !== fnRemovalEpochRef.current || fnRemovalInFlightRef.current > 0) return;
+    const startRemovalEpoch = fnRemovalEpochRef.current;
     // Signature of the WHOLE projected breakdown (income + per-dept manpower + inventory + fabric) —
     // used to skip redundant writes. Covering all of it (not just income totals) means a change to the
     // manpower split or fabric plan also re-syncs, so the stored snapshot can't drift out of sync.
@@ -4567,6 +4596,10 @@ export default function StudioApp() {
     try {
       // Read the FRESHEST row so we never clobber IMS-owned fields with Studio's stale local copy.
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
+      // A removal may have started (and even finished) while this read was in flight — see this
+      // function's own epoch guard above. Abort rather than write a snapshot that no longer matches
+      // what the server's functionsDetail should look like.
+      if (fnRemovalEpochRef.current !== startRemovalEpoch) return;
       if (row && row.data) {
         const cur = row.data;
         // Skip only when truly in sync: same signature AND the income snapshot is actually present.
@@ -4610,6 +4643,9 @@ export default function StudioApp() {
   const persistBuildLayoutSnapshot = useCallback(async () => {
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     if (!eo) return; // not sold yet — nothing in IMS to keep in sync
+    // Epoch guard — see persistDeptSnapshot's own identical guard and fnRemovalEpochRef's comment.
+    if (committedRemovalEpochRef.current !== fnRemovalEpochRef.current || fnRemovalInFlightRef.current > 0) return;
+    const startRemovalEpoch = fnRemovalEpochRef.current;
     const layout = new Map();
     try {
       const allFns = collectAllFunctionDataRef.current?.() || [];
@@ -4649,6 +4685,9 @@ export default function StudioApp() {
     const laySig = sigHash(JSON.stringify([...layout.entries()])); // a fingerprint, not the whole layout (was ~7 KB a row)
     try {
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
+      // See persistDeptSnapshot's identical check — a removal may have started/finished while this
+      // read was in flight.
+      if (fnRemovalEpochRef.current !== startRemovalEpoch) return;
       if (!row || !row.data) return;
       const cur = row.data;
       if (cur.layoutSig === laySig) return; // already in sync — no write
@@ -6515,7 +6554,7 @@ export default function StudioApp() {
   }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, clientFlowerPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx, sourceVideo]);
   const collectAllFunctionData = useCallback(() => allFunctionData, [allFunctionData]);
   // Layout, same reasoning as snapshotFnRef / saveSessionRef — read from synchronous paths.
-  useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; });
+  useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; committedRemovalEpochRef.current = fnRemovalEpochRef.current; });
   // ── EARLY WARNING: TWO FUNCTIONS JUST STARTED SHARING ONE REFERENCE VIDEO ──
   // duplicateSourceVideoFnIdxs' own comment has the full story — this is a one-time, non-blocking
   // heads-up (never refuses a save, unlike suspiciousDuplicateFnIdxs) meant to catch the Sahiba-
@@ -9660,41 +9699,53 @@ export default function StudioApp() {
   // (persistDeptSnapshot) deliberately never touches it — so this patches the live server row
   // directly and narrowly, the same surgical single-field pattern syncDealValueNow uses just above
   // (re-read the freshest row first, never write from a possibly-stale local copy of IMS's own data).
-  const reindexEventOrderDeptOpsForRemoval = useCallback(async (removedIdx) => {
+  // Reindexes event_orders.functionsDetail ITSELF (so a deleted function stops showing in every IMS
+  // PDF/display — owner report, 2026-11-14) plus its deptOps carpet/fabric choices in the SAME
+  // write (see eventOrderFnRemoval.js's own header for the full story, including why a middle/first
+  // deletion is worse than a stale trailing entry: persistDeptSnapshot's own Sangeeta-incident
+  // identity guard, and pushEventOrderPlan's matchesOtherInExisting, both misfire against a
+  // not-yet-reindexed row). removedIdentity: this function's own {type,date,venue} as
+  // StudioEventInfo.jsx's removeFunction captured it BEFORE any of its own setters ran — never
+  // trust a bare index alone to decide which server entry is "the" removed one.
+  const reindexEventOrderForRemoval = useCallback(async (removedIdx, removedIdentity) => {
+    // View-only users never get here in practice (removing a function isn't itself gated — a
+    // separate, pre-existing gap, not this fix's to close), but every OTHER write path in this file
+    // IS gated — skip the persist (the live Studio-side reindex above already happened regardless)
+    // rather than let a view-only session write straight to the server.
+    if (!canDesignEditRef.current) return;
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     // Strict id match only — eventOrderFor's own name-only fallback (for pre-id-era records) can
     // resolve to a DIFFERENT client's order that happens to share this client's name, and every
     // other reader/writer of this fallback only ever MERGES fields in; this one DELETES/renumbers
     // keys, which is too destructive to risk firing against an unrelated client's sold deal over a
     // name coincidence. Pre-id-era sold deals being re-edited in Studio today are rare enough that
-    // skipping this one patch for them is the safer tradeoff (regression-caught).
+    // skipping this one patch for them is the safer tradeoff (regression-caught, same guard the
+    // deptOps-only version of this function already had).
     if (!eo || !activeClientId || eo.clientId !== activeClientId) return;
-    try {
-      const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
-      if (!row || !row.data) return;
-      const cur = row.data;
-      const deptOps = cur.deptOps;
-      if (!deptOps || typeof deptOps !== "object") return; // nothing decided yet
-      const reindexChoice = (choiceMap) => reindexCompositeKeyObject(choiceMap, removedIdx, ZONE_PIPE_KEY.parseIdx, ZONE_PIPE_KEY.rebuildKey);
-      // changed must mean "the reindex actually altered something", not merely "a map exists" — a
-      // regression review caught this writing on every removal for any sold deal with ANY decision
-      // at all, even when nothing in that specific map needed to move, widening the (pre-existing,
-      // shared-by-every-writer-of-this-blob) clobber race with other event_orders writers for no
-      // reason. JSON-comparing is safe here: reindexCompositeKeyObject preserves insertion order and
-      // every value verbatim when it changes nothing, so a true no-op always stringifies identically.
-      let changed = false;
-      const nextDeptOps = { ...deptOps };
-      if (deptOps.Tenting?.carpetChoice) {
-        const next = reindexChoice(deptOps.Tenting.carpetChoice);
-        if (JSON.stringify(next) !== JSON.stringify(deptOps.Tenting.carpetChoice)) { nextDeptOps.Tenting = { ...deptOps.Tenting, carpetChoice: next }; changed = true; }
-      }
-      if (deptOps.Fabric?.itemChoice) {
-        const next = reindexChoice(deptOps.Fabric.itemChoice);
-        if (JSON.stringify(next) !== JSON.stringify(deptOps.Fabric.itemChoice)) { nextDeptOps.Fabric = { ...deptOps.Fabric, itemChoice: next }; changed = true; }
-      }
-      if (!changed) return;
-      await retryingUpdate("event_orders", eo.id, { data: { ...cur, deptOps: nextDeptOps } });
-    } catch { /* best effort — IMS's own next decision on this zone just re-asks the question */ }
+    // Bump BEFORE the chained run even starts — see fnRemovalEpochRef's own comment above.
+    fnRemovalEpochRef.current += 1;
+    fnRemovalInFlightRef.current += 1;
+    const run = async () => {
+      try {
+        const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
+        if (!row || !row.data) return;
+        const { next, changed, refused, reason } = removeFnFromEventOrderData(row.data, removedIdx, removedIdentity);
+        if (refused) {
+          // eslint-disable-next-line no-console
+          console.warn(`[reindexEventOrderForRemoval] refused (${reason}) — functionsDetail didn't match what Studio expected at index ${removedIdx}.`);
+          showMsg?.("Function removed in Studio, but IMS's copy didn't line up — open Summary → Apply Changes to resync IMS.", "red");
+          return;
+        }
+        if (!changed) return;
+        await retryingUpdate("event_orders", eo.id, { data: next });
+      } catch { /* best effort — Apply Changes (a full, trusted rebuild from Studio's live function list) is the backstop */ }
+      finally { fnRemovalInFlightRef.current = Math.max(0, fnRemovalInFlightRef.current - 1); }
+    };
+    // Chained onto the previous removal's own promise — two quick removals (or one racing an
+    // in-flight one) must never interleave their reads/writes to the same row.
+    const chained = fnRemovalChainRef.current.then(run);
+    fnRemovalChainRef.current = chained;
+    await chained;
   }, [eventOrders, activeClientId, clientName]);
   // ── LIVE KITS (owner ask 2026-11-10) ── An element on a kit picked in Build (Kit 2, or another item's kit) takes that kit's parts as
   // they are in IMS now: an edit in IMS → Inventory reaches the open deal in real time (the inventory subscription), and the save that
@@ -10095,7 +10146,16 @@ export default function StudioApp() {
       const isActualChange = !prior || prior.type !== f.type || prior.date !== f.date;
       if (!isActualChange) return;
       const matchesSiblingInThisBooking = fnEOs.some((other, j) => j !== idx && other.type === f.type && other.date === f.date);
-      const matchesOtherInExisting = (existingActive?.functionsDetail || []).some((other) => other?.fnIdx !== f.fnIdx && other?.type === f.type && other?.date === f.date);
+      // A function removed in Studio since the last booking leaves the existing row's functionsDetail
+      // one entry longer than fnEOs (this wholesale replace is about to discard those stale slots
+      // anyway) — without this, a survivor correctly renumbered DOWN into a now-out-of-range index
+      // still collided against its own OLD self sitting at that stale slot, and this guard stamped
+      // the deleted function's identity onto it (confirmed, 2026-11-14 — the middle/first-deletion
+      // case: "Mehendi"(1) removed, "Wedding" becomes fnIdx 1, the stale row's OLD fnIdx-1 entry was
+      // still "Mehendi" — matchesOtherInExisting fired and rewrote Wedding's own type/date to
+      // Mehendi's). Harmless for the ordinary Sangeeta case this guard still exists for (old and new
+      // function counts equal — nothing here is out of range, so nothing changes).
+      const matchesOtherInExisting = (existingActive?.functionsDetail || []).some((other, j) => (other?.fnIdx ?? j) < fnEOs.length && other?.fnIdx !== f.fnIdx && other?.type === f.type && other?.date === f.date);
       if (!matchesSiblingInThisBooking && !matchesOtherInExisting) return;
       if (prior?.type && prior?.date) {
         console.warn(`[pushEventOrderPlan] Function ${idx + 1}'s type/date ("${f.type}", ${f.date}) matches a DIFFERENT function — booking the existing, already-booked identity instead.`);
@@ -14978,8 +15038,8 @@ export default function StudioApp() {
     deleteSessionRows: designDeleteSessionRows,
     showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger: designSaveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
-    pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval, reindexEventOrderDeptOpsForRemoval,
-    lastFnRemoval, setLastFnRemoval,
+    pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval, reindexEventOrderForRemoval,
+    lastFnRemoval, setLastFnRemoval, autoSaveBuild,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS
     lmsLeads, setLmsLeads, lmsLoading, setLmsLoading, lmsError, setLmsError, lmsFilling, setLmsFilling, lmsRefreshCounter, setLmsRefreshCounter,

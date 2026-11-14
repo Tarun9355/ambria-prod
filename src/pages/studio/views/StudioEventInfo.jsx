@@ -186,8 +186,8 @@ export default function StudioEventInfo({ ctx }) {
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax,
     clientVenueOther, setClientVenueOther, clientPalette, setClientPalette, setClientFlowerPalette, fnBuilds, setFnBuilds, restoreBuildState,
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
-    activeFnIdx, setActiveFnIdx, switchActiveFn, pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval, reindexEventOrderDeptOpsForRemoval,
-    setLastFnRemoval,
+    activeFnIdx, setActiveFnIdx, switchActiveFn, pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval, reindexEventOrderForRemoval,
+    setLastFnRemoval, autoSaveBuild,
     clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch, ledgerReady, ledgerLoadError, houseAgencyFeePct,
     activeClient, loadClientSession, loadClientSessionGuarded, resumeSavedSession, startNewDeal, askConfirm,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
@@ -495,6 +495,13 @@ export default function StudioEventInfo({ ctx }) {
   // Hoisted out of the render map so the confirm dialog can invoke it. Reindexing logic is
   // verbatim from the previous inline `doDelete`.
   const removeFunction = (idx) => {
+    // Captured BEFORE any setter below runs — this function's real identity (type/date/venue) at
+    // the moment of deletion, for reindexEventOrderForRemoval's own identity check (it refuses to
+    // touch the server's functionsDetail unless the entry at removedIdx genuinely matches this,
+    // the same "don't trust a bare index" reasoning as persistDeptSnapshot's Sangeeta-incident
+    // guard). idx===0 removes the top-level client fields (promoted from extraFunctions[0] below,
+    // not an array splice) — its OWN identity is whatever those fields hold right now.
+    const removedIdentity = idx === 0 ? { type: fn, date: clientDate, venue } : (extraFunctions[idx - 1] || null);
     // Was the function being removed the one currently LIVE in Build (zoneConfig/zoneElements/etc,
     // as opposed to sitting frozen in fnBuilds)? If so, that live canvas is about to be relabelled
     // under whatever function ends up at the new activeFnIdx — a different function's real saved
@@ -546,9 +553,12 @@ export default function StudioEventInfo({ ctx }) {
     // allocations, collapsed-section UI) has the identical reindexing problem fnBuilds just got
     // fixed above, for the same reason — see reindexDealCheckStateForRemoval's own top comment.
     reindexDealCheckStateForRemoval(idx);
-    // Same again for IMS Dept Ops' own carpet/fabric choices on an already-sold event order (outside
-    // Studio's own state entirely) — see reindexEventOrderDeptOpsForRemoval's own top comment.
-    reindexEventOrderDeptOpsForRemoval(idx);
+    // Same again for the server's own event_orders copy — functionsDetail itself (what every IMS
+    // PDF/display reads) plus IMS Dept Ops' carpet/fabric choices — see
+    // reindexEventOrderForRemoval's own top comment for why a plain patch-not-filter sync
+    // (persistDeptSnapshot/persistBuildLayoutSnapshot) can never remove a deleted function on its
+    // own, and why this has to be its own explicit, identity-checked write.
+    reindexEventOrderForRemoval(idx, removedIdentity);
     // And once more for DealCheckOverlay's own local kitHandEditsRef, which lives in a different
     // component and isn't reachable from here directly — see lastFnRemoval's own comment.
     setLastFnRemoval({ idx });
@@ -560,6 +570,15 @@ export default function StudioEventInfo({ ctx }) {
     // this the just-deleted function's leftover zoneConfig/zoneElements rides along mislabeled as the
     // new active function, and the next fn-switch snapshots that garbage over the real one's build.
     if (wasActive) restoreBuildState(reindexedBuilds[newActiveIdx] || null);
+    // Force an IMMEDIATE real save (owner report, 2026-11-14: deleting a function, then reloading
+    // the deal from Event Info shortly after, brought it right back) — removing a function only ever
+    // scheduled the normal 1.5s debounced save (extraFunctions/fnBuilds are in that effect's own
+    // deps), same gap this codebase already fixed once for dcCustomItems ("add one, refresh shortly
+    // after, it's gone") — a deliberate, isolated action someone makes and then immediately
+    // navigates away from, not something safe to trust a timer to catch. setTimeout(0), not a direct
+    // call: the setters above are async, and autoSaveBuild reads the build via saveSessionRef's
+    // closure, which only reflects this removal once those commits have actually landed.
+    setTimeout(() => autoSaveBuild({ edited: true }), 0);
   };
   const cancelRemove = () => {
     setConfirmRemove(null);

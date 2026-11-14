@@ -94,7 +94,10 @@ export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platfo
   const fnLabel = (eoId, fnIdx) => {
     const fd = eoById[eoId]?.functionsDetail;
     const fn = Array.isArray(fd) ? (fd.find((f) => f?.fnIdx === fnIdx) ?? fd[fnIdx]) : null;
-    return fn ? `${fn.fnType || `Function ${fnIdx + 1}`}${fn.fnDate ? ` · ${fn.fnDate}` : ""}` : `Function ${fnIdx + 1}`;
+    // functionsDetail entries store their own type/date as `type`/`date` (persistDeptSnapshot's own
+    // field names), not `fnType`/`fnDate` (Studio's in-memory naming) — this always fell through to
+    // the bare "Function N" fallback. Read both so a real function label/date actually shows.
+    return fn ? `${fn.type || fn.fnType || `Function ${fnIdx + 1}`}${(fn.date || fn.fnDate) ? ` · ${fn.date || fn.fnDate}` : ""}` : `Function ${fnIdx + 1}`;
   };
 
   const trussStockBars = useMemo(() => {
