@@ -5,6 +5,7 @@
 import { heavyExtraLabour } from "./constants";
 import { walkKitUnits, kitDescendantIds } from "./helpers";
 import { cardIsFoc } from "../studio/foc.js";
+import { isCancelledEO } from "./liveBlocks.js";
 
 // Normalize a venue name for matching: lowercase, drop a leading "Ambria ", trim, and drop
 // trailing punctuation. The trailing-punctuation strip closes a real, confusing bug: a deal's own
@@ -360,6 +361,7 @@ export function reservedByVenueToday(blockEntriesForItem, eventOrders, opts = {}
     if (b?.eventId && exclude.has(b.eventId)) return;
     const eo = eoById.get(b?.eventId);
     if (!eo) return;
+    if (isCancelledEO(eo)) return; // a cancelled event's hold is never a real overlap against the venue's own stock (see lib/ims/liveBlocks.js)
     let venueName = eo.venue;
     if (opts.date) {
       const fd = Array.isArray(eo.functionsDetail) ? eo.functionsDetail : null;

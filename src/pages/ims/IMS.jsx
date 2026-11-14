@@ -15,6 +15,7 @@ import { createSettingsWriter } from "../../lib/ims/settingsWriter";
 import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, DEFAULT_ROLE_TABS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
 import SiteSupervisorTab from "./SiteSupervisorTab.jsx";
 import { assembleAttendanceLocationsFromRows, assembleAttendanceTrainingByDeptFromRows } from "../../lib/ims/attendance";
+import { filterLiveBlocks } from "../../lib/ims/liveBlocks";
 import { assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher";
 import { assembleMarkedDatesFromRows } from "../../lib/inventory/helpers";
 import { RC_CATS_DEFAULT } from "../../lib/studio/constants";
@@ -319,6 +320,11 @@ export default function IMS() {
   const [prodRequests, setProdRequestsState] = useState([]);
   const [eventOrders, setEventOrdersState] = useState([]);
   const [blocks, setBlocksState] = useState({});
+  // A cancelled event_order's own `blocks` entries must never read as real competing demand — see
+  // lib/ims/liveBlocks.js's own header for why. Passed ONLY to tabs that never write `blocks`
+  // (Planning, Site) — every tab that can write (Inventory, Calendar, Approvals, the auto-confirm
+  // hook) keeps the raw `blocks` state, filtering only at read-time, in its own component.
+  const readOnlyBlocks = useMemo(() => filterLiveBlocks(blocks, eventOrders), [blocks, eventOrders]);
   const [amendRequests, setAmendRequests] = useState([]);
   const [trussAlloc, setTrussAllocState] = useState({});
   const [platformAlloc, setPlatformAllocState] = useState({});
@@ -2970,7 +2976,7 @@ export default function IMS() {
             projects={projects} functions={functions} setFunctions={setFunctions} inventory={items} setInventory={setInventory}
             settings={settings} setSettings={setSettings} prodRequests={prodRequests}
             trussInv={trussInv} setTrussInv={setTrussInv}
-            trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} platformAlloc={platformAlloc} setPlatformAlloc={setPlatformAlloc} battaAlloc={battaAlloc} setBattaAlloc={setBattaAlloc} eventOrders={eventOrders} setEventOrders={setEventOrders} blocks={blocks}
+            trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} platformAlloc={platformAlloc} setPlatformAlloc={setPlatformAlloc} battaAlloc={battaAlloc} setBattaAlloc={setBattaAlloc} eventOrders={eventOrders} setEventOrders={setEventOrders} blocks={readOnlyBlocks}
             studio={studio} authUser={user} amendRequests={amendRequests}
             focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={clearFocusEvent}
             autoPdfFor={autoPdfFor} onAutoPdfDone={finishAutoPdf}
@@ -3011,7 +3017,7 @@ export default function IMS() {
           <SiteSupervisorTab
             eventOrders={eventOrders} setEventOrders={setEventOrders}
             inventory={items} settings={settings}
-            blocks={blocks} trussInv={trussInv} rateCardCategories={rateCardCategories}
+            blocks={readOnlyBlocks} trussInv={trussInv} rateCardCategories={rateCardCategories}
             authUser={user}
           />
         ) : (

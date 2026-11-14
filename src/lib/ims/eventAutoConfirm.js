@@ -21,6 +21,7 @@ import { normalizeSizeClass, sizeClassToPatternKey } from "./flowerHelpers";
 import { lookupBySubcat } from "./helpers";
 import { supabase } from "../supabase";
 import { isFoc } from "../studio/foc.js";
+import { filterLiveBlocks } from "./liveBlocks.js";
 
 export const resolveRealPct = (el, rcItem, fnFloralRatio) => {
   if (typeof el?.realPct === "number") return Math.max(0, Math.min(100, el.realPct));
@@ -941,7 +942,9 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
     // eslint-disable-next-line no-console
     console.log("[auto-confirm] starting for EO", eo.id, eo.clientName, "status:", eo.status);
     try {
-      const results = await aiMatchEvent(eo, inventory, blocks, {studioRcItems: studio?.rcItems || [], recipeSubcats: settings?.flowerRecipeSubcats || []});
+      // filterLiveBlocks: a cancelled event's own hold must never read as real competing demand for
+      // what THIS new deal can claim — see lib/ims/liveBlocks.js's own header for why.
+      const results = await aiMatchEvent(eo, inventory, filterLiveBlocks(blocks, eventOrders), {studioRcItems: studio?.rcItems || [], recipeSubcats: settings?.flowerRecipeSubcats || []});
       // eslint-disable-next-line no-console
       console.log("[auto-confirm] aiMatchEvent done:", results.length, "results for", eo.id);
       executeConfirmBlocks(eo, results, {}, eo.manualItems || [], {clearReviewState: false});

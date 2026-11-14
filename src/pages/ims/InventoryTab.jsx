@@ -15,6 +15,7 @@ import { itemDimsText } from "../../lib/ims/helpers";
 import { catToDept, canSeeDept } from "../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb";
 import { addBlock, getAvailableQty } from "../../lib/ims/eventAutoConfirm";
+import { filterLiveBlocks } from "../../lib/ims/liveBlocks";
 
 export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [], authUser, eventOrders = [], blocks, setBlocks, saveBlocks }) {
   const canAdd = hasIMSPerm(authUser, "inv_add");
@@ -22,6 +23,11 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const canImages = hasIMSPerm(authUser, "inv_images");
   const canBlock = hasIMSPerm(authUser, "block_single");
   const studioLoading = !!studio?.loading;
+  // A cancelled event_order's own hold must never read as "stock already taken" when deciding
+  // whether THIS block can go through, or what the Block modal's availability preview shows — see
+  // lib/ims/liveBlocks.js's own header for why. Read-only: addBlock/setBlocks below keep writing
+  // the raw `blocks` state, same as always.
+  const readBlocks = useMemo(() => filterLiveBlocks(blocks, eventOrders), [blocks, eventOrders]);
   // Tier 1.2 — Studio cat labels. Top-level categories (Florals/Fabric/Structure/...) are a
   // small, stable set still sourced from Studio's live Rate-Card categories — only the
   // SUB-category list moves to rate_card_categories below (see studioSubcats/studioSubcatsByCat).
@@ -762,7 +768,7 @@ Rules:
     const fn = functions.find((f) => f.id === blockForm.fnId);
     if (!inv || !fn) return;
     const qty = parseInt(blockForm.qty) || 1;
-    if (qty > getAvailableQty(inv, blocks, fn.date)) { alert("Insufficient available qty for this function's date"); return; }
+    if (qty > getAvailableQty(inv, readBlocks, fn.date)) { alert("Insufficient available qty for this function's date"); return; }
     const sizeClass = String(blockForm.sizeClass || "M").toUpperCase();
     // Tagged "ims-manual" — a deliberate human ops decision, outside Studio's build entirely. Studio's
     // own sold-deal reconcile (reconcileSoldInventoryBlocks) reads this tag and must never release it
@@ -2219,7 +2225,7 @@ Rules:
             // Date-aware — not blockInv.qty - blocked. Before a function is picked there's no date
             // to check yet, so this falls back to the item's un-dated baseline (whole stock minus
             // only the permanent, date-less `blocked` count) as a neutral preview.
-            const avail = blockInv ? getAvailableQty(blockInv, blocks, selFn?.date || "") : 0;
+            const avail = blockInv ? getAvailableQty(blockInv, readBlocks, selFn?.date || "") : 0;
             const needed = parseInt(blockForm.qty) || 1;
             const isShort = avail < needed;
             const isZero = avail <= 0;

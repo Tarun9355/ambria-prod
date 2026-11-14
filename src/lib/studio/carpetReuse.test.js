@@ -37,6 +37,11 @@ describe("sameVenueHolds — another event holding the carpet at THIS venue that
     ], [...orders, eo("eo_me", "Me", "Aura", [{ date: D, venue: "Aura" }])], "Aura", D, "eo_me");
     expect(r).toEqual({ qty: 0, who: [] });
   });
+  it("a cancelled event's hold is never 'already laid, reusable' — it never happened (liveBlocks)", () => {
+    const cancelledEo = { ...eo("eo_cancelled", "Mr. Cancelled", "Aura", [{ date: D, venue: "Aura" }]), status: "cancelled" };
+    const r = sameVenueHolds([{ eventId: "eo_cancelled", qty: 300, date: D }], [...orders, cancelledEo], "Aura", D, "eo_me");
+    expect(r).toEqual({ qty: 0, who: [] });
+  });
   it("several holds add up, and each is named", () => {
     const more = [...orders, eo("eo_d", "Mr. Jain", "Aura", [{ date: D, venue: "Aura", type: "Cocktail" }])];
     const r = sameVenueHolds([{ eventId: "eo_a", qty: 100 }, { eventId: "eo_d", qty: 40 }], more, "Aura", D, "me");

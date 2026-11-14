@@ -5,6 +5,7 @@
 // The match is the same one cross-function reuse uses: venue name equal (case and spaces ignored), date equal.
 import { prefsOf, floorSqftOf } from "./carpetPrefs.js";
 import { CARPET_OFF } from "./taxonomy.js";
+import { isCancelledEO } from "../ims/liveBlocks.js";
 
 const norm = (v) => String(v || "").trim().toLowerCase();
 
@@ -21,6 +22,7 @@ export function sameVenueHolds(entries, eventOrders, venue, date, selfEventId) {
     if (date && b.date && b.date !== date) return;
     const eo = byId.get(b.eventId);
     if (!eo) return;
+    if (isCancelledEO(eo)) return; // a cancelled event's hold is never "already laid, reusable" (see lib/ims/liveBlocks.js)
     const fn = (Array.isArray(eo.functionsDetail) ? eo.functionsDetail : []).find((f) => f && f.date === date);
     if (norm(fn?.venue || eo.venue) !== v) return;
     const q = Number(b.qty) || 0;
