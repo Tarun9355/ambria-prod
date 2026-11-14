@@ -152,8 +152,14 @@ export function planStudioBlocks({ eventId, rowsById, cardReq, manualReq, focReq
       if (k === "manual") { (manualByDate[b.date] ||= []).push(b); continue; }
       // adoptable (untagged legacy, or ims-autoconfirm)
       if (freezeCard) { next.push(b); continue; }
+      // wantCard OR a now-owned manual need (manualReady — never guessed at from a possibly-incomplete
+      // list, same posture as manage()'s own manualReady branch below): an IMS auto-confirm hold for a
+      // Deal Check manual item (tagged "ims-autoconfirm" before Studio's own reconcile ever ran for
+      // this deal, or legacy/untagged) adopts into a Studio-owned "studio-manual" entry the same way an
+      // adoptable card entry already does, once Studio can prove the same need exists in its own data.
       const wantCard = processedDates.has(b.date) && (cardReq[b.date]?.[id] || 0) > 0;
-      if (wantCard) { log.adopted.push({ id, date: b.date, qty: b.qty, source: b.source ?? null }); continue; }
+      const wantManual = manualReady && processedDates.has(b.date) && (manualReq?.[b.date]?.[id] || 0) > 0;
+      if (wantCard || wantManual) { log.adopted.push({ id, date: b.date, qty: b.qty, source: b.source ?? null }); continue; }
       const wantFoc = processedDates.has(b.date) && (focReq?.[b.date]?.[id] || 0) > 0;
       if (wantFoc) { log.released.push({ id, date: b.date, qty: b.qty, source: b.source ?? null, reason: "foc" }); continue; }
       if (!liveDates.has(b.date) && legacyScopeIds.has(id)) {

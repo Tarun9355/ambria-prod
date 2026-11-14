@@ -5,6 +5,7 @@
 import { prefsOf, floorSqftOf } from "../studio/carpetPrefs.js";
 import { CARPET_OFF, carpetPricingFor, carpetTakesStockPick } from "../studio/taxonomy.js";
 import { sameVenueHolds, reuseAwareAvail } from "../studio/carpetReuse.js";
+import { isLiveBlockStatus, blockEntryQty } from "./liveBlocks.js";
 
 const norm = (v) => String(v || "").trim().toLowerCase();
 
@@ -16,9 +17,11 @@ export const carpetKey = (fi, zk, ri) => `${fi}|${zk}|${ri}`;
 export function freeForEvent(item, blocks, date, eventId) {
   if (!item) return null;
   const arr = (blocks || {})[item.id] || [];
+  // isLiveBlockStatus/blockEntryQty (bug 14): one shared "is this entry live" definition with
+  // Studio's and IMS's own counts (lib/ims/liveBlocks.js), not a third independent allowlist.
   const other = arr
-    .filter((b) => b && b.date === date && b.status !== "released" && b.eventId !== eventId)
-    .reduce((s, b) => s + (Number(b.qty) || 1), 0);
+    .filter((b) => b && b.date === date && isLiveBlockStatus(b) && b.eventId !== eventId)
+    .reduce((s, b) => s + blockEntryQty(b), 0);
   return Math.max(0, (Number(item.qty) || 0) - (Number(item.blocked) || 0) - other);
 }
 

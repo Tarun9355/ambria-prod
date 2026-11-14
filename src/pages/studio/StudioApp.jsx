@@ -116,7 +116,7 @@ import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDef
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
-import { cancelledEventIds, liveDateBlocks } from "../../lib/ims/liveBlocks";
+import { cancelledEventIds, liveDateBlocks, isLiveBlockStatus, blockEntryQty } from "../../lib/ims/liveBlocks";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc, claimDealPresence } from "../../lib/supabase";
 import { writeWithRetry } from "../../lib/writeRetry";
 import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
@@ -151,7 +151,8 @@ import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CA
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions } from "../../lib/studio/sessionData.js";
 import { reqByDateFrom, ownedIds, planStudioBlocks, SRC_STUDIO_CARD } from "../../lib/studio/soldBlocksPlan.js";
-import { isFoc, cardIsFoc as sharedCardIsFoc } from "../../lib/studio/foc.js";
+import { mergeManualSwaps } from "../../lib/studio/dealCheckCardMerge.js";
+import { isFoc, cardIsFoc as sharedCardIsFoc, parseCardKeyLite } from "../../lib/studio/foc.js";
 import { reindexFnIdxObject, reindexFnIdxArray, reindexCompositeKeyObject, ZONE_PIPE_KEY, TRUSS_ZONE_PIPE_KEY, TRANSPORT_COLLAPSE_KEY, FLORAL_CALC_OPEN_KEY } from "../../lib/studio/dealCheckReindex.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
@@ -1089,8 +1090,12 @@ async function fetchIMSData(date) {
     const blocksDetailForDate = {};
     for (const [imsId, blockList] of Object.entries(blocks)) {
       if (!Array.isArray(blockList)) continue;
-      const activeToday = blockList.filter(b => b && b.date === date && (b.status === "confirmed" || b.status === "final" || b.status === "held"));
-      const total = activeToday.reduce((sum, b) => sum + (Number(b.qty) || 0), 0);
+      // isLiveBlockStatus (bug 14, 2026-11-14 audit): this used to be its own allowlist
+      // (confirmed/final/held only), which disagreed with IMS's own getAvailableQty (everything NOT
+      // "released") — an entry with an unrecognized/missing status was invisible to Studio but
+      // counted by IMS. One shared, fail-closed definition now, lib/ims/liveBlocks.js.
+      const activeToday = blockList.filter(b => b && b.date === date && isLiveBlockStatus(b));
+      const total = activeToday.reduce((sum, b) => sum + blockEntryQty(b), 0);
       if (total > 0) blocksForDate[imsId] = total;
       if (activeToday.length) blocksDetailForDate[imsId] = activeToday.map(b => ({ eventId: b.eventId, qty: Number(b.qty) || 0 }));
     }
@@ -1929,6 +1934,12 @@ export default function StudioApp() {
     return () => el.removeAttribute("data-dc-open");
   }, [dcFullPageOpen]);
   const [dcCards, setDcCards] = useState({});
+  // Mirrors dcCards synchronously (bug 17, 2026-11-14 audit) — the reconcile below needs the LATEST
+  // manual-swap merge at the exact moment it reads cards, not whatever `dcCards` this call's own
+  // render closure happened to capture when it started (which can be stale on Deal Check's first
+  // open after a hard refresh — see the setDcCards functional-update comment further down).
+  const dcCardsRef = useRef(dcCards);
+  dcCardsRef.current = dcCards;
   const [dcZoneState, setDcZoneState] = useState({});
   const [dcKitEdits, setDcKitEdits] = useState({});
   const [dcCarpetPick, setDcCarpetPick] = useState({});
@@ -5272,6 +5283,9 @@ export default function StudioApp() {
     // path (availability-checked or plain) this element ultimately falls through to.
     let kitFlowerCost = 0;
     let kitFlowerSMB = false;
+    // Set by the non-kit floral-recipe branch below (bug fix, 2026-11-14: this used to be an early
+    // return with no availability check at all — see that branch's own comment).
+    let floralBlend = null;
     // The real/artificial mix of the function BEING PRICED. Every event-level caller (event total,
     // Summary breakdown, cost sheet) prices all functions in one pass and passes each one's own
     // ratio as opts.fnRatio; falling back to `floralRatio` (the ACTIVE function's mix) priced every
@@ -5385,11 +5399,21 @@ export default function StudioApp() {
         const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
         const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - fnFloralRatio));
         const realPct = (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? el.realPct : modeDefault;
-        // Flower cost blends by real/artificial %; the pot/container itself doesn't — this specific
-        // item's own rental (× its sub-category's scaling factor) is always added on top, alongside
-        // the recipe's own generic "extra (pot/base)" figure.
-        const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey, invForPricing);
-        return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
+        // Flower cost blends by real/artificial %; the pot/container itself doesn't — its own rental
+        // (× its sub-category's scaling factor) is the shared availability block's own `ownedRate`
+        // below (priceForInvItem), added on top there alongside kitFlowerCost, exactly like a kit's
+        // own recipe add-on (isKit branch above).
+        //
+        // kitFlowerCost/kitFlowerSMB/floralBlend (not an early return, as this used to be): a non-kit
+        // item that merely matches a flower recipe by name/sub-category is still real rentable stock —
+        // it was previously exempt from EVERY availability check (no outOfStock, no maxQty ceiling, no
+        // Sold-gate stop), which let it sell past real stock with no warning at all, same root cause as
+        // the kit case F2 already fixed 2026-11-13 (see that comment above). Falling through to the
+        // shared availability-check block below restores the check for this item type too;
+        // kitFlowerCost is added back on top of whatever that block computes, further down.
+        kitFlowerCost = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
+        kitFlowerSMB = pattern.mode === "smb";
+        floralBlend = { realPct };
       }
     }
 
@@ -5572,13 +5596,13 @@ export default function StudioApp() {
       // item that ever took this availability-checked path — which is every element card in Build.
       // shortCost (raw, pre-date-multiplier) — getElPrice's own wrapper reads this to keep the
       // date-category multiplier off a true shortfall's cost-basis price (see its own comment).
-      return { rc: null, unitPrice, fullUnitPrice: ownedRate + kitFlowerCost, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, patternSMB: kitFlowerSMB, available: ownedQty, shortCost, outOfStock, maxQty, shortWhy,
+      return { rc: null, unitPrice, fullUnitPrice: ownedRate + kitFlowerCost, lineCost, area: 0, warning, isFloralBlend: !!floralBlend, realPct: floralBlend ? floralBlend.realPct : null, patternSMB: kitFlowerSMB, available: ownedQty, shortCost, outOfStock, maxQty, shortWhy,
         // madeToOrder: short on the date, but the item is ticked 'Can be made' and there is time to make it - Build does not call it
         // short (owner ask 2026-11-06); it is still priced at cost% for the part past stock, and Planning still sees it to be made.
         madeToOrder: shortQty > 0 && canMakeShort };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, invForPricing, el.kitOverrides) + kitFlowerCost;
-    return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: kitFlowerSMB };
+    return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: !!floralBlend, realPct: floralBlend ? floralBlend.realPct : null, patternSMB: kitFlowerSMB };
   }, [imsInventory, invForPricing, patternById, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate, flowerRateForFn, hideDiscountFromClient]);
 
   // Thin outer wrapper: resolves live-vs-deleted `item` once, calls the core pricing body, then
@@ -13799,7 +13823,19 @@ export default function StudioApp() {
         if (!c.imsId) return;
         const qty = Number(c.qty) || 0;
         if (qty <= 0) return;
-        const tgt = cardIsFoc(fn, cardKey) ? focByItem : byItem;
+        // A card backed by a Deal Check manual item (_dcManualId — syncManualItemToBuild mirrors it
+        // into Build's zoneElements while the deal is still ongoing) is NOT counted here — manualByFn
+        // below is now the single source of truth for every Deal Check manual item, mirrored into
+        // Build or not, so counting it again via this card loop would double-reserve it (regression
+        // review finding, 2026-11-14: the exact double-count finding C's own manualByFn addition
+        // introduced for a manual item added before the deal was marked Sold). A FOC'd manual card
+        // still routes through the ordinary FOC path below (cardIsFoc) — manualByFn has no FOC
+        // awareness of its own, so that routing is still this card's only path to functions.data.focItems.
+        const manualParsed = parseCardKeyLite(cardKey);
+        const manualEl = manualParsed ? fn?.zoneElements?.[manualParsed.zoneKey]?.[manualParsed.idx] : null;
+        const isFoc_ = cardIsFoc(fn, cardKey);
+        if (manualEl?._dcManualId && !isFoc_) return;
+        const tgt = isFoc_ ? focByItem : byItem;
         const topItem = (inventoryList || []).find((x) => x.id === c.imsId);
         if (topItem && Array.isArray(topItem.subItems) && topItem.subItems.length > 0) {
           const edited = dcKitEdits?.[fnIdx]?.[cardKey];
@@ -13814,6 +13850,43 @@ export default function StudioApp() {
       });
       requiredByFn[fnIdx] = byItem;
       focByFn[fnIdx] = focByItem;
+    });
+
+    // Deal Check manual items (finding C, bug 6 audit, 2026-11-14): this is NEW reservation behavior,
+    // not a hand-off — IMS's own auto-confirm engine (eventAutoConfirm.js's executeConfirmBlocks) was
+    // fed eo.manualItems (which carries `imsId`), but its own lookup there reads `itemId`, a key that
+    // never existed on that object — confirmed dead code, regression review: manual items were never
+    // actually reserved by anyone before this. Studio's OWN reconcile is now the one place that does,
+    // same as it already does for matched cards above. Kit expansion mirrors the card loop above
+    // exactly (walkKitUnits), so a manual kit pick's components get their own reservation too, not
+    // just the kit's own top-level id — manual items have no per-instance dcKitEdits override of
+    // their own, so kits expand with their default sub-items.
+    //
+    // Double-count guard (regression review, 2026-11-14): a manual item added while the deal was still
+    // ONGOING gets mirrored into Build's own zoneElements (syncManualItemToBuild, dealCheckSync.js,
+    // tagged `_dcManualId`), which ALSO becomes a pinned card above (getCardSpecsForZone doesn't
+    // distinguish it) — the card loop above now skips any non-FOC `_dcManualId` card for exactly this
+    // reason, so manualByFn here is the single source of truth for every Deal Check manual item,
+    // mirrored into Build or not, with nothing double-counting it.
+    const manualByFn = {};
+    fnsToProcess.forEach((fn, i) => {
+      const fnIdx = fn.fnIdx ?? i;
+      const byItem = {};
+      (dcManualItems || []).filter((mi) => (mi.fnIdx ?? 0) === fnIdx).forEach((mi) => {
+        if (!mi.imsId) return;
+        const qty = Number(mi.qty) || 0;
+        if (qty <= 0) return;
+        const topItem = (inventoryList || []).find((x) => x.id === mi.imsId);
+        if (topItem && Array.isArray(topItem.subItems) && topItem.subItems.length > 0) {
+          walkKitUnits(topItem, qty, inventoryList, undefined, (node, nodeQty) => {
+            if (!node?.id) return;
+            byItem[node.id] = (byItem[node.id] || 0) + nodeQty;
+          });
+        } else {
+          byItem[mi.imsId] = (byItem[mi.imsId] || 0) + qty;
+        }
+      });
+      manualByFn[fnIdx] = byItem;
     });
 
     const prevByFn = (cli.dcReservedInventory && typeof cli.dcReservedInventory === "object") ? cli.dcReservedInventory : {};
@@ -13888,6 +13961,12 @@ export default function StudioApp() {
     // never disagree about whether this run is trusted or frozen.
     const cardReq = reqByDateFrom(fnsToProcess, requiredByFn);
     const focReq = reqByDateFrom(fnsToProcess, focByFn);
+    const manualReq = reqByDateFrom(fnsToProcess, manualByFn);
+    // dcStateReadyForClientRef.current === cli.id: Deal Check's own dc* state (including
+    // dcManualItems) has actually finished restoring for THIS client — never dcManualItems.length > 0,
+    // which is indistinguishable from "genuinely has no manual items" and would let an UNLOADED empty
+    // list release real manual holds the moment this ran before the restore effect caught up.
+    const manualReady = dcStateReadyForClientRef.current === cli.id;
     const processedDates = new Set(fnsToProcess.map((fn) => fn?.fnDate).filter(Boolean));
     const liveRaw = collectAllFunctionDataRef.current?.();
     const liveList = (Array.isArray(liveRaw) && liveRaw.length) ? liveRaw : fnsToProcess;
@@ -14140,8 +14219,8 @@ export default function StudioApp() {
     if (!rowsById) return;   // the blocks fetch above failed — same posture as the old code's own fetch failure.
 
     const plan = planStudioBlocks({
-      eventId: eo.id, rowsById, cardReq, manualReq: {}, focReq, processedDates, liveDates,
-      legacyScopeIds, manualReady: false, freezeCard: false, now: Date.now(),
+      eventId: eo.id, rowsById, cardReq, manualReq, focReq, processedDates, liveDates,
+      legacyScopeIds, manualReady, freezeCard: false, now: Date.now(),
     });
 
     if (plan.changedIds.length) {
@@ -14190,7 +14269,7 @@ export default function StudioApp() {
       }), status: "logged" };
       submitAmendRequest(amendReq);
     }
-  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, dcKitEdits]);
+  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, dcKitEdits, dcManualItems]);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   // `skipAi` runs the matcher deterministically — knowledge + name-match only, no vision calls.
@@ -14442,32 +14521,28 @@ export default function StudioApp() {
     // to protect it. Re-applying the manual-swap guard here against `prev` (guaranteed current by
     // React's functional-update contract) closes that race regardless of what this call's own
     // dcCards looked like when it started.
-    setDcCards(prev => {
-      const merged = { ...newCards };
-      Object.keys(prev || {}).forEach((fi) => {
-        const prevFn = prev[fi] || {};
-        // Only defined for an fnIdx this run actually touched — undefined means this fn wasn't
-        // processed at all this pass, so there is no fresh prune to respect; carry every manual-swap
-        // card forward unconditionally, same as before. When it IS defined, a key missing from it was
-        // genuinely pruned (its Build element is gone/renamed/reindexed) — resurrecting it here would
-        // put a stale "ghost" card back on screen next to whatever now correctly occupies its slot.
-        const vKeys = validKeysByFn[fi];
-        let mergedFn = null;
-        Object.keys(prevFn).forEach((key) => {
-          if (prevFn[key]?.source === "manual-swap" && (!vKeys || vKeys.has(key))) {
-            if (!mergedFn) mergedFn = { ...(merged[fi] || {}) };
-            mergedFn[key] = prevFn[key];
-          }
-        });
-        if (mergedFn) merged[fi] = mergedFn;
-      });
-      return merged;
-    });
+    // mergeManualSwaps (lib/studio/dealCheckCardMerge.js) — used against dcCardsRef.current
+    // (synchronous, guaranteed current) for what the reconcile below actually reserves, AND again
+    // inside the functional setDcCards update (React's own `prev`, guaranteed current at commit
+    // time) for what gets written to state. Two calls, not one shared value, because React's
+    // functional-update contract is the only thing that guarantees `prev` is current AT THE MOMENT
+    // it applies — the ref read happens earlier, synchronously, on this same tick (bug 17,
+    // 2026-11-14 audit: before this fix, the reconcile was handed the UN-merged `newCards` directly,
+    // so a manual swap made in Deal Check could reserve the original item instead of the swapped one).
+    // activeClientId !== cli.id (regression review finding, 2026-11-14): this run started for `cli`,
+    // but the salesperson switched to a DIFFERENT client while this async call was still in flight
+    // (the IMS fetches above can take 1-4s) — openDealCheck's own client-switch reset has by now
+    // replaced dcCardsRef.current with the NEWLY ACTIVE client's own cards. Merging those in here
+    // would reserve a manual swap belonging to a different client/deal under THIS event's id, if the
+    // two clients' cardKeys (zone|name|idx) happen to collide. Falling back to plain `newCards`
+    // (nothing merged) is always safe — strictly no worse than skipping this fix entirely.
+    const mergedForReconcile = activeClientId === cli.id ? mergeManualSwaps(newCards, dcCardsRef.current, validKeysByFn) : newCards;
+    setDcCards(prev => mergeManualSwaps(newCards, prev, validKeysByFn));
     setDcZoneState(newZoneState);
     if (kitEditsSeeded) setDcKitEdits(newKitEdits);
     // Owner decision: a SOLD deal's inventory changes reserve immediately (no approval gate) —
     // see reconcileSoldInventoryBlocks above.
-    if (isSold) { try { await reconcileSoldInventoryBlocks(fnsToProcess, newCards, inventory, cli); } catch (e) { console.warn("[reconcile] sold-deal block reconcile failed:", e?.message || e); } }
+    if (isSold) { try { await reconcileSoldInventoryBlocks(fnsToProcess, mergedForReconcile, inventory, cli); } catch (e) { console.warn("[reconcile] sold-deal block reconcile failed:", e?.message || e); } }
     setDcGenerating(false);
     setDcGenStatus("");
     setDcAbortRef(null);

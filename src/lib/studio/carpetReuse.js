@@ -5,7 +5,7 @@
 // The match is the same one cross-function reuse uses: venue name equal (case and spaces ignored), date equal.
 import { prefsOf, floorSqftOf } from "./carpetPrefs.js";
 import { CARPET_OFF } from "./taxonomy.js";
-import { isCancelledEO } from "../ims/liveBlocks.js";
+import { isCancelledEO, isLiveBlockStatus } from "../ims/liveBlocks.js";
 
 const norm = (v) => String(v || "").trim().toLowerCase();
 
@@ -18,7 +18,8 @@ export function sameVenueHolds(entries, eventOrders, venue, date, selfEventId) {
   if (!v) return out;
   const byId = new Map((eventOrders || []).map((e) => [e?.id, e]));
   (entries || []).forEach((b) => {
-    if (!b || b.eventId === selfEventId || b.status === "released") return;
+    // isLiveBlockStatus (bug 14): one shared "is this entry live" definition, not its own allowlist.
+    if (!b || b.eventId === selfEventId || !isLiveBlockStatus(b)) return;
     if (date && b.date && b.date !== date) return;
     const eo = byId.get(b.eventId);
     if (!eo) return;

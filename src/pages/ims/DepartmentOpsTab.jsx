@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { SHIFT_START_HOUR } from "../../lib/studio/dihariWindows.js";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits, flowerPaletteHexFor } from "../../lib/ims/helpers";
+import { isLiveBlockStatus, blockEntryQty } from "../../lib/ims/liveBlocks";
 import { buildDeptCrew, orderWinIds as orderWinIdsShared, flowerTraceForFn as flowerTraceForFnShared, setMpPatch, addMpPatch, removeMpPatch, actualCrewPatch, resetLinePatch, mpDayPatch, resetMpDayPatch, shiftCountPatch, shiftSplitPatch, addDihariPatch, removeDihariPatch, eventLabourInfo, eventLabourTotalDeptOps } from "../../lib/ims/deptCrew";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel, makeSubcatDept } from "../../lib/ims/deptClassify";
@@ -1040,7 +1041,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     }
     const out = [];
     Object.entries(blocks || {}).forEach(([itemId, arr]) => {
-      const qty = (arr || []).filter(b => b.eventId === sel.id).reduce((s, b) => s + (Number(b.qty) || 0), 0);
+      // isLiveBlockStatus (bug 14): one shared "is this entry live" definition, not a third
+      // unfiltered count that disagreed with both Studio's and IMS's own.
+      const qty = (arr || []).filter(b => b.eventId === sel.id && isLiveBlockStatus(b)).reduce((s, b) => s + blockEntryQty(b), 0);
       if (qty <= 0) return;
       const item = (inventory || []).find(i => String(i.id) === String(itemId));
       if (!item) return;

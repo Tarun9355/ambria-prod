@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isCancelledEO, cancelledEventIds, isLiveBlockEntry, filterLiveBlocks, liveDateBlocks } from "./liveBlocks.js";
+import { isCancelledEO, cancelledEventIds, isLiveBlockEntry, filterLiveBlocks, liveDateBlocks, isLiveBlockStatus, blockEntryQty, heldOnDate } from "./liveBlocks.js";
 
 describe("isCancelledEO / cancelledEventIds", () => {
   it("only status === 'cancelled' counts, pending/confirming/review/null are left alone", () => {
@@ -65,6 +65,63 @@ describe("filterLiveBlocks", () => {
     const snapshot = JSON.parse(JSON.stringify(blocks));
     filterLiveBlocks(blocks, eos);
     expect(blocks).toEqual(snapshot);
+  });
+});
+
+describe("isLiveBlockStatus (bug 14 — one shared 'live' definition)", () => {
+  it("undefined/empty/unrecognized statuses are live (fails closed)", () => {
+    expect(isLiveBlockStatus({ status: undefined })).toBe(true);
+    expect(isLiveBlockStatus({ status: "" })).toBe(true);
+    expect(isLiveBlockStatus({ status: "held" })).toBe(true);
+    expect(isLiveBlockStatus({ status: "confirmed" })).toBe(true);
+    expect(isLiveBlockStatus({ status: "final" })).toBe(true);
+    expect(isLiveBlockStatus({})).toBe(true);
+  });
+  it("released and cancelled are not live", () => {
+    expect(isLiveBlockStatus({ status: "released" })).toBe(false);
+    expect(isLiveBlockStatus({ status: "cancelled" })).toBe(false);
+  });
+  it("false for null/undefined", () => {
+    expect(isLiveBlockStatus(null)).toBe(false);
+    expect(isLiveBlockStatus(undefined)).toBe(false);
+  });
+});
+
+describe("blockEntryQty", () => {
+  it("a missing/non-numeric/non-positive qty counts as 0, never defaults to 1", () => {
+    expect(blockEntryQty({})).toBe(0);
+    expect(blockEntryQty({ qty: 0 })).toBe(0);
+    expect(blockEntryQty({ qty: -5 })).toBe(0);
+    expect(blockEntryQty({ qty: "not a number" })).toBe(0);
+    expect(blockEntryQty(null)).toBe(0);
+  });
+  it("a positive numeric qty is returned as-is", () => {
+    expect(blockEntryQty({ qty: 9 })).toBe(9);
+  });
+  it("qtyToProduce is never counted, only qty", () => {
+    expect(blockEntryQty({ qty: 3, qtyToProduce: 50 })).toBe(3);
+  });
+});
+
+describe("heldOnDate", () => {
+  const entries = [
+    { date: "2026-11-15", eventId: "eo_a", qty: 5, status: "confirmed" },
+    { date: "2026-11-15", eventId: "eo_b", qty: 3, status: "released" },
+    { date: "2026-11-16", eventId: "eo_a", qty: 9, status: "confirmed" },
+    { date: "2026-11-15", eventId: "eo_c", qty: 2 },
+  ];
+  it("sums only live-status entries on the given date", () => {
+    expect(heldOnDate(entries, "2026-11-15")).toBe(7); // eo_a(5) + eo_c(2), eo_b released, eo_a/9 is a different date
+  });
+  it("with a cancelled-events set, that event's entries are excluded too", () => {
+    expect(heldOnDate(entries, "2026-11-15", new Set(["eo_a"]))).toBe(2);
+  });
+  it("accepts the raw eventOrders array in place of a pre-built Set", () => {
+    expect(heldOnDate(entries, "2026-11-15", [{ id: "eo_a", status: "cancelled" }])).toBe(2);
+  });
+  it("empty/missing entries return 0", () => {
+    expect(heldOnDate(undefined, "2026-11-15")).toBe(0);
+    expect(heldOnDate([], "2026-11-15")).toBe(0);
   });
 });
 

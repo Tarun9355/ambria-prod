@@ -253,4 +253,30 @@ describe("planStudioBlocks — manual items (Phase 2 plumbing, inert until manua
     expect(next2).toContainEqual({ date: D, eventId: EO, qty: 3, status: "confirmed", createdAt: NOW, source: SRC_STUDIO_CARD });
     expect(next2.some((b) => b.source === SRC_STUDIO_MANUAL)).toBe(false);
   });
+
+  // bug 6 audit (2026-11-14): IMS auto-confirm used to be the ONLY writer of a Deal Check manual
+  // item's reservation (tagged "ims-autoconfirm", same as a fuzzy-matched card) — now that it no
+  // longer writes `blocks` at all for a Studio order, Studio's reconcile must adopt that entry into
+  // its own "studio-manual" tag, the same compatibility rule an adoptable CARD entry already gets.
+  it("an ims-autoconfirm entry adopts into studio-manual when manualReady and manual need is positive", () => {
+    const entry = { date: D, eventId: EO, qty: 5, status: "confirmed", createdAt: 1, source: "ims-autoconfirm" };
+    const rowsById = new Map([["T", [entry]]]);
+    const r = planStudioBlocks({ ...base, rowsById, cardReq: {}, manualReq: { [D]: { T: 5 } }, manualReady: true });
+    const next = r.nextById.get("T");
+    expect(next).toEqual([{ date: D, eventId: EO, qty: 5, status: "confirmed", createdAt: NOW, source: SRC_STUDIO_MANUAL }]);
+  });
+
+  it("an ims-autoconfirm entry is untouched when !manualReady, even with a positive manual requirement", () => {
+    const entry = { date: D, eventId: EO, qty: 5, status: "confirmed", createdAt: 1, source: "ims-autoconfirm" };
+    const rowsById = new Map([["T", [entry]]]);
+    const r = planStudioBlocks({ ...base, rowsById, cardReq: {}, manualReq: { [D]: { T: 5 } }, manualReady: false });
+    expect(r.changedIds).toEqual([]);
+  });
+
+  it("an untagged legacy entry also adopts into studio-manual the same way", () => {
+    const entry = { date: D, eventId: EO, qty: 2, status: "confirmed", createdAt: 1 };
+    const rowsById = new Map([["T", [entry]]]);
+    const r = planStudioBlocks({ ...base, rowsById, cardReq: {}, manualReq: { [D]: { T: 2 } }, manualReady: true });
+    expect(r.nextById.get("T")).toEqual([{ date: D, eventId: EO, qty: 2, status: "confirmed", createdAt: NOW, source: SRC_STUDIO_MANUAL }]);
+  });
 });
