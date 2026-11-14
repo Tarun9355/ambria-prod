@@ -127,3 +127,21 @@ describe("book: the combined book carries no kit cards (owner ask 2026-11-14)", 
     expect(html).not.toContain("floral foam");
   });
 });
+
+describe("book: a recipe renamed since Deal Check ran prints one card, not two (owner report 2026-11-14)", () => {
+  const inv2 = [...inventory, { id: "foam", name: "floral foam", category: "Florals", unit: "pc" }];
+  const pats = [{ id: "p1", name: "Flower Trail Rft", sub: "Trail", sizes: { medium: { flowers: [{ invItemId: "foam", qty: 3 }] } } }];
+  const selR = {
+    ...sel,
+    functionsDetail: [{ fnType: "Party", date: "2026-12-01", venue: "", zones: ["stage"], elements: { stage: [{ name: "Flower Trail", patternId: "p1", qty: 9, realPct: 35 }] } }],
+    floralPlan: { artificial: { flowerBunches: 43, greenBunches: 64 } },
+    floralDetail: [{ realZones: [{ zone: "stage", el: "Flower Trail", lines: [{ name: "floral foam", qty: 27, unit: "pc" }] }],
+      artZones: [{ zone: "stage", el: "Flower Trail", flower: 43, green: 64, qty: 9, realPct: 35 }] }],
+  };
+  it("the old name's bunches and lines land on the renamed piece's card", () => {
+    const html = buildDeptBookHtml({ ...ctx("Floral", []), sel: selR, inventory: inv2, flowerPatterns: pats, floralModeBySub: new Map() }, {}, {}, { combined: true });
+    expect(html).toContain("Flower Trail Rft");
+    expect(html.split("43").length - 1).toBe(1); // the bunches once, on the one card
+    expect(html).not.toMatch(/🌸 Flower Trail</);
+  });
+});

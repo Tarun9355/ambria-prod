@@ -951,7 +951,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           // a flower recipe with no inventory item is named as the recipe is named now - renamed in IMS, it reads the new name
           // here even in a deal not saved since (2026-11-11)
           const recipeName = !invU && el?.patternId ? String((flowerPatterns || []).find(p => p.id === el.patternId)?.name || "").trim() : "";
-          merged.set(key, { name: arranged ? `${el?.name || inv?.name || t("Item")} — ${t("arranged separately")}` : (invU?.name || decName || recipeName || el?.name || held?.name || t("Item")),
+          // the other names this piece goes by - Deal Check's snapshot keys its flower lines by the element's name as it was then
+          // (a recipe renamed in IMS since, "Flower Trail" -> "Flower Trail Rft", printed a second card under the old name)
+          const altNames = [...new Set([el?.name, inv?.name, held?.name].map(n => String(n || "").trim()).filter(Boolean))];
+          merged.set(key, { altNames, name: arranged ? `${el?.name || inv?.name || t("Item")} — ${t("arranged separately")}` : (invU?.name || decName || recipeName || el?.name || held?.name || t("Item")),
             ...(arranged ? { shown: `${hn(el?.name || inv?.name) || t("Item")} — ${t("arranged separately")}` } : {}), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix || statusTxt) ? [...(choiceExtra || []), ...(floralMix ? [[t("Flowers"), floralMix]] : []), ...(statusTxt ? [[t("Status"), statusTxt]] : [])] : undefined, mix: floralMix, realPct, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, recipe, paint: addPaint(new Map(), paint) });
         });
         // ── CUSTOM CEILING ── not a zone element: it sits on the zone's truss rows (customCeilingItemId + its count
@@ -1380,6 +1383,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         return [...(fl > 0 ? [{ name: t("Artificial flowers"), qty: fl, unit: t("bunches") }] : []), ...(gr > 0 ? [{ name: t("Artificial greens"), qty: gr, unit: t("bunches") }] : [])];
       };
       const takeArt = (name) => { const k = artKey(name), list = artLeft.get(k) || []; artLeft.delete(k); return artLines(list); };
+      // a piece by any of its names (its name now, then the names Deal Check may have recorded it under) - one block of bunches
+      const namesOf = (it) => [...new Set([it.name, ...(it.altNames || [])].map(n => String(n || "").trim()).filter(Boolean))];
+      const takeArtAny = (names) => { const list = []; names.forEach(n => { const k = artKey(n); if (artLeft.has(k)) { list.push(...artLeft.get(k)); artLeft.delete(k); } }); return artLines(list); };
       // ── REAL FLOWERS AS DEAL CHECK HAS THEM ──
       // Deal Check's own real flower lines per element row (floralDetail[fn].realZones, snapshot v12): the real share, real-only
       // flowers at full, the reuse credit taken off, the recipe's inventory ingredients - so a line here is the number Deal Check
@@ -1387,8 +1393,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // element the snapshot does not know yet (added since Deal Check last ran) falls back to its recipe worked out here.
       const realTaker = realLineTaker(floralCards ? sel?.floralDetail?.[pg.fnIdx]?.realZones : [], pg.zk, eventSwap);
       (pg.items || []).forEach(it => {
-        const art = floralCards && it.mix ? takeArt(it.name) : [];
-        const snapReal = floralCards && it.mix && realTaker.has(it.name) ? realTaker.take(it.name) : null;
+        const art = floralCards && it.mix ? takeArtAny(namesOf(it)) : [];
+        const realName = floralCards && it.mix ? namesOf(it).find(n => realTaker.has(n)) : null;
+        const snapReal = realName ? realTaker.take(realName) : null;
         if (floralCards && ((Array.isArray(it.recipe) && it.recipe.length) || art.length || (snapReal && snapReal.length))) {
           // Each flower line is the whole recipe amount, its tag saying how much of it is real (the amount Deal Check and the mandi
           // list have) and how much artificial; real-only flowers and inventory ingredients at full, untagged. The artificial
@@ -1406,8 +1413,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         // The combined "All departments" book carries no kit cards (owner ask 2026-11-14) - the kit sits on its zone page as one
         // item. Its attached recipe's bunches / real lines are still taken here, so they do not come back as a loose card below.
         if (it.kit > 0 && combined) {
-          takeArt(it.name);
-          if (realTaker.has(it.name)) realTaker.take(it.name);
+          takeArtAny(namesOf(it));
+          namesOf(it).filter(n => realTaker.has(n)).forEach(n => realTaker.take(n));
         } else if (it.kit > 0) {
           const key = String(it.name || "").trim().toLowerCase();
           const kb = kitBlocksByName.get(key);
@@ -1446,13 +1453,13 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           // alongside the kit's real inventory parts, instead of a separate standalone card. `artPlan`
           // being null (the combined book) already leaves `zArt`/`artLeft` empty, so this is a no-op
           // there, same as every other flower section in that book.
-          parts.push(...takeArt(it.name));
+          parts.push(...takeArtAny(namesOf(it)));
           // Same for the recipe's REAL flowers (Morya Patti, banglore daisy, …) — realTaker is ALSO
           // keyed by the kit's own name for a kit-sourced row (realLineTaker, fixed alongside). Before
           // this, a kit's attached recipe never matched the `it.mix` branch above (a kit element is
           // never `it.mix`) and had no fallback either, so its real flowers never printed anywhere in
           // the book at all (owner report, 2026-11-13).
-          if (floralCards && realTaker.has(it.name)) parts.push(...realTaker.take(it.name));
+          if (floralCards) namesOf(it).filter(n => realTaker.has(n)).forEach(n => parts.push(...realTaker.take(n)));
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : (kb?.qty || zq), "", parts) });
         }
       });
