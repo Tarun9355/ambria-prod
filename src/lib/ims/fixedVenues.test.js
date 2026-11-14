@@ -266,6 +266,12 @@ describe("reservedByVenueToday", () => {
     expect(reservedByVenueToday(undefined, eventOrders)).toEqual({});
     expect(reservedByVenueToday([], eventOrders)).toEqual({});
   });
+
+  it("a cancelled event's hold is never a real overlap against the venue's own stock (liveBlocks)", () => {
+    const withCancelled = [...eventOrders, { id: "eo_cancelled", venue: "Pushpanjali", status: "cancelled" }];
+    const blocks = [{ eventId: "eo1", qty: 100 }, { eventId: "eo_cancelled", qty: 999 }];
+    expect(reservedByVenueToday(blocks, withCancelled)).toEqual({ pushpanjali: 100 });
+  });
 });
 
 describe("venueSlackFor", () => {

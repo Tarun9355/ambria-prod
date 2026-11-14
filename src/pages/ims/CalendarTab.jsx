@@ -103,12 +103,18 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
     if (!canRelease) return;
     if (!eoId || !setEventOrders || !setBlocks) return;
     if (!confirm(`Cancel booking for "${guestName}" and release all its held inventory?`)) return;
-    const newBlocks = releaseBlocks(blocks, eoId);
-    setBlocks(newBlocks);
-    saveBlocks?.(newBlocks);
+    // Status saved FIRST, release second (reversed from this flow's original order, 2026-11-14):
+    // every reader of `blocks` now treats a cancelled event_order's own entries as not-there
+    // (lib/ims/liveBlocks.js), so status is the real source of truth and a release that fails or
+    // races after this point is now a harmless cleanup step, not a correctness gap — the opposite
+    // of the old order, where a failed/raced SECOND save (status) could leave stock released while
+    // the deal still looked live.
     const updated = (eventOrders || []).map((eo) => (eo.id === eoId ? { ...eo, status: "cancelled" } : eo));
     setEventOrders(updated);
     saveEventOrders?.(updated);
+    const newBlocks = releaseBlocks(blocks, eoId);
+    setBlocks(newBlocks);
+    saveBlocks?.(newBlocks);
     // Releasing the real stock hold above never touched the ops-side `functions` rows this event
     // created — those kept showing as blocked in IMS Inventory's own "Blocked for Functions" list
     // long after cancellation (the exact orphan InventoryTab.jsx had to start filtering out by the

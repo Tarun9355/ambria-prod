@@ -116,6 +116,7 @@ import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDef
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
+import { cancelledEventIds, liveDateBlocks } from "../../lib/ims/liveBlocks";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc, claimDealPresence } from "../../lib/supabase";
 import { writeWithRetry } from "../../lib/writeRetry";
 import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
@@ -12889,7 +12890,7 @@ export default function StudioApp() {
   // handed back but not cached, so the next ask fetches fresh.
   const availInflightRef = useRef({});
   const availGenRef = useRef(0);
-  const loadAvailability = useCallback(async (date) => {
+  const loadAvailabilityRaw = useCallback(async (date) => {
     if (!date) return { inventory: [], blocksForDate: {} };
     if (availCacheRef.current[date]) return availCacheRef.current[date];
     const gen = availGenRef.current;
@@ -12904,6 +12905,15 @@ export default function StudioApp() {
     availInflightRef.current[date] = { gen, promise };
     return promise;
   }, []);
+  // A cancelled event_order's own `blocks` entries must never count as real competing demand for
+  // ANY reader of this availability — see lib/ims/liveBlocks.js's own header for why (the "Test 2"
+  // incident: an orphaned, never-released hold from a cancelled deal was read as real stock by every
+  // consumer of loadAvailability/activeBlocksForDate/blocksByDate below). Keyed on the sorted id list
+  // (not the eventOrders array identity) so this Set — and loadAvailability's own identity — only
+  // change when which orders are cancelled actually changes, not on every unrelated eventOrders refetch.
+  const cancelledEoKey = useMemo(() => [...cancelledEventIds(eventOrders)].sort().join("|"), [eventOrders]);
+  const cancelledEoIds = useMemo(() => new Set(cancelledEoKey ? cancelledEoKey.split("|") : []), [cancelledEoKey]);
+  const loadAvailability = useCallback(async (date) => liveDateBlocks(await loadAvailabilityRaw(date), cancelledEoIds), [loadAvailabilityRaw, cancelledEoIds]);
 
   // Cache was never invalidated once a date's blocksForDate had been fetched — so once an item's
   // reservations changed (another salesperson's block confirmed/released, or this same deal's own
@@ -13450,7 +13460,10 @@ export default function StudioApp() {
       setDcInventoryCache(inventory);
       const blocksByDate = {};
       const blocksDetailByDate = {};
-      uniqueDates.forEach((d, i) => { blocksByDate[d] = invResults[i]?.blocksForDate || {}; blocksDetailByDate[d] = invResults[i]?.blocksDetailForDate || {}; });
+      // liveDateBlocks: a cancelled event_order's own entries must never read as real competing
+      // demand inside Deal Check either — see loadAvailability's own use of this above, and
+      // lib/ims/liveBlocks.js's header for why.
+      uniqueDates.forEach((d, i) => { const live = liveDateBlocks(invResults[i], cancelledEoIds); blocksByDate[d] = live?.blocksForDate || {}; blocksDetailByDate[d] = live?.blocksDetailForDate || {}; });
       // Reduce settings rows → object s (EXACT key/field names the reference uses)
       const s = {};
       (settingsRows || []).forEach(r => {
@@ -13579,7 +13592,7 @@ export default function StudioApp() {
       }
     }
     setDcAbortRef(null);
-  }, [collectAllFunctionData, dcPhotoOverrides, photoImsMap, dcCache, activeClientId, clientLedger, ensureClientHeavyFieldsLoaded, customProperties, customOutdoor]);
+  }, [collectAllFunctionData, dcPhotoOverrides, photoImsMap, dcCache, activeClientId, clientLedger, ensureClientHeavyFieldsLoaded, customProperties, customOutdoor, cancelledEoIds]);
 
   // ═══ DEAL CHECK — fire openDealCheck on full-page open — VERBATIM ═══
   useEffect(() => {
@@ -13745,6 +13758,12 @@ export default function StudioApp() {
     // naive pattern eventOrderFor/ownEventOrderIds were built to replace everywhere else).
     const eo = eventOrderFor(eventOrders, cli.id, cli.name);
     if (!eo) { console.warn("[reconcile] no event_orders row for this client — skipping (not through markSold yet?)", cli.id); return; }
+    // eventOrderFor prefers a LIVE order when the client has several (the Sangeeta duplicate-
+    // booking case above) — but when it is the client's ONLY order and that order is itself
+    // cancelled, there is nothing live to prefer, and this would otherwise write fresh `blocks`
+    // reservations under an eventId whose deal no longer exists. A client whose ledger still says
+    // "sold" but whose own order was cancelled has nothing to reconcile.
+    if (eo.status === "cancelled") { console.warn("[reconcile] this client's event_orders row is cancelled — skipping, not writing blocks under a dead eventId", cli.id); return; }
 
     // KNOWN SCOPE LIMIT: this only diffs functions still present in fnsToProcess. Deleting an
     // entire function from a sold deal (not just items within one) leaves that function's prior
