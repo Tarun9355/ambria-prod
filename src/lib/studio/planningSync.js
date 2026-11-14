@@ -80,8 +80,9 @@ export function planningUpcoming(eo, now = Date.now()) {
 // v20 (2026-11-13): Wall Masking goes in the colour the salesperson picked on the truss in Build (zc.mkColour) when there is one,
 // instead of being split over the Fabric Palette's colours (fabricPlan masking colours, Planning, the Setup Book).
 // v21 (2026-11-14): Liza and velvet curtains likewise go in the colour picked on the Fabric card (zc.lizaColour / zc.curtainColour).
-export const PLANNING_SNAPSHOT_VERSION = 21;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-14T09:40:20Z");
+// v22 (2026-11-14): Liza / curtains split over several colours by the ratio picked on the Fabric card ("Ivory:60, Gold:40").
+export const PLANNING_SNAPSHOT_VERSION = 22;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-14T10:38:29Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // Synced before, and a planning input changed after that sync (a minute of slack: the sync's own write

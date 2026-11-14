@@ -524,16 +524,19 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         // that fabric. Unset = the function's Fabric Palette decides (its colours marked "Use for" this fabric), as before
                         // (fabricAnchorsForRow) - shown here as the default; a pick overrides it for this truss only.
                         const colour=on?String(zc[colKey]||"").trim():"";
+                        // a ratio over several colours ("Ivory:60, Gold:40") reads "Ivory 60% · Gold 40%" beside the icon
+                        const colourList=colour?parseFlowerPalette(colour):[];
+                        const colourText=colourList.length>1?colourList.map(c=>`${c.name} ${Math.round(c.pct)}%`).join(" · "):colour;
                         const paletteCols=on&&Array.isArray(fabricPaletteColours?.[mat])?fabricPaletteColours[mat]:[];
                         const palSet=new Set(paletteCols);
                         const colourOpts=[...new Set(((fabricInv?.[stockKey])||[]).map(x=>String(x?.colour||"").trim()).filter(Boolean))].sort((a,b)=>(palSet.has(b)-palSet.has(a))||a.localeCompare(b));
                         return(
                         <div key={key} className="relative inline-flex items-center gap-1">
-                          <span role="button" tabIndex={0} aria-haspopup="menu" aria-expanded={fabMenu===key} onClick={(e)=>openFabMenu(key,e.currentTarget)} onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();openFabMenu(key,e.currentTarget);}}} title={`${lbl}: ${on?"on":"off"}${colour?` · ${colour}`:""}${rep?" · repeat":""} — click for options`}
+                          <span role="button" tabIndex={0} aria-haspopup="menu" aria-expanded={fabMenu===key} onClick={(e)=>openFabMenu(key,e.currentTarget)} onKeyDown={(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();openFabMenu(key,e.currentTarget);}}} title={`${lbl}: ${on?"on":"off"}${colour?` · ${colourText}`:""}${rep?" · repeat":""} — click for options`}
                             style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:6,cursor:"pointer",fontSize:12,
                               border:`1px solid ${on?accent:border}`,background:on?`${accent}18`:"transparent",opacity:on?1:0.4,filter:on?"none":"grayscale(1)"}}>{ic}</span>
                           {rep&&<span className="absolute -top-1.5 left-4 text-[10px] leading-none text-emerald-600 pointer-events-none">♻</span>}
-                          {colour?<span style={{fontSize:10,fontWeight:600,color:accent,whiteSpace:"nowrap"}}>{colour}</span>
+                          {colour?<span style={{fontSize:10,fontWeight:600,color:accent,whiteSpace:"nowrap"}}>{colourText}</span>
                             :paletteCols.length>0&&<span title="From the function's Fabric Palette - pick a colour in this icon's menu to change it for this truss" style={{fontSize:10,color:textS,whiteSpace:"nowrap"}}>{paletteCols.join(", ")}</span>}
                           {fabMenu===key&&fabMenuPos&&createPortal(<>
                             <div style={{position:"fixed",inset:0,zIndex:9998}} onClick={()=>setFabMenu(null)} />
@@ -548,7 +551,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                               </button>
                               {on&&colourOpts.length>0&&<div className={`border-t mt-1 pt-1 ${isDark?"border-gray-600":"border-gray-100"}`}>
                                 <FabricColourPick stock={fabricInv?.[stockKey]||[]} paletteCols={paletteCols} value={colour} isDark={isDark} accent={accent} textP={textP} textS={textS} border={border}
-                                  onPick={(c)=>{sZ({[colKey]:c||undefined});setFabMenu(null);}} />
+                                  onPick={(c)=>sZ({[colKey]:c||undefined})} />
                               </div>}
                             </div>
                           </>, document.body)}

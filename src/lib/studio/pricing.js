@@ -1165,6 +1165,9 @@ export const anchorsForPaletteByMaterial = (paletteCatalogue, paletteName, mater
   if (pObj?.anchorColours?.length) return pObj.anchorColours;
   return parseFabricPalette(paletteName).filter((c) => !c.materials || c.materials.includes(material)).map((c) => c.name);
 };
+// An anchor is a colour name, or { name, pct } when the salesperson set a ratio between colours (Build's Fabric card,
+// zc.lizaColour "Ivory:60, Gold:40" - owner ask 2026-11-14).
+const anchorName = (a) => (a && typeof a === "object" ? String(a.name || "") : String(a || ""));
 export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, qtyField) => {
   if (!totalQty || totalQty <= 0) return [];
   const stocks = Array.isArray(stockArray) ? stockArray.filter(s => s && s.colour) : [];
@@ -1175,12 +1178,22 @@ export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, q
   for (const a of anchors) {
     let best = null;
     for (const s of stocks) {
-      if (fuzzyColourMatch(a, s.colour)) {
+      if (fuzzyColourMatch(anchorName(a), s.colour)) {
         const stockVal = Number(s[qtyField]) || 0;
-        if (!best || stockVal > best.stockVal) best = { colour: s.colour, stockVal };
+        if (!best || stockVal > best.stockVal) best = { colour: s.colour, stockVal, pct: a && typeof a === "object" ? Number(a.pct) || 0 : null };
       }
     }
     if (best && !matched.some((m) => m.colour === best.colour)) matched.push(best);
+  }
+  // A ratio set between the colours: each its share of the whole units (largest remainder), over the colours that have stock.
+  if (matched.length > 1 && matched.every((m) => m.pct !== null) && matched.some((m) => m.pct > 0)) {
+    const total = Math.max(0, Math.round(Number(totalQty) || 0));
+    const sumPct = matched.reduce((t, m) => t + m.pct, 0);
+    const raw = matched.map((m) => total * m.pct / sumPct);
+    const share = raw.map(Math.floor);
+    let left = total - share.reduce((t, v) => t + v, 0);
+    raw.map((r, i) => [r - share[i], i]).sort((x, y) => y[0] - x[0]).forEach(([, i]) => { if (left > 0) { share[i] += 1; left -= 1; } });
+    return matched.map((m, i) => ({ qty: share[i], colour: m.colour })).filter((a) => a.qty > 0);
   }
   // Several palette colours share the fabric evenly (owner ask 2026-11-11: a "Black, Maroon" palette put every row in Maroon,
   // the one with more stock, and Black never reached Planning). Whole units; what does not divide goes to the colours with the
@@ -1201,7 +1214,7 @@ export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, q
   // reporting it as fine. The old behaviour here made Ivory requirements quietly disappear into
   // whatever colour had the most stock, with no sign anywhere that a substitution had happened.
   if (anchors.length > 0) {
-    return [{ qty: totalQty, colour: anchors[0] }];
+    return [{ qty: totalQty, colour: anchorName(anchors[0]) }];
   }
   // 3. No colour preference at all — fall back to whatever has the most stock.
   const bestOverall = stocks.reduce((best, s) => {
@@ -1222,18 +1235,24 @@ export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, q
 // truss in Build (zc.mkColour, "🎨 Colour") when there is one - it was read only by Build itself, so Deal Check, Planning and the Setup
 // Book split the masking over the Fabric Palette's colours instead (owner report 2026-11-13: "masking in pdf incorrect"). Else the
 // palette's anchors for that material, as before. Liza and velvet curtains have their own pick on the Fabric card's icon menu
-// (zc.lizaColour / zc.curtainColour, owner ask 2026-11-14), read the same way.
+// (zc.lizaColour / zc.curtainColour, owner ask 2026-11-14), read the same way. Liza / curtains can be split over several colours
+// with a ratio ("Ivory:60, Gold:40", the Flower Palette's format - parseFlowerPalette); those come back as { name, pct } anchors.
 const PICKED_COLOUR_FIELD = { masking: "mkColour", liza: "lizaColour", curtain: "curtainColour" };
 export const fabricAnchorsForRow = (row, material, paletteAnchors) => {
   const field = PICKED_COLOUR_FIELD[material];
   const picked = field ? String(row?.[field] || "").trim() : "";
-  return picked ? [picked] : (Array.isArray(paletteAnchors) ? paletteAnchors : []);
+  if (!picked) return Array.isArray(paletteAnchors) ? paletteAnchors : [];
+  if (material === "masking") return [picked];
+  const list = parseFlowerPalette(picked);
+  return list.length > 1 ? list.map((c) => ({ name: c.name, pct: c.pct })) : list.map((c) => c.name);
 };
 
 export const resolveFabricAllocation = (existing, totalQty, paletteAnchors, stockArray, qtyField) => {
   const anchors = Array.isArray(paletteAnchors) ? paletteAnchors : [];
-  if (Array.isArray(existing) && existing.length > 0) {
-    const agrees = anchors.length === 0 || existing.every((a) => anchors.some((an) => fuzzyColourMatch(an, a?.colour)));
+  // A ratio picked between colours decides the split itself - an allocation saved earlier (Deal Check) is not kept over it.
+  const ratioSet = anchors.some((a) => a && typeof a === "object");
+  if (!ratioSet && Array.isArray(existing) && existing.length > 0) {
+    const agrees = anchors.length === 0 || existing.every((a) => anchors.some((an) => fuzzyColourMatch(anchorName(an), a?.colour)));
     if (agrees) return existing;
   }
   return autoFillFabricAllocation(totalQty, anchors, stockArray, qtyField);
