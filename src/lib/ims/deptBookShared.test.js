@@ -87,3 +87,68 @@ describe("book: masking edge cases priced the same way", () => {
     expect(html).toContain("Acrylic · Back wall");
   });
 });
+
+describe("book: flower cards in the combined book (owner report 2026-11-14)", () => {
+  const inv2 = [...inventory, { id: "foam", name: "floral foam", category: "Florals", unit: "pc" }];
+  const pats = [{ id: "p1", name: "Flower Reet", sub: "Reet", sizes: { medium: { flowers: [{ invItemId: "foam", qty: 1 }] } } }];
+  const selF = {
+    ...sel,
+    functionsDetail: [{ fnType: "Wedding", date: "2026-12-01", venue: "", zones: ["stage"], elements: { stage: [{ name: "Flower Reet", patternId: "p1", qty: 3, realPct: 0 }] } }],
+    floralPlan: { artificial: { flowerBunches: 10, greenBunches: 8 } },
+    floralDetail: [{ realZones: [{ zone: "stage", el: "Flower Reet", lines: [{ name: "floral foam", qty: 3, unit: "pc" }] }],
+      artZones: [{ zone: "stage", el: "Flower Reet", flower: 10, green: 8, qty: 3, realPct: 0 }] }],
+  };
+  const book = (d, opts) => buildDeptBookHtml({ ...ctx(d, []), sel: selF, inventory: inv2, flowerPatterns: pats, floralModeBySub: new Map() }, {}, {}, opts);
+  it("the combined book prints a 100% artificial piece's card with its bunches, not a bare floral-foam card", () => {
+    const html = book("Floral", { combined: true });
+    expect(html).toContain("Artificial flowers");
+    expect(html).toContain("Artificial 100%");
+  });
+  it("a Tenting-only book carries no flower card", () => {
+    const html = book("Tenting", {});
+    expect(html).not.toContain("Artificial flowers");
+    expect(html).not.toContain("floral foam");
+  });
+});
+
+describe("book: the combined book carries no FLORAL kit cards (owner ask 2026-11-14)", () => {
+  const inv3 = [...inventory, { id: "k1", name: "Wooden Console", category: "Florals", subItems: [{ itemId: "f1", qty: 2 }] },
+    { id: "k2", name: "Tree", category: "Tenting", subItems: [{ itemId: "s1", qty: 3 }] }];
+  const cat = (c) => ({ Florals: "Floral", Tenting: "Tenting", Fabric: "Fabric", Furniture: "Structure" })[c] || "";
+  const bookOf = (s) => buildDeptBookHtml({ ...ctx("Floral", []), sel: s, inventory: inv3, catToDept: cat, floralModeBySub: new Map() }, {}, {}, { combined: true });
+  const selK = {
+    ...sel,
+    functionsDetail: [{ fnType: "Wedding", date: "2026-12-01", venue: "", zones: ["stage"], elements: { stage: [{ name: "Wooden Console", invId: "k1", qty: 1 }] } }],
+    floralPlan: { artificial: { flowerBunches: 9, greenBunches: 7 } },
+    floralDetail: [{ realZones: [{ zone: "stage", el: "Chandelier Recipe", kitParent: "Wooden Console", lines: [{ name: "floral foam", qty: 2, unit: "pc" }] }],
+      artZones: [{ zone: "stage", el: "Chandelier Recipe", kitParent: "Wooden Console", flower: 9, green: 7, qty: 1 }] }],
+  };
+  it("a Floral kit: no 📦 card, and its recipe's bunches / foam do not come back as a loose card", () => {
+    const html = bookOf(selK);
+    expect(html).not.toContain("📦");
+    expect(html).not.toContain("Chandelier Recipe");
+    expect(html).not.toContain("floral foam");
+  });
+  it("another department's kit (a Tenting tree) keeps its parts card", () => {
+    const selT = { ...sel, functionsDetail: [{ fnType: "Wedding", date: "2026-12-01", venue: "", zones: ["stage"], elements: { stage: [{ name: "Tree", invId: "k2", qty: 1 }] } }] };
+    expect(bookOf(selT)).toContain("📦");
+  });
+});
+
+describe("book: a recipe renamed since Deal Check ran prints one card, not two (owner report 2026-11-14)", () => {
+  const inv2 = [...inventory, { id: "foam", name: "floral foam", category: "Florals", unit: "pc" }];
+  const pats = [{ id: "p1", name: "Flower Trail Rft", sub: "Trail", sizes: { medium: { flowers: [{ invItemId: "foam", qty: 3 }] } } }];
+  const selR = {
+    ...sel,
+    functionsDetail: [{ fnType: "Party", date: "2026-12-01", venue: "", zones: ["stage"], elements: { stage: [{ name: "Flower Trail", patternId: "p1", qty: 9, realPct: 35 }] } }],
+    floralPlan: { artificial: { flowerBunches: 43, greenBunches: 64 } },
+    floralDetail: [{ realZones: [{ zone: "stage", el: "Flower Trail", lines: [{ name: "floral foam", qty: 27, unit: "pc" }] }],
+      artZones: [{ zone: "stage", el: "Flower Trail", flower: 43, green: 64, qty: 9, realPct: 35 }] }],
+  };
+  it("the old name's bunches and lines land on the renamed piece's card", () => {
+    const html = buildDeptBookHtml({ ...ctx("Floral", []), sel: selR, inventory: inv2, flowerPatterns: pats, floralModeBySub: new Map() }, {}, {}, { combined: true });
+    expect(html).toContain("Flower Trail Rft");
+    expect(html.split("43").length - 1).toBe(1); // the bunches once, on the one card
+    expect(html).not.toMatch(/🌸 Flower Trail</);
+  });
+});

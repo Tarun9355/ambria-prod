@@ -5,7 +5,7 @@
 // So this reads the event's own layout (functionsDetail), not a department snapshot. A colour equal to the item's base
 // colour (Ivory when unset) is no repaint - the same rule Studio prices paint by (lib/studio/paint.js).
 
-import { normalizePaintAllocation, paintTotalFor } from "../studio/paint.js";
+import { normalizePaintAllocation, paintTotalFor, paintColoursOf } from "../studio/paint.js";
 
 const nameKey = (s) => String(s || "").trim().replace(/\s+/g, " ").toLowerCase();
 const prettyZone = (zk) => String(zk || "").replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
@@ -17,8 +17,9 @@ const prettyZone = (zk) => String(zk || "").replace(/[_-]+/g, " ").replace(/\b\w
 // the highest in its sub-category, else the default), so it matches the paint in the deal's total.
 // Returns { fns: [{ fi, label, date, rows }], colours: [{ colour, qty }], pieces, items }:
 //   rows    - one per item per zone: { key, invId, name, photo, baseColour, qty, colours: [{ colour, qty }], painted, zk, zone }
-//   colours - every colour over the event, most pieces first
-//   pieces  - pieces to paint over the event; items - how many rows; cost - the paint over the event
+//   colours - every colour over the event, most pieces first; a multi-colour piece ("Gold + Maroon") counts in each
+//             of its colours (the paint to mix), while its item row keeps the combination as one entry
+//   pieces  - pieces to paint over the event (a multi-colour piece once); items - how many rows; cost - the paint over the event
 export function paintWorkOf({ functionsDetail = [], inventory = [], zoneLabel = null, defaultPaintCost = 400 } = {}) {
   const byId = new Map(), byName = new Map();
   (inventory || []).forEach((i) => {
@@ -28,6 +29,7 @@ export function paintWorkOf({ functionsDetail = [], inventory = [], zoneLabel = 
   });
   const fnsIn = (Array.isArray(functionsDetail) ? functionsDetail : []).filter(Boolean);
   const allColours = new Map();
+  let pieces = 0;
   const fns = [];
   fnsIn.forEach((fn, fi) => {
     const rows = new Map();
@@ -55,9 +57,13 @@ export function paintWorkOf({ functionsDetail = [], inventory = [], zoneLabel = 
           const c = row.colours.get(ck) || { colour: a.colour, qty: 0 };
           c.qty += a.qty;
           row.colours.set(ck, c);
-          const t = allColours.get(ck) || { colour: a.colour, qty: 0 };
-          t.qty += a.qty;
-          allColours.set(ck, t);
+          pieces += a.qty;
+          paintColoursOf(a.colour).forEach((one) => {
+            const k1 = nameKey(one);
+            const t = allColours.get(k1) || { colour: one, qty: 0 };
+            t.qty += a.qty;
+            allColours.set(k1, t);
+          });
         });
         rows.set(key, row);
       });
@@ -72,7 +78,7 @@ export function paintWorkOf({ functionsDetail = [], inventory = [], zoneLabel = 
   const colours = [...allColours.values()].sort((a, b) => b.qty - a.qty);
   return {
     fns, colours,
-    pieces: colours.reduce((s, c) => s + c.qty, 0),
+    pieces,
     cost: fns.reduce((s, f) => s + f.rows.reduce((t, r) => t + r.cost, 0), 0),
     items: fns.reduce((s, f) => s + f.rows.length, 0),
   };

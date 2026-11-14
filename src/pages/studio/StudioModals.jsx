@@ -24,6 +24,7 @@ import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { AVAIL_THUMB } from "../../lib/studio/prefetchImages.js";
 import { reuseAwareAvail } from "../../lib/studio/carpetReuse.js";
 import { SkRows } from "../../components/studio/Skeleton.jsx";
+import { maxRepaintCostInSubcat } from "../../lib/studio/paint.js";
 
 // Short codes for the availability picker's per-venue idle-slack breakdown — substring match
 // (case-insensitive) rather than an exact one, so "Ambria Restro"/"Restro"/a future venue-group
@@ -399,6 +400,21 @@ export default function StudioModals({ ctx }) {
                           set={availPhotoSet} startIndex={availPhotoSet.findIndex(x => x.id === it.id)}/> : <div style={{width:"100%",height:120,display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,background:isDark?"#1a1a2e":"#eee"}}><IconBox size={22}/></div>}
                         <div style={{padding:"8px 10px"}}>
                           <div style={{fontSize:11,fontWeight:600,color:textP,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</div>
+                          {/* Can this item be repainted (owner ask 2026-11-14)? Same rule as Build's paint pill: ticked
+                              "can be painted" in IMS and a repaint rate (its own, else its sub-category's highest). */}
+                          {(() => {
+                            const inv = (imsInventory || []).find(x => String(x.id) === String(it.id));
+                            if (!inv || inv.paintable !== true) return null;
+                            const rate = Number(inv.paintCost) > 0 ? Number(inv.paintCost) : maxRepaintCostInSubcat(inv.subCat || inv.subcategory || "", imsInventory || [], 0);
+                            if (!(rate > 0)) return null;
+                            const base = inv.baseColour || "Ivory";
+                            return (
+                              <div title={`Can be painted — ships ${base}; repaint ₹${rate.toLocaleString("en-IN")} per piece per colour`}
+                                style={{display:"inline-flex",alignItems:"center",gap:3,marginTop:2,padding:"1px 6px",borderRadius:999,fontSize:9,fontWeight:700,color:"#BE185D",background:isDark?"rgba(236,72,153,0.15)":"#FDF2F8",border:"1px solid #F9A8D4",whiteSpace:"nowrap",maxWidth:"100%",overflow:"hidden",textOverflow:"ellipsis"}}>
+                                🎨 Paintable · {base} · ₹{rate.toLocaleString("en-IN")}
+                              </div>
+                            );
+                          })()}
                           {unpickable && <div style={{fontSize:8.5,marginTop:1,color:"#EF4444",fontWeight:700}}>Out of stock — can't be made</div>}
                           {shortBy > 0 && <div style={{fontSize:9.5,marginTop:2,color:"#EF4444",fontWeight:800}}>SHORT {shortBy} {mUnit} · needs {needSqft}{sel ? " · tap to remove" : ""}</div>}
                           {reuseShown && <div style={{fontSize:9,marginTop:2,color:SWAP,fontWeight:700}} title="Already laid at this venue on this date for another event — it stays down, so it can be reused here">⇄ In use at this venue today: {reuseNote.join(", ")}{reuse?.qty > 0 ? ` · ${Math.round(reuse.qty)} ${mUnit} laid` : ""} — reusable</div>}
@@ -1398,7 +1414,10 @@ export default function StudioModals({ ctx }) {
           ? (imsInventory || []).find(i => i.id === el.invId)
           : (imsInventory || []).find(i => i.name === el.name);
         const baseColour = invItem?.baseColour || "Ivory";
-        const paintCost = invItem?.paintCost ?? imsDefaultPaintCost;
+        // Same rate the bill charges (lib/studio/paint.js paintLinesFor): the item's own paint cost, else the highest
+        // in its sub-category, else the IMS default — `paintCost ?? default` showed +₹0 for an item with a 0 cost.
+        const paintCost = Number(invItem?.paintCost) > 0 ? Number(invItem.paintCost)
+          : maxRepaintCostInSubcat(invItem?.subCat || invItem?.subcategory || "", imsInventory || [], imsDefaultPaintCost ?? 400);
         // Pick active function's palette
         const activePalette = activeFnIdx === 0 ? clientPalette : (extraFunctions[activeFnIdx - 1]?.palette || "Custom");
         // Initial allocation from current state (normalized from legacy paintOverride if needed)

@@ -281,6 +281,18 @@ describe("buildFabricGroups — Wall Masking in the colour picked on the truss (
   });
 });
 
+describe("buildFabricGroups — Liza and velvet curtains in the colour picked on the Fabric card (owner ask 2026-11-14)", () => {
+  const stock = { lizaStock: [{ colour: "Gold", stockKg: 50 }, { colour: "Ivory", stockKg: 50 }], curtainStock: [{ colour: "Gold", stockPieces: 20 }, { colour: "Ivory", stockPieces: 20 }] };
+  const groupOf = (key, row) => buildFabricGroups({ entries: [{ fi: 0, ri: 0, zk: "entry", zLabel: "Entry", fab: { lizaKg: 6, curtainPieces: 4 }, row }], lines: [], fabricPlan: null, stock, fnPalettes: { 0: "Gold, Ivory" } }).groups.find((g) => g.key === key);
+  it("Liza picked Ivory: all of it in Ivory", () => {
+    expect(groupOf("liza", { lizaColour: "Ivory" }).colours.map((c) => c.colour)).toEqual(["Ivory"]);
+  });
+  it("curtains picked Gold: all of them in Gold; Liza unpicked still follows the palette", () => {
+    expect(groupOf("curtain", { curtainColour: "Gold" }).colours.map((c) => c.colour)).toEqual(["Gold"]);
+    expect(groupOf("liza", { curtainColour: "Gold" }).colours.length).toBeGreaterThan(0);
+  });
+});
+
 describe("buildFabricGroups — the masking note names only the walls the fabric goes on", () => {
   const g = (row) => buildFabricGroups({ entries: [{ fi: 0, ri: 0, zk: "entry", zLabel: "Entry", fab: { maskingPieces: 2 }, row }], lines: [] }).groups.find((x) => x.key === "masking").zones[0].application;
   it("an Acrylic right wall is not called a fabric wall", () => {

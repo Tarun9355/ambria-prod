@@ -1221,9 +1221,12 @@ export const autoFillFabricAllocation = (totalQty, paletteAnchors, stockArray, q
 // The colour(s) a truss row's fabric of one material is meant to go in: for Wall Masking, the ONE colour the salesperson picked on the
 // truss in Build (zc.mkColour, "🎨 Colour") when there is one - it was read only by Build itself, so Deal Check, Planning and the Setup
 // Book split the masking over the Fabric Palette's colours instead (owner report 2026-11-13: "masking in pdf incorrect"). Else the
-// palette's anchors for that material, as before.
+// palette's anchors for that material, as before. Liza and velvet curtains have their own pick on the Fabric card's icon menu
+// (zc.lizaColour / zc.curtainColour, owner ask 2026-11-14), read the same way.
+const PICKED_COLOUR_FIELD = { masking: "mkColour", liza: "lizaColour", curtain: "curtainColour" };
 export const fabricAnchorsForRow = (row, material, paletteAnchors) => {
-  const picked = material === "masking" ? String(row?.mkColour || "").trim() : "";
+  const field = PICKED_COLOUR_FIELD[material];
+  const picked = field ? String(row?.[field] || "").trim() : "";
   return picked ? [picked] : (Array.isArray(paletteAnchors) ? paletteAnchors : []);
 };
 
@@ -1377,12 +1380,18 @@ export const calcZoneFabricCost = (zCfg, trussInv, paletteAnchors, density, mult
 // chip never touches it (calcStructCost); instead each Fabric-card icon carries its own Repeat flag
 // (row.fabLizaRep / row.fabCurtainRep), and only that part's share of the guest price (× mult, the
 // IMS guest multiplier) comes off at `pct`. Wall-masking pieces are not a part and stay full price.
-export const fabricRepeatDiscount = (row, trussInv, density, mult, pct) => {
-  if (!row || !trussInv || row.noFabric || !(row.fabLizaRep || row.fabCurtainRep)) return 0;
+// Owner ask (2026-11-14): marking the zone's Truss & Masking chip Repeat marks Liza and curtains Repeat
+// too, the way masking follows it (maskingRepeatOn): a flag left untouched follows `trussRepeat`, true
+// is Repeat regardless, false is an explicit "not Repeat" even with the chip on.
+export const fabricPartRepeatOn = (row, repKey, trussRepeat) => !!row && row[repKey] !== false && (row[repKey] === true || !!trussRepeat);
+export const fabricRepeatDiscount = (row, trussInv, density, mult, pct, trussRepeat = false) => {
+  const lizaRep = fabricPartRepeatOn(row, "fabLizaRep", trussRepeat);
+  const curtainRep = fabricPartRepeatOn(row, "fabCurtainRep", trussRepeat);
+  if (!row || !trussInv || row.noFabric || !(lizaRep || curtainRep)) return 0;
   const whole = calcZoneFabricCost(row, trussInv, [], density);
   let off = 0;
-  if (row.fabLizaRep && row.fabLiza !== false) off += whole - calcZoneFabricCost({ ...row, fabLiza: false }, trussInv, [], density);
-  if (row.fabCurtainRep && row.fabCurtain !== false) off += whole - calcZoneFabricCost({ ...row, fabCurtain: false }, trussInv, [], density);
+  if (lizaRep && row.fabLiza !== false) off += whole - calcZoneFabricCost({ ...row, fabLiza: false }, trussInv, [], density);
+  if (curtainRep && row.fabCurtain !== false) off += whole - calcZoneFabricCost({ ...row, fabCurtain: false }, trussInv, [], density);
   return Math.round(off * (Number(mult) || 0) * (Number(pct) || 0) / 100);
 };
 

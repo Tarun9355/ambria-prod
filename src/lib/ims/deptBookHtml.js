@@ -166,7 +166,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // A unit after a quantity ("1.5 bundle") in the book's language - lib/ims/pdfI18n's fixed list, a unit not in it as given.
     const hu = (u) => pdfUnit(lang, u);
     // A paint line ("Gold ×2, Silver ×1") with each colour through hn().
-    const paintHn = (txt) => lang !== "hi" ? txt : String(txt || "").split(", ").map(part => part.replace(/^(.*) ×(\S+)$/, (m, c, q) => `${hn(c)} ×${q}`)).join(", ");
+    const paintHn = (txt) => lang !== "hi" ? txt : String(txt || "").split(", ").map(part => part.replace(/^(.*) ×(\S+)$/, (m, c, q) => `${String(c).split(" + ").map(hn).join(" + ")} ×${q}`)).join(", ");
     const bookTitle = combined ? t("All departments") : bookDepts.map(d => t(d)).join(" & ");
     // A flower piece's real / artificial split in numbers, the share that is 0 left out (owner ask 2026-11-11): "Real 100%",
     // "Artificial 100%", else both - "Artificial 70% · Real 30%". `real` is the real share, 0-100.
@@ -951,7 +951,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           // a flower recipe with no inventory item is named as the recipe is named now - renamed in IMS, it reads the new name
           // here even in a deal not saved since (2026-11-11)
           const recipeName = !invU && el?.patternId ? String((flowerPatterns || []).find(p => p.id === el.patternId)?.name || "").trim() : "";
-          merged.set(key, { name: arranged ? `${el?.name || inv?.name || t("Item")} — ${t("arranged separately")}` : (invU?.name || decName || recipeName || el?.name || held?.name || t("Item")),
+          // the other names this piece goes by - Deal Check's snapshot keys its flower lines by the element's name as it was then
+          // (a recipe renamed in IMS since, "Flower Trail" -> "Flower Trail Rft", printed a second card under the old name)
+          const altNames = [...new Set([el?.name, inv?.name, held?.name].map(n => String(n || "").trim()).filter(Boolean))];
+          merged.set(key, { altNames, name: arranged ? `${el?.name || inv?.name || t("Item")} — ${t("arranged separately")}` : (invU?.name || decName || recipeName || el?.name || held?.name || t("Item")),
             ...(arranged ? { shown: `${hn(el?.name || inv?.name) || t("Item")} — ${t("arranged separately")}` } : {}), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix || statusTxt) ? [...(choiceExtra || []), ...(floralMix ? [[t("Flowers"), floralMix]] : []), ...(statusTxt ? [[t("Status"), statusTxt]] : [])] : undefined, mix: floralMix, realPct, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, recipe, paint: addPaint(new Map(), paint) });
         });
         // ── CUSTOM CEILING ── not a zone element: it sits on the zone's truss rows (customCeilingItemId + its count
@@ -1357,6 +1360,11 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     };
     const zoneDetailPages = (pg) => {
       const blocks = [];
+      // Flower cards (recipe + artificial bunches) print in the Floral book AND in the combined "All departments" book - the
+      // one sales downloads for a client (owner report 2026-11-14: its flower pieces showed only a stray "floral foam" card,
+      // because the combined book skipped the recipe cards but still printed Deal Check's leftover real lines). Any other
+      // single-department book has no flower cards at all.
+      const floralCards = combined || inBook("Floral");
       // ── ARTIFICIAL BUNCHES UNDER THEIR OWN ARRANGEMENT ──
       // A zone's artificial flowers and greens used to print as a block of their own ("Ulta Pulta Pot — flowers 10.8
       // bunches"), apart from the arrangement they go into. They now sit in that arrangement's own block, in whole bunches
@@ -1366,7 +1374,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // below and folds into the kit's own 📦 card, instead of never matching anything and falling
       // through to a confusing standalone "Tree · recipe" card of its own (owner report, 2026-11-12:
       // Tree is a kit, its recipe showed as a separate loose card instead of inside the kit's card).
-      const zArt = artPlan ? (sel?.floralDetail?.[pg.fnIdx]?.artZones || []).filter(a => a.zone === pg.zk) : [];
+      const zArt = floralCards && sel?.floralPlan?.artificial ? (sel?.floralDetail?.[pg.fnIdx]?.artZones || []).filter(a => a.zone === pg.zk) : [];
       const artKey = (n) => String(n || "").trim().toLowerCase();
       const artLeft = new Map();
       zArt.forEach(a => { const k = artKey(a.kitParent || a.el); artLeft.set(k, [...(artLeft.get(k) || []), a]); });
@@ -1375,16 +1383,20 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         return [...(fl > 0 ? [{ name: t("Artificial flowers"), qty: fl, unit: t("bunches") }] : []), ...(gr > 0 ? [{ name: t("Artificial greens"), qty: gr, unit: t("bunches") }] : [])];
       };
       const takeArt = (name) => { const k = artKey(name), list = artLeft.get(k) || []; artLeft.delete(k); return artLines(list); };
+      // a piece by any of its names (its name now, then the names Deal Check may have recorded it under) - one block of bunches
+      const namesOf = (it) => [...new Set([it.name, ...(it.altNames || [])].map(n => String(n || "").trim()).filter(Boolean))];
+      const takeArtAny = (names) => { const list = []; names.forEach(n => { const k = artKey(n); if (artLeft.has(k)) { list.push(...artLeft.get(k)); artLeft.delete(k); } }); return artLines(list); };
       // ── REAL FLOWERS AS DEAL CHECK HAS THEM ──
       // Deal Check's own real flower lines per element row (floralDetail[fn].realZones, snapshot v12): the real share, real-only
       // flowers at full, the reuse credit taken off, the recipe's inventory ingredients - so a line here is the number Deal Check
       // shows. This event's mandi swaps (made in IMS) are applied on top, as before. Matched by name, like the bunches above; an
       // element the snapshot does not know yet (added since Deal Check last ran) falls back to its recipe worked out here.
-      const realTaker = realLineTaker(sel?.floralDetail?.[pg.fnIdx]?.realZones, pg.zk, eventSwap);
+      const realTaker = realLineTaker(floralCards ? sel?.floralDetail?.[pg.fnIdx]?.realZones : [], pg.zk, eventSwap);
       (pg.items || []).forEach(it => {
-        const art = !combined && it.mix ? takeArt(it.name) : [];
-        const snapReal = !combined && it.mix && realTaker.has(it.name) ? realTaker.take(it.name) : null;
-        if (!combined && ((Array.isArray(it.recipe) && it.recipe.length) || art.length || (snapReal && snapReal.length))) {
+        const art = floralCards && it.mix ? takeArtAny(namesOf(it)) : [];
+        const realName = floralCards && it.mix ? namesOf(it).find(n => realTaker.has(n)) : null;
+        const snapReal = realName ? realTaker.take(realName) : null;
+        if (floralCards && ((Array.isArray(it.recipe) && it.recipe.length) || art.length || (snapReal && snapReal.length))) {
           // Each flower line is the whole recipe amount, its tag saying how much of it is real (the amount Deal Check and the mandi
           // list have) and how much artificial; real-only flowers and inventory ingredients at full, untagged. The artificial
           // bunches to pull follow; the header still says the mix.
@@ -1398,7 +1410,14 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const parts = [...realParts.filter(f => f.qty > 0), ...art];
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts, it.mix, it.size) });
         }
-        if (it.kit > 0) {
+        // The combined "All departments" book carries no FLORAL kit cards (owner ask 2026-11-14: a console of pots and flowers) -
+        // that kit sits on its zone page as one item; any other department's kit (a Tenting tree, a Structure bar, a Furniture
+        // couch) keeps its parts card. A hidden kit's attached recipe's bunches / real lines are still taken here, so they do not
+        // come back as a loose card below.
+        if (it.kit > 0 && combined && it.deptTag === "Floral") {
+          takeArtAny(namesOf(it));
+          namesOf(it).filter(n => realTaker.has(n)).forEach(n => realTaker.take(n));
+        } else if (it.kit > 0) {
           const key = String(it.name || "").trim().toLowerCase();
           const kb = kitBlocksByName.get(key);
           // kb holds the whole EVENT's kits (its parts are totals for all of them) — the zone's page needs this zone's own
@@ -1436,13 +1455,13 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           // alongside the kit's real inventory parts, instead of a separate standalone card. `artPlan`
           // being null (the combined book) already leaves `zArt`/`artLeft` empty, so this is a no-op
           // there, same as every other flower section in that book.
-          parts.push(...takeArt(it.name));
+          parts.push(...takeArtAny(namesOf(it)));
           // Same for the recipe's REAL flowers (Morya Patti, banglore daisy, …) — realTaker is ALSO
           // keyed by the kit's own name for a kit-sourced row (realLineTaker, fixed alongside). Before
           // this, a kit's attached recipe never matched the `it.mix` branch above (a kit element is
           // never `it.mix`) and had no fallback either, so its real flowers never printed anywhere in
           // the book at all (owner report, 2026-11-13).
-          if (!combined && realTaker.has(it.name)) parts.push(...realTaker.take(it.name));
+          if (floralCards) namesOf(it).filter(n => realTaker.has(n)).forEach(n => parts.push(...realTaker.take(n)));
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : (kb?.qty || zq), "", parts) });
         }
       });

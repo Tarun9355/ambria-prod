@@ -79,8 +79,9 @@ export function planningUpcoming(eo, now = Date.now()) {
 // Floral book's card for an arrangement shown only by its bunches says its split, as every other flower card does.
 // v20 (2026-11-13): Wall Masking goes in the colour the salesperson picked on the truss in Build (zc.mkColour) when there is one,
 // instead of being split over the Fabric Palette's colours (fabricPlan masking colours, Planning, the Setup Book).
-export const PLANNING_SNAPSHOT_VERSION = 20;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-13T10:51:20Z");
+// v21 (2026-11-14): Liza and velvet curtains likewise go in the colour picked on the Fabric card (zc.lizaColour / zc.curtainColour).
+export const PLANNING_SNAPSHOT_VERSION = 21;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-14T09:40:20Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // Synced before, and a planning input changed after that sync (a minute of slack: the sync's own write

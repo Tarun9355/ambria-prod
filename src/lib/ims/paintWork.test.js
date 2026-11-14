@@ -33,6 +33,18 @@ describe("paintWorkOf", () => {
     expect(w.fns[0].rows[0]).toMatchObject({ name: "Console Table", baseColour: "Ivory", painted: 2 });
   });
 
+  it("a piece in two colours: one row entry for the combination, each colour counted in the event's colours, the piece once", () => {
+    const w = paintWorkOf({
+      inventory,
+      functionsDetail: [{ elements: { stage: [
+        { invId: "C1", name: "Console Table", qty: 2, paintAllocation: [{ qty: 1, colour: "Gold + Maroon" }, { qty: 1, colour: "Gold" }] },
+      ] } }],
+    });
+    expect(w.fns[0].rows[0].colours).toEqual([{ colour: "Gold + Maroon", qty: 1 }, { colour: "Gold", qty: 1 }]);
+    expect(w.colours).toEqual([{ colour: "Gold", qty: 2 }, { colour: "Maroon", qty: 1 }]);
+    expect(w.pieces).toBe(2);
+  });
+
   it("an event with no paint has nothing", () => {
     const w = paintWorkOf({ inventory, functionsDetail: [{ elements: { stage: [{ invId: "A1", qty: 4 }] } }] });
     expect(w).toEqual({ fns: [], colours: [], pieces: 0, items: 0, cost: 0 });
