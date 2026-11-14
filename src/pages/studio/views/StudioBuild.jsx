@@ -6143,7 +6143,10 @@ undefined
           session snapshot persists per function. Setting it back to the venue's own number clears
           the override, so the row stops being pinned and follows the venue again. */}
       {/* One row per genset size, each with its own count — an event often needs a big unit AND a
-          smaller one, so a single "which size" toggle could never express that. */}
+          smaller one, so a single "which size" toggle could never express that. The rate and amount are
+          the guest's (× the price-level dial, as transportCalc.gensetCost bills it): the raw rate here
+          disagreed with the Live Estimate's Genset / Power by exactly that (owner report 2026-11-14:
+          ₹18,000 here, ₹21,600 in the estimate and the total, at 1.2×). */}
       {[
         { kva: "125", count: transportCalc.gensets, rate: transportCalc.gensetRate,
           set: (n) => setCustomGensets(n === transportCalc.venueGensets ? null : n),
@@ -6152,8 +6155,7 @@ undefined
           set: (n) => setGenset62(n === transportCalc.venueGenset62 ? null : n),
           note: genset62 !== null ? `venue default ${transportCalc.venueGenset62}` : "" },
       ].map((g, gi) => (
-        <div key={g.kva} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,
-          ...(gi===1?{paddingBottom:10,borderBottom:"1px solid rgba(255,255,255,0.1)"}:null)}}>
+        <div key={g.kva} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
           <span style={{fontSize:12,color:"#a5b4fc",display:"inline-flex",alignItems:"center",gap:8}}>
             Genset {g.kva} KVA
             <span style={{display:"inline-flex",alignItems:"center",gap:2,background:"rgba(255,255,255,0.08)",borderRadius:8,padding:2}}>
@@ -6170,12 +6172,19 @@ undefined
                 </Fragment>
               ))}
             </span>
-            {rightRailOpen&&g.rate>0&&<span style={{opacity:0.75}}>× {fmt(g.rate)}</span>}
+            {rightRailOpen&&g.rate>0&&<span style={{opacity:0.75}}>× {fmt(g.rate*(Number(guestPriceMultiplier)||1))}</span>}
             {g.note&&<span style={{fontSize:10,opacity:0.7}}>· {g.note}</span>}
           </span>
-          {rightRailOpen&&<span style={{fontSize:14,fontWeight:600,opacity:(Number(g.count)||0)?1:0.45}}>{fmt((Number(g.count)||0)*g.rate)}</span>}
+          {rightRailOpen&&<span style={{fontSize:14,fontWeight:600,opacity:(Number(g.count)||0)?1:0.45}}>{fmt((Number(g.count)||0)*g.rate*(Number(guestPriceMultiplier)||1))}</span>}
         </div>
       ))}
+      {/* The Design and Management Fee is in the Grand Total below (and on the Live Estimate) but had no line of its own
+          here, so the lines above never added up to the total (owner report 2026-11-14). */}
+      {rightRailOpen&&<div style={{display:"flex",justifyContent:"space-between",marginBottom:10,paddingBottom:10,borderBottom:"1px solid rgba(255,255,255,0.1)"}}>
+        <span style={{fontSize:12,color:"#a5b4fc"}}>Design and Management Fee</span>
+        <span style={{fontSize:14,fontWeight:600}}>{fmt(agencyFeeAmt)}</span>
+      </div>}
+      {!rightRailOpen&&<div style={{borderBottom:"1px solid rgba(255,255,255,0.1)",marginBottom:10}}/>}
       {rightRailOpen&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <span style={{fontSize:14,fontWeight:700,color:"#C9A96E"}}>Grand Total</span>
         {/* The page's OTHER grand total. Gated on pricingReady like the estimate tile — the same
