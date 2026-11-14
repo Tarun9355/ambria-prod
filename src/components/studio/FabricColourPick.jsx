@@ -7,8 +7,10 @@ import { swatchHexFor } from "../../lib/studio/colours";
 // Studio's Build card.
 //   stock: the fabric's IMS stock rows [{ colour, photo, hex }]   paletteCols: the palette's colours for this fabric
 //   value: the colour picked for this truss ("" = follow the palette)   onPick(colour | "")
+// Closed by default (owner ask 2026-11-14): one row naming the colour in use; a click opens the list.
 export default function FabricColourPick({ stock = [], paletteCols = [], value = "", onPick, isDark = false, accent = "#C5A572", textP = "#222", textS = "#888", border = "#e5e7eb" }) {
   const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
   const byName = new Map();
   (stock || []).forEach((s) => {
     const c = String(s?.colour || "").trim();
@@ -38,9 +40,29 @@ export default function FabricColourPick({ stock = [], paletteCols = [], value =
     </button>
   );
 
+  if (!open) {
+    const inUse = value ? [value] : paletteCols;
+    return (
+      <button type="button" onClick={() => setOpen(true)} aria-expanded={false} title="Pick the colour for this truss"
+        onMouseEnter={(e) => { e.currentTarget.style.background = hover; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+        style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "6px 8px", border: "none", borderRadius: 6, cursor: "pointer", textAlign: "left", background: "transparent", color: textP, fontSize: 12 }}>
+        <span>🎨 Colour</span>
+        <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+          {inUse.slice(0, 3).map((c, i) => <span key={c} style={{ marginLeft: i ? -11 : 0, display: "inline-flex" }}><Swatch c={c} size={14} /></span>)}
+          <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 110 }}>{inUse.length ? inUse.join(", ") : "—"}</span>
+          {!value && inUse.length > 0 && <span style={{ fontSize: 9, color: textS, flexShrink: 0 }}>palette</span>}
+          <span aria-hidden="true" style={{ color: textS, flexShrink: 0 }}>›</span>
+        </span>
+      </button>
+    );
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: textS, padding: "2px 8px 0" }}>Colour</div>
+      <button type="button" onClick={() => { setOpen(false); setQ(""); }} aria-expanded={true}
+        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", border: "none", background: "transparent", cursor: "pointer", fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: textS, padding: "4px 8px 0" }}>
+        <span>Colour</span><span aria-hidden="true" style={{ fontSize: 12 }}>⌄</span>
+      </button>
       {/* the default: whatever the function's Fabric Palette says for this fabric */}
       <Row picked={!value} onClick={() => onPick("")} title="Follow the function's Fabric Palette (changes with it)">
         <span style={{ display: "inline-flex", flexShrink: 0 }}>
