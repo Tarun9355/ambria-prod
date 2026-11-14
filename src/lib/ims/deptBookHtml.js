@@ -1357,6 +1357,11 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     };
     const zoneDetailPages = (pg) => {
       const blocks = [];
+      // Flower cards (recipe + artificial bunches) print in the Floral book AND in the combined "All departments" book - the
+      // one sales downloads for a client (owner report 2026-11-14: its flower pieces showed only a stray "floral foam" card,
+      // because the combined book skipped the recipe cards but still printed Deal Check's leftover real lines). Any other
+      // single-department book has no flower cards at all.
+      const floralCards = combined || inBook("Floral");
       // ── ARTIFICIAL BUNCHES UNDER THEIR OWN ARRANGEMENT ──
       // A zone's artificial flowers and greens used to print as a block of their own ("Ulta Pulta Pot — flowers 10.8
       // bunches"), apart from the arrangement they go into. They now sit in that arrangement's own block, in whole bunches
@@ -1366,7 +1371,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // below and folds into the kit's own 📦 card, instead of never matching anything and falling
       // through to a confusing standalone "Tree · recipe" card of its own (owner report, 2026-11-12:
       // Tree is a kit, its recipe showed as a separate loose card instead of inside the kit's card).
-      const zArt = artPlan ? (sel?.floralDetail?.[pg.fnIdx]?.artZones || []).filter(a => a.zone === pg.zk) : [];
+      const zArt = floralCards && sel?.floralPlan?.artificial ? (sel?.floralDetail?.[pg.fnIdx]?.artZones || []).filter(a => a.zone === pg.zk) : [];
       const artKey = (n) => String(n || "").trim().toLowerCase();
       const artLeft = new Map();
       zArt.forEach(a => { const k = artKey(a.kitParent || a.el); artLeft.set(k, [...(artLeft.get(k) || []), a]); });
@@ -1380,11 +1385,11 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // flowers at full, the reuse credit taken off, the recipe's inventory ingredients - so a line here is the number Deal Check
       // shows. This event's mandi swaps (made in IMS) are applied on top, as before. Matched by name, like the bunches above; an
       // element the snapshot does not know yet (added since Deal Check last ran) falls back to its recipe worked out here.
-      const realTaker = realLineTaker(sel?.floralDetail?.[pg.fnIdx]?.realZones, pg.zk, eventSwap);
+      const realTaker = realLineTaker(floralCards ? sel?.floralDetail?.[pg.fnIdx]?.realZones : [], pg.zk, eventSwap);
       (pg.items || []).forEach(it => {
-        const art = !combined && it.mix ? takeArt(it.name) : [];
-        const snapReal = !combined && it.mix && realTaker.has(it.name) ? realTaker.take(it.name) : null;
-        if (!combined && ((Array.isArray(it.recipe) && it.recipe.length) || art.length || (snapReal && snapReal.length))) {
+        const art = floralCards && it.mix ? takeArt(it.name) : [];
+        const snapReal = floralCards && it.mix && realTaker.has(it.name) ? realTaker.take(it.name) : null;
+        if (floralCards && ((Array.isArray(it.recipe) && it.recipe.length) || art.length || (snapReal && snapReal.length))) {
           // Each flower line is the whole recipe amount, its tag saying how much of it is real (the amount Deal Check and the mandi
           // list have) and how much artificial; real-only flowers and inventory ingredients at full, untagged. The artificial
           // bunches to pull follow; the header still says the mix.
@@ -1442,7 +1447,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           // this, a kit's attached recipe never matched the `it.mix` branch above (a kit element is
           // never `it.mix`) and had no fallback either, so its real flowers never printed anywhere in
           // the book at all (owner report, 2026-11-13).
-          if (!combined && realTaker.has(it.name)) parts.push(...realTaker.take(it.name));
+          if (floralCards && realTaker.has(it.name)) parts.push(...realTaker.take(it.name));
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("📦", it.name, zq > 0 && tq > 0 ? zq : (kb?.qty || zq), "", parts) });
         }
       });

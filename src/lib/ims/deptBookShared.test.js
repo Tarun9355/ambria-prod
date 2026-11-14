@@ -87,3 +87,26 @@ describe("book: masking edge cases priced the same way", () => {
     expect(html).toContain("Acrylic · Back wall");
   });
 });
+
+describe("book: flower cards in the combined book (owner report 2026-11-14)", () => {
+  const inv2 = [...inventory, { id: "foam", name: "floral foam", category: "Florals", unit: "pc" }];
+  const pats = [{ id: "p1", name: "Flower Reet", sub: "Reet", sizes: { medium: { flowers: [{ invItemId: "foam", qty: 1 }] } } }];
+  const selF = {
+    ...sel,
+    functionsDetail: [{ fnType: "Wedding", date: "2026-12-01", venue: "", zones: ["stage"], elements: { stage: [{ name: "Flower Reet", patternId: "p1", qty: 3, realPct: 0 }] } }],
+    floralPlan: { artificial: { flowerBunches: 10, greenBunches: 8 } },
+    floralDetail: [{ realZones: [{ zone: "stage", el: "Flower Reet", lines: [{ name: "floral foam", qty: 3, unit: "pc" }] }],
+      artZones: [{ zone: "stage", el: "Flower Reet", flower: 10, green: 8, qty: 3, realPct: 0 }] }],
+  };
+  const book = (d, opts) => buildDeptBookHtml({ ...ctx(d, []), sel: selF, inventory: inv2, flowerPatterns: pats, floralModeBySub: new Map() }, {}, {}, opts);
+  it("the combined book prints a 100% artificial piece's card with its bunches, not a bare floral-foam card", () => {
+    const html = book("Floral", { combined: true });
+    expect(html).toContain("Artificial flowers");
+    expect(html).toContain("Artificial 100%");
+  });
+  it("a Tenting-only book carries no flower card", () => {
+    const html = book("Tenting", {});
+    expect(html).not.toContain("Artificial flowers");
+    expect(html).not.toContain("floral foam");
+  });
+});
