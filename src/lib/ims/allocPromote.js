@@ -9,10 +9,23 @@
 // skipped, so nothing is recomputed, saved or audited. Only the fields the builder itself produces
 // are compared (the allocator may add its own bookkeeping to an event; createdAt can fall back to
 // Date.now()), so a real change to the EO's functions still re-promotes as before.
+
+// Key-order-insensitive JSON: the stored entry comes back from a JSONB column, and JSONB does not
+// keep object key order — a plain JSON.stringify of a nested object (trusses, per-material totals)
+// would differ from the freshly built one every time and the skip would never fire.
+// undefined-valued keys are dropped, as a JSON round trip drops them.
+export const stableStringify = (v) => {
+  if (v === undefined) return undefined;
+  if (v === null || typeof v !== "object") return JSON.stringify(v);
+  if (Array.isArray(v)) return "[" + v.map((x) => stableStringify(x) ?? "null").join(",") + "]";
+  return "{" + Object.keys(v).filter((k) => v[k] !== undefined).sort()
+    .map((k) => JSON.stringify(k) + ":" + stableStringify(v[k])).join(",") + "}";
+};
+
 export const hardEntryUnchanged = (events, entry) => {
   const list = Array.isArray(events) ? events : [];
   if (list.some((ev) => ev?.state === "soft" && ev.clientId === entry.clientId)) return false;
   const cur = list.find((ev) => ev?.state === "hard" && ev.eoId === entry.eoId);
   if (!cur) return false;
-  return Object.keys(entry).every((k) => k === "createdAt" || JSON.stringify(cur[k]) === JSON.stringify(entry[k]));
+  return Object.keys(entry).every((k) => k === "createdAt" || stableStringify(cur[k]) === stableStringify(entry[k]));
 };
