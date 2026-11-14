@@ -843,6 +843,32 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     const fns = Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : [];
     return fns.find((f) => String(f?.date || "").slice(0, 10) === date) || fns[0] || null;
   };
+  // Every DISTINCT (date, venue) pair this event actually spans — for a WHOLE-EVENT summary line (a
+  // print header, the top event-info line), which must show every venue a multi-venue deal spans,
+  // not just functionsDetail[0]'s (owner report 2026-11-14, Loveleen: a second function at Emerald
+  // Green never showed anywhere in these whole-event headers — every one of them read only
+  // functionsDetail[0], the same shape of bug fnForDate above already fixed for the calendar picker).
+  // Dedupes same-date-same-venue pairs (several same-venue functions on one date = one line for it).
+  const allDateVenuesOf = (eo) => {
+    const fns = Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : [];
+    const seen = new Set();
+    const out = [];
+    fns.forEach((f) => {
+      // Falls back to the event's own top-level date, same as eventDate(eo) does — a function row
+      // with no date of its own (regression caught by review, 2026-11-14) must not silently lose the
+      // date entirely from every header; only functionsDetail[0] gets this fallback pre-existing
+      // behavior matched exactly (every other function with its own blank date has no single
+      // "the event's date" to fall back to more correctly than that).
+      const d = String(f?.date || eo?.date || eo?.eventDate || "").slice(0, 10);
+      const v = venueWithParent(settings, f?.venue || eo?.venue || "");
+      const key = `${d}|${v}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ date: d, venue: v });
+    });
+    return out.length ? out : [{ date: eventDate(eo), venue: venueOf(eo) }];
+  };
+  const dateVenueLineOf = (eo) => allDateVenuesOf(eo).map(({ date, venue }) => [date, venue].filter(Boolean).join(" · ")).join(" + ");
   const today = new Date().toISOString().slice(0, 10);
   // A "live" event for ops = confirmed/finalised. Excludes pending (not yet auto-confirmed), cancelled,
   // and review — so cancelled/dead deals never clutter the list or the transfer pickers.
@@ -1307,9 +1333,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const mpScoped = mpFn !== "all" && !!mpFnDate(mpFns[mpFn]);
   // All functions + one chip per function — one row shared by every panel that can be scoped to a
   // function (Manpower plan, Inventory blocked). Only on a booking with more than one function.
+  // Venue included alongside type+date (owner report 2026-11-14, Loveleen) — a multi-venue deal's
+  // chips used to read e.g. "Wedding · 2026-11-15" / "Reception · 2026-11-16" with no venue at all,
+  // so there was no way to tell from the chip itself which one was Aura and which was Emerald Green,
+  // even though picking a chip already correctly scopes every row below to that one function's own
+  // data (invFn/mpFn index into sel.functionsDetail — never clubbed across functions).
   const fnChipRow = (value, setValue) => mpFns.length > 1 && (
     <div className="m-2.5 mb-0 flex flex-wrap gap-1.5">
-      {[["all", "All functions"], ...mpFns.map((f, fi) => [fi, [f?.type || `Function ${fi + 1}`, mpFnDate(f)].filter(Boolean).join(" · ")])].map(([k, label]) => (
+      {[["all", "All functions"], ...mpFns.map((f, fi) => [fi, [f?.type || `Function ${fi + 1}`, venueWithParent(settings, f?.venue || sel?.venue || ""), mpFnDate(f)].filter(Boolean).join(" · ")])].map(([k, label]) => (
         <button key={k} onClick={() => setValue(k)} aria-pressed={value === k}
           className={"rounded-lg px-2.5 py-1 text-[12px] font-semibold whitespace-nowrap cursor-pointer transition-colors " + (value === k ? "bg-blue-600 text-white" : "bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-blue-50 hover:text-blue-700")}>{label}</button>
       ))}
@@ -1699,7 +1730,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     }).join("");
     w.document.write(`<html><head><title>Mandi List — ${esc(sel?.clientName || "Event")}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:6px 8px;font-size:12px;vertical-align:top}th{background:#f5f5f5;text-align:left}td.c{text-align:center}td.r,th.r{text-align:right;white-space:nowrap}td.blank{min-width:70px}img{width:44px;height:44px;object-fit:cover;border-radius:5px;display:block;margin:auto}tr.off img{opacity:.45}.s{color:#777;font-size:10.5px;margin-top:2px}.sw{color:#B45309;font-weight:bold}tr.off td{color:#999}tr.off b{text-decoration:line-through}tr{break-inside:avoid}tfoot td{font-weight:bold;background:#ECFDF5}@media print{button{display:none}body{padding:0}@page{size:A4;margin:10mm}}</style></head><body>
       <h2>🌸 Ambria — Mandi Shopping List</h2>
-      <p>Event: ${esc(sel?.clientName || "-")} &nbsp;|&nbsp; ${esc(selDateStr || "-")} &nbsp;|&nbsp; ${esc(venueOf(sel) || "-")}</p>
+      <p>Event: ${esc(sel?.clientName || "-")} &nbsp;|&nbsp; ${esc(dateVenueLineOf(sel) || "-")}</p>
       <table><tr><th class="c">#</th><th class="c">Photo</th><th>Flower</th><th class="r">Planned</th><th class="r">To buy</th><th class="r">₹/unit</th><th class="r">Total</th><th>Bought qty</th><th>Paid ₹/unit</th></tr>${rows || '<tr><td colspan="9" style="text-align:center;color:#999">No flowers on the list</td></tr>'}
       <tfoot><tr><td colspan="6">Total (real flowers)</td><td class="r">₹${num(mandiActualReal)}</td><td></td><td></td></tr></tfoot></table>
       <br><p>Bought by: _______________ &nbsp;&nbsp; Checked by: _______________</p>
@@ -1912,7 +1943,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
     w.document.write(`<html><head><title>Challan — ${dept} — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
       <h2>${DEPT_ICON[dept]} Ambria — ${dept} Challan · Truck ${n}</h2>
-      <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${selDateStr || "-"} &nbsp;|&nbsp; ${venueOf(sel) || "-"}</p>
+      <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${dateVenueLineOf(sel) || "-"}</p>
       <p>Vehicle: ${truck.vehicle || "______"} &nbsp;|&nbsp; Driver: ${truck.driver || "______"} &nbsp;|&nbsp; Phone: ${truck.phone || "______"}</p>
       <h4>Inventory on this truck</h4>
       <table><tr><th>Item</th><th>Type</th><th>Qty</th></tr>${rows || '<tr><td colspan="3" style="text-align:center;color:#999">No items assigned to this truck</td></tr>'}</table>
@@ -1956,7 +1987,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       pdf.setFont("helvetica", "bold"); pdf.setFontSize(16); pdf.setTextColor(79, 70, 229);
       pdf.text(`Ambria - ${dept} Challan - Truck ${n}`, M, y); y += 22;
       pdf.setTextColor(17); pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
-      pdf.text(`Event: ${sel.clientName || "-"}  |  ${selDateStr || "-"}  |  ${venueOf(sel) || "-"}`, M, y); y += 16;
+      pdf.text(`Event: ${sel.clientName || "-"}  |  ${dateVenueLineOf(sel) || "-"}`, M, y); y += 16;
       pdf.text(`Vehicle: ${truck.vehicle || "______"}  |  Driver: ${truck.driver || "______"}  |  Phone: ${truck.phone || "______"}`, M, y); y += 26;
       pdf.setFontSize(9.5);
       pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck", M, y); y += 16;
@@ -2044,7 +2075,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       pdf.setFont("helvetica", "bold"); pdf.setFontSize(16);
       pdf.text(`Actuals - ${dept}`, M, y); y += 20;
       pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
-      pdf.text([sel.clientName || "Event", selDateStr || "", venueOf(sel)].filter(Boolean).join("  |  "), M, y); y += 24;
+      pdf.text([sel.clientName || "Event", dateVenueLineOf(sel)].filter(Boolean).join("  |  "), M, y); y += 24;
       pdf.setFontSize(9.5);
       if (dept === "Floral") {
         // artificial flowers/greens are our own stock - shown under Inventory blocked, not an actual spend (owner ask 2026-11-11)
@@ -2132,7 +2163,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     ].join("");
     w.document.write(`<html><head><title>Challan — ${dept}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}@media print{button{display:none}}</style></head><body>
       <h2>${DEPT_ICON[dept]} Ambria — ${dept} Loading Challan</h2>
-      <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${selDateStr || "-"} &nbsp;|&nbsp; ${venueOf(sel) || "-"}</p>
+      <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${dateVenueLineOf(sel) || "-"}</p>
       <p>Vehicle: ${dispatch.vehicle || "______"} &nbsp;|&nbsp; Driver: ${dispatch.driver || "______"} &nbsp;|&nbsp; Phone: ${dispatch.phone || "______"}</p>
       <table><tr><th>✓</th><th>Item</th><th>Type</th><th>Qty</th></tr>${rows || '<tr><td colspan="4" style="text-align:center;color:#999">Nothing to load</td></tr>'}</table>
       <br><p>Dispatched by: _______________ &nbsp;&nbsp; Received by: _______________</p>
@@ -3993,7 +4024,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       reading it for. Capped at two lines so a long venue cannot push the card
                       taller than the tiles it sits above; from sm there is room for one line and
                       it truncates as before. */}
-                  <div className="text-[12px] sm:text-sm text-gray-500 leading-snug line-clamp-2 sm:truncate">{selDateStr || "no date"} · {venueOf(sel) || "—"}{sel.salesperson ? ` · booked by ${sel.salesperson}` : ""}{deptData.updatedBy ? ` · last edited by ${deptData.updatedBy}` : ""}</div>
+                  <div className="text-[12px] sm:text-sm text-gray-500 leading-snug line-clamp-2 sm:truncate">{dateVenueLineOf(sel) || "no date"}{sel.salesperson ? ` · booked by ${sel.salesperson}` : ""}{deptData.updatedBy ? ` · last edited by ${deptData.updatedBy}` : ""}</div>
                   {/* Site Supervisor — one per event (not per department, since the same person
                       oversees the whole booking onsite), assignable by anyone with this tab open
                       (same access as everything else here, no extra gate). Denormalized onto the
