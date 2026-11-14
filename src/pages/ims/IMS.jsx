@@ -2487,39 +2487,14 @@ export default function IMS() {
       if (failed) throw failed.error;
     } catch (e) { setError(`Save failed: ${e?.message || e}`); }
   };
-  // A blocks row holds EVERY event's reservations on that one item — if the table's initial fetch
-  // failed, blocksRef.current is sitting at {} (not "genuinely no reservations exist"), and writing
-  // from that empty baseline would upsert just this session's own reservation over a row that, in
-  // the database, still holds every other event's. Refuse instead of guessing, same as blocks' own
-  // table-level reasoning above.
-  const setBlocks = useCallback((updater) => {
-    if (loadOkRef.current.blocks !== true) {
-      setError("Block reservations haven't loaded — reload the page before changing them. Nothing was saved.");
-      return;
-    }
-    const prev = blocksRef.current;
-    const next = typeof updater === "function" ? updater(prev) : updater;
-    blocksRef.current = next;
-    setBlocksState(next);
-    trackWrite(persistBlocks(next, prev));
-  }, [trackWrite]);
-  const saveBlocks = useCallback((val) => {
-    if (loadOkRef.current.blocks !== true) {
-      setError("Block reservations haven't loaded — reload the page before changing them. Nothing was saved.");
-      return;
-    }
-    const prev = blocksRef.current;
-    const next = typeof val === "function" ? val(prev) : val;
-    blocksRef.current = next;
-    setBlocksState(next);
-    trackWrite(persistBlocks(next, prev));
-  }, [trackWrite]);
   // The locked, availability-checking RPC (bug 4, 2026-11-14 inventory-blocks audit) — every writer
-  // migrated to it calls THIS instead of setBlocks/saveBlocks for an actual `blocks` reservation.
-  // Unlike setBlocks/saveBlocks (a plain read-modify-write of a local snapshot, racy against any
-  // other writer touching the same item), this never reads blocksRef at all before writing — the RPC
-  // re-reads under its own row lock, so the only local state this touches is the RESULT, merged in
-  // for immediate UI consistency once the write has already safely landed.
+  // (Studio's reconcile, IMS's auto-confirm, IMS's manual Block/Bulk Block — Phase 2b closed out the
+  // last of these) calls THIS for an actual `blocks` reservation, never a plain local read-modify-
+  // write. This never reads blocksRef at all before writing — the RPC re-reads under its own row
+  // lock, so the only local state this touches is the RESULT, merged in for immediate UI consistency
+  // once the write has already safely landed. (The plain setBlocks/saveBlocks/persistBlocks upsert
+  // path this replaced is gone — it had no row lock and no availability check, the exact bug class
+  // this RPC exists to close off; see the module header above blocksRef for why that was unsafe.)
   const applyBlocksRpc = useCallback(async (ops, opts) => {
     const res = await applyBlockOps(supabase, ops, opts);
     if (res.rows?.length) {
@@ -2688,7 +2663,7 @@ export default function IMS() {
     && settingsLoadedRef.current === true
     && trussInvLoadedRef.current === true;
   useEventOrderAutoConfirm({
-    eventOrders, setEventOrders, inventory: items, blocks, setBlocks, saveBlocks, applyBlocksRpc, saveEventOrders,
+    eventOrders, setEventOrders, inventory: items, blocks, applyBlocksRpc, saveEventOrders,
     projects, setProjects, functions, setFunctions, purchase, setPurchase,
     settings, studio, trussInv, setTrussInv, ready: autoConfirmReady,
   });
@@ -2965,7 +2940,7 @@ export default function IMS() {
             settings={settings} studio={studio}
             rateCardCategories={rateCardCategories} authUser={user}
             eventOrders={eventOrders}
-            blocks={blocks} setBlocks={setBlocks} saveBlocks={saveBlocks}
+            blocks={blocks} applyBlocksRpc={applyBlocksRpc}
           />
         ) : activeTab === "admin" ? (
           <AdminTab

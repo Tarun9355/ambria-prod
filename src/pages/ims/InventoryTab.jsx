@@ -14,10 +14,11 @@ import { studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { itemDimsText } from "../../lib/ims/helpers";
 import { catToDept, canSeeDept } from "../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb";
-import { addBlock, getAvailableQty } from "../../lib/ims/eventAutoConfirm";
+import { getAvailableQty } from "../../lib/ims/eventAutoConfirm";
 import { filterLiveBlocks } from "../../lib/ims/liveBlocks";
+import { appendOp, shortfallsOf } from "../../lib/ims/blocksRpc";
 
-export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [], authUser, eventOrders = [], blocks, setBlocks, saveBlocks }) {
+export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [], authUser, eventOrders = [], blocks, applyBlocksRpc }) {
   const canAdd = hasIMSPerm(authUser, "inv_add");
   const canDelete = hasIMSPerm(authUser, "inv_delete");
   const canImages = hasIMSPerm(authUser, "inv_images");
@@ -25,8 +26,9 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const studioLoading = !!studio?.loading;
   // A cancelled event_order's own hold must never read as "stock already taken" when deciding
   // whether THIS block can go through, or what the Block modal's availability preview shows — see
-  // lib/ims/liveBlocks.js's own header for why. Read-only: addBlock/setBlocks below keep writing
-  // the raw `blocks` state, same as always.
+  // lib/ims/liveBlocks.js's own header for why. Read-only, for display/preview only — blockItem/
+  // submitBulk below write through applyBlocksRpc (the locked, availability-checking RPC, Phase 2b
+  // of the 2026-11-14 inventory-blocks audit), never this local snapshot.
   const readBlocks = useMemo(() => filterLiveBlocks(blocks, eventOrders), [blocks, eventOrders]);
   // Tier 1.2 — Studio cat labels. Top-level categories (Florals/Fabric/Structure/...) are a
   // small, stable set still sourced from Studio's live Rate-Card categories — only the
@@ -762,21 +764,31 @@ Rules:
   // dated entry instead makes this indistinguishable from any other reservation (confirmed/held,
   // same table Studio/Deal Check/Calendar already read) — scoped to this one date, and releasable
   // the same way (releaseBlocks, or the block's own status flipping to "released").
-  function blockItem() {
+  //
+  // Writes through applyBlocksRpc (apply_block_ops, migration 066) — Phase 2b of the 2026-11-14
+  // inventory-blocks audit: this used to be a plain local read-modify-write (addBlock + setBlocks),
+  // racy against any other writer touching the same item in the same few seconds, with its own
+  // availability check against the (possibly already-stale) local readBlocks snapshot. 'cap' — not
+  // 'reject' — to actually deliver what the submit button has always promised ("🔒 Block Item
+  // (partial)" when isShort): reserve whatever real stock covers, report the rest, rather than
+  // either silently succeeding for the full requested qty or hard-refusing the whole action.
+  async function blockItem() {
     if (!canBlock) return;
     const inv = inventory.find((i) => i.id === blockModal);
     const fn = functions.find((f) => f.id === blockForm.fnId);
     if (!inv || !fn) return;
     const qty = parseInt(blockForm.qty) || 1;
-    if (qty > getAvailableQty(inv, readBlocks, fn.date)) { alert("Insufficient available qty for this function's date"); return; }
     const sizeClass = String(blockForm.sizeClass || "M").toUpperCase();
     // Tagged "ims-manual" — a deliberate human ops decision, outside Studio's build entirely. Studio's
     // own sold-deal reconcile (reconcileSoldInventoryBlocks) reads this tag and must never release it
     // just because Studio's own build doesn't need this item.
-    const newBlocks = addBlock(blocks, blockModal, fn.date, fn.eventOrderId || fn.id, qty, "confirmed", "ims-manual");
-    setBlocks(newBlocks);
-    saveBlocks?.(newBlocks);
-    setFunctions((prev) => prev.map((f) => f.id === blockForm.fnId ? { ...f, items: [...f.items, { invId: blockModal, qty, dept: blockForm.dept, remark: blockForm.remark, sizeClass }] } : f));
+    const res = await applyBlocksRpc([appendOp({ itemId: blockModal, eventId: fn.eventOrderId || fn.id, date: fn.date, qty, source: "ims-manual" })], { onShort: "cap" });
+    if (res.error || !res.applied) return; // genuine write failure — applyBlocksRpc already surfaced it
+    const short = shortfallsOf(res)[0];
+    const grantedQty = short ? Math.max(0, qty - Number(short.short || 0)) : qty;
+    if (grantedQty <= 0) { alert("Insufficient available qty for this function's date — nothing was reserved."); return; }
+    if (short) alert(`Only ${grantedQty} of ${qty} requested were available and have been reserved.`);
+    setFunctions((prev) => prev.map((f) => f.id === blockForm.fnId ? { ...f, items: [...f.items, { invId: blockModal, qty: grantedQty, dept: blockForm.dept, remark: blockForm.remark, sizeClass }] } : f));
     setBlockModal(null);
     setBlockForm({ fnId: "", qty: 1, dept: "Flower", remark: "", sizeClass: "M" });
   }
@@ -793,21 +805,33 @@ Rules:
   function updateBulkItem(id, field, val) { setBulkSel((prev) => ({ ...prev, [id]: { ...prev[id], [field]: val } })); }
 
   // Same fix as blockItem above — dated `blocks` entries for bulkFnId's own date, not the
-  // permanent, date-less `inventory.blocked` counter.
-  function submitBulk() {
+  // permanent, date-less `inventory.blocked` counter. One RPC call covers every selected item (its
+  // own row lock per item, same transaction) — 'cap' so one short item never blocks the rest of the
+  // batch; any items that came up short are reported in a single summary afterward.
+  async function submitBulk() {
     if (!bulkFnId) return;
     const fn = functions.find((f) => f.id === bulkFnId);
     if (!fn) return;
     const entries = Object.entries(bulkSel);
     if (!entries.length) return;
-    let newBlocks = blocks;
-    entries.forEach(([invId, e]) => {
-      // Tagged "ims-manual" — see blockItem's identical comment.
-      newBlocks = addBlock(newBlocks, invId, fn.date, fn.eventOrderId || fn.id, parseInt(e.qty || 1), "confirmed", "ims-manual");
+    const eventId = fn.eventOrderId || fn.id;
+    // Tagged "ims-manual" — see blockItem's identical comment.
+    const ops = entries.map(([invId, e]) => appendOp({ itemId: invId, eventId, date: fn.date, qty: parseInt(e.qty || 1), source: "ims-manual" }));
+    const res = await applyBlocksRpc(ops, { onShort: "cap" });
+    if (res.error || !res.applied) return; // genuine write failure — applyBlocksRpc already surfaced it
+    const shortByItem = new Map(shortfallsOf(res).map((s) => [s.item_id, Number(s.short) || 0]));
+    const granted = entries.map(([invId, e]) => {
+      const requested = parseInt(e.qty || 1);
+      const short = shortByItem.get(invId) || 0;
+      return [invId, e, Math.max(0, requested - short)];
     });
-    setBlocks(newBlocks);
-    saveBlocks?.(newBlocks);
-    setFunctions((prev) => prev.map((f) => f.id === bulkFnId ? { ...f, items: [...f.items, ...entries.map(([invId, e]) => ({ invId, qty: parseInt(e.qty || 1), dept: e.dept, remark: e.remark }))] } : f));
+    if (shortByItem.size) {
+      const summary = granted.filter(([invId]) => shortByItem.has(invId))
+        .map(([invId, , grantedQty]) => { const it = inventory.find((i) => i.id === invId); return `${it?.name || invId} (${grantedQty}/${parseInt(bulkSel[invId]?.qty || 1)})`; })
+        .join(", ");
+      alert(`Some items couldn't be fully reserved — reserved as available: ${summary}`);
+    }
+    setFunctions((prev) => prev.map((f) => f.id === bulkFnId ? { ...f, items: [...f.items, ...granted.filter(([, , g]) => g > 0).map(([invId, e, g]) => ({ invId, qty: g, dept: e.dept, remark: e.remark }))] } : f));
     setBulkModal(false); setBulkFnId(""); setBulkSel({}); setBulkSearch("");
   }
 
