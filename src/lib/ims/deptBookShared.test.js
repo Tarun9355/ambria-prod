@@ -111,8 +111,11 @@ describe("book: flower cards in the combined book (owner report 2026-11-14)", ()
   });
 });
 
-describe("book: the combined book carries no kit cards (owner ask 2026-11-14)", () => {
-  const inv3 = [...inventory, { id: "k1", name: "Wooden Console", category: "Florals", subItems: [{ itemId: "f1", qty: 2 }] }];
+describe("book: the combined book carries no FLORAL kit cards (owner ask 2026-11-14)", () => {
+  const inv3 = [...inventory, { id: "k1", name: "Wooden Console", category: "Florals", subItems: [{ itemId: "f1", qty: 2 }] },
+    { id: "k2", name: "Tree", category: "Tenting", subItems: [{ itemId: "s1", qty: 3 }] }];
+  const cat = (c) => ({ Florals: "Floral", Tenting: "Tenting", Fabric: "Fabric", Furniture: "Structure" })[c] || "";
+  const bookOf = (s) => buildDeptBookHtml({ ...ctx("Floral", []), sel: s, inventory: inv3, catToDept: cat, floralModeBySub: new Map() }, {}, {}, { combined: true });
   const selK = {
     ...sel,
     functionsDetail: [{ fnType: "Wedding", date: "2026-12-01", venue: "", zones: ["stage"], elements: { stage: [{ name: "Wooden Console", invId: "k1", qty: 1 }] } }],
@@ -120,11 +123,15 @@ describe("book: the combined book carries no kit cards (owner ask 2026-11-14)", 
     floralDetail: [{ realZones: [{ zone: "stage", el: "Chandelier Recipe", kitParent: "Wooden Console", lines: [{ name: "floral foam", qty: 2, unit: "pc" }] }],
       artZones: [{ zone: "stage", el: "Chandelier Recipe", kitParent: "Wooden Console", flower: 9, green: 7, qty: 1 }] }],
   };
-  it("no 📦 kit card, and its recipe's bunches / foam do not come back as a loose card", () => {
-    const html = buildDeptBookHtml({ ...ctx("Floral", []), sel: selK, inventory: inv3, floralModeBySub: new Map() }, {}, {}, { combined: true });
+  it("a Floral kit: no 📦 card, and its recipe's bunches / foam do not come back as a loose card", () => {
+    const html = bookOf(selK);
     expect(html).not.toContain("📦");
     expect(html).not.toContain("Chandelier Recipe");
     expect(html).not.toContain("floral foam");
+  });
+  it("another department's kit (a Tenting tree) keeps its parts card", () => {
+    const selT = { ...sel, functionsDetail: [{ fnType: "Wedding", date: "2026-12-01", venue: "", zones: ["stage"], elements: { stage: [{ name: "Tree", invId: "k2", qty: 1 }] } }] };
+    expect(bookOf(selT)).toContain("📦");
   });
 });
 

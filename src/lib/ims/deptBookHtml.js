@@ -1410,9 +1410,11 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const parts = [...realParts.filter(f => f.qty > 0), ...art];
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts, it.mix, it.size) });
         }
-        // The combined "All departments" book carries no kit cards (owner ask 2026-11-14) - the kit sits on its zone page as one
-        // item. Its attached recipe's bunches / real lines are still taken here, so they do not come back as a loose card below.
-        if (it.kit > 0 && combined) {
+        // The combined "All departments" book carries no FLORAL kit cards (owner ask 2026-11-14: a console of pots and flowers) -
+        // that kit sits on its zone page as one item; any other department's kit (a Tenting tree, a Structure bar, a Furniture
+        // couch) keeps its parts card. A hidden kit's attached recipe's bunches / real lines are still taken here, so they do not
+        // come back as a loose card below.
+        if (it.kit > 0 && combined && it.deptTag === "Floral") {
           takeArtAny(namesOf(it));
           namesOf(it).filter(n => realTaker.has(n)).forEach(n => realTaker.take(n));
         } else if (it.kit > 0) {
