@@ -155,7 +155,13 @@ export default function FabricColourPick({ stock = [], paletteCols = [], value =
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search colours…" aria-label="Search colours"
           style={{ margin: "2px 4px", padding: "5px 8px", borderRadius: 6, border: `1px solid ${border}`, fontSize: 12, background: isDark ? "#111827" : "#fff", color: textP, outline: "none" }} />
       )}
-      {picked.length === 1 && <div style={{ fontSize: 10, color: textS, padding: "0 8px" }}>Tick another colour to split by ratio</div>}
+      {/* how the ratio opens - it is not visible until two colours are ticked, so say so (owner report 2026-11-14) */}
+      {picked.length < 2 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "0 4px", padding: "5px 8px", borderRadius: 6, background: selBg, fontSize: 10.5, color: textP }}>
+          <span aria-hidden="true">⚖️</span>
+          <span>{picked.length ? `Tick one more colour to split ${picked[0].name} by ratio` : "Tick two or more colours to set a ratio"}</span>
+        </div>
+      )}
       <div style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 1, paddingRight: 2 }}>
         {shown.map((c) => {
           const on = pickedSet.has(c.colour);
