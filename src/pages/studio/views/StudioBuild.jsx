@@ -144,7 +144,7 @@ const LOOSE_FABRIC_KINDS = [
 // titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
 // rather than writing a cut-down row is what keeps an added truss genuinely equal to the first —
 // front extension, the auto Box/Single-U line, custom ceiling and its own masking all included.
-export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1, trussRepeat = false, fabricChipRepeat = false, trussReserved, stockDateLabel = "" }) {
+export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1, trussRepeat = false, fabricChipRepeat = false, fabricPaletteColours = null, trussReserved, stockDateLabel = "" }) {
   // What THIS truss structure costs. Same function the cost engine sums over every row, so the
   // figure on the card and the figure in the bill cannot drift.
   // guestPriceMultiplier — the 1.0/1.1/1.2…x dial (Build's own filter-rail dots) folds into the
@@ -496,18 +496,22 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         see calcZoneFabric's fabLiza / fabCurtain. */}
                     <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
                       <span style={rowCap}>Fabric</span>
-                      {!zc.noFabric&&[["fabLiza","fabLizaRep","🧣","Liza","lizaColour","lizaStock"],["fabCurtain","fabCurtainRep","🎀","Velvet curtains","curtainColour","curtainStock"]].map(([key,repKey,ic,lbl,colKey,stockKey])=>{const on=zc[key]!==false;const rep=on&&fabricPartRepeatOn(zc,repKey,fabricChipRepeat);
+                      {!zc.noFabric&&[["fabLiza","fabLizaRep","🧣","Liza","lizaColour","lizaStock","liza"],["fabCurtain","fabCurtainRep","🎀","Velvet curtains","curtainColour","curtainStock","curtain"]].map(([key,repKey,ic,lbl,colKey,stockKey,mat])=>{const on=zc[key]!==false;const rep=on&&fabricPartRepeatOn(zc,repKey,fabricChipRepeat);
                         // The colour this part goes in (owner ask 2026-11-14), like masking's 🎨 Colour: one colour from IMS's own stock of
-                        // that fabric. Unset = the Fabric Palette decides, as before (fabricAnchorsForRow).
+                        // that fabric. Unset = the function's Fabric Palette decides (its colours marked "Use for" this fabric), as before
+                        // (fabricAnchorsForRow) - shown here as the default; a pick overrides it for this truss only.
                         const colour=on?String(zc[colKey]||"").trim():"";
-                        const colourOpts=[...new Set(((fabricInv?.[stockKey])||[]).map(x=>String(x?.colour||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+                        const paletteCols=on&&Array.isArray(fabricPaletteColours?.[mat])?fabricPaletteColours[mat]:[];
+                        const palSet=new Set(paletteCols);
+                        const colourOpts=[...new Set(((fabricInv?.[stockKey])||[]).map(x=>String(x?.colour||"").trim()).filter(Boolean))].sort((a,b)=>(palSet.has(b)-palSet.has(a))||a.localeCompare(b));
                         return(
                         <div key={key} className="relative inline-flex items-center gap-1">
                           <span onClick={()=>setFabMenu(fabMenu===key?null:key)} title={`${lbl}: ${on?"on":"off"}${colour?` · ${colour}`:""}${rep?" · repeat":""} — click for options`}
                             style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:6,cursor:"pointer",fontSize:12,
                               border:`1px solid ${on?accent:border}`,background:on?`${accent}18`:"transparent",opacity:on?1:0.4,filter:on?"none":"grayscale(1)"}}>{ic}</span>
                           {rep&&<span className="absolute -top-1.5 left-4 text-[10px] leading-none text-emerald-600 pointer-events-none">♻</span>}
-                          {colour&&<span style={{fontSize:10,fontWeight:600,color:accent,whiteSpace:"nowrap"}}>{colour}</span>}
+                          {colour?<span style={{fontSize:10,fontWeight:600,color:accent,whiteSpace:"nowrap"}}>{colour}</span>
+                            :paletteCols.length>0&&<span title="From the function's Fabric Palette - pick a colour in this icon's menu to change it for this truss" style={{fontSize:10,color:textS,whiteSpace:"nowrap"}}>{paletteCols.join(", ")}</span>}
                           {fabMenu===key&&<>
                             <div className="fixed inset-0 z-40" onClick={()=>setFabMenu(null)} />
                             <div className={`absolute left-0 top-7 z-50 w-44 rounded-lg border shadow-lg p-1 flex flex-col ${isDark?"bg-gray-800 border-gray-600 text-gray-100":"bg-white border-gray-200 text-gray-800"}`}>
@@ -522,8 +526,8 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                                 <span>🎨 Colour</span>
                                 <select value={colour} disabled={!on} onChange={e=>{sZ({[colKey]:e.target.value||undefined});setFabMenu(null);}} title={`Pick the colour this truss's ${lbl} goes in (IMS ${lbl} stock)`}
                                   className={`w-full text-[12px] rounded border px-1.5 py-1 ${isDark?"bg-gray-900 border-gray-600 text-gray-100":"bg-white border-gray-200 text-gray-800"}`}>
-                                  <option value="">— From Fabric Palette —</option>
-                                  {colourOpts.map(c=><option key={c} value={c}>{c}</option>)}
+                                  <option value="">{paletteCols.length?`Fabric Palette: ${paletteCols.join(", ")}`:"— From Fabric Palette —"}</option>
+                                  {colourOpts.map(c=><option key={c} value={c}>{palSet.has(c)?`★ ${c}`:c}</option>)}
                                 </select>
                               </label>}
                             </div>
@@ -834,10 +838,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
 //
 // calcStructCost has always summed zc.extraTrussRows, and Deal Check, the truss engine and the
 // stock reservation all read them — Build was simply the one place with no way to create one.
-export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1, trussRepeat = false, fabricChipRepeat = false, trussReserved, stockDateLabel = "" }) {
+export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1, trussRepeat = false, fabricChipRepeat = false, fabricPaletteColours = null, trussReserved, stockDateLabel = "" }) {
   const rows = zc.extraTrussRows || [];
   const write = (next) => sZ({ extraTrussRows: next });
-  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale, guestDiscPct, guestFabricDiscPct, maskingColours, maskingColourOptions, guestPriceMultiplier, trussRepeat, fabricChipRepeat, trussReserved, stockDateLabel };
+  const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale, guestDiscPct, guestFabricDiscPct, maskingColours, maskingColourOptions, guestPriceMultiplier, trussRepeat, fabricChipRepeat, fabricPaletteColours, trussReserved, stockDateLabel };
   return (<>
     <TrussCard {...shared} zc={zc} sZ={sZ} sD={sD} title={rows.length ? "Truss 1" : "Truss"} />
     {rows.map((row, ri) => {
@@ -5988,7 +5992,7 @@ undefined
                   DCTrussTab still shows that detailed breakdown for its own purposes, unaffected. */}
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} fabricChipRepeat={repeatCatFor(zc,"truss")} trussRepeat={repeatCatFor(zc,"truss")||!!structDiscountFor(zc,aVenue)?.truss} trussReserved={trussReserved} stockDateLabel={stockDateLabel} />}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} maskingColours={maskingColours} fabricPaletteColours={{liza:anchorsForPaletteByMaterial(imsPaletteCatalogue,activeFabricPaletteStr,"liza"),curtain:anchorsForPaletteByMaterial(imsPaletteCatalogue,activeFabricPaletteStr,"curtain")}} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} fabricChipRepeat={repeatCatFor(zc,"truss")} trussRepeat={repeatCatFor(zc,"truss")||!!structDiscountFor(zc,aVenue)?.truss} trussReserved={trussReserved} stockDateLabel={stockDateLabel} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsCarpetMaterialsPriced={imsCarpetMaterialsPriced} imsPlatformRatesPriced={imsPlatformRatesPriced} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseNow()} guestPriceMultiplier={guestPriceMultiplier} guestDiscPct={structDiscountFor(zc,aVenue)?.platform?25:0} />}
@@ -6527,7 +6531,7 @@ undefined
                       catalog count either way. */}
                   <TrussStack S={S} customCeilingField={ownsLive?customCeilingField:noCustomField} k={zk} zc={cfgCur} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} maskingColours={maskingColours} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} fabricChipRepeat={repeatCatFor(cfgCur,"truss")} trussRepeat={repeatCatFor(cfgCur,"truss")||!!structDiscountFor(cfgCur,aVenue)?.truss} trussReserved={ownsLive?trussReserved:undefined} stockDateLabel={ownsLive?stockDateLabel:""} />
+                    customMaskingField={ownsLive?customMaskingField:noCustomField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={scaleFor} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(cfgCur,aVenue)?.truss?25:0} maskingColours={maskingColours} fabricPaletteColours={{liza:anchorsForPaletteByMaterial(imsPaletteCatalogue,activeFabricPaletteStr,"liza"),curtain:anchorsForPaletteByMaterial(imsPaletteCatalogue,activeFabricPaletteStr,"curtain")}} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} fabricChipRepeat={repeatCatFor(cfgCur,"truss")} trussRepeat={repeatCatFor(cfgCur,"truss")||!!structDiscountFor(cfgCur,aVenue)?.truss} trussReserved={ownsLive?trussReserved:undefined} stockDateLabel={ownsLive?stockDateLabel:""} />
                   <FloorStack S={S} zc={cfgCur} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                     isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsCarpetMaterialsPriced={imsCarpetMaterialsPriced} imsPlatformRatesPriced={imsPlatformRatesPriced} scale={scaleFor} openAvailModal={ownsLive?openAvailModal:undefined} zoneKey={zk} guestPriceMultiplier={guestPriceMultiplier} guestDiscPct={structDiscountFor(cfgCur,aVenue)?.platform?25:0} />
                 </div>
