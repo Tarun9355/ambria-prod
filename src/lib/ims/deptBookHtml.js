@@ -417,10 +417,41 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // replacement row (swapFor, the qty actually bought). Every arrangement using that flower is
     // made with the replacement instead, scaled by bought ÷ planned so the piece gets its share.
     // Keyed by the shopping-list name — the mandi flower name the recipe resolves to.
-    const floralLines = Array.isArray(sel?.deptOps?.Floral?.mandiLines) ? sel.deptOps.Floral.mandiLines : [];
-    const eventSwap = buildEventSwap(floralLines);
+    //
+    // The shopping list is now one tab per function (owner ask, 2026-11-14 — see
+    // DepartmentOpsTab.jsx's own mandiTabs), each with its OWN swaps logged in
+    // deptOps.Floral.mandiLinesByFn[fnIdx] — a swap made in one function's own tab must only apply
+    // to THAT function's arrangements, never bleed into a different function's (confirmed bug,
+    // 2026-11-14 regression review: every deal with a per-function tab, including a single-function
+    // deal's lone tab, logged its swaps there instead of the flat `mandiLines` this book exclusively
+    // read, so the setup book kept printing the original, unavailable flower). Falls back to the
+    // flat legacy list for a function with no per-function entry of its own yet (an already-booked
+    // deal not yet resynced, or a function whose own shopping was logged before this feature
+    // shipped) — same list every function used before this split existed.
+    const legacyFloralLines = Array.isArray(sel?.deptOps?.Floral?.mandiLines) ? sel.deptOps.Floral.mandiLines : [];
+    const floralLinesByFn = (sel?.deptOps?.Floral?.mandiLinesByFn && typeof sel.deptOps.Floral.mandiLinesByFn === "object") ? sel.deptOps.Floral.mandiLinesByFn : {};
+    // Identity tag written alongside each function's own entry (DepartmentOpsTab.jsx's saveMandi) —
+    // same check as that file's own ownsStoredEntry (date+venue+label). Without it, a function
+    // removal that lets a LATER function reuse the same numeric fnIdx would apply the EARLIER
+    // function's swaps to the new one's arrangements (confirmed bug, 2026-11-14 regression review,
+    // third pass) — a disowned entry's swaps are never applied here; DepartmentOpsTab.jsx surfaces
+    // that money under its own "Unmatched"/archived tab instead, this book simply ignores it.
+    const floralLinesByFnMeta = (sel?.deptOps?.Floral?.mandiLinesByFnMeta && typeof sel.deptOps.Floral.mandiLinesByFnMeta === "object") ? sel.deptOps.Floral.mandiLinesByFnMeta : {};
     const placed = new Set();
     const fns = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+    const eventSwap = buildEventSwap(legacyFloralLines);
+    // Merged with the legacy whole-event map (legacy first, this function's own swaps on top) — a
+    // flower this function's own shopping list never mentions can still resolve via the old flat list.
+    const eventSwapByFn = new Map();
+    Object.entries(floralLinesByFn).forEach(([fnIdx, lines]) => {
+      const fn = fns.find((f, i) => (Number.isInteger(f?.fnIdx) ? f.fnIdx : i) === Number(fnIdx));
+      if (!fn) return; // no live function at this index at all — disowned, see comment above
+      const meta = floralLinesByFnMeta[fnIdx];
+      const owns = !meta || (meta.date === (fn.date || "") && meta.venue === (fn.venue || "") && meta.label === (fn.type || ""));
+      if (!owns) return;
+      eventSwapByFn.set(String(fnIdx), new Map([...eventSwap, ...buildEventSwap(lines)]));
+    });
+    const eventSwapFor = (fnIdx) => eventSwapByFn.get(String(fnIdx)) || eventSwap;
     // ── WHAT STANDS IN THE ZONE: truss, platform, carpet ──
     // Shown on each zone's own page, in the Tenting and the Structure books (owner ask) — the
     // classifier files truss/platform/carpet under Tenting, but the Structure crew builds on that
@@ -907,7 +938,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
             // This event's own mandi swap, made on the Floral shopping list (eventSwap above): the
             // piece is made with the replacement, in its units. Only the replacement is named — the crew makes the piece with
             // what was bought; the flower it stands in for is on the Mandi list, not here.
-            const swapped = swappedRecipeFlower(eventSwap, mf.name, baseQty);
+            const swapped = swappedRecipeFlower(eventSwapFor(fn?.fnIdx ?? fi), mf.name, baseQty);
             // full: an inventory ingredient, or a mandi flower that is real-only, goes in at its whole amount whatever the mix - as Deal Check counts it
             const full = mf.flowerType === "real_only";
             if (swapped) return { ...swapped, full };
@@ -1392,7 +1423,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // flowers at full, the reuse credit taken off, the recipe's inventory ingredients - so a line here is the number Deal Check
       // shows. This event's mandi swaps (made in IMS) are applied on top, as before. Matched by name, like the bunches above; an
       // element the snapshot does not know yet (added since Deal Check last ran) falls back to its recipe worked out here.
-      const realTaker = realLineTaker(floralCards ? sel?.floralDetail?.[pg.fnIdx]?.realZones : [], pg.zk, eventSwap);
+      const realTaker = realLineTaker(floralCards ? sel?.floralDetail?.[pg.fnIdx]?.realZones : [], pg.zk, eventSwapFor(pg.fnIdx));
       (pg.items || []).forEach(it => {
         const art = floralCards && it.mix ? takeArtAny(namesOf(it)) : [];
         const realName = floralCards && it.mix ? namesOf(it).find(n => realTaker.has(n)) : null;

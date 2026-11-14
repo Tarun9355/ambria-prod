@@ -15,7 +15,7 @@
 // for expenses, mandi spend, and on-site crew (mpDayPatch/shiftCountPatch/actualCrewPatch/etc, plus
 // the legacy flat `mp` array and `mpOverrides`/`mpExtra` count-or-rate overrides). `mpSeen` is
 // deliberately excluded — it just records that a plan was looked at, not an edit of one.
-export const ACTUALS_DEPT_KEYS = ["expenses", "mandiLines", "realMandi", "mp", "mpOverrides", "mpExtra", "mpDay", "mpWin", "mpWinCount", "mpWinBasis"];
+export const ACTUALS_DEPT_KEYS = ["expenses", "mandiLines", "mandiLinesByFn", "mandiLinesByFnMeta", "mandiLinesArchived", "realMandi", "mp", "mpOverrides", "mpExtra", "mpDay", "mpWin", "mpWinCount", "mpWinBasis"];
 
 export function patchTouchesActuals(patch) {
   return !!patch && typeof patch === "object" && Object.keys(patch).some((k) => ACTUALS_DEPT_KEYS.includes(k));

@@ -569,6 +569,113 @@ function DeptIncomeModal({ eo, depts, startDept, onClose }) {
   );
 }
 
+// ── Mandi Shopping List (Floral) — one tab per function, pure derivation ──
+// colorVariant — the salesperson's colour pick in Deal Check (ranked preference or the legacy single
+// pick), carried through calcFnFloralSourcingCost's own breakdown (StudioApp.jsx) so the purchase
+// manager sees WHICH colour to actually buy, not just a bare flower name. price: f.rate IS the real
+// mandi rate this flower costed at (qty already whole-unit — f.cost = qty × rate at the source).
+// Older snapshots captured before `rate` existed have no such field, so those fall back to the
+// previous cost÷qty approximation rather than showing no price at all — only ever a stand-in for a
+// snapshot nobody has regenerated since.
+function seedRowsFromFlowers(flowersArr) {
+  return (flowersArr || []).filter(f => !f.artificial && (Number(f.qty) || 0) > 0).map(f => {
+    const price = (typeof f.rate === "number" && f.rate > 0) ? f.rate : (f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0);
+    return { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
+  });
+}
+function mandiRealTotalOf(rows) { return (Array.isArray(rows) ? rows : []).reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0); }
+
+// A SINGLE pure function of (deptData, fp) — the department's own saved data and Studio's floral
+// plan — computing every tab, which rows belong to which, and the one grand total every other figure
+// (the footer, the Actuals card, the printed PDF, realMandi/Studio's P&L) must agree with.
+//
+// Root cause of three straight regression-review findings (2026-11-14, rounds 2-4): `saveMandi` used
+// to re-derive `mandiTabs`/`anyRealShoppingExists`/`ownsStoredEntry` from the PRE-save deptData, then
+// hand-adjust the one tab being saved on top — any change this save ALSO makes to those derived
+// values (e.g. archiving a disowned entry in the very same save that overwrites it) left the SAVED
+// total disagreeing with what the screen would show one render later, because the two were computed
+// two different ways. Calling this ONE function on `deptData` for display and on `{...deptData,
+// ...patch}` for the save (saveMandi, below) makes that structurally impossible — both always use the
+// exact same logic on the exact same shape of input, the saved value IS what the next render would
+// derive, there is no second, divergent code path left to disagree with it.
+function deriveMandiView(deptData, fp) {
+  const fpByFn = Array.isArray(fp?.byFn) ? fp.byFn : [];
+  const legacyMandiLines = Array.isArray(deptData?.mandiLines) ? deptData.mandiLines : null;
+  const mandiLinesByFn = (deptData?.mandiLinesByFn && typeof deptData.mandiLinesByFn === "object") ? deptData.mandiLinesByFn : {};
+  // Real spend rescued from a disowned (orphaned) slot right before it would have been overwritten by
+  // a different, later function's own save landing on the same reused numeric key — see saveMandi's
+  // own comment for how an entry gets here. Permanent and never re-attributed to any live function;
+  // always counted in the grand total, shown under its own read-only, flagged tab.
+  const mandiLinesArchived = Array.isArray(deptData?.mandiLinesArchived) ? deptData.mandiLinesArchived : [];
+  // Identity tag for each mandiLinesByFn entry, stamped by saveMandi — this function's date/venue/label
+  // AT THE TIME it was logged. A later function REMOVAL reindexes Studio's own local Deal Check state
+  // but never touches this IMS-owned field — if function 2 is removed and function 3 becomes function
+  // 2, mandiLinesByFn["2"] (function 3's OLD money, logged before the removal) would otherwise
+  // silently render as if it belongs to the NEW function 2 (the exact array-index identity risk the
+  // Sangeeta incident was about — see persistDeptSnapshot's own "REFUSE TO STAMP A DIFFERENT
+  // FUNCTION'S IDENTITY" guard for the same class of bug, same fix shape: verify identity before
+  // trusting an index, don't just trust the index).
+  const mandiLinesByFnMeta = (deptData?.mandiLinesByFnMeta && typeof deptData.mandiLinesByFnMeta === "object") ? deptData.mandiLinesByFnMeta : {};
+  const liveFnByIdx = new Map(fpByFn.map(e => [String(e.fnIdx), e]));
+  // A stored entry counts as belonging to the function CURRENTLY at that index only when there's no
+  // identity tag yet (pre-existing data, logged before this check existed — trusted as it always was,
+  // no worse than before) or the tag's own date+venue+label still match what's there now. Date+venue
+  // alone can't tell apart two functions sharing both (a Haldi and a Mehendi at the same venue, same
+  // day, is routine) — the function's own label (type) is part of its identity too, same as
+  // persistDeptSnapshot's own type+date collision check. Disowned by either test (mismatch, or no
+  // live function at that index at all) means this money is NEVER silently shown as the wrong
+  // function's, or dropped — it surfaces under its own flagged tab so a human can reconcile it.
+  const ownsStoredEntry = (fnIdx) => {
+    const meta = mandiLinesByFnMeta[fnIdx];
+    const live = liveFnByIdx.get(String(fnIdx));
+    if (!live) return false;
+    if (!meta) return true;
+    return meta.date === (live.fnDate || "") && meta.venue === (live.fnVenue || "") && meta.label === (live.fnLabel || "");
+  };
+  const storedForFn = (fnIdx) => (ownsStoredEntry(fnIdx) ? mandiLinesByFn[fnIdx] : undefined);
+  const orphanFnTabs = Object.keys(mandiLinesByFn)
+    .filter(k => Array.isArray(mandiLinesByFn[k]) && mandiLinesByFn[k].length > 0 && !ownsStoredEntry(k))
+    .map(k => ({ key: `orphanfn:${k}`, label: `⚠️ Unmatched (was function ${Number(k) + 1})`, flowers: [], fnIdx: k, orphaned: true }));
+  // Permanent, read-only (never re-attached to any live function, never overwritable) — view-only
+  // record of real spend rescued from a reused slot, see saveMandi's own comment.
+  const archivedTabs = mandiLinesArchived.map((a, i) => ({ key: `archived:${i}`, label: `📦 Archived (${a.meta?.label || "removed function"})`, flowers: [], archived: true, rows: a.rows }));
+  const legacyFlowers = (Array.isArray(fp?.flowers) ? fp.flowers : []).filter(f => !f.artificial);
+  // fpByFn empty means this floralPlan was captured BEFORE this feature shipped (an already-booked
+  // deal not yet re-synced) — fall back to one single "Combined" tab seeded from the old whole-event
+  // fp.flowers, exactly the old single-list behaviour, rather than showing nothing just because
+  // there's no per-function split to offer yet.
+  const mandiTabs = fpByFn.length > 0
+    ? [
+        ...(legacyMandiLines ? [{ key: "legacy", label: "Already logged", flowers: legacyFlowers }] : []),
+        ...fpByFn.map(e => ({ key: `fn:${e.fnIdx}`, label: e.fnLabel + (e.fnVenue ? ` · ${e.fnVenue}` : "") + (e.fnDate ? ` · ${e.fnDate}` : ""), flowers: e.flowers, fnIdx: e.fnIdx })),
+        ...orphanFnTabs,
+        ...archivedTabs,
+      ]
+    : [{ key: "legacy", label: legacyMandiLines ? "Already logged" : "Combined", flowers: legacyFlowers }, ...orphanFnTabs, ...archivedTabs];
+  // A tab's own raw stored rows — legacy reads the flat field, an archived tab always trusts its own
+  // permanent record, an orphan tab (already flagged as unmatched) always trusts its own raw entry,
+  // and a live function tab only trusts its entry when ownsStoredEntry confirms the identity tag
+  // still matches.
+  const rawStoredFor = (t) => (t.key === "legacy" ? legacyMandiLines : t.archived ? t.rows : t.orphaned ? mandiLinesByFn[t.fnIdx] : storedForFn(t.fnIdx));
+  // Is there any REAL spend whose owning function is ambiguous/unknown right now — the flat legacy
+  // list, an orphaned entry, or an archived one? (Deliberately NOT a live function's own correctly-
+  // owned entry — that money is already unambiguously attributed to its own function and must never
+  // suppress a DIFFERENT, sibling function's own untouched plan; confirmed bug, 2026-11-14 regression
+  // review, fourth pass: gating on ANY mandiLinesByFn entry made logging Haldi's own real spend
+  // silently zero out Wedding's own still-unlogged plan too.) A function tab with nothing logged of
+  // its OWN contributes its seeded plan to the grand total UNLESS such ambiguous real spend exists
+  // somewhere — in that case it contributes nothing, since that unattributed money might already be
+  // this function's (confirmed bug, rounds 1-2: an untouched tab's own plan was added on top of
+  // legacy/orphan spend that, in practice, already covered it).
+  const anyUnknownRealSpend = (legacyMandiLines?.length > 0) || mandiLinesArchived.length > 0 || orphanFnTabs.length > 0;
+  const fallbackRowsFor = (t) => (t.fnIdx != null && anyUnknownRealSpend ? [] : seedRowsFromFlowers(t.flowers));
+  const mandiRowsOfTab = (t) => { const stored = rawStoredFor(t); return Array.isArray(stored) ? stored : fallbackRowsFor(t); };
+  // The ONE figure billing (the Actuals card/PDF, Studio's P&L via realMandi) must ever use — every
+  // tab summed, never just whichever one happens to be open on screen.
+  const mandiGrandReal = mandiTabs.reduce((s, t) => s + mandiRealTotalOf(mandiRowsOfTab(t)), 0);
+  return { mandiTabs, legacyMandiLines, mandiLinesByFn, mandiLinesByFnMeta, mandiLinesArchived, liveFnByIdx, ownsStoredEntry, rawStoredFor, fallbackRowsFor, mandiRowsOfTab, mandiGrandReal, anyUnknownRealSpend };
+}
+
 export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [] }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
@@ -1632,21 +1739,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // shopping (deptData.mandiLines, the old flat array) is preserved exactly as-is under its own
   // "Already logged" tab rather than silently split or guessed at — nobody can know which function
   // an already-bought flower was really for. New shopping goes per function from here on
-  // (deptData.mandiLinesByFn[fnIdx]).
-  const fpByFn = Array.isArray(fp.byFn) ? fp.byFn : [];
-  const legacyMandiLines = Array.isArray(deptData.mandiLines) ? deptData.mandiLines : null;
-  const mandiLinesByFn = (deptData.mandiLinesByFn && typeof deptData.mandiLinesByFn === "object") ? deptData.mandiLinesByFn : {};
-  const legacyFlowers = (Array.isArray(fp.flowers) ? fp.flowers : []).filter(f => !f.artificial);
-  // fpByFn empty means this floralPlan was captured BEFORE this feature shipped (an already-booked
-  // deal not yet re-synced) — fall back to one single "Combined" tab seeded from the old whole-event
-  // fp.flowers, exactly the old single-list behaviour, rather than showing nothing just because
-  // there's no per-function split to offer yet.
-  const mandiTabs = fpByFn.length > 0
-    ? [
-        ...(legacyMandiLines ? [{ key: "legacy", label: "Already logged", flowers: legacyFlowers }] : []),
-        ...fpByFn.map(e => ({ key: `fn:${e.fnIdx}`, label: e.fnLabel + (e.fnVenue ? ` · ${e.fnVenue}` : "") + (e.fnDate ? ` · ${e.fnDate}` : ""), flowers: e.flowers, fnIdx: e.fnIdx })),
-      ]
-    : [{ key: "legacy", label: legacyMandiLines ? "Already logged" : "Combined", flowers: legacyFlowers }];
+  // (deptData.mandiLinesByFn[fnIdx]). See deriveMandiView's own header comment (module scope, above
+  // this component) for the full design and the three regression-review rounds that shaped it.
+  const { mandiTabs, legacyMandiLines, mandiLinesByFn, mandiLinesByFnMeta, mandiLinesArchived, liveFnByIdx, ownsStoredEntry, rawStoredFor, mandiRowsOfTab, mandiGrandReal, anyUnknownRealSpend } = deriveMandiView(deptData, fp);
+  const realTotalOf = mandiRealTotalOf;
   const activeMandiTabKey = mandiTabs.some(t => t.key === mandiActiveTab) ? mandiActiveTab : (mandiTabs[0]?.key ?? null);
   const activeMandiTab = mandiTabs.find(t => t.key === activeMandiTabKey) || null;
 
@@ -1656,18 +1752,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // blocked total (owner ask 2026-11-11). Whole-event figure only - Deal Check does not split it by function.
   const artStockTotal = dept === "Floral" && fp.artificial && ((fp.artificial.flowerBunches || 0) > 0 || (fp.artificial.greenBunches || 0) > 0) ? Number(fp.artificial.total) || 0 : 0;
   const invBlockedTotal = rentalIncome + artStockTotal;
-  // colorVariant — the salesperson's colour pick in Deal Check (ranked preference or the legacy
-  // single pick), carried through calcFnFloralSourcingCost's own breakdown (StudioApp.jsx) so the
-  // purchase manager sees WHICH colour to actually buy, not just a bare flower name.
-  // price: f.rate IS the real mandi rate this flower costed at (qty already whole-unit — f.cost =
-  // qty × rate at the source). Older snapshots captured before `rate` existed have no such field,
-  // so those fall back to the previous cost÷qty approximation rather than showing no price at all —
-  // only ever a stand-in for a snapshot nobody has regenerated since.
-  const seedRowsFromFlowers = (flowersArr) => (flowersArr || []).filter(f => !f.artificial && (Number(f.qty) || 0) > 0)
-    .map(f => {
-      const price = (typeof f.rate === "number" && f.rate > 0) ? f.rate : (f.qty ? Math.round(((Number(f.cost) || 0) / f.qty) * 100) / 100 : 0);
-      return { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
-    });
   const seedMandi = seedRowsFromFlowers(fpFlowers);
   // Once shopping has started, the tab's own logged rows are the source of truth for everything
   // EXCEPT colour — re-merging colorVariant/colorPrefs fresh from the seed (i.e. from whatever
@@ -1683,7 +1767,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const mandiKey = (r) => `${r.name}¦${r.colorVariant?.label || (Array.isArray(r.colorPrefs) ? r.colorPrefs.map(p => p.label).join("/") : "") || ""}`;
   const seedColourByName = {};
   seedMandi.forEach(r => { const k = mandiKey(r); if (!seedColourByName[k]) seedColourByName[k] = { colorVariant: r.colorVariant, colorPrefs: r.colorPrefs }; });
-  const activeStoredLines = activeMandiTabKey === "legacy" ? legacyMandiLines : (activeMandiTab ? mandiLinesByFn[activeMandiTab.fnIdx] : undefined);
+  const activeStoredLines = activeMandiTab ? rawStoredFor(activeMandiTab) : undefined;
   const mandiRows = Array.isArray(activeStoredLines)
     ? activeStoredLines.map(r => seedColourByName[mandiKey(r)] ? { ...r, ...seedColourByName[mandiKey(r)] } : r)
     : seedMandi;
@@ -1699,36 +1783,42 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // show, with their kg and ₹, under Inventory blocked instead. (Was real + the artificial projection.)
   const mandiActualTotal = mandiActualReal;
   const projMandiReal = mandiRows.reduce((s, r) => s + (Number(r.projCost) || 0), 0);
-  const realTotalOf = (rows) => (Array.isArray(rows) ? rows : []).reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0);
-  // Every tab's own effective rows (its logged rows if any, else its own seed) — the active tab's
-  // live in-memory rows are used for ITSELF (so an unsaved edit reflects immediately), the persisted
-  // ones for every other tab.
-  const mandiRowsOfTab = (t) => {
-    if (t.key === activeMandiTabKey) return mandiRows;
-    const stored = t.key === "legacy" ? legacyMandiLines : mandiLinesByFn[t.fnIdx];
-    return Array.isArray(stored) ? stored : seedRowsFromFlowers(t.flowers);
-  };
-  // The ONE figure billing (the Actuals card/PDF, Studio's P&L via realMandi) must ever use — every
-  // tab summed, never just whichever one happens to be open on screen.
-  const mandiGrandReal = mandiTabs.reduce((s, t) => s + realTotalOf(mandiRowsOfTab(t)), 0);
   const mandiGrandTotal = mandiGrandReal;
-  // Persist the list AND the headline actual (realMandi, summed across EVERY tab) so Studio's P&L
-  // reflection picks it up. This total comes out identical whether computed from one combined list
-  // or summed across per-function tabs — the real spend hasn't changed, only how it's organised.
+  // Persist the list — the headline actual (realMandi, summed across EVERY tab) is recomputed from
+  // the POST-save state via deriveMandiView itself, never hand-adjusted here, so the saved figure can
+  // never disagree with what the very next render would independently derive (see deriveMandiView's
+  // own header comment for the three regression-review rounds this closes out).
   const saveMandi = (next) => {
+    // Archived tabs are a permanent, read-only record (no live fnIdx of their own to write back to —
+    // saving one would otherwise create a bogus mandiLinesByFn["undefined"] entry) — editing one is a
+    // deliberate no-op rather than silently corrupting state.
+    if (activeMandiTab?.archived) return;
     const isLegacy = activeMandiTabKey === "legacy";
+    const isOrphan = !!activeMandiTab?.orphaned;
+    const liveFn = (!isLegacy && !isOrphan && activeMandiTab) ? liveFnByIdx.get(String(activeMandiTab.fnIdx)) : null;
+    // Writing a live function's own tab REPLACES whatever currently sits at that same numeric key —
+    // if that existing entry is DISOWNED (an "Unmatched" orphan — a different, earlier function's
+    // real money that landed on this same index after a removal), it would otherwise be silently
+    // destroyed the instant this save lands. Archive it first — permanently, separately from
+    // mandiLinesByFn — so real logged spend is never lost, only ever moved to its own flagged,
+    // read-only record (owner decision: archive, don't drop).
+    const existing = liveFn ? mandiLinesByFn[activeMandiTab.fnIdx] : null;
+    const mustArchive = liveFn && Array.isArray(existing) && existing.length > 0 && !ownsStoredEntry(activeMandiTab.fnIdx);
+    const nextArchived = mustArchive
+      ? [...mandiLinesArchived, { fnIdx: activeMandiTab.fnIdx, meta: mandiLinesByFnMeta[activeMandiTab.fnIdx] || null, rows: existing, archivedAt: Date.now() }]
+      : mandiLinesArchived;
     const nextByFn = isLegacy || !activeMandiTab ? mandiLinesByFn : { ...mandiLinesByFn, [activeMandiTab.fnIdx]: next };
-    const nextLegacy = isLegacy ? next : legacyMandiLines;
-    // Every tab counts, not just ones with their own logged rows so far — an untouched tab (nobody's
-    // gone shopping for THAT function yet) still contributes its own projected seed, same as the
-    // single-list code this replaced always did before any edit existed at all. Using next directly
-    // for the tab being saved (not yet reflected in mandiRowsOfTab/mandiRows this same tick).
-    const grandReal = mandiTabs.reduce((s, t) => {
-      if (t.key === activeMandiTabKey) return s + realTotalOf(next);
-      const stored = t.key === "legacy" ? nextLegacy : nextByFn[t.fnIdx];
-      return s + realTotalOf(Array.isArray(stored) ? stored : seedRowsFromFlowers(t.flowers));
-    }, 0);
-    saveDept({ ...(isLegacy ? { mandiLines: next } : { mandiLinesByFn: nextByFn }), realMandi: grandReal }); // real only - artificial is stock, not spend
+    // Stamp this function's CURRENT identity (date+venue+label) alongside its freshly-logged rows,
+    // so a later function removal that reuses this same numeric fnIdx can be caught instead of
+    // silently trusted (see mandiLinesByFnMeta's own comment, above). Never stamped for legacy/orphan
+    // saves — there is no live function to tag those with.
+    const nextMeta = liveFn ? { ...mandiLinesByFnMeta, [activeMandiTab.fnIdx]: { date: liveFn.fnDate || "", venue: liveFn.fnVenue || "", label: liveFn.fnLabel || "" } } : null;
+    const patch = {
+      ...(isLegacy ? { mandiLines: next } : { mandiLinesByFn: nextByFn, ...(nextMeta ? { mandiLinesByFnMeta: nextMeta } : {}) }),
+      ...(mustArchive ? { mandiLinesArchived: nextArchived } : {}),
+    };
+    const { mandiGrandReal: nextGrandReal } = deriveMandiView({ ...deptData, ...patch }, fp);
+    saveDept({ ...patch, realMandi: nextGrandReal }); // real only - artificial is stock, not spend
   };
   const setMandi = (i, key, val) => saveMandi(mandiRows.map((r, j) => j === i ? { ...r, [key]: val } : r));
   // Deleting a swap's replacement row undoes the swap on its original too, so the original is not
@@ -5301,9 +5391,16 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       {/* Ops view — FLORAL COST (what ops spends to source flowers). Client billing is
                           intentionally NOT shown here — ops only needs the real mandi + artificial spend
                           and how each is derived. */}
-                      {!mandiShopped && (mandiRows.length > 0 || fpFlowers.length > 0) && (
+                      {activeMandiTab?.archived && (
+                        <div className="px-3 py-1.5 rounded-lg text-[10px] text-amber-700 bg-amber-50 border border-amber-100">
+                          📦 Archived — view only. This is real spend that was logged for a function since removed or reindexed; it's already counted in "Floral cost to source" above and can no longer be edited here.
+                        </div>
+                      )}
+                      {!activeMandiTab?.archived && !mandiShopped && (mandiRows.length > 0 || fpFlowers.length > 0) && (
                         <div className="px-3 py-1.5 rounded-lg text-[10px] text-blue-700 bg-blue-50 border border-blue-100">
-                          ℹ️ Nobody's gone shopping yet — the numbers below are just the plan shown as a starting point. Edit a row once the real mandi purchase happens; until then there's nothing you need to fill in here.
+                          {anyUnknownRealSpend
+                            ? "ℹ️ This function hasn't been shopped for on its own tab yet — the numbers below are just its plan, not counted in the total above (there's already real shopping logged under \"Already logged\"/\"Unmatched\"/\"Archived\" that might cover it). Edit a row here only once real shopping happens specifically for this function."
+                            : "ℹ️ Nobody's gone shopping yet — the numbers below are just the plan shown as a starting point. Edit a row once the real mandi purchase happens; until then there's nothing you need to fill in here."}
                         </div>
                       )}
                       <div className="bg-white border border-emerald-100 rounded-lg overflow-hidden text-xs">
