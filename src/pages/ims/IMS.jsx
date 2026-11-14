@@ -38,6 +38,7 @@ import { triggerLmsSync, fetchCachedContracts, fetchSeason, buildDateCategories,
 import { allocateForDate, buildEventAllocation, eoToFnList, appendTrussAudit, TRUSS_P3_BACKFILLED_SK } from "../../lib/ims/trussEngine";
 import { allocatePlatformForDate, buildEventPlatformAllocation, appendPlatformAudit, PLATFORM_BACKFILLED_SK } from "../../lib/ims/platformEngine";
 import { allocateBattaForDate, buildEventBattaAllocation, appendBattaAudit, BATTA_BACKFILLED_SK } from "../../lib/ims/battaEngine";
+import { hardEntryUnchanged } from "../../lib/ims/allocPromote";
 import { ensureCdnLibs } from "../../lib/ims/pdf";
 import { kvGet, reliableSave } from "../../lib/ims/kv";
 import { rowToRcItem, rcItemToRow } from "../../lib/rateCard";
@@ -1879,6 +1880,7 @@ export default function IMS() {
     if (toPromote.length === 0) return;
     let nextAlloc = { ...trussAllocRef.current };
     const datesToRecompute = new Set();
+    const triggersByDate = {};
     toPromote.forEach((eo) => {
       trussPromotedRef.current.add(eo.id);
       const fnList = eoToFnList(eo);
@@ -1889,6 +1891,7 @@ export default function IMS() {
         if (!eventEntry.trusses || eventEntry.trusses.length === 0) return;
         const dateEntry = nextAlloc[d] || { events: [] };
         const existingEvents = Array.isArray(dateEntry.events) ? [...dateEntry.events] : [];
+        if (hardEntryUnchanged(existingEvents, eventEntry)) return; // already booked as-is — no re-save, no audit row
         const filteredEvents = existingEvents.filter((ev) => {
           if (ev.state === "soft" && ev.clientId === eventEntry.clientId) return false;
           if (ev.state === "hard" && ev.eoId === eventEntry.eoId) return false;
@@ -1897,12 +1900,13 @@ export default function IMS() {
         filteredEvents.push(eventEntry);
         nextAlloc[d] = { ...dateEntry, events: filteredEvents };
         datesToRecompute.add(d);
+        (triggersByDate[d] ||= []).push(eo.id);
       });
     });
     datesToRecompute.forEach((d) => { nextAlloc = allocateForDate(nextAlloc, d, nextAlloc[d]?.events || [], trussInv, "auto-promote-on-sold"); });
     if (datesToRecompute.size > 0) {
       setTrussAlloc(nextAlloc);
-      datesToRecompute.forEach((d) => appendTrussAudit({ date: d, event: "promote-soft-to-hard", triggerEoIds: toPromote.map((e) => e.id), eventCount: nextAlloc[d]?.events?.length || 0, feasible: !!nextAlloc[d]?.stockSummary?.feasible }));
+      datesToRecompute.forEach((d) => appendTrussAudit({ date: d, event: "promote-soft-to-hard", triggerEoIds: triggersByDate[d] || [], eventCount: nextAlloc[d]?.events?.length || 0, feasible: !!nextAlloc[d]?.stockSummary?.feasible }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventOrders, trussInv, user]);
@@ -1983,6 +1987,7 @@ export default function IMS() {
     if (toPromote.length === 0) return;
     let nextAlloc = { ...platformAllocRef.current };
     const datesToRecompute = new Set();
+    const triggersByDate = {};
     toPromote.forEach((eo) => {
       platformPromotedRef.current.add(eo.id);
       const fnList = eoToFnList(eo);
@@ -1993,6 +1998,7 @@ export default function IMS() {
         if (Object.keys(eventEntry.totalPlatformSqftByMaterial).length === 0) return; // no platform in this event
         const dateEntry = nextAlloc[d] || { events: [] };
         const existingEvents = Array.isArray(dateEntry.events) ? [...dateEntry.events] : [];
+        if (hardEntryUnchanged(existingEvents, eventEntry)) return; // already booked as-is — no re-save, no audit row
         const filteredEvents = existingEvents.filter((ev) => {
           if (ev.state === "soft" && ev.clientId === eventEntry.clientId) return false;
           if (ev.state === "hard" && ev.eoId === eventEntry.eoId) return false;
@@ -2001,12 +2007,13 @@ export default function IMS() {
         filteredEvents.push(eventEntry);
         nextAlloc[d] = { ...dateEntry, events: filteredEvents };
         datesToRecompute.add(d);
+        (triggersByDate[d] ||= []).push(eo.id);
       });
     });
     datesToRecompute.forEach((d) => { nextAlloc = allocatePlatformForDate(nextAlloc, d, nextAlloc[d]?.events || [], trussInv, "auto-promote-on-sold"); });
     if (datesToRecompute.size > 0) {
       setPlatformAlloc(nextAlloc);
-      datesToRecompute.forEach((d) => appendPlatformAudit({ date: d, event: "promote-soft-to-hard", triggerEoIds: toPromote.map((e) => e.id), eventCount: nextAlloc[d]?.events?.length || 0, feasible: !!nextAlloc[d]?.stockSummary?.feasible }));
+      datesToRecompute.forEach((d) => appendPlatformAudit({ date: d, event: "promote-soft-to-hard", triggerEoIds: triggersByDate[d] || [], eventCount: nextAlloc[d]?.events?.length || 0, feasible: !!nextAlloc[d]?.stockSummary?.feasible }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventOrders, trussInv, user]);
@@ -2085,6 +2092,7 @@ export default function IMS() {
     if (toPromote.length === 0) return;
     let nextAlloc = { ...battaAllocRef.current };
     const datesToRecompute = new Set();
+    const triggersByDate = {};
     toPromote.forEach((eo) => {
       battaPromotedRef.current.add(eo.id);
       const fnList = eoToFnList(eo);
@@ -2095,6 +2103,7 @@ export default function IMS() {
         if (Object.keys(eventEntry.totalBattaRftByMaterial).length === 0) return; // no truss (so no batta) in this event
         const dateEntry = nextAlloc[d] || { events: [] };
         const existingEvents = Array.isArray(dateEntry.events) ? [...dateEntry.events] : [];
+        if (hardEntryUnchanged(existingEvents, eventEntry)) return; // already booked as-is — no re-save, no audit row
         const filteredEvents = existingEvents.filter((ev) => {
           if (ev.state === "soft" && ev.clientId === eventEntry.clientId) return false;
           if (ev.state === "hard" && ev.eoId === eventEntry.eoId) return false;
@@ -2103,12 +2112,13 @@ export default function IMS() {
         filteredEvents.push(eventEntry);
         nextAlloc[d] = { ...dateEntry, events: filteredEvents };
         datesToRecompute.add(d);
+        (triggersByDate[d] ||= []).push(eo.id);
       });
     });
     datesToRecompute.forEach((d) => { nextAlloc = allocateBattaForDate(nextAlloc, d, nextAlloc[d]?.events || [], trussInv, "auto-promote-on-sold"); });
     if (datesToRecompute.size > 0) {
       setBattaAlloc(nextAlloc);
-      datesToRecompute.forEach((d) => appendBattaAudit({ date: d, event: "promote-soft-to-hard", triggerEoIds: toPromote.map((e) => e.id), eventCount: nextAlloc[d]?.events?.length || 0, feasible: !!nextAlloc[d]?.stockSummary?.feasible }));
+      datesToRecompute.forEach((d) => appendBattaAudit({ date: d, event: "promote-soft-to-hard", triggerEoIds: triggersByDate[d] || [], eventCount: nextAlloc[d]?.events?.length || 0, feasible: !!nextAlloc[d]?.stockSummary?.feasible }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventOrders, trussInv, user]);

@@ -1596,12 +1596,26 @@ export default function StudioEventInfo({ ctx }) {
                   // a stored name with a double or odd space in it ("Pushpanjali  LUX" looks the same on screen), so typing
                   // the name exactly said "No matching … Studio client" while Copy a build listed it.
                   const nameWords = qName.split(/\s+/).filter(Boolean);
+                  // ── A LEAD HIDDEN BECAUSE STUDIO HAS THE DEAL BRINGS THAT STUDIO CLIENT ──
+                  // The LMS side drops a lead Studio already holds (lmsDealAlreadyInStudio); the Studio card was then found by NAME only,
+                  // so a client renamed in Studio ("Glocal Holiday Pvt Ltd" -> "Gdhar", owner report 2026-11-13) matched neither list
+                  // and the search said "No matching" for a deal with ten builds. Such a lead's Studio twin (its linked lead number, or
+                  // same phone + a shared function date) now shows whatever its own name is.
+                  const suppressedLeads = (lmsLeads || []).filter(l => lmsDealAlreadyInStudio(l));
+                  const twinOfSuppressed = (c) => suppressedLeads.some(l => {
+                    if (c.lmsLeadId && String(c.lmsLeadId) === String(l?.entryNo)) return true;
+                    const ph = digits10(l?.phone);
+                    if (ph.length !== 10 || digits10(c.phone) !== ph) return false;
+                    const leadDates = new Set((Array.isArray(l?.functions) ? l.functions : []).map(f => String(f?.fnDate || "").slice(0, 10)).filter(Boolean));
+                    const slots = (Array.isArray(c.functions) && c.functions.length) ? c.functions : [{ date: c.eventDate }];
+                    return slots.some(f => leadDates.has(String(f?.date || "").slice(0, 10)));
+                  });
                   const matchesBeforeRepFilter = clientLedger.filter(c => {
                     if (!c.name) return false;
                     const hay = c.name.toLowerCase().replace(/\s+/g, " ");
                     const nameMatch = qName.length >= 2 && nameWords.every(w => hay.includes(w));
                     const phoneMatch = qPhone.length >= 4 && (c.phone || "").includes(qPhone);
-                    if (!(nameMatch || phoneMatch)) return false;
+                    if (!(nameMatch || phoneMatch || twinOfSuppressed(c))) return false;
                     // ── ONE ROW PER DEAL, AND STUDIO IS THE ONE THAT WINS ──
                     // A linked client used to be suppressed here unconditionally, so the LMS card
                     // was the only way to reach the deal. That is now inverted: the LMS side hides
