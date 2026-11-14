@@ -764,7 +764,10 @@ Rules:
     const qty = parseInt(blockForm.qty) || 1;
     if (qty > getAvailableQty(inv, blocks, fn.date)) { alert("Insufficient available qty for this function's date"); return; }
     const sizeClass = String(blockForm.sizeClass || "M").toUpperCase();
-    const newBlocks = addBlock(blocks, blockModal, fn.date, fn.eventOrderId || fn.id, qty, "confirmed");
+    // Tagged "ims-manual" — a deliberate human ops decision, outside Studio's build entirely. Studio's
+    // own sold-deal reconcile (reconcileSoldInventoryBlocks) reads this tag and must never release it
+    // just because Studio's own build doesn't need this item.
+    const newBlocks = addBlock(blocks, blockModal, fn.date, fn.eventOrderId || fn.id, qty, "confirmed", "ims-manual");
     setBlocks(newBlocks);
     saveBlocks?.(newBlocks);
     setFunctions((prev) => prev.map((f) => f.id === blockForm.fnId ? { ...f, items: [...f.items, { invId: blockModal, qty, dept: blockForm.dept, remark: blockForm.remark, sizeClass }] } : f));
@@ -793,7 +796,8 @@ Rules:
     if (!entries.length) return;
     let newBlocks = blocks;
     entries.forEach(([invId, e]) => {
-      newBlocks = addBlock(newBlocks, invId, fn.date, fn.eventOrderId || fn.id, parseInt(e.qty || 1), "confirmed");
+      // Tagged "ims-manual" — see blockItem's identical comment.
+      newBlocks = addBlock(newBlocks, invId, fn.date, fn.eventOrderId || fn.id, parseInt(e.qty || 1), "confirmed", "ims-manual");
     });
     setBlocks(newBlocks);
     saveBlocks?.(newBlocks);

@@ -36,10 +36,18 @@ export function getAvailableQty(item, blocks, date){
   return (item.qty||0)-(item.blocked||0)-blockedOnDate;
 }
 
-export function addBlock(blocks, itemId, date, eventId, qty, status="held"){
+// `source` (optional) tags WHO reserved this — Studio's own sold-deal reconcile (reconcileSoldInventoryBlocks,
+// StudioApp.jsx) reads this tag to decide which blocks entries it's allowed to touch: only ones it wrote
+// itself ("studio-incremental"/"studio-manual"). Anything this function writes under "ims-autoconfirm" (or
+// IMS's own manual Block/Bulk Block feature under "ims-manual") must never be silently released by Studio's
+// reconcile just because Studio's own build doesn't happen to need it — Studio has no visibility into IMS's
+// own AI-fuzzy matching or a human ops decision. Omitted (every existing caller), the entry is byte-identical
+// to before — untagged legacy entries are treated by Studio's reconcile as safely "adoptable" (only ever
+// replaced by a Studio reservation that actually needs the same item/date, never dropped for a zero need).
+export function addBlock(blocks, itemId, date, eventId, qty, status="held", source){
   const next={...blocks};
   if(!next[itemId]) next[itemId]=[];
-  next[itemId]=[...next[itemId],{date,eventId,qty:qty||1,status,createdAt:Date.now()}];
+  next[itemId]=[...next[itemId],{date,eventId,qty:qty||1,status,createdAt:Date.now(),...(source?{source}:{})}];
   return next;
 }
 
@@ -874,7 +882,7 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
       });
       // Write block rows summed by itemId
       byInv.forEach((sumQty, itemId)=>{
-        newBlocks=addBlock(newBlocks,itemId,fn.fnDate,eo.id,sumQty,"confirmed");
+        newBlocks=addBlock(newBlocks,itemId,fn.fnDate,eo.id,sumQty,"confirmed","ims-autoconfirm");
         accepted++;
       });
     });

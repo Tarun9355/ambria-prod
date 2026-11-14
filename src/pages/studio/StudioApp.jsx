@@ -149,6 +149,7 @@ import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CA
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions } from "../../lib/studio/sessionData.js";
+import { reqByDateFrom, ownedIds, planStudioBlocks, SRC_STUDIO_CARD } from "../../lib/studio/soldBlocksPlan.js";
 import { reindexFnIdxObject, reindexFnIdxArray, reindexCompositeKeyObject, ZONE_PIPE_KEY, TRUSS_ZONE_PIPE_KEY, TRANSPORT_COLLAPSE_KEY, FLORAL_CALC_OPEN_KEY } from "../../lib/studio/dealCheckReindex.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
@@ -13754,11 +13755,89 @@ export default function StudioApp() {
     const prevByFn = (cli.dcReservedInventory && typeof cli.dcReservedInventory === "object") ? cli.dcReservedInventory : {};
     const isFirstRun = Object.keys(prevByFn).length === 0;
 
-    const allItemIds = new Set();
-    Object.values(requiredByFn).forEach((m) => Object.keys(m).forEach((id) => allItemIds.add(id)));
-    Object.values(prevByFn).forEach((m) => Object.keys(m).forEach((id) => allItemIds.add(id)));
-    if (allItemIds.size === 0) return;
-    const ids = [...allItemIds];
+    // legacyScopeIds: items required now, or previously reserved per cli's own dcReservedInventory
+    // cache. Kept ONLY as a conservative scope limiter for releasing an ADOPTABLE (untagged, or
+    // ims-autoconfirm-tagged) entry on a date no live function of this deal uses any more — never used
+    // to decide what Studio-OWNED ("studio-incremental"/"studio-manual") entries to release; those are
+    // read straight from the blocks table itself below, not from this cache (owner report, 2026-11-14,
+    // Harpal Singh: dcReservedInventory only ever reflects what THIS incremental path itself has
+    // written — an item reserved once at the initial auto-confirm and never touched by this path again
+    // was never in this cache, so a later edit that dropped it from the build could never see it here
+    // to release it; see planStudioBlocks's own file comment, lib/studio/soldBlocksPlan.js, for the
+    // full design this replaces the old `ids`-driven release logic with).
+    const legacyScopeIds = new Set();
+    Object.values(requiredByFn).forEach((m) => Object.keys(m).forEach((id) => legacyScopeIds.add(id)));
+    Object.values(prevByFn).forEach((m) => Object.keys(m).forEach((id) => legacyScopeIds.add(id)));
+
+    // Read this event's OWN blocks entries straight from the ledger — every item it currently holds
+    // ANY entry for, regardless of source or whether Studio's own build still needs it — plus every
+    // item THIS run's cards currently require (so a brand-new item with no blocks row yet still gets
+    // one created). This is the actual source of truth planStudioBlocks reasons from; legacyScopeIds
+    // above is never used for this. A failed fetch leaves rowsById null; every use below checks for
+    // that and backs off exactly like the old code's own blocks-fetch failure did.
+    let rowsById = null;
+    try {
+      const requiredIds = new Set();
+      Object.values(requiredByFn).forEach((m) => Object.keys(m).forEach((id) => requiredIds.add(id)));
+      // .filter(..., "cs", ...) with an explicit JSON string, not .contains(eventId: ...) — .contains()
+      // on a JSONB ARRAY column (blocks.data is an array of entries, not one object) is a known
+      // supabase-js footgun: passing a plain JS array/object through it doesn't reliably serialize to
+      // the jsonb array-containment shape Postgres's @> operator expects here. Spelling it out avoids that.
+      const [ownRes, reqRes] = await Promise.all([
+        supabase.from("blocks").select("*").filter("data", "cs", JSON.stringify([{ eventId: eo.id }])),
+        requiredIds.size ? supabase.from("blocks").select("*").in("item_id", [...requiredIds]) : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (ownRes.error) throw ownRes.error;
+      if (reqRes.error) throw reqRes.error;
+      rowsById = new Map();
+      [...(ownRes.data || []), ...(reqRes.data || [])].forEach((r) => {
+        rowsById.set(r.item_id ?? r.id, Array.isArray(r.data) ? r.data : []);
+      });
+    } catch (e) {
+      // Best-effort, same posture as the old code's own blocks-fetch failure — a failed fetch here
+      // shouldn't fail the whole regenerate, but it does mean this run can't safely touch blocks at
+      // all (see the `if (!rowsById) return;` right before the planner call, further down).
+      console.error("[reconcile] blocks fetch failed:", e?.message || e);
+    }
+    // Widened ONLY by items this run can PROVE Studio owns a reservation for (classified "card" by
+    // ownedIds, reading the actual `source` tag) — not by every invId a functions row happens to list,
+    // which is what the first attempt at this fix got wrong (it couldn't tell a Studio-matched item
+    // apart from a Deal Check manual item, an IMS ops manual Block, or an IMS AI-fuzzy match that
+    // Studio's own matcher never resolved into a card — see soldBlocksPlan.js's file comment).
+    const itemsSyncIds = rowsById ? [...new Set([...legacyScopeIds, ...ownedIds(rowsById, eo.id, SRC_STUDIO_CARD)])] : [...legacyScopeIds];
+
+    // What Studio's build needs, by date — processedDates only has fresh information this run; dates
+    // belonging to a live function this deal has that simply wasn't part of THIS run are left alone
+    // entirely (liveDates), never released as if abandoned. Computed here (moved up from right before
+    // the blocks-planning section) so the empty-build glitch guard right below can see it BEFORE this
+    // run touches anything else — functions.items, the blocks ledger, and the department log must
+    // never disagree about whether this run is trusted or frozen.
+    const cardReq = reqByDateFrom(fnsToProcess, requiredByFn);
+    const processedDates = new Set(fnsToProcess.map((fn) => fn?.fnDate).filter(Boolean));
+    const liveRaw = collectAllFunctionDataRef.current?.();
+    const liveList = (Array.isArray(liveRaw) && liveRaw.length) ? liveRaw : fnsToProcess;
+    const liveDates = new Set([...liveList.map((fn) => fn?.fnDate).filter(Boolean), ...processedDates]);
+
+    // Empty-build glitch guard: if this run's cards resolve to ZERO required items at all, but this
+    // event still holds Studio-owned ("studio-incremental") reservations on a date this run actually
+    // processed, bail out of the ENTIRE rest of this function — not just the blocks release. Regression-
+    // caught: scoping the freeze to only the blocks section (letting functions.items still get wiped
+    // and department "removed" notifications still fire) left three systems disagreeing with each
+    // other — blocks held, functions.items emptied, heads told the items were removed — with no way to
+    // ever reconcile that drift, since every later run re-detects the identical freeze. Bailing out
+    // completely instead keeps everything consistent: nothing about this deal changes anywhere this
+    // run. A genuinely emptied build is rare enough that it should be confirmed by a human (re-open
+    // Deal Check once the build has real content again, or fix the blocks table by hand if the empty
+    // build is real) rather than acted on from what could be a transient glitch (a stale card list, a
+    // mid-edit autosave).
+    if (rowsById) {
+      const totalCardReq = Object.values(cardReq).reduce((s, m) => s + Object.keys(m).length, 0);
+      const ownedCardOnProcessed = [...rowsById.values()].some((arr) => (arr || []).some((b) => b?.eventId === eo.id && b?.source === SRC_STUDIO_CARD && processedDates.has(b.date)));
+      if (totalCardReq === 0 && ownedCardOnProcessed) {
+        console.warn("[reconcile] build resolved to ZERO required items but event", eo.id, "holds Studio-owned reservations on a processed date — refusing to touch blocks, functions.items or notifications this run (empty-build glitch guard).");
+        return;
+      }
+    }
 
     // Always resync functions.items, regardless of whether anything changed vs. our OWN diff cache
     // (dcReservedInventory) below. That cache only tracks what THIS incremental path itself last
@@ -13816,7 +13895,7 @@ export default function StudioApp() {
         const date = fn.fnDate || "";
         if (!date) continue;
         const row = rowByDate.get(fnRowKey(date, fn.fnType));
-        const nextItems = ids.reduce((acc, id) => {
+        const nextItems = itemsSyncIds.reduce((acc, id) => {
           const qty = req[id] || 0;
           if (qty <= 0) return acc;
           const existingItems = row ? (Array.isArray(row.data?.items) ? row.data.items : []) : [];
@@ -13827,7 +13906,7 @@ export default function StudioApp() {
         }, []);
         if (row) {
           const existingItems = Array.isArray(row.data?.items) ? row.data.items : [];
-          const kept = existingItems.filter((it) => !ids.includes(it.invId));
+          const kept = existingItems.filter((it) => !itemsSyncIds.includes(it.invId));
           // venue/shift/pax resync — this row's own venue object used to be written ONCE, whenever
           // the row was first created, and never touched again: editing the venue in Event Info
           // afterward updated event_orders (and the `blocks` table's own event lookups, which read
@@ -13967,91 +14046,46 @@ export default function StudioApp() {
         }
       });
     });
-    if (!changed) return;
+    // `changed` now gates ONLY the dcReservedInventory cache save and the department notifications
+    // below — never the blocks work itself, which must run on every call regardless (that cache is
+    // not a reliable "did anything change" signal for blocks any more, see legacyScopeIds' own comment
+    // above: it can be empty or stale while a real stale reservation still needs releasing).
+    if (!rowsById) return;   // the blocks fetch above failed — same posture as the old code's own fetch failure.
 
-    // Fetch current blocks rows for every affected item, reconcile only THIS event's own entries.
-    let blockRows = [];
-    try {
-      const { data, error } = await supabase.from("blocks").select("*").in("item_id", ids);
-      if (error) throw error;
-      blockRows = data || [];
-    } catch (e) {
-      // Best-effort — a failed fetch here shouldn't fail the whole regenerate — but silent used to
-      // mean SILENT: nothing logged anywhere, which is exactly what made "IMS still shows 0 blocked
-      // after opening Deal Check" impossible to diagnose from the outside. Logging the real reason
-      // (RLS/permission errors on a table only IMS has ever written to before are the leading
-      // suspect) so it shows up in the browser console instead of vanishing.
-      console.error("[reconcile] blocks fetch failed:", e?.message || e);
-      return;
-    }
+    const plan = planStudioBlocks({
+      eventId: eo.id, rowsById, cardReq, manualReq: {}, processedDates, liveDates,
+      legacyScopeIds, manualReady: false, freezeCard: false, now: Date.now(),
+    });
 
-    const byId = new Map(blockRows.map((r) => [r.item_id, Array.isArray(r.data) ? r.data : []]));
-    // Group by DATE first, not by function — two functions sharing a date (Haldi + Sangeet both
-    // on the same day, say) reuse the same physical pieces set up once at the venue, same reasoning
-    // scanOutOfStockElements's own crossFnReusePool credits for availability. Confirmed live,
-    // 2026-11-02: writing one blocks entry per FUNCTION, keyed only on (eventId, date), had each
-    // same-day function's own iteration delete the date's entry the previous one just wrote and
-    // replace it with its own number — whichever function this loop reached last silently became
-    // the ENTIRE date's reservation, discarding the other's requirement rather than crediting it.
-    // The true reservation for a shared date is the larger of what any one function on it needs,
-    // not each one stomping the last.
-    const reqByDate = {};
-    fnsToProcess.forEach((fn, i) => {
-      const fnIdx = fn.fnIdx ?? i;
-      const req = requiredByFn[fnIdx] || {};
-      const date = fn.fnDate || "";
-      if (!date) return;
-      const slot = reqByDate[date] || (reqByDate[date] = {});
-      Object.entries(req).forEach(([id, qty]) => { slot[id] = Math.max(slot[id] || 0, Number(qty) || 0); });
-    });
-    // Release this event's own reservation on any date that is no longer one of its functions' dates
-    // — a function's date edited in Event Info (or a whole function removed) left its OLD date's
-    // hold in place forever, because the loop below only ever replaces THIS SAME date's entry, never
-    // touches any other. Confirmed live, 2026-11-02 (Anuja Berry): a function moved from 30 Oct to
-    // 3 Nov kept double-holding every one of its ~67 items on BOTH dates — the real date got its
-    // entry refreshed each run, the abandoned date's entry just sat there, permanently starving that
-    // day's stock for every other deal. ids already covers every item this event has ever reserved
-    // (allItemIds merges current AND prevByFn), so this reaches a date dropped entirely, not just one
-    // whose qty changed.
-    const validDates = new Set(Object.keys(reqByDate));
-    ids.forEach((id) => {
-      const arr = (byId.get(id) || []).filter((b) => !(b.eventId === eo.id && !validDates.has(b.date)));
-      byId.set(id, arr);
-    });
-    Object.entries(reqByDate).forEach(([date, req]) => {
-      ids.forEach((id) => {
-        const qty = req[id] || 0;
-        const arr = (byId.get(id) || []).filter((b) => !(b.eventId === eo.id && b.date === date));
-        if (qty > 0) arr.push({ date, eventId: eo.id, qty, status: "confirmed", createdAt: Date.now(), source: "studio-incremental" });
-        byId.set(id, arr);
-      });
-    });
-    try {
-      // Scoped to THIS event, not per-item: unlike IMS's own per-item blocks writer, this is
-      // already one batched multi-row upsert (not a sequential loop with its own ordering race), so
-      // retrying the whole batch together as this event's own reconcile attempt is the proportionate
-      // fix. retryable:false: byId is a merge of a point-in-time blocksRef-equivalent read, not
-      // re-read fresh, same caution as every other blocks/event_orders write in this rollout.
-      const res = await writeWithRetry(
-        () => supabase.from("blocks").upsert(ids.map((id) => ({ id, item_id: id, data: byId.get(id) || [] })), { onConflict: "id" }),
-        { target: `blocks:reconcile:${eo.id}`, label: "blocks reconcile", retryable: false },
-      );
-      if (res.superseded) {
-        // A newer reconcile of this SAME event already took over and owns the ledger
-        // save/department notifications below — falling through here (res.error is undefined on a
-        // superseded result, so `if (error) throw` alone would wrongly read as success) would log a
-        // false "wrote blocks", save requiredByFn into dcReservedInventory as if it landed when the
-        // actual write never did, and double-send the department notifications.
-        console.info("[reconcile] blocks write superseded by a newer reconcile of event", eo.id);
+    if (plan.changedIds.length) {
+      try {
+        // Scoped to THIS event's changed items, not per-item: unlike IMS's own per-item blocks writer,
+        // this is already one batched multi-row upsert (not a sequential loop with its own ordering
+        // race), so retrying the whole batch together as this event's own reconcile attempt is the
+        // proportionate fix. retryable:false: rowsById is a merge of a point-in-time read, not re-read
+        // fresh, same caution as every other blocks/event_orders write in this rollout.
+        const res = await writeWithRetry(
+          () => supabase.from("blocks").upsert(plan.changedIds.map((id) => ({ id, item_id: id, data: plan.nextById.get(id) })), { onConflict: "id" }),
+          { target: `blocks:reconcile:${eo.id}`, label: "blocks reconcile", retryable: false },
+        );
+        if (res.superseded) {
+          // A newer reconcile of this SAME event already took over and owns the ledger
+          // save/department notifications below — falling through here (res.error is undefined on a
+          // superseded result, so `if (error) throw` alone would wrongly read as success) would log a
+          // false "wrote blocks", save requiredByFn into dcReservedInventory as if it landed when the
+          // actual write never did, and double-send the department notifications.
+          console.info("[reconcile] blocks write superseded by a newer reconcile of event", eo.id);
+          return;
+        }
+        if (res.error) throw res.error;
+      } catch (e) {
+        console.error("[reconcile] blocks upsert failed:", e?.message || e);
         return;
       }
-      if (res.error) throw res.error;
-    } catch (e) {
-      console.error("[reconcile] blocks upsert failed:", e?.message || e);
-      return;
+      console.info("[reconcile] blocks: event", eo.id, "changed", plan.changedIds.length, "item(s)", plan.log);
     }
 
-    console.info("[reconcile] wrote blocks for", ids.length, "item(s), event", eo.id);
+    if (!changed) return;
 
     // Persist what we just reserved so the NEXT run diffs against this, not the initial markSold state.
     const nextLedger = (clientLedgerRef.current || clientLedger).map((c) => (c.id === cli.id ? { ...c, dcReservedInventory: requiredByFn } : c));

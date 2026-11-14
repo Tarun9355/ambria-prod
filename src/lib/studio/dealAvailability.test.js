@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { allocateRowAvailability, maxQtyForRow, qtyUsedElsewhereInBuild, kitPartShortfalls } from "./dealAvailability.js";
+import { allocateRowAvailability, maxQtyForRow, qtyUsedElsewhereInBuild, kitPartShortfalls, netOwnReservedBlocksLive } from "./dealAvailability.js";
 import { walkKitUnits } from "../ims/helpers";
 
 const inventory = [{ id: "pod", name: "Round Fibre Podium" }];
@@ -256,5 +256,26 @@ describe("allocateRowAvailability — index matches the old per-call walk", () =
       const id = ids[rnd(ids.length)], pool = rnd(60), date = rnd(3) ? "d1" : undefined;
       expect(allocateRowAvailability(id, fns, inv, { fnIdx, zoneKey, elIdx }, date, pool)).toEqual(oldAlloc(id, fns, { fnIdx, zoneKey, elIdx }, date, pool));
     }
+  });
+});
+
+describe("netOwnReservedBlocksLive — source-agnostic by design (soldBlocksPlan's provenance tags change WHO can release a blocks entry, never whether availability math counts it)", () => {
+  it("nets several of this event's own entries together regardless of source — a card-matched one, a Deal Check manual one, an IMS AI-matched one and an IMS ops manual Block all count toward the same deal's own stock", () => {
+    const blocksDetail = {
+      pod: [
+        { eventId: "eo_1", qty: 2, source: "studio-incremental" },
+        { eventId: "eo_1", qty: 1, source: "studio-manual" },
+        { eventId: "eo_1", qty: 3, source: "ims-autoconfirm" },
+        { eventId: "eo_1", qty: 4, source: "ims-manual" },
+        { eventId: "eo_other", qty: 99, source: "studio-incremental" }, // a different deal — never counted
+      ],
+    };
+    expect(netOwnReservedBlocksLive({ pod: 10 }, "pod", blocksDetail, "eo_1")).toEqual({ pod: 0 });
+    expect(netOwnReservedBlocksLive({ pod: 20 }, "pod", blocksDetail, "eo_1")).toEqual({ pod: 10 }); // 20 - (2+1+3+4)
+  });
+
+  it("an untagged legacy entry (no source at all) is counted exactly the same as a tagged one", () => {
+    const blocksDetail = { pod: [{ eventId: "eo_1", qty: 5 }] };
+    expect(netOwnReservedBlocksLive({ pod: 10 }, "pod", blocksDetail, "eo_1")).toEqual({ pod: 5 });
   });
 });
