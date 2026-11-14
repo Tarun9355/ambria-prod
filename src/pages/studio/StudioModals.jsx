@@ -83,6 +83,7 @@ export default function StudioModals({ ctx }) {
     // Pre-Sold gate #2 (markSold's scanTrussStockShortage, StudioApp.jsx) — truss/platform/batta
     // stock instead of a tagged inventory item. Same hard-block treatment, no per-item fix button.
     trussStockGateModal, setTrussStockGateModal,
+    ledgerStockGateModal, setLedgerStockGateModal,
     // fabricPickerTarget
     fabricPickerTarget, setFabricPickerTarget, fnBuilds, setFnBuilds,
     zoneConfig, setZoneConfig, libItems,
@@ -555,6 +556,37 @@ export default function StudioModals({ ctx }) {
             </div>
             <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,textAlign:"right"}}>
               <button onClick={() => setTrussStockGateModal(null)} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pre-Sold gate #3 (Phase 4, 2026-11-14 inventory-blocks audit) — markSold/applyBookedChanges
+          scan the whole build's real stock LEDGER need (ledgerPreflightShortfalls, every same-day/
+          same-venue function's need summed/maxed the same way the real `blocks` reservation will be,
+          not the pricing-side cross-function reuse credit) against each date's real stock pool, and
+          open this instead of the usual confirm dialog when confirming would reserve more than
+          apply_block_ops will actually grant. Same plain-list treatment as the truss gate above — no
+          per-row fix button, since resolving this means reducing qty, swapping the item, or sourcing
+          more, not picking an alternative for one specific row. Closing it just cancels the confirm. */}
+      {ledgerStockGateModal && ledgerStockGateModal.length > 0 && (
+        <div onClick={() => setLedgerStockGateModal(null)} style={{position:"fixed",inset:0,zIndex:9400,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div onClick={e => e.stopPropagation()} style={{width:"min(520px, 100%)",maxHeight:"80vh",background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            <div style={{padding:"18px 20px",borderBottom:`1px solid ${border}`}}>
+              <div style={{fontSize:16,fontWeight:700,color:"#EF4444",display:"flex",alignItems:"center",gap:8}}>🔗 Can't confirm — stock already committed elsewhere</div>
+              <div style={{fontSize:12.5,color:textS,marginTop:6,lineHeight:1.5}}>These items look available on their own card, but together with another function or booking on the same date, confirming would reserve more than is really in stock. Reduce the qty, swap the item, or check with a department head about sourcing more before this deal can be marked Sold.</div>
+            </div>
+            <div style={{padding:"4px 20px",overflowY:"auto",flex:1}}>
+              {ledgerStockGateModal.map((f, i) => (
+                <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 0",borderBottom:i<ledgerStockGateModal.length-1?`1px solid ${border}`:"none"}}>
+                  <div style={{minWidth:0,fontSize:13,fontWeight:600,color:textP,whiteSpace:"normal"}}>
+                    {f.emoji} {f.date} — {f.detail}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,textAlign:"right"}}>
+              <button onClick={() => setLedgerStockGateModal(null)} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Close</button>
             </div>
           </div>
         </div>

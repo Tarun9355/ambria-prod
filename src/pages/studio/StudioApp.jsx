@@ -106,6 +106,8 @@ import { sheetItemLine } from "../../lib/studio/sheetRounding";
 import { sigHash } from "../../lib/sigHash";
 import { costSheetQtyEdit } from "../../lib/studio/costSheetQtyEdit";
 import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive, kitPartShortfalls, fnUnitQty } from "../../lib/studio/dealAvailability";
+import { ledgerPreflightShortfalls } from "../../lib/studio/ledgerPreflight";
+import { reportStockShortfall, clearStockShortfall } from "../../lib/studio/stockShortfalls";
 import { swapKitPart } from "../../lib/studio/kitPartSwap";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
@@ -2021,6 +2023,11 @@ export default function StudioApp() {
   // truss/platform/batta shortage means picking a different size/material or sourcing more stock,
   // not swapping one inventory item for another).
   const [trussStockGateModal, setTrussStockGateModal] = useState(null);
+  // Pre-Sold gate #3 (Phase 4, 2026-11-14 inventory-blocks audit, finding F4 / "bug 7") — see
+  // ledgerPreflightShortfalls' own comment (lib/studio/ledgerPreflight.js). Same blocking treatment,
+  // same plain-list shape as trussStockGateModal: fixing this means reducing qty, swapping the item,
+  // or sourcing more — not a per-row swap picker, so no Fix button here either.
+  const [ledgerStockGateModal, setLedgerStockGateModal] = useState(null);
   // One flagged row's {fnIdx, zoneKey, idx} while its own function switch is still catching up to
   // openAvailModal — see the effect right below. null the rest of the time.
   const [oosFixPending, setOosFixPending] = useState(null);
@@ -6645,6 +6652,20 @@ export default function StudioApp() {
     return flagged;
   }, [studioFloralData, collectAllFunctionData, activeClientId, clientName]);
 
+  // Pre-Sold gate #3 — see ledgerPreflightShortfalls' own comment (lib/studio/ledgerPreflight.js):
+  // Build's own per-row availability check credits cross-function reuse for PRICING, but the real
+  // `blocks` ledger a sold deal reserves has no such credit — two same-day, same-venue functions each
+  // needing the full qty of an item can each independently price as "fully covered" while the real
+  // ledger need still exceeds what apply_block_ops will actually grant at write time. This catches that
+  // BEFORE Sold, instead of the RPC silently capping it after.
+  const scanLedgerShortfalls = useCallback(() => {
+    const allFns = collectAllFunctionData();
+    const eo = eventOrderFor(eventOrders, activeClientId, clientName);
+    const ownEventIds = [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)].filter(Boolean);
+    const shortfalls = ledgerPreflightShortfalls({ fns: allFns, inventory: imsInventory, blocksDetailByDate, ownEventIds });
+    return shortfalls.map((s) => ({ domain: "ledger", emoji: "🔗", date: s.date, detail: `${s.short}× ${s.name} short of what this date really needs` }));
+  }, [collectAllFunctionData, eventOrders, activeClientId, clientName, imsInventory, blocksDetailByDate]);
+
   // The SAME cross-function reuse quantities calcFunctionCost/calcFunctionBreakdown already build
   // and fold into the Live Estimate/Summary/Deal Check totals for the active function — but Build's
   // own LIVE per-card view (getElPrice/calcElsCost, called directly by StudioBuild.jsx, never
@@ -10160,6 +10181,9 @@ export default function StudioApp() {
       // truss/platform/batta stock instead of a tagged inventory item.
       const trussFlagged = scanTrussStockShortage();
       if (trussFlagged.length > 0) { setTrussStockGateModal(trussFlagged); return; }
+      // Pre-Sold gate #3 — see scanLedgerShortfalls' own comment.
+      const ledgerFlagged = scanLedgerShortfalls();
+      if (ledgerFlagged.length > 0) { setLedgerStockGateModal(ledgerFlagged); return; }
       // Same IMS Calendar category the Build panel's date badge uses (King's = Saya day) - see dateDemand
       // in StudioBuild.jsx. The legacy dateTypes list is only a fallback when datePricing hasn't loaded.
       const dpSave = sharedFloralSettings?.datePricing;
@@ -10250,7 +10274,7 @@ export default function StudioApp() {
       setTimeout(() => setShowSoldConfetti(false), 4000);
       showMsg("🎉 Booking confirmed for " + client.name, "green");
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); }
-  }, [scanOutOfStockElements, scanTrussStockShortage, saveSession, authUser, saveClientLedger, clientName, clientDate, venue, dateTypes, sharedFloralSettings, clientLedger,
+  }, [scanOutOfStockElements, scanTrussStockShortage, scanLedgerShortfalls, saveSession, authUser, saveClientLedger, clientName, clientDate, venue, dateTypes, sharedFloralSettings, clientLedger,
     // Listed because the ₹0 check above reads it. Without this the callback holds whatever
     // eventGrandTotal was when it was last rebuilt — which could warn "nothing has been built" on a
     // deal that has since been priced, or worse, stay silent on one that has been emptied.
@@ -10278,6 +10302,13 @@ export default function StudioApp() {
       // booking" baseline (eventGrandTotal - bookedSystemTotal) to 0 while IMS's copy is still
       // actually out of date. See markSold's identical check for the full reasoning.
       if (blockIfEoNotLoaded()) return false;
+      // After blockIfEoNotLoaded, not before (regression review, 2026-11-14): scanLedgerShortfalls'
+      // own-hold netting depends on eventOrders already being loaded — run too early, with eventOrders
+      // still empty, this deal's own existing reservation would read as nobody's, and a perfectly fine
+      // re-push could flag a false shortfall. The oos/truss gates above have the same pre-existing
+      // exposure (unchanged here, out of scope for this phase) — only the new gate is moved.
+      const ledgerFlagged = scanLedgerShortfalls();
+      if (ledgerFlagged.length > 0) { setLedgerStockGateModal(ledgerFlagged); return false; }
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return false; }
       const { client: savedClient, ledger } = result;
@@ -10323,7 +10354,7 @@ export default function StudioApp() {
       showMsg(`Changes applied for ${freshClient.name}`, "green");
       return true;
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); return false; }
-  }, [activeClient, scanOutOfStockElements, scanTrussStockShortage, saveSession, showMsg, eventGrandTotal, saveClientLedger, pushEventOrderPlan]);
+  }, [activeClient, scanOutOfStockElements, scanTrussStockShortage, scanLedgerShortfalls, saveSession, showMsg, eventGrandTotal, saveClientLedger, pushEventOrderPlan]);
 
   // ── Load client session — VERBATIM ──
   const loadClientSession = useCallback((client, session, landingStep = 3, opts = {}) => {
@@ -14294,8 +14325,38 @@ export default function StudioApp() {
           return `${item?.name || s.item_id} short ${Math.round(s.short)} on ${s.date}`;
         }).join("; ");
         showMsg(`Couldn't fully reserve ${shorts.length} item${shorts.length > 1 ? "s" : ""} for this date — other bookings hold the rest: ${names}${shorts.length > 3 ? "…" : ""}`, "red");
+        // Persistent banner (Phase 4, 2026-11-14 inventory-blocks audit, finding F3) — the toast above
+        // fades in 2s and can fire after the salesperson has already moved to a different client.
+        // Replaces (not merges) this event's own entry wholesale — correct only because every current
+        // caller of this reconcile processes the WHOLE deal at once (fnIdxFilter is always null today,
+        // runDealCheckGenerate's own signature above). A future single-function-only run would need
+        // this to merge per fnIdx instead of overwrite, or it would wipe other functions' shortfalls.
+        reportStockShortfall(eo.id, {
+          clientId: cli.id,
+          clientName: cli.name,
+          items: shorts.map((s) => ({
+            itemId: s.item_id,
+            name: (inventoryList || []).find((x) => x.id === s.item_id)?.name || s.item_id,
+            date: s.date,
+            requested: Math.round(s.requested),
+            granted: Math.round((Number(s.requested) || 0) - (Number(s.short) || 0)),
+            short: Math.round(s.short),
+          })),
+        });
+      } else {
+        // A clean reconcile (nothing short this run) means whatever this deal needed IS now fully
+        // reserved — clear any earlier shortfall report for it rather than leaving a stale banner.
+        clearStockShortfall(eo.id);
       }
       console.info("[reconcile] blocks: event", eo.id, "changed", plan.changedIds.length, "item(s)", plan.log);
+    } else if (manualReady) {
+      // Nothing to change this run — every already-processed item already holds exactly what it
+      // needs (regression review, 2026-11-14: clearStockShortfall only ran inside the branch above,
+      // so a banner from an EARLIER capped run survived forever once the salesperson's own fix made
+      // the plan stop changing, e.g. lowering the qty to what was actually granted last time).
+      // manualReady-gated: manual items aren't re-checked at all when it's false, so an unchanged
+      // plan isn't yet a trustworthy "fully resolved" signal in that case.
+      clearStockShortfall(eo.id);
     }
 
     if (!changed) return;
@@ -15018,6 +15079,7 @@ export default function StudioApp() {
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
     oosGateModal, setOosGateModal, openOosFix, kitPartShorts,
     trussStockGateModal, setTrussStockGateModal,
+    ledgerStockGateModal, setLedgerStockGateModal,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,
