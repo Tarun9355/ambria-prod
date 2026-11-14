@@ -2,6 +2,7 @@ import { Fragment, useState, useRef, useEffect, useLayoutEffect, useMemo } from 
 import { createPortal } from "react-dom";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import NumField from "../../../components/ui/NumField.jsx";
+import FabricColourPick from "../../../components/studio/FabricColourPick.jsx";
 import { applyQtyCeiling } from "../../../lib/studio/qtyCeiling";
 import { smartFilter } from "../../../lib/studio/itemSearch";
 import { unitAllowsDecimal, quantityForUnit } from "../../../lib/studio/qtyUnits";
@@ -514,7 +515,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                             :paletteCols.length>0&&<span title="From the function's Fabric Palette - pick a colour in this icon's menu to change it for this truss" style={{fontSize:10,color:textS,whiteSpace:"nowrap"}}>{paletteCols.join(", ")}</span>}
                           {fabMenu===key&&<>
                             <div className="fixed inset-0 z-40" onClick={()=>setFabMenu(null)} />
-                            <div className={`absolute left-0 top-7 z-50 w-44 rounded-lg border shadow-lg p-1 flex flex-col ${isDark?"bg-gray-800 border-gray-600 text-gray-100":"bg-white border-gray-200 text-gray-800"}`}>
+                            <div className={`absolute left-0 top-7 z-50 w-60 rounded-lg border shadow-lg p-1 flex flex-col ${isDark?"bg-gray-800 border-gray-600 text-gray-100":"bg-white border-gray-200 text-gray-800"}`}>
                               <button type="button" className="text-left text-[12px] px-2 py-1.5 rounded hover:bg-black/5" onClick={()=>{sZ({[key]:on?false:undefined,...(on?{[repKey]:undefined}:{})});setFabMenu(null);}}>
                                 {on?"✓ Selected":"Select"}
                               </button>
@@ -522,14 +523,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                                 title={guestFabricDiscPct>0?`${lbl} is reused — ${guestFabricDiscPct}% off its price`:"Repeat is marked; the discount shows once the client discount toggle is on"}>
                                 {rep?"♻ Repeat on":"♻ Repeat"}
                               </button>
-                              {colourOpts.length>0&&<label className={`flex flex-col gap-1 text-[11px] px-2 pt-1.5 pb-1 border-t mt-1 ${isDark?"border-gray-600":"border-gray-100"} ${on?"":"opacity-40"}`}>
-                                <span>🎨 Colour</span>
-                                <select value={colour} disabled={!on} onChange={e=>{sZ({[colKey]:e.target.value||undefined});setFabMenu(null);}} title={`Pick the colour this truss's ${lbl} goes in (IMS ${lbl} stock)`}
-                                  className={`w-full text-[12px] rounded border px-1.5 py-1 ${isDark?"bg-gray-900 border-gray-600 text-gray-100":"bg-white border-gray-200 text-gray-800"}`}>
-                                  <option value="">{paletteCols.length?`Fabric Palette: ${paletteCols.join(", ")}`:"— From Fabric Palette —"}</option>
-                                  {colourOpts.map(c=><option key={c} value={c}>{palSet.has(c)?`★ ${c}`:c}</option>)}
-                                </select>
-                              </label>}
+                              {on&&colourOpts.length>0&&<div className={`border-t mt-1 pt-1 ${isDark?"border-gray-600":"border-gray-100"}`}>
+                                <FabricColourPick stock={fabricInv?.[stockKey]||[]} paletteCols={paletteCols} value={colour} isDark={isDark} accent={accent} textP={textP} textS={textS} border={border}
+                                  onPick={(c)=>{sZ({[colKey]:c||undefined});setFabMenu(null);}} />
+                              </div>}
                             </div>
                           </>}
                         </div>);})}
