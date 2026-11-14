@@ -6612,7 +6612,12 @@ export default function StudioApp() {
         const result = allocateForDate({}, date, list, trussInv, "studio-presale-check");
         if (list.find((ev) => ev.eoId === SELF_CHECK_EOID)?.shortageBorne) {
           const sm = result[date]?.stockSummary;
-          const bits = [...Object.entries(sm?.overflowPillars || {}).map(([sz, q]) => `${q}× ${sz}ft pillar`), ...Object.entries(sm?.overflowBeams || {}).map(([sz, q]) => `${q}× ${sz}ft beam`)];
+          // overflowPillars/overflowBeams are keyed "<material>|<size>" (trussEngine.js's
+          // computePoolFeasibility, 2026-11-14 — material-aware stock, see its own header comment) —
+          // "iron" is left off the label since it's the common/default case, any other material is
+          // named so the salesperson knows which skeleton is actually short.
+          const label = (k, unit) => { const [mat, sz] = k.split("|"); return `${sz}ft ${unit}${mat !== "iron" ? ` (${mat})` : ""}`; };
+          const bits = [...Object.entries(sm?.overflowPillars || {}).map(([k, q]) => `${q}× ${label(k, "pillar")}`), ...Object.entries(sm?.overflowBeams || {}).map(([k, q]) => `${q}× ${label(k, "beam")}`)];
           flagged.push({ domain: "truss", emoji: "🏗️", date, detail: bits.join(", ") || "stock shortfall" });
         }
       }

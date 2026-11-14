@@ -10,39 +10,64 @@ export const TRUSS_AUDIT_SK = "ambria-ims-truss-audit-v1";
 export const TRUSS_OVERRIDES_SK    = "ambria-ims-truss-overrides-v1";
 export const TRUSS_SIMULATIONS_SK  = "ambria-ims-truss-simulations-v1";
 
+// Per-event, per-(material,size) pillar/beam totals — keyed "<skeletonMat>|<size>", walking the
+// event's own per-truss material tag (ev.trusses[].trussMaterial, resolved via skeletonMaterialKey,
+// same fallback-to-iron-if-unconfigured rule reservedTrussStockOnDate already uses) rather than the
+// event's pre-aggregated, material-BLIND totalPillarsUsed/totalBeamsUsed (which sums every material's
+// same-size pieces into one bucket). Works for both freshly-built AND already-stored historical events
+// — every event carries its own `trusses` array regardless of when it was written, so no migration of
+// stored truss_allocations rows is needed.
+const eventMaterialTotals = (ev, trussInv) => {
+  const out = { pillars: {}, beams: {} };
+  (ev?.trusses || []).forEach((t) => {
+    const mat = skeletonMaterialKey(trussInv, t?.trussMaterial);
+    Object.entries(t?.allocation?.totals?.pillarsUsed || {}).forEach(([sz, q]) => { const k = `${mat}|${sz}`; out.pillars[k] = (out.pillars[k] || 0) + q; });
+    Object.entries(t?.allocation?.totals?.beamsUsed || {}).forEach(([sz, q]) => { const k = `${mat}|${sz}`; out.beams[k] = (out.beams[k] || 0) + q; });
+  });
+  return out;
+};
+
+// CONFIRMED BUG (2026-11-14, owner report): demand/stock here used to be matched by bare SIZE only,
+// reading stock exclusively off trussInv.pillars/trussInv.beams — Iron's own skeleton. A truss built
+// in Aluminium or Pole draws from a COMPLETELY SEPARATE stock table (trussInv.materials[mat]), which
+// can (and does) stock sizes Iron never carries at all (e.g. a 5ft pillar / 6ft beam in Aluminium) —
+// checking that demand against Iron's table read as a dead-zero shortage regardless of how much
+// Aluminium stock actually existed. A single Aluminium zone on one sold deal (Lakshay, 2026-11-22)
+// read as "short 4× 5ft pillar, 6× 6ft beam" even though Aluminium's own pool had 4 and 30 respectively
+// — and because that stored shortage then fed every LATER same-day self-check (Studio's pre-Sold
+// gate, scanTrussStockShortage), it wrongly blocked an unrelated deal (Rao Yashvardhan) from
+// confirming too. Every size is now scoped to the material it actually belongs to throughout.
 const computePoolFeasibility = (eventsForDate, trussInv) => {
-  // Aggregate demand per size
-  const demandPillars = {};
-  const demandBeams = {};
-  const softP = {}, hardP = {}, softB = {}, hardB = {};
+  const demandByMat = { pillars: {}, beams: {} }; // "<mat>|<size>" -> qty
+  const softByMat = { pillars: {}, beams: {} };
+  const hardByMat = { pillars: {}, beams: {} };
   (eventsForDate || []).forEach(ev => {
-    Object.entries(ev.totalPillarsUsed || {}).forEach(([sz, q]) => {
-      demandPillars[sz] = (demandPillars[sz] || 0) + q;
-      if (ev.state === "soft") softP[sz] = (softP[sz] || 0) + q;
-      else hardP[sz] = (hardP[sz] || 0) + q;
-    });
-    Object.entries(ev.totalBeamsUsed || {}).forEach(([sz, q]) => {
-      demandBeams[sz] = (demandBeams[sz] || 0) + q;
-      if (ev.state === "soft") softB[sz] = (softB[sz] || 0) + q;
-      else hardB[sz] = (hardB[sz] || 0) + q;
+    const totals = eventMaterialTotals(ev, trussInv);
+    const bucket = ev.state === "soft" ? softByMat : hardByMat;
+    ["pillars", "beams"].forEach((kind) => {
+      Object.entries(totals[kind]).forEach(([k, q]) => {
+        demandByMat[kind][k] = (demandByMat[kind][k] || 0) + q;
+        bucket[kind][k] = (bucket[kind][k] || 0) + q;
+      });
     });
   });
 
-  const stockPillars = {};
-  const stockBeams = {};
-  Object.entries(trussInv?.pillars || {}).forEach(([sz, p]) => { stockPillars[sz] = Number(p?.stock) || 0; });
-  Object.entries(trussInv?.beams   || {}).forEach(([sz, b]) => { stockBeams[sz]   = Number(b?.stock) || 0; });
+  const stockTableFor = (mat, kind) => (mat === "iron" ? (trussInv?.[kind] || {}) : (trussInv?.materials?.[mat]?.[kind] || {}));
+  const allMats = ["iron", ...Object.keys(trussInv?.materials || {})];
+  const stockByMat = { pillars: {}, beams: {} };
+  allMats.forEach((mat) => {
+    ["pillars", "beams"].forEach((kind) => {
+      Object.entries(stockTableFor(mat, kind)).forEach(([sz, p]) => { stockByMat[kind][`${mat}|${sz}`] = Number(p?.stock) || 0; });
+    });
+  });
 
   let feasible = true;
-  const overflowPillars = {};
-  const overflowBeams = {};
-  Object.entries(demandPillars).forEach(([sz, q]) => {
-    const stock = stockPillars[sz] || 0;
-    if (q > stock) { feasible = false; overflowPillars[sz] = q - stock; }
-  });
-  Object.entries(demandBeams).forEach(([sz, q]) => {
-    const stock = stockBeams[sz] || 0;
-    if (q > stock) { feasible = false; overflowBeams[sz] = q - stock; }
+  const overflowByMat = { pillars: {}, beams: {} };
+  ["pillars", "beams"].forEach((kind) => {
+    Object.entries(demandByMat[kind]).forEach(([k, q]) => {
+      const stock = stockByMat[kind][k] || 0;
+      if (q > stock) { feasible = false; overflowByMat[kind][k] = q - stock; }
+    });
   });
 
   // Sort events by createdAt ascending; last-added bears shortage
@@ -57,47 +82,67 @@ const computePoolFeasibility = (eventsForDate, trussInv) => {
   // If infeasible, walk events in REVERSE order, attributing shortage to last-first
   if (!feasible) {
     // Make a running stock pool
-    const remainingP = { ...stockPillars };
-    const remainingB = { ...stockBeams };
+    const remaining = { pillars: { ...stockByMat.pillars }, beams: { ...stockByMat.beams } };
     // Subtract HARD events first (they have priority)
     sorted.filter(ev => ev.state === "hard").forEach(ev => {
-      Object.entries(ev.totalPillarsUsed || {}).forEach(([sz, q]) => { remainingP[sz] = (remainingP[sz] || 0) - q; });
-      Object.entries(ev.totalBeamsUsed || {}).forEach(([sz, q]) => { remainingB[sz] = (remainingB[sz] || 0) - q; });
+      const totals = eventMaterialTotals(ev, trussInv);
+      ["pillars", "beams"].forEach((kind) => {
+        Object.entries(totals[kind]).forEach(([k, q]) => { remaining[kind][k] = (remaining[kind][k] || 0) - q; });
+      });
     });
     // Now walk SOFT events in createdAt order — first ones fit, later ones bear shortage
     sorted.filter(ev => ev.state === "soft").forEach(ev => {
+      const totals = eventMaterialTotals(ev, trussInv);
       let fits = true;
-      Object.entries(ev.totalPillarsUsed || {}).forEach(([sz, q]) => { if ((remainingP[sz] || 0) < q) fits = false; });
-      Object.entries(ev.totalBeamsUsed || {}).forEach(([sz, q]) => { if ((remainingB[sz] || 0) < q) fits = false; });
+      ["pillars", "beams"].forEach((kind) => {
+        Object.entries(totals[kind]).forEach(([k, q]) => { if ((remaining[kind][k] || 0) < q) fits = false; });
+      });
       if (fits) {
-        Object.entries(ev.totalPillarsUsed || {}).forEach(([sz, q]) => { remainingP[sz] = (remainingP[sz] || 0) - q; });
-        Object.entries(ev.totalBeamsUsed || {}).forEach(([sz, q]) => { remainingB[sz] = (remainingB[sz] || 0) - q; });
+        ["pillars", "beams"].forEach((kind) => {
+          Object.entries(totals[kind]).forEach(([k, q]) => { remaining[kind][k] = (remaining[kind][k] || 0) - q; });
+        });
       } else {
         ev.shortageBorne = true;
       }
     });
-    // If hard events themselves exceed stock, mark the LAST hard event
-    let hardOverflow = false;
-    Object.values(remainingP).forEach(v => { if (v < 0) hardOverflow = true; });
-    Object.values(remainingB).forEach(v => { if (v < 0) hardOverflow = true; });
-    if (hardOverflow) {
-      const hardSorted = sorted.filter(ev => ev.state === "hard");
-      if (hardSorted.length > 0) hardSorted[hardSorted.length - 1].shortageBorne = true;
+    // If hard events themselves exceed stock on some (material,size) key, attribute THAT key's
+    // overflow to the newest hard event that actually drew from it — not just "the newest hard event
+    // overall, whichever material it's for" (confirmed bug, 2026-11-14, second pass: an Iron-only
+    // self-check sorting last by createdAt was wrongly blamed for a different, already-booked event's
+    // pre-existing Aluminium shortage it had no part in, purely because it happened to be newest).
+    const negativeKeys = [];
+    ["pillars", "beams"].forEach((kind) => {
+      Object.entries(remaining[kind]).forEach(([k, v]) => { if (v < 0) negativeKeys.push([kind, k]); });
+    });
+    if (negativeKeys.length) {
+      const hardSorted = sorted.filter(ev => ev.state === "hard"); // createdAt ascending
+      negativeKeys.forEach(([kind, k]) => {
+        for (let i = hardSorted.length - 1; i >= 0; i--) {
+          const totals = eventMaterialTotals(hardSorted[i], trussInv);
+          if ((totals[kind][k] || 0) > 0) { hardSorted[i].shortageBorne = true; break; }
+        }
+      });
     }
   }
 
+  // External shape for demand/stock/soft/hard stays Iron-only, plain-size-keyed — backward compatible
+  // with StructurePlanningTab's stock bars, which only ever displayed Iron (a pre-existing, separate
+  // gap — those bars still don't show Aluminium/Pole — not expanded here). overflowPillars/overflowBeams
+  // stay material-tagged ("<mat>|<size>") — scanTrussStockShortage (StudioApp.jsx) is their one
+  // consumer and needs the material to tell the salesperson something actionable.
+  const stripIron = (byMatDict) => Object.fromEntries(Object.entries(byMatDict).filter(([k]) => k.startsWith("iron|")).map(([k, v]) => [k.slice(5), v]));
   return {
     feasible,
-    demandPillars,
-    demandBeams,
-    stockPillars,
-    stockBeams,
-    softPillars: softP,
-    hardPillars: hardP,
-    softBeams: softB,
-    hardBeams: hardB,
-    overflowPillars,
-    overflowBeams,
+    demandPillars: stripIron(demandByMat.pillars),
+    demandBeams: stripIron(demandByMat.beams),
+    stockPillars: stripIron(stockByMat.pillars),
+    stockBeams: stripIron(stockByMat.beams),
+    softPillars: stripIron(softByMat.pillars),
+    hardPillars: stripIron(hardByMat.pillars),
+    softBeams: stripIron(softByMat.beams),
+    hardBeams: stripIron(hardByMat.beams),
+    overflowPillars: overflowByMat.pillars,
+    overflowBeams: overflowByMat.beams,
   };
 };
 
