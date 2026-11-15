@@ -348,6 +348,12 @@ describe("kitPartShortfalls — a part inside a kit that is short on the date", 
   it("without a target row the kit is judged alone", () => {
     expect(kitPartShortfalls(inv[0], 3, undefined, [], inv, null, D, availFor)).toEqual([{ id: "cover", name: "Cushion Cover", need: 12, short: 2 }]);
   });
+  it("a fractional per-kit qty (from a directly-edited '× Kits = total' column) that divides unevenly doesn't false-flag a part short from ordinary floating-point noise", () => {
+    // 29 total over 7 kits → 29/7 per kit; 29/7*7 is 29.000000000000004 in plain JS, which must
+    // not read as "short by a sliver" against exactly 29 free.
+    const fns = [{ fnDate: D, zoneElements: { lounge: [{ invId: "kit", qty: 7, kitOverrides: [{ itemId: "cover", qty: 29 / 7 }] }] } }];
+    expect(kitPartShortfalls(inv[0], 7, [{ itemId: "cover", qty: 29 / 7 }], fns, inv, null, D, (it) => (it.id === "cover" ? 29 : free[it.id]))).toEqual([]);
+  });
 });
 
 // ── The cached booking-row index gives exactly what the old per-call walk gave ──

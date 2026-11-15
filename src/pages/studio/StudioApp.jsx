@@ -13503,9 +13503,16 @@ export default function StudioApp() {
   // think to look for.
   const allocateSplit = useCallback((total, ids) => {
     const n = ids.length;
-    const base = Math.floor(total / n);
-    const remainder = total - base * n;   // 0..n-1 leftover units
-    return ids.map((id, i) => ({ id, qty: base + (i < remainder ? 1 : 0) }));
+    // A kit component's own per-kit qty can be fractional now (a user directly edited its
+    // "× Kits = total" column) — splitting it still floors/distributes the WHOLE part the same
+    // way as any other split, with any leftover fraction landing on the first line alone, so the
+    // allocation always sums back to the exact total instead of silently rounding it up (e.g. a
+    // whole-number floor+remainder split of 2.5 across 2 items used to give 2+1=3, not 2.5).
+    const whole = Math.floor(total);
+    const frac = total - whole;
+    const base = Math.floor(whole / n);
+    const remainder = whole - base * n;   // 0..n-1 leftover whole units
+    return ids.map((id, i) => ({ id, qty: base + (i < remainder ? 1 : 0) + (i === 0 ? frac : 0) }));
   }, []);
 
   const saveAvailSplit = useCallback((pickedIds) => {

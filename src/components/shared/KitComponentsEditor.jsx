@@ -10,6 +10,32 @@ import { thumbUrl } from "../../lib/studio/thumb.js";
 import { itemTakesChoices, partChoices, applyPartChoicePicks, ELEMENT_PREF_LABELS } from "../../lib/studio/elementPrefs.js";
 import { matchKit } from "../../lib/studio/kitVariants.js";
 
+// The "× Kits = total" figure, editable — local draft state so a user can clear the field and
+// retype a multi-digit total without React's controlled-input value snapping back mid-edit, and so
+// it commits once (on blur/Enter) instead of on every keystroke (typing "5" over a selected "6"
+// commits once; backspacing "6" then typing "5" would otherwise briefly commit "" then "5", or on an
+// uncommitted empty string, nothing at all until a real digit follows). Defined at module scope
+// (not nested in KitComponentsEditor) so it keeps its own draft state across the parent's re-renders
+// instead of remounting on every one of them.
+function TotalQtyInput({ qtyMultiplier, computedTotal, onCommit, border, cardBg, textP }) {
+  const [draft, setDraft] = useState(null); // null = not actively editing, show computedTotal
+  const commit = () => {
+    if (draft !== null) {
+      const v = parseFloat(draft);
+      if (isFinite(v) && v >= 0) onCommit(v);
+    }
+    setDraft(null);
+  };
+  return (
+    <input type="number" min="0" step="any" value={draft !== null ? draft : String(computedTotal)}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+      title="Total across every kit in this row - edit this directly to set an exact total without having to change the per-kit qty above"
+      style={{ width: 46, padding: "1px 4px", borderRadius: 5, border: `1px solid ${border}`, background: cardBg, color: textP, fontSize: 11.5, textAlign: "center" }} />
+  );
+}
+
 // Shared "expand a kit element to its components, with editable per-instance counts" block —
 // used by Library's Element Breakdown (ManageLibrary.jsx) and the Build page (StudioBuild.jsx) so
 // a kit shows the same count-customizable breakdown Deal Check already has (DealCheckOverlay.jsx's
@@ -58,6 +84,17 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // contributes ₹0 to the rental total below).
   const comps = Array.isArray(overrides) ? overrides : (Array.isArray(item.subItems) ? item.subItems.map(s => (s.patternId ? { patternId: s.patternId, qty: Number(s.qty) || 1, realPct: s.realPct, size: s.size } : { itemId: s.itemId, qty: Number(s.qty) || 1 })) : []);
   const isEdited = Array.isArray(overrides);
+  // Rounds to 2dp for display only — the underlying qty (below) can be fractional once a user
+  // edits the "× Kits" total directly, so the per-kit figure that produced it doesn't land on a
+  // clean whole number (e.g. 5 total ÷ 2 kits = 2.5 per kit).
+  // Deliberately NOT rounded at commit time (storing the raw `total / qtyMultiplier` division) —
+  // rounding HERE first, then multiplying back up by the kit count everywhere this qty is read,
+  // compounds a NEW error of its own (up to kits × 5e-7) that can exceed walkKitUnits' own 6dp
+  // tolerance and overshoot the typed total (regression review, 2026-11-15: 5÷3 kits stored
+  // commit-rounded as 1.666667, walked back out as 5.000001 — enough to read as "not short" when it
+  // should be, or vice versa). walkKitUnits (lib/ims/helpers.js) is the single place that rounds,
+  // and only needs the raw division to fully bound the ordinary (t/m)*m floating-point noise.
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
   // a parts list that is exactly a kit picked in Exchange Kit is named, not called "edited" (lib/studio/kitVariants.js)
   const pickedKit = isEdited ? matchKit(overrides, item, imsInventory) : null;
   const kitBase = Number(item.kitBase) || 0;
@@ -169,7 +206,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
   // row in the kit agrees about that, so the columns stay aligned.
   const rowGrid = {
     display: "grid",
-    gridTemplateColumns: `22px minmax(0,1fr) ${qtyMultiplier > 1 ? "78px " : ""}86px 16px`,
+    gridTemplateColumns: `22px minmax(0,1fr) ${qtyMultiplier > 1 ? "92px " : ""}86px 16px`,
     alignItems: "center", gap: 6, fontSize: 12,
   };
   // ── Category-appropriate controls, shared by both row types ──
@@ -246,13 +283,20 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                 {patDeleted && <span title={catalogueDeletedTitle({ self: true, kind: "recipe", name: pat.name, deletedAt: pat.catalogueDeletedAt, parts: [] })} style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, fontWeight: 700, whiteSpace: "nowrap", background: "rgba(239,68,68,0.15)", color: "#EF4444" }}>⚠ deleted</span>}
                 <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }} title="per kit">
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: Math.max(0, patQty - 1) } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>−</span>
-                  <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>{patQty}{studioUnitLabel(pat?.unit)}</span>
+                  <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>{round2(patQty)}{studioUnitLabel(pat?.unit)}</span>
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: patQty + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
                 </div>
                 {sizeControls(c, ci, pat)}
                 {pat && ratioControls(c, ci, recipeModeDefault(pat, pat?.sub))}
                 </div>
-                {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 11.5, whiteSpace: "nowrap", textAlign: "right" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{patQty * qtyMultiplier}</b></span>}
+                {qtyMultiplier > 1 && (
+                  <span style={{ display: "flex", alignItems: "center", gap: 3, justifyContent: "flex-end", fontSize: 11.5, color: textS, whiteSpace: "nowrap" }}>
+                    × {round2(qtyMultiplier)} =
+                    <TotalQtyInput qtyMultiplier={qtyMultiplier} computedTotal={round2(patQty * qtyMultiplier)}
+                      onCommit={(v) => setComp(ci, { qty: v / qtyMultiplier })}
+                      border={border} cardBg={cardBg} textP={textP} />
+                  </span>
+                )}
                 {(() => { const rr = recipeRateFor(pat, pat?.sub, c); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="recipe Studio rate (all-in)"><b style={{ color: "#EC4899" }}>🌸 ₹{Math.round(rr * patQty * scale).toLocaleString("en-IN")}</b></span>; })()}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
@@ -314,7 +358,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   {cItem && onCheckChoices && itemTakesChoices(cItem) && (
                     // An overlay or a cushion cover inside the kit: the stock icon names up to three designs in order of preference (Planning decides which one is used),
                     // exactly as it does on an element of its own.
-                    <span onClick={() => onCheckChoices(cItem, c, (picks) => setComps(comps.map((x, i) => (i === ci ? applyPartChoicePicks(x, picks) : x))), { need: qtyEach * qtyMultiplier })}
+                    <span onClick={() => onCheckChoices(cItem, c, (picks) => setComps(comps.map((x, i) => (i === ci ? applyPartChoicePicks(x, picks) : x))), { need: round2(qtyEach * qtyMultiplier) })}
                       title="Check what is free and name up to 3 designs for this part in order of preference - Planning decides which one is used" style={{ cursor: "pointer", fontSize: 12, opacity: 0.5, padding: "0 1px", lineHeight: 1 }}><IconBox size={12}/></span>
                   )}
                   {cItem && onCheckAvailability && !(onCheckChoices && itemTakesChoices(cItem)) && (
@@ -333,17 +377,24 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                 </span>
                 <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }} title="per kit">
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: Math.max(0, qtyEach - 1) } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>−</span>
-                  <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>×{qtyEach}</span>
+                  <span style={{ color: textP, minWidth: 20, textAlign: "center" }}>×{round2(qtyEach)}</span>
                   <span onClick={() => setComps(comps.map((x, i) => i === ci ? { ...x, qty: qtyEach + 1 } : x))} style={{ cursor: "pointer", color: textS, fontSize: 14, padding: "0 4px", userSelect: "none" }}>+</span>
                 </div>
                 </div>
-                {qtyMultiplier > 1 && <span style={{ color: textS, fontSize: 11.5, whiteSpace: "nowrap", textAlign: "right" }}>× {qtyMultiplier} = <b style={{ color: textP }}>{qtyEach * qtyMultiplier}</b></span>}
-                {cItem ? (() => { const marked = Math.round(cRate * scale); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="client price (rental + margin, all-in)"><b style={{ color: indigo }}>₹{(marked * qtyEach).toLocaleString("en-IN")}</b></span>; })() : <span/>}
+                {qtyMultiplier > 1 && (
+                  <span style={{ display: "flex", alignItems: "center", gap: 3, justifyContent: "flex-end", fontSize: 11.5, color: textS, whiteSpace: "nowrap" }}>
+                    × {round2(qtyMultiplier)} =
+                    <TotalQtyInput qtyMultiplier={qtyMultiplier} computedTotal={round2(qtyEach * qtyMultiplier)}
+                      onCommit={(v) => setComp(ci, { qty: v / qtyMultiplier })}
+                      border={border} cardBg={cardBg} textP={textP} />
+                  </span>
+                )}
+                {cItem ? (() => { const marked = Math.round(cRate * scale); return <span style={{ color: textS, whiteSpace: "nowrap", opacity: 0.85, textAlign: "right" }} title="client price (rental + margin, all-in)"><b style={{ color: indigo }}>₹{Math.round(marked * qtyEach).toLocaleString("en-IN")}</b></span>; })() : <span/>}
                 <span onClick={() => setComps(comps.filter((_, i) => i !== ci))} style={{ color: "#EF4444", cursor: "pointer", fontSize: 14, padding: "0 2px" }} title="Remove component">×</span>
               </div>
               {/* The part's named designs, in order - the 1st is the one priced and held. Tapping them reopens the picker. */}
               {cItem && onCheckChoices && partChoices(c).length >= 2 && (
-                <div role="button" tabIndex={0} onClick={() => onCheckChoices(cItem, c, (picks) => setComps(comps.map((x, i) => (i === ci ? applyPartChoicePicks(x, picks) : x))), { need: qtyEach * qtyMultiplier })}
+                <div role="button" tabIndex={0} onClick={() => onCheckChoices(cItem, c, (picks) => setComps(comps.map((x, i) => (i === ci ? applyPartChoicePicks(x, picks) : x))), { need: round2(qtyEach * qtyMultiplier) })}
                   title="Choices in order - Planning decides which one is used. Tap to change." style={{ display: "flex", flexDirection: "column", gap: 3, margin: "2px 0 4px 28px", cursor: "pointer" }}>
                   {partChoices(c).map((ch, i) => {
                     const it = (imsInventory || []).find((x) => x.id === ch.id);
@@ -361,7 +412,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
               {/* An overlay / cushion cover part with no alternative designs named: no preference yet - in red; tapping it opens the same picker. */}
               {cItem && onCheckChoices && itemTakesChoices(cItem) && partChoices(c).length < 2 && (
                 <div style={{ margin: "2px 0 4px 28px" }}>
-                  <span role="button" tabIndex={0} onClick={() => onCheckChoices(cItem, c, (picks) => setComps(comps.map((x, i) => (i === ci ? applyPartChoicePicks(x, picks) : x))), { need: qtyEach * qtyMultiplier })}
+                  <span role="button" tabIndex={0} onClick={() => onCheckChoices(cItem, c, (picks) => setComps(comps.map((x, i) => (i === ci ? applyPartChoicePicks(x, picks) : x))), { need: round2(qtyEach * qtyMultiplier) })}
                     title="No alternative designs named - tap to pick up to 3 in order of preference. Planning decides which one is used."
                     style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#EF4444", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 6, padding: "2px 8px", cursor: "pointer" }}>● Not selected preference</span>
                 </div>
@@ -469,7 +520,7 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
         return (
           <div style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid rgba(99,102,241,0.2)`, display: "flex", justifyContent: "space-between", fontSize: 11.5 }}>
             <span style={{ color: textS }}>Kit total = addon ₹{itemsDisp.toLocaleString("en-IN")}{kitBaseDisp > 0 ? ` + main ₹${kitBaseDisp.toLocaleString("en-IN")}` : ""}{flowerDisp > 0 ? ` + recipe ₹${flowerDisp.toLocaleString("en-IN")}` : ""} = ₹{partsDisp.toLocaleString("en-IN")}{qtyMultiplier > 1 ? ` × ${qtyMultiplier}` : ""}</span>
-            <span style={{ color: indigo, fontWeight: 700 }}>{fmt ? fmt(partsDisp * qtyMultiplier) : `₹${(partsDisp * qtyMultiplier).toLocaleString("en-IN")}`}</span>
+            <span style={{ color: indigo, fontWeight: 700 }}>{fmt ? fmt(Math.round(partsDisp * qtyMultiplier)) : `₹${Math.round(partsDisp * qtyMultiplier).toLocaleString("en-IN")}`}</span>
           </div>
         );
       })()}

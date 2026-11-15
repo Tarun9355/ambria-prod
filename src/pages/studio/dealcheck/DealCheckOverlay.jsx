@@ -1022,7 +1022,11 @@ export default function DealCheckOverlay({ ctx }) {
                   // just a part of a kit unit, so it must shrink the same way or the "to load" peak
                   // fix above would show e.g. 12 kits but the components list under it would still sum
                   // to 36 kits' worth of parts once merged across the same sibling functions.
-                  const cqNet = perKit * Math.max(0, qty - reusedQty);
+                  // Rounded — a component's per-kit qty can be fractional now (a user directly
+                  // edited a kit's "× Kits = total" column), and this physical count is what Dept
+                  // Ops/the Dept PDF print verbatim, so raw floating-point noise (15/11*11 style)
+                  // must not reach ops as e.g. "14.999999999999998".
+                  const cqNet = Math.round(perKit * Math.max(0, qty - reusedQty) * 100) / 100;
                   const cr = imsField.rentalCost(ci);
                   return { ci, name: ci.name, imsId: ci.id, qty: cqNet, unit: cr, total: cr * cq, sub: imsField.subcategory(ci) || "", photo: imsField.photos(ci)[0] || "" };
                 }).filter(Boolean);
