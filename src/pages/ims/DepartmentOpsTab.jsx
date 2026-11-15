@@ -1086,6 +1086,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     });
     return m;
   }, [amendRequests, eventOrders, lockNow]);
+  // Department-wise (owner ask 2026-11-15): a change shows only in the department it happened in - the calendar marks an event
+  // when the department being planned changed on it, and the list inside lists that department's changes.
+  const deptChangesOf = (eoId, d = dept) => (changedByEo.get(eoId) || []).filter((c) => c.dept === d);
   // the chip's tooltip: "Changed in the last 48 h — Floral: Inventory blocked, Actuals · Anmol, 2 h ago"
   // a line of the "changed in the last 48 hours" list, clicked: that department (if this person can open it), the planning
   // view, the block that changed open, and the page scrolled to it
@@ -3880,6 +3883,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                     ? "bg-blue-50 text-blue-700 font-semibold shadow-[0_1px_2px_rgba(37,99,235,0.14),0_4px_10px_-4px_rgba(37,99,235,0.3)]"
                     : "text-gray-600 font-medium hover:text-gray-900 hover:bg-gray-50 hover:-translate-y-0.5 hover:shadow-[0_1px_2px_rgba(16,24,40,0.06),0_4px_10px_-6px_rgba(16,24,40,0.2)]")}>
                 {DEPT_ICON[d]} {d}
+                {sel && d !== dept && deptChangesOf(sel.id, d).length > 0 && (
+                  <span title={`${d}: changed in the last 48 h`} aria-label={`${d} changed in the last 48 hours`} className="ml-1 self-start w-1.5 h-1.5 rounded-full bg-amber-500" />
+                )}
               </button>
             );
           })}
@@ -4059,7 +4065,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                             {/* A dot only where there is something — the tile tint already says
                                 it too, but the dot survives at a glance when the row is scanned
                                 rather than read. */}
-                            <span className={"w-1.5 h-1.5 rounded-full " + (on ? "bg-white" : evs.some(eo => changedByEo.has(eo.id)) ? "bg-amber-500" : evs.length ? "bg-blue-500" : "bg-transparent")} />
+                            <span className={"w-1.5 h-1.5 rounded-full " + (on ? "bg-white" : evs.some(eo => deptChangesOf(eo.id).length > 0) ? "bg-amber-500" : evs.length ? "bg-blue-500" : "bg-transparent")} />
                           </button>
                         );
                       })}
@@ -4090,7 +4096,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                     <span className="flex items-center gap-1.5 min-w-0">
                                       <span className="text-[15px] font-semibold text-gray-900 leading-snug truncate">{eo.clientName || "Event"}</span>
                                       <span className={`shrink-0 text-[9.5px] font-bold px-1 rounded ${vc.bg} ${vc.text}`}>{vc.code}</span>
-                                      {changedByEo.has(eo.id) && <ChangedMark tip={changeTip(changedByEo.get(eo.id))} />}
+                                      {deptChangesOf(eo.id).length > 0 && <ChangedMark tip={changeTip(deptChangesOf(eo.id))} />}
                                     </span>
                                     {/* Venue and shift, because that is what an event_order actually
                                         carries — there are no start/end times on one to show. */}
@@ -4141,11 +4147,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                               // THIS cell's own date's function — see fnForDate's comment.
                               const vc = venueCalendarColor(settings, fnForDate(eo, ds)?.venue || eo.venue || "");
                               return (
-                                <button key={eo.id} onClick={() => setSelId(eo.id)} title={changedByEo.has(eo.id) ? changeTip(changedByEo.get(eo.id)) : `Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
+                                <button key={eo.id} onClick={() => setSelId(eo.id)} title={deptChangesOf(eo.id).length ? changeTip(deptChangesOf(eo.id)) : `Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
                                   className={`w-full flex items-center gap-1 text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
                                   <span className="shrink-0 text-[9px] font-bold opacity-70">{vc.code}</span>
                                   <span className="min-w-0 truncate">{eo.clientName || "Event"}</span>
-                                  {changedByEo.has(eo.id) && <ChangedMark tip={changeTip(changedByEo.get(eo.id))} />}
+                                  {deptChangesOf(eo.id).length > 0 && <ChangedMark tip={changeTip(deptChangesOf(eo.id))} />}
                                 </button>
                               );
                             })}
@@ -4615,16 +4621,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
             {/* ── CHANGED IN THE LAST 48 HOURS ── (owner ask 2026-11-15) what changed on this event, where and by whom - this
                 department's own lines first and clickable (they open their block); other departments' for context. */}
             {(() => {
-              const all = changedByEo.get(sel.id) || [];
-              if (!all.length) return null;
-              const mine = all.filter(c => c.dept === dept), others = all.filter(c => c.dept !== dept);
-              const list = [...mine, ...others];
+              const list = deptChangesOf(sel.id);
+              if (!list.length) return null;
               return (
                 <div className="rounded-xl bg-amber-50 ring-1 ring-amber-200 px-3.5 py-3" role="status">
                   <div className="flex items-center gap-2">
                     <span aria-hidden="true" className="w-6 h-6 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-[13px]">⚠</span>
                     <div className="text-[13px] font-semibold text-amber-900">Changed in the last 48 hours</div>
-                    <span className="ml-auto text-[11px] text-amber-700 tabular-nums">{`${all.length} ${all.length === 1 ? "change" : "changes"}${mine.length ? ` · ${dept} ${mine.length}` : ""}`}</span>
+                    <span className="ml-auto text-[11px] text-amber-700 tabular-nums">{`${list.length} ${list.length === 1 ? "change" : "changes"}`}</span>
                   </div>
                   {/* every line of the 48 hours, no "show all" - the list scrolls past a few lines; anything older is in the
                       Activity log (owner ask 2026-11-15) */}
@@ -4634,7 +4638,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       const canGo = deptOptions.includes(c.dept);
                       const body = (
                         <>
-                          <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (own ? "bg-amber-200 text-amber-900" : "bg-white text-gray-500 ring-1 ring-gray-200")}>{c.dept || "—"}</span>
                           <span className="font-semibold text-gray-900 shrink-0">{c.label}</span>
                           {c.text && <span className="min-w-0 truncate text-gray-600">· {c.text}</span>}
                           {c.times > 1 && <span className="shrink-0 text-[10px] font-semibold text-amber-800 bg-amber-100 rounded px-1">×{c.times}</span>}
