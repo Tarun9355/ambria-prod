@@ -97,7 +97,7 @@ export const UI_HI = {
 const UI_WORDS = {
   // the "changed in the last 48 hours" marks (owner ask 2026-11-15)
   furniture: "फ़र्नीचर", lighting: "लाइटिंग", tenting: "टेंटिंग", fabric: "फ़ैब्रिक", floral: "फ़्लोरल", structure: "स्ट्रक्चर",
-  kit: "किट", by: "द्वारा", added: "जोड़े", removed: "हटाए", switched: "बदले", ago: "पहले", actuals: "असल खर्च", updated: "अपडेट", yesterday: "कल", latest: "ताज़ा", change: "बदलाव", changes: "बदलाव", open: "खोलें",
+  kit: "किट", short: "कम", more: "और", by: "द्वारा", added: "जोड़े", removed: "हटाए", switched: "बदले", ago: "पहले", actuals: "असल खर्च", updated: "अपडेट", yesterday: "कल", latest: "ताज़ा", change: "बदलाव", changes: "बदलाव", open: "खोलें",
   pcs: "पीस", pc: "पीस", nos: "नग", sqft: "वर्ग फुट", bundle: "बंडल", bundles: "बंडल", dihari: "दिहाड़ी", qty: "मात्रा", total: "कुल",
   truck: "ट्रक", trucks: "ट्रक", item: "आइटम", items: "आइटम", zone: "ज़ोन", zones: "ज़ोन", day: "दिन", days: "दिन", event: "इवेंट",
   events: "इवेंट", crew: "क्रू", worker: "वर्कर", workers: "वर्कर", labour: "लेबर", labours: "लेबर", full: "फ़ुल", stock: "स्टॉक",
