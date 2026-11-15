@@ -100,16 +100,42 @@ export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platfo
     return fn ? `${fn.type || fn.fnType || `Function ${fnIdx + 1}`}${(fn.date || fn.fnDate) ? ` · ${fn.date || fn.fnDate}` : ""}` : `Function ${fnIdx + 1}`;
   };
 
+  // One section per material actually present in trussInv (iron + every key in trussInv.materials —
+  // same dynamic set trussEngine.js's own computePoolFeasibility iterates as `allMats`, so a newly
+  // added material shows up here automatically, no hardcoding). Demand now reads the material-tagged
+  // demandByMaterial fields (trussEngine.js, 2026-11-15) instead of the iron-only demandPillars/
+  // demandBeams this used to be limited to — this is the fix for TRUSS not showing Pole/Aluminium
+  // stock at all (BATTA, right next to it, already showed all 3 materials). A material with no size
+  // entries in either its pillars or beams stock table (e.g. not configured yet) is filtered out
+  // entirely — no empty, confusing section for it.
   const trussStockBars = useMemo(() => {
-    if (!trussInv) return { pillars: [], beams: [] };
+    if (!trussInv) return [];
     const sm = dateEntryByDomain.truss?.stockSummary;
-    const build = (kind) => Object.entries(trussInv[kind] || {}).map(([sz, item]) => {
-      const total = Number(item?.stock) || 0;
-      const used = Number((kind === "pillars" ? sm?.demandPillars : sm?.demandBeams)?.[sz]) || 0;
-      const pct = total > 0 ? Math.round((used / total) * 100) : 0;
-      return { size: sz, total, used, pct, color: pct >= 100 ? "red" : pct >= 85 ? "amber" : pct >= 50 ? "yellow" : "green" };
-    }).sort((a, b) => Number(b.size) - Number(a.size));
-    return { pillars: build("pillars"), beams: build("beams") };
+    const allMats = ["iron", ...Object.keys(trussInv?.materials || {})];
+    const stockTableFor = (mat, kind) => (mat === "iron" ? (trussInv?.[kind] || {}) : (trussInv?.materials?.[mat]?.[kind] || {}));
+    // demandPillars/demandBeams (Iron-only, plain-size-keyed) have existed on every saved
+    // stockSummary since before this change; demandByMaterial only exists on a snapshot recomputed
+    // since 2026-11-15. Most already-booked dates are stable and won't get a fresh recompute for a
+    // while (nothing changed about them), so their stored stockSummary has no demandByMaterial at
+    // all yet. Without this fallback, Iron's own bars would wrongly read 0-used (and look falsely
+    // fully available) on every one of those dates until something nudges a recompute — a real
+    // regression, since Iron used to read correctly everywhere (regression review finding,
+    // 2026-11-15). Pole/Aluminium have no legacy field to fall back to — they simply weren't shown
+    // at all before this change, so reading 0 for them on an unrecomputed date is the same
+    // "not yet accurate" gap that already existed, not something this fix makes worse.
+    const legacyDemandFor = (kind) => (kind === "pillars" ? sm?.demandPillars : sm?.demandBeams);
+    return allMats.map((mat) => {
+      const build = (kind) => Object.entries(stockTableFor(mat, kind)).map(([sz, item]) => {
+        const total = Number(item?.stock) || 0;
+        const demandDict = kind === "pillars" ? sm?.demandByMaterial?.pillars : sm?.demandByMaterial?.beams;
+        const used = sm?.demandByMaterial
+          ? Number(demandDict?.[`${mat}|${sz}`]) || 0
+          : (mat === "iron" ? Number(legacyDemandFor(kind)?.[sz]) || 0 : 0);
+        const pct = total > 0 ? Math.round((used / total) * 100) : 0;
+        return { size: sz, total, used, pct, color: pct >= 100 ? "red" : pct >= 85 ? "amber" : pct >= 50 ? "yellow" : "green" };
+      }).sort((a, b) => Number(b.size) - Number(a.size));
+      return { mat, pillars: build("pillars"), beams: build("beams") };
+    }).filter((m) => m.pillars.length > 0 || m.beams.length > 0);
   }, [trussInv, dateEntryByDomain.truss]);
 
   // Platform material (Wood/Iron, each row's own field) and booking/feasibility (one combined pool
@@ -230,9 +256,16 @@ export default function StructurePlanningTab({ trussAlloc, setTrussAlloc, platfo
           <div className="grid md:grid-cols-3 gap-5">
             <div>
               <p className="text-xs font-semibold text-gray-600 mb-2">🏗️ TRUSS</p>
-              <div className="space-y-1.5">
-                {trussStockBars.pillars.map((b) => <StockBarRow key={"p" + b.size} label={b.size + "ft pillar"} {...b} />)}
-                {trussStockBars.beams.map((b) => <StockBarRow key={"b" + b.size} label={b.size + "ft beam"} {...b} />)}
+              <div className="space-y-3">
+                {trussStockBars.map((m) => (
+                  <div key={m.mat}>
+                    <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">{MAT_LABEL[m.mat] || m.mat}</p>
+                    <div className="space-y-1.5">
+                      {m.pillars.map((b) => <StockBarRow key={"p" + m.mat + b.size} label={b.size + "ft pillar"} {...b} />)}
+                      {m.beams.map((b) => <StockBarRow key={"b" + m.mat + b.size} label={b.size + "ft beam"} {...b} />)}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
             <div>

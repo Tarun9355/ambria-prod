@@ -702,7 +702,14 @@ export default function DealCheckOverlay({ ctx }) {
           const fnDate = fn.fnDate || clientDate;
           const fnVenue = fn.fnVenue || "";
           const _fvCfgHere = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-          const usedElsewhereInDeal = qtyUsedElsewhereInDealCheck(it.id, fns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ...exclude }, fnDate) - ((addBack && it.id === addBack.itemId) ? (Number(addBack.qty) || 0) : 0);
+          // addBack.qty is only real if the kit's own card (addBack.cardKey) was actually counted by
+          // qtyUsedElsewhereInDealCheck's own gates — a date mismatch against targetDate (fnDate,
+          // same resolution that function itself applies) or the card itself being FOC. Otherwise the
+          // kit's own draw was never subtracted to begin with, and unconditionally adding it back
+          // invents stock that isn't there (round 4 regression review, 2026-11-15 — same shape of bug
+          // as Build's own openAvailModal _addBack, StudioApp.jsx).
+          const addBackCounted = !!addBack && (fn?.fnDate || "") === fnDate && !cardIsFoc(fn?.zoneElements, addBack.cardKey);
+          const usedElsewhereInDeal = qtyUsedElsewhereInDealCheck(it.id, fns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ...exclude }, fnDate) - ((addBack && addBackCounted && it.id === addBack.itemId) ? (Number(addBack.qty) || 0) : 0);
           return Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, dcAvailable(it, null, fnIdx), availableAtVenue(_fvCfgHere, fnVenue, it), dcOverlap(it, fnIdx, fnVenue, _fvCfgHere)) - usedElsewhereInDeal);
         };
         // The 2-run counter came out with the Generate button — nothing starts a run from this
@@ -3251,7 +3258,7 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                         // independent view" approximation Build's own per-card display already accepts,
                         // since this pill is a display total, not the actual billed figure.
                         const _crossFnPrevFnZone = findCrossFnReuseSource(fns[fnIdx], fns);
-                        const _crossFnPoolPill = _crossFnPrevFnZone ? new Map(Object.entries(computeFnInvQty(_crossFnPrevFnZone))) : null;
+                        const _crossFnPoolPill = _crossFnPrevFnZone ? new Map(Object.entries(computeFnInvQty(_crossFnPrevFnZone, dcInventoryCache))) : null;
                         const _crossFnTakePill = (invId, qty) => { if (!_crossFnPoolPill || !invId) return 0; const t = Math.min(qty, _crossFnPoolPill.get(invId) || 0); if (t > 0) _crossFnPoolPill.set(invId, (_crossFnPoolPill.get(invId) || 0) - t); return t; };
                         let zoneRentalTotal = 0;
                         zoneCards.forEach(c => {
@@ -3321,9 +3328,9 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                         // Fresh cross-function-reuse pools for the two passes rendered below (the
                         // matched-card grid and the manual-block list) — each its own pass, same
                         // "fresh pool per independent view" reasoning as the pill above.
-                        const _crossFnPoolCards = _crossFnPrevFnZone ? new Map(Object.entries(computeFnInvQty(_crossFnPrevFnZone))) : null;
+                        const _crossFnPoolCards = _crossFnPrevFnZone ? new Map(Object.entries(computeFnInvQty(_crossFnPrevFnZone, dcInventoryCache))) : null;
                         const _crossFnTakeCards = (invId, qty) => { if (!_crossFnPoolCards || !invId) return 0; const t = Math.min(qty, _crossFnPoolCards.get(invId) || 0); if (t > 0) _crossFnPoolCards.set(invId, (_crossFnPoolCards.get(invId) || 0) - t); return t; };
-                        const _crossFnPoolManual = _crossFnPrevFnZone ? new Map(Object.entries(computeFnInvQty(_crossFnPrevFnZone))) : null;
+                        const _crossFnPoolManual = _crossFnPrevFnZone ? new Map(Object.entries(computeFnInvQty(_crossFnPrevFnZone, dcInventoryCache))) : null;
                         const _crossFnTakeManual = (invId, qty) => { if (!_crossFnPoolManual || !invId) return 0; const t = Math.min(qty, _crossFnPoolManual.get(invId) || 0); if (t > 0) _crossFnPoolManual.set(invId, (_crossFnPoolManual.get(invId) || 0) - t); return t; };
                         // ── A CARD, NOT A BAND ──
                         // These read as flat grey strips: the shadow was almost nothing, the radius was
@@ -4244,7 +4251,7 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                                                             // candidate free that a sibling component's own demand would
                                                             // immediately re-flag as short the instant it was picked).
                                                             need: needed, date: _fnDateForRepeat || clientDate, venue: _venue, strictAvail: true,
-                                                            availFn: dcAvailFnFor(fnIdx, {}, { itemId: c.itemId, qty: needed }),
+                                                            availFn: dcAvailFnFor(fnIdx, {}, { itemId: c.itemId, qty: needed, cardKey: editKey }),
                                                           })}
                                                           style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:6,border:"1px solid rgba(239,68,68,0.35)",background:"rgba(239,68,68,0.08)",color:"#EF4444",fontSize:11,fontWeight:600,cursor:"pointer"}}>
                                                           <IconBox size={12}/> {cItem ? `⚠ need ${needed}, only ${owned} — swap` : "⚠ not in IMS — pick one"}

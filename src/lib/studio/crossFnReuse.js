@@ -1,4 +1,5 @@
 import { venueKey } from "../venueKey.js";
+import { walkKitUnits } from "../ims/helpers.js";
 
 // Cross-function reuse: two functions of the SAME deal, same venue, on the same day or the next —
 // e.g. a Sundowner Cocktail followed the next night by the Wedding. The ONE shared definition of
@@ -58,17 +59,51 @@ export function findCrossFnReuseSource(fnData, allFns) {
   return { fnVenue: fnData.fnVenue, fnDate: fnData.fnDate, fnIdx: -1, fnType: eligible.map(f => f.fnType || "").filter(Boolean).join(" + "), zoneElements, enabledEls, zoneConfig };
 }
 
-// Per-invId qty a function used, top-level elements only (no kit-component walk — the
-// cross-function reuse discount, guest-facing or Deal-Check-internal, is scoped to plain rental
-// items). Sibling to computeFnSubQty (StudioApp.jsx), at item identity instead of
-// truck-capacity-subcategory granularity.
-export function computeFnInvQty(fnData) {
+// Per-invId qty a function used — top-level elements, AND (when imsInventory is given) every
+// component a kit element draws, recursively, via the SAME walkKitUnits node-walker
+// priceForInvItem/transport/reservation already share. Sibling to computeFnSubQty (StudioApp.jsx),
+// at item identity instead of truck-capacity-subcategory granularity.
+// `imsInventory` is optional and trailing — a caller that omits it keeps the exact old top-level-only
+// behavior (walkKitUnits can't find a kit's own subItems without the inventory list to resolve
+// component ids against, so a kit element just falls through to the plain top-level add below,
+// identical to before this parameter existed). Passing it is a strict superset: a kit element (e.g.
+// a lounge kit with 4 sofas inside) now ALSO credits its components, which previously earned a
+// sibling function ZERO reuse credit even though the sofas are standing there just as much as a
+// plain top-level sofa row would be (bug 5, 2026-11-15 adversarial matrix — computeFnInvQty was the
+// one reuse-pool builder in the app that stayed top-level-only after fnUnitQty, dealAvailability.js,
+// was made kit-aware for the exact same reason).
+//
+// KNOWN RESIDUAL RISK (regression review, 2026-11-15, round 4 — deliberately NOT fixed here, same
+// "left for a dedicated future pass" posture allocateRowAvailability's own header comment already
+// takes for this exact category of problem): every existing consumer draws this pool with a flat
+// `pool.get(invId)`/`pool.set(invId, …)` take, with no idea that a kit's OWN id (e.g. "LOUNGE") and
+// its components' ids (e.g. "SOFA") can now BOTH be present at once, representing the SAME physical
+// stock from two different granularities. If the function CONSUMING this pool has both an element
+// using the exact same kit AND a separate plain element for one of that kit's own components (e.g. a
+// LOUNGE kit element plus standalone extra sofas, in the same reuse-eligible window), each can
+// independently draw full credit from this one pool — double-crediting the same physical units. The
+// bug this fix targets (a plain component row earning ZERO credit for a kit-nested sibling item) does
+// not trigger this — it only arises in that narrower combined case. Fully closing it needs a shared,
+// kit-aware take helper at every consumption site (StudioApp.jsx's reusePool/pricingPool/
+// transportPool/clientTruckPool, DealCheckOverlay.jsx's _crossFnTake*), which is a wider change than
+// this fix's scope; flagged here rather than silently shipped.
+export function computeFnInvQty(fnData, imsInventory) {
   const m = {};
   const fZoneElements = fnData?.zoneElements || {};
   const fEnabledEls = fnData?.enabledEls || {};
   Object.entries(fZoneElements).forEach(([zk, elems]) => {
     if (!fEnabledEls[zk] || !elems) return;
-    elems.forEach(el => { if (el.invId && !el.foc) m[el.invId] = (m[el.invId] || 0) + (Number(el.qty) || 0); }); // FOC earns no reuse credit for a different function
+    elems.forEach(el => {
+      if (!el.invId || el.foc) return; // FOC earns no reuse credit for a different function
+      const q = Number(el.qty) || 0;
+      if (!(q > 0)) return;
+      const item = (imsInventory || []).find(i => i.id === el.invId);
+      if (item && Array.isArray(item.subItems) && item.subItems.length) {
+        walkKitUnits(item, q, imsInventory, el.kitOverrides, (node, nodeQty) => { if (node?.id) m[node.id] = (m[node.id] || 0) + (Number(nodeQty) || 0); });
+      } else {
+        m[el.invId] = (m[el.invId] || 0) + q;
+      }
+    });
   });
   return m;
 }
@@ -78,7 +113,7 @@ export function computeFnInvQty(fnData) {
 // this looks both ways at EVERY sibling function of the deal at the same venue on the same or next
 // calendar date — same adjacency rule as above — so the shared item is flagged in both functions.
 // Returns { [invId]: [label, ...] } with each sibling's type/date as the label, or {} when none.
-export function findSiblingFnInvUse(fnData, allFns) {
+export function findSiblingFnInvUse(fnData, allFns, imsInventory) {
   const out = {};
   if (!fnData?.fnVenue || !fnData?.fnDate) return out;
   const venue = venueKey(fnData.fnVenue);
@@ -90,7 +125,7 @@ export function findSiblingFnInvUse(fnData, allFns) {
     const t2 = Date.parse(f.fnDate);
     if (!Number.isFinite(t2) || Math.abs(Math.round((t2 - t) / (24 * 60 * 60 * 1000))) > 1) return;
     const label = f.fnType || `Function ${f.fnIdx + 1}`;
-    Object.entries(computeFnInvQty(f)).forEach(([invId, q]) => {
+    Object.entries(computeFnInvQty(f, imsInventory)).forEach(([invId, q]) => {
       if (!(q > 0)) return;
       (out[invId] ||= []).includes(label) || out[invId].push(label);
     });
@@ -120,7 +155,7 @@ export function findSiblingFnSubcatOpportunity(fnData, allFns, imsInventory) {
     const t2 = Date.parse(f.fnDate);
     if (!Number.isFinite(t2) || Math.abs(Math.round((t2 - t) / (24 * 60 * 60 * 1000))) > 1) return;
     const label = f.fnType || `Function ${f.fnIdx + 1}`;
-    Object.entries(computeFnInvQty(f)).forEach(([invId, q]) => {
+    Object.entries(computeFnInvQty(f, imsInventory)).forEach(([invId, q]) => {
       if (!(q > 0)) return;
       const item = invById.get(invId);
       const subcat = String(item?.subCat || item?.subcategory || "").trim().toLowerCase();

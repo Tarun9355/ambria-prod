@@ -126,10 +126,13 @@ const computePoolFeasibility = (eventsForDate, trussInv) => {
   }
 
   // External shape for demand/stock/soft/hard stays Iron-only, plain-size-keyed — backward compatible
-  // with StructurePlanningTab's stock bars, which only ever displayed Iron (a pre-existing, separate
-  // gap — those bars still don't show Aluminium/Pole — not expanded here). overflowPillars/overflowBeams
-  // stay material-tagged ("<mat>|<size>") — scanTrussStockShortage (StudioApp.jsx) is their one
-  // consumer and needs the material to tell the salesperson something actionable.
+  // with StructurePlanningTab's stock bars, which only ever displayed Iron. These fields are KEPT
+  // EXACTLY as-is (not removed/renamed) since other code may depend on this shape — see each field's
+  // *ByMaterial twin added below (2026-11-15, StructurePlanningTab per-material stock bars) for the
+  // full, non-stripped, material-tagged view every other material (Pole/Aluminium/...) now needs.
+  // overflowPillars/overflowBeams stay material-tagged ("<mat>|<size>") — scanTrussStockShortage
+  // (StudioApp.jsx) is their one consumer and needs the material to tell the salesperson something
+  // actionable.
   const stripIron = (byMatDict) => Object.fromEntries(Object.entries(byMatDict).filter(([k]) => k.startsWith("iron|")).map(([k, v]) => [k.slice(5), v]));
   return {
     feasible,
@@ -143,6 +146,15 @@ const computePoolFeasibility = (eventsForDate, trussInv) => {
     hardBeams: stripIron(hardByMat.beams),
     overflowPillars: overflowByMat.pillars,
     overflowBeams: overflowByMat.beams,
+    // Full, non-stripped, material-tagged maps — every material (iron included) keyed "<mat>|<size>",
+    // same internal dicts the iron-only fields above are derived FROM via stripIron. Added so a
+    // per-material UI (StructurePlanningTab's Stock Availability panel) can show Pole/Aluminium's own
+    // demand/stock/soft/hard the same way BATTA already does, without disturbing any existing
+    // iron-only consumer of the fields above.
+    demandByMaterial: demandByMat,
+    stockByMaterial: stockByMat,
+    softByMaterial: softByMat,
+    hardByMaterial: hardByMat,
   };
 };
 
@@ -179,6 +191,13 @@ export const allocateForDate = (existingAlloc, date, eventsList, trussInv, trigg
       overflowPillars: summary.overflowPillars,
       overflowBeams:   summary.overflowBeams,
       feasible:      summary.feasible,
+      // Material-tagged twins (2026-11-15) — see computePoolFeasibility's own comment. Consumed by
+      // StructurePlanningTab's per-material truss stock bars; every existing reader above (named
+      // iron-only fields) is untouched.
+      demandByMaterial: summary.demandByMaterial,
+      stockByMaterial:  summary.stockByMaterial,
+      softByMaterial:   summary.softByMaterial,
+      hardByMaterial:   summary.hardByMaterial,
     },
   };
   return out;

@@ -6482,7 +6482,7 @@ export default function StudioApp() {
     const allFnsNow = collectAllFunctionDataRef.current?.() || [];
     const activeFnData = { ...(allFnsNow.find(f => f.fnIdx === activeFnIdx) || {}), fnIdx: activeFnIdx, fnDate: aDate, fnVenue: aVenue, zoneElements, zoneConfig, enabledEls };
     const crossFnPrev = (!isFillerDateFor(aDate) && allFnsNow.length > 1) ? findCrossFnReuseSource(activeFnData, allFnsNow) : null;
-    const reusePool = crossFnPrev ? new Map(Object.entries(computeFnInvQty(crossFnPrev))) : null;
+    const reusePool = crossFnPrev ? new Map(Object.entries(computeFnInvQty(crossFnPrev, imsInventory))) : null;
     const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, sharedFloralSettings.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, aVenue, !hideDiscountFromClient, reusePool, structRates.printMaterials);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
@@ -6670,7 +6670,7 @@ export default function StudioApp() {
       // function count, whatever the guest-discount toggle or a Filler date say (those only decide the price). The discount gate cut
       // this credit too, so a sofa used in Haldi and again in Sangeet the same day read out of stock at Sold (RC-11).
       const crossFnPrevFn = findCrossFnReuseSource(fnData, allFns);
-      const reusePool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+      const reusePool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn, imsInventory))) : null;
       // the same function's pieces, kit parts included, for the kit-part check
       const partReusePool = crossFnPrevFn ? fnUnitQty(crossFnPrevFn, imsInventory) : null;
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
@@ -6811,8 +6811,8 @@ export default function StudioApp() {
     const fnData = all[activeFnIdx];
     if (!fnData || isFillerDateFor(fnData.fnDate)) return null;
     const prevFn = findCrossFnReuseSource(fnData, all);
-    return prevFn ? computeFnInvQty(prevFn) : null;
-  }, [collectAllFunctionData, activeFnIdx, dealCheckData, studioFloralData]);
+    return prevFn ? computeFnInvQty(prevFn, imsInventory) : null;
+  }, [collectAllFunctionData, activeFnIdx, dealCheckData, studioFloralData, imsInventory]);
   // Layout, same TDZ reasoning as collectAllFunctionDataRef — totalCost (declared above this) reads
   // the ref instead of the memo directly.
   useLayoutEffect(() => { activeCrossFnReuseQtyRef.current = activeCrossFnReuseQty; });
@@ -6821,8 +6821,8 @@ export default function StudioApp() {
   // date rule: it is a heads-up for the salesperson, not a price change.
   const activeSiblingFnInvUse = useMemo(() => {
     const all = collectAllFunctionData();
-    return all[activeFnIdx] ? findSiblingFnInvUse(all[activeFnIdx], all) : {};
-  }, [collectAllFunctionData, activeFnIdx]);
+    return all[activeFnIdx] ? findSiblingFnInvUse(all[activeFnIdx], all, imsInventory) : {};
+  }, [collectAllFunctionData, activeFnIdx, imsInventory]);
   // sub-category → sibling-function items NOT yet matched exactly — drives the orange 📦 stock icon
   // (as opposed to activeSiblingFnInvUse's orange RATE, shown only once an exact match is picked).
   // Heads-up only, same as activeSiblingFnInvUse — not gated by hideDiscountFromClient/Filler date.
@@ -6858,7 +6858,7 @@ export default function StudioApp() {
     // share mutable state across the two unrelated loops. Never fires when THIS function (the one
     // being priced/billed) is on a Filler date — see isFillerDateFor above.
     const crossFnPrevFn = !isFillerDateFor(fnData.fnDate) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
-    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn, imsInventory))) : null;
     let decor = 0;
     // Always derive zones fresh from the live zoneConfig/enabledEls — see totalCost's matching
     // comment. `activeZones` no longer takes priority here. Also dropped the legacy itemQty
@@ -6902,7 +6902,7 @@ export default function StudioApp() {
       // track IMS's live Sub-Categories master.
       const fcFlowerPatterns = sharedFloralSettings.flowerPatterns;
       // Own pool, separate from pricingPool above — see the comment where crossFnPrevFn is computed.
-      const transportPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+      const transportPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn, imsInventory))) : null;
       const standPool = new Map(); // standing stock pooled across this function's elements (kitBuiltQty)
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
@@ -7475,7 +7475,7 @@ export default function StudioApp() {
     // accordion/Build's Live Estimate agree with the revenue total on which units are discounted.
     // Never fires when THIS function is on a Filler date — see isFillerDateFor above.
     const crossFnPrevFn = !isFillerDateFor(fnData.fnDate) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
-    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn, imsInventory))) : null;
     // Sorted by IMS/Studio Admin → Settings → Zone Types' configured order (zoneKeys), same as
     // buildZonesForFn below — enabledEls' own key order is whenever each zone was first toggled on
     // for THIS deal, not the admin's current order, and an old deal's order can predate a later
@@ -7618,7 +7618,7 @@ export default function StudioApp() {
       // were left out and why, rather than a truck count just quietly coming out lower.
       // The guest's own reuse pool for trucks — same source and same per-element draw-down order as
       // calcFunctionCost's transportPool, so the two count the guest's trucks identically.
-      const clientTruckPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+      const clientTruckPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn, imsInventory))) : null;
       // Standing stock pooled across this function's elements: one pool for Ambria's own cost
       // count, one for the guest's (they draw different quantities from the same standing stock).
       const standPoolCost = new Map(), standPoolGuest = new Map();
@@ -12579,7 +12579,7 @@ export default function StudioApp() {
     // earlier function.
     const fBlocksForDate = blocksByDate[fnData.fnDate];
     const crossFnPrevFn = !isFillerDateFor(fnData.fnDate) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
-    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn, imsInventory))) : null;
     // Sorted by IMS/Studio Admin → Settings → Zone Types' configured order (zoneKeys, same order
     // Build's own zone list renders in — see StudioBuild.jsx's `[...zoneKeys, ...customZones]`),
     // not by Object.entries' insertion order. enabledEls is a per-deal record that gained its keys
@@ -13281,6 +13281,13 @@ export default function StudioApp() {
       // reuse from at all).
       const usedElsewhere = {};
       const usedQty = {};
+      // Whether the kit-component-swap's own matching row (opts.currentPartId's slot) actually got
+      // counted into usedQty below — a row that matches (fnIdx/zoneKey/idx) can still fall out
+      // before reaching usedQty (an FOC row, the whole zone switched off, or a different/no date),
+      // and _addBack further down must not invent stock back for a draw that was never subtracted
+      // in the first place (regression review, 2026-11-15, round 4 — confirmed: could push `free`
+      // above the item's owned qty).
+      let currentPartRowCounted = false;
       (collectAllFunctionData() || []).forEach((f) => {
         Object.entries(f.zoneElements || {}).forEach(([zk, elems]) => {
           // zoneIsOff (not a bare `!f.enabledEls?.[zk]` check): a function with no enabledEls
@@ -13308,6 +13315,7 @@ export default function StudioApp() {
             // short the instant it was picked — worse than the old null/null self-exclusion, which
             // at least counted every part's real demand even though it then wrongly colored the
             // self-replaced part's own candidates too).
+            const isCurrentPartRow = !!opts?.currentPartId && f.fnIdx === activeFnIdx && zk === zoneKey && ei === idx;
             if (f.fnIdx === activeFnIdx && zk === zoneKey && ei === idx && !opts?.currentPartId) return;
             // Stock only competes on the SAME date — a row on another function's date does not hold units
             // today (it still gets the "used elsewhere" note below, which is about reusing the same piece).
@@ -13321,13 +13329,19 @@ export default function StudioApp() {
             const elQty = Number(e.qty) || 0;
             if (topItem && elQty > 0) {
               walkKitUnits(topItem, elQty, imsInventory, e.kitOverrides, (node, nodeQty) => {
-                if (sameDate) usedQty[node.id] = (usedQty[node.id] || 0) + nodeQty;
+                if (sameDate) {
+                  usedQty[node.id] = (usedQty[node.id] || 0) + nodeQty;
+                  if (isCurrentPartRow && node.id === opts.currentPartId) currentPartRowCounted = true;
+                }
                 if (f.fnIdx !== activeFnIdx) {
                   (usedElsewhere[node.id] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
                 }
               });
             } else {
-              if (sameDate) usedQty[e.invId] = (usedQty[e.invId] || 0) + elQty;
+              if (sameDate) {
+                usedQty[e.invId] = (usedQty[e.invId] || 0) + elQty;
+                if (isCurrentPartRow && e.invId === opts.currentPartId) currentPartRowCounted = true;
+              }
               if (f.fnIdx !== activeFnIdx) {
                 (usedElsewhere[e.invId] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
               }
@@ -13426,7 +13440,7 @@ export default function StudioApp() {
           // swapped. The one slot that IS being swapped stops drawing the moment the pick lands, so
           // its own current item's free count gets that slot's qty added back — but only for THAT
           // item, never for any other candidate (round 3 regression review, 2026-11-15, finding F1).
-          const _addBack = (opts?.currentPartId && it.id === opts.currentPartId) ? (Number(opts.slotDraw) || 0) : 0;
+          const _addBack = (opts?.currentPartId && it.id === opts.currentPartId && currentPartRowCounted) ? (Number(opts.slotDraw) || 0) : 0;
           const free = opts?.availFn
             ? Math.round(Math.max(0, Number(opts.availFn(it)) || 0) * 1e6) / 1e6
             : Math.round(Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getSharingAwareAvailable(it, blocksDetailForDate, eventOrders, fvCfgForRepeat, date, _dealShiftPicker.venueName, _dealShiftPicker.shift, _ownIdsPicker), availableAtVenue(fvCfgForRepeat, pickerVenue, it), _fvOverlap) - (usedQty[it.id] || 0) + _addBack) * 1e6) / 1e6;
@@ -14121,9 +14135,17 @@ export default function StudioApp() {
       const byItem = {};
       const focByItem = {};
       Object.entries(newCards[fnIdx] || {}).forEach(([cardKey, c]) => {
-        if (!c.imsId) return;
-        const qty = Number(c.qty) || 0;
-        if (qty <= 0) return;
+        // Split fulfilment (Deal Check's own Split picker, writes card.split = [{imsId, qty}, …]) —
+        // checked BEFORE the plain c.imsId/qty guard below, same order dcCostRollup's own split
+        // branch already uses (a split card's own c.imsId/qty go stale the moment it's split — the
+        // split array is the only live allocation from then on). Each split entry reserves its OWN
+        // imsId/qty directly, never the card's single imsId/qty — before this fix, reconcile read
+        // only the card's own imsId/qty here, so a split card's actual client-facing allocation (e.g.
+        // 4 of Arch-A + 6 of Arch-B) reserved wrong (10 of Arch-A, 0 of Arch-B). No kit walk for split
+        // entries — Split is documented/used everywhere else (dcCostRollup, qtyUsedElsewhereInDealCheck)
+        // as spreading qty across several SIMPLE items, never kits, so matching that same assumption
+        // here, not inventing new kit-walking behavior for a shape nothing else in the app expects.
+        const splitArr = Array.isArray(c.split) ? c.split.filter((s) => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
         // A card backed by a Deal Check manual item (_dcManualId — syncManualItemToBuild mirrors it
         // into Build's zoneElements while the deal is still ongoing) is NOT counted here — manualByFn
         // below is now the single source of truth for every Deal Check manual item, mirrored into
@@ -14137,6 +14159,13 @@ export default function StudioApp() {
         const isFoc_ = cardIsFoc(fn, cardKey);
         if (manualEl?._dcManualId && !isFoc_) return;
         const tgt = isFoc_ ? focByItem : byItem;
+        if (splitArr.length) {
+          splitArr.forEach((s) => { tgt[s.imsId] = (tgt[s.imsId] || 0) + (Number(s.qty) || 0); });
+          return;
+        }
+        if (!c.imsId) return;
+        const qty = Number(c.qty) || 0;
+        if (qty <= 0) return;
         const topItem = (inventoryList || []).find((x) => x.id === c.imsId);
         if (topItem && Array.isArray(topItem.subItems) && topItem.subItems.length > 0) {
           const edited = dcKitEdits?.[fnIdx]?.[cardKey];
