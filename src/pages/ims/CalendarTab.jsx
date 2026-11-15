@@ -5,14 +5,13 @@ import { resolveDateCategory } from "../../lib/inventory/helpers";
 import { DATE_PRICING_LABELS, SETTINGS_DEFAULTS, hasIMSPerm, DATE_PRICING_OWNER_ID } from "../../lib/ims/constants";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { PRICING_CAT_STYLES } from "../../lib/inventory/constants";
-import { releaseBlocks } from "../../lib/ims/eventAutoConfirm";
 import { useAuth } from "../../lib/AuthContext";
 
 // Faithful copy of the reference IMS CalendarTab — renders LMS/ERP contracts on a
 // month grid, colour-codes dates by Studio category, and exposes Date Pricing config.
 // Also the one place ops can cancel a Studio-booked event (releasing its held inventory) — the
 // old dedicated IMS "Events" tab is gone; that was its only manual control worth keeping.
-export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings, mergeDatePricing, eventOrders, setEventOrders, saveEventOrders, blocks, setBlocks, saveBlocks }) {
+export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, lmsSyncing, settings, setSettings, mergeDatePricing, eventOrders, setEventOrders, saveEventOrders }) {
   const { user: authUser } = useAuth();
   // "Cancel booking" is IMS's only surviving whole-event release control (see cancelStudioEvent's
   // own comment below) — the nearest real target for block_release, which has no dedicated
@@ -97,24 +96,23 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
   };
   const fmtAmt = (n) => "₹" + (Number(n) || 0).toLocaleString("en-IN");
 
-  // Cancel a Studio-booked event: releases every inventory item it's holding and marks the
-  // event_orders row cancelled. This is the only surviving manual control from the old Events tab.
+  // Cancel a Studio-booked event: marks the event_orders row cancelled and releases every inventory
+  // item it's holding. The release itself is no longer a client-side write here (bug 4, 2026-11-14
+  // inventory-blocks audit) — migration 065's own AFTER UPDATE OF status trigger releases this
+  // event's `blocks` entries in the SAME transaction as the status change below, reliably, regardless
+  // of which code path (or a direct DB edit) caused the cancel. A client-side release here used to be
+  // the ONLY thing that did this, via a plain un-locked read-modify-write upsert — now that the
+  // trigger is the real mechanism, keeping that client-side write around would just be a second,
+  // stale-snapshot writer racing against every OTHER writer of the same item's `blocks` row, exactly
+  // the class of bug this whole phase exists to close off; removing it is a strict improvement, not
+  // a lost backstop. This is the only surviving manual control from the old Events tab.
   function cancelStudioEvent(eoId, guestName) {
     if (!canRelease) return;
-    if (!eoId || !setEventOrders || !setBlocks) return;
+    if (!eoId || !setEventOrders) return;
     if (!confirm(`Cancel booking for "${guestName}" and release all its held inventory?`)) return;
-    // Status saved FIRST, release second (reversed from this flow's original order, 2026-11-14):
-    // every reader of `blocks` now treats a cancelled event_order's own entries as not-there
-    // (lib/ims/liveBlocks.js), so status is the real source of truth and a release that fails or
-    // races after this point is now a harmless cleanup step, not a correctness gap — the opposite
-    // of the old order, where a failed/raced SECOND save (status) could leave stock released while
-    // the deal still looked live.
     const updated = (eventOrders || []).map((eo) => (eo.id === eoId ? { ...eo, status: "cancelled" } : eo));
     setEventOrders(updated);
     saveEventOrders?.(updated);
-    const newBlocks = releaseBlocks(blocks, eoId);
-    setBlocks(newBlocks);
-    saveBlocks?.(newBlocks);
     // Releasing the real stock hold above never touched the ops-side `functions` rows this event
     // created — those kept showing as blocked in IMS Inventory's own "Blocked for Functions" list
     // long after cancellation (the exact orphan InventoryTab.jsx had to start filtering out by the
@@ -183,12 +181,32 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
   // Studio-booked deals (event_orders) — a separate source from the external LMS/CRM contracts
   // above, so a deal only shows here if it's booked in Studio, whether or not it also exists in
   // the CRM. `functionsDetail[]` covers multi-function events; single-date EOs fall back to `.date`.
+  // A client with 2+ LIVE (non-cancelled) event_orders rows is either a legitimate re-booking/
+  // amendment or an accidental duplicate — lib/studio/eventOrderFor.js's own ownEventOrderIds already
+  // nets a client's stock correctly across every one of their live orders (so the DATA never double-
+  // counts), but nothing has ever told ops the duplication happened at all (confirmed gap, 2026-11-14
+  // inventory-blocks audit) — the 2026-11-02 eoId-badge fix above only helps tell two such cards
+  // APART once you already know to look; it doesn't flag that there's more than one to begin with.
+  // Same clientId-else-clientName grouping ownEventOrderIds itself uses, computed once for every
+  // client instead of per-call.
+  const liveOrderCountByClient = useMemo(() => {
+    const m = new Map();
+    (eventOrders || []).forEach((eo) => {
+      if (!eo || eo.status === "cancelled" || !eo.id) return;
+      const key = eo.clientId || (String(eo.clientName || "").trim() ? `name:${String(eo.clientName).trim()}` : null);
+      if (!key) return;
+      m.set(key, (m.get(key) || 0) + 1);
+    });
+    return m;
+  }, [eventOrders]);
   const studioEvents = useMemo(() => {
     const events = [];
     for (const eo of (eventOrders || [])) {
       if (!eo || eo.status === "cancelled") continue;
       const fnsDetail = Array.isArray(eo.functionsDetail) ? eo.functionsDetail : null;
       const fnList = fnsDetail && fnsDetail.length ? fnsDetail : [{ date: eo.date, venue: eo.venue, type: (eo.functions || [])[0] }];
+      const dupKey = eo.clientId || (String(eo.clientName || "").trim() ? `name:${String(eo.clientName).trim()}` : null);
+      const liveOrderCount = dupKey ? (liveOrderCountByClient.get(dupKey) || 0) : 0;
       fnList.forEach((fn, fi) => {
         const date = fn.date || eo.date;
         if (!date) return;
@@ -203,11 +221,12 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
           // of its function cards with nothing saying so, which read as N separate ₹X bookings rather
           // than one ₹X deal covering all of them together.
           isMultiFn: fnList.length > 1,
+          liveOrderCount,
         });
       });
     }
     return events;
-  }, [eventOrders]);
+  }, [eventOrders, liveOrderCountByClient]);
 
   const allEvents = useMemo(() => [...calEvents, ...studioEvents], [calEvents, studioEvents]);
 
@@ -424,6 +443,11 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
                     {e.eoStatus && <span className="text-xs px-2 py-0.5 rounded-md font-semibold bg-gray-100 text-gray-600 capitalize">{e.eoStatus}</span>}
                     {e.priority && <span className="text-xs px-2 py-0.5 rounded-md font-semibold bg-yellow-50 text-yellow-700">{e.priority}</span>}
                     {e.matched && <span className="text-xs px-2 py-0.5 rounded-md font-bold bg-green-50 text-green-700">🔗 {e.matchType === "exact" ? "Exact" : "Fuzzy"}</span>}
+                    {e.dept === "studio" && e.liveOrderCount > 1 && (
+                      <span className="text-xs px-2 py-0.5 rounded-md font-semibold bg-amber-50 text-amber-700" title="This client has more than one live (non-cancelled) Studio booking — check it's a deliberate re-booking/amendment, not an accidental duplicate">
+                        ⚠ {e.liveOrderCount} live bookings
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     {e.entryNo && <span className="text-xs text-gray-400">#{e.entryNo}</span>}

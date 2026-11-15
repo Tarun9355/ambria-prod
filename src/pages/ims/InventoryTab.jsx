@@ -14,10 +14,11 @@ import { studioUnitLabel } from "../../lib/ims/flowerHelpers";
 import { itemDimsText } from "../../lib/ims/helpers";
 import { catToDept, canSeeDept } from "../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb";
-import { addBlock, getAvailableQty } from "../../lib/ims/eventAutoConfirm";
-import { filterLiveBlocks } from "../../lib/ims/liveBlocks";
+import { getAvailableQty } from "../../lib/ims/eventAutoConfirm";
+import { filterLiveBlocks, heldForEventOnDate } from "../../lib/ims/liveBlocks";
+import { appendOp, shortfallsOf } from "../../lib/ims/blocksRpc";
 
-export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [], authUser, eventOrders = [], blocks, setBlocks, saveBlocks }) {
+export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [], authUser, eventOrders = [], blocks, applyBlocksRpc }) {
   const canAdd = hasIMSPerm(authUser, "inv_add");
   const canDelete = hasIMSPerm(authUser, "inv_delete");
   const canImages = hasIMSPerm(authUser, "inv_images");
@@ -25,8 +26,9 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const studioLoading = !!studio?.loading;
   // A cancelled event_order's own hold must never read as "stock already taken" when deciding
   // whether THIS block can go through, or what the Block modal's availability preview shows — see
-  // lib/ims/liveBlocks.js's own header for why. Read-only: addBlock/setBlocks below keep writing
-  // the raw `blocks` state, same as always.
+  // lib/ims/liveBlocks.js's own header for why. Read-only, for display/preview only — blockItem/
+  // submitBulk below write through applyBlocksRpc (the locked, availability-checking RPC, Phase 2b
+  // of the 2026-11-14 inventory-blocks audit), never this local snapshot.
   const readBlocks = useMemo(() => filterLiveBlocks(blocks, eventOrders), [blocks, eventOrders]);
   // Tier 1.2 — Studio cat labels. Top-level categories (Florals/Fabric/Structure/...) are a
   // small, stable set still sourced from Studio's live Rate-Card categories — only the
@@ -378,13 +380,23 @@ Rules:
       });
     });
     const m = {}, byItem = {};
-    Object.values(perDeal).forEach((d) => Object.entries(d).forEach(([invId, { qty, names }]) => {
-      m[invId] = (m[invId] || 0) + qty;
-      (byItem[invId] = byItem[invId] || []).push({ name: [...new Set(names)].join(" + "), qty });
+    Object.entries(perDeal).forEach(([dealKey, d]) => Object.entries(d).forEach(([invId, { qty, names }]) => {
+      // The live `blocks` ledger, not this deal's own static per-function snapshot, whenever there's a
+      // real entry to read it from — same reasoning as the item popup's own fix (Phase 5): `functions`'
+      // own qty is a point-in-time snapshot taken once at auto-confirm time, never corrected as a LATER
+      // writer (Studio's reconcile, a re-block, a release) changes the real `blocks` entries. No
+      // per-function ambiguity to guard against here the way the popup's fix had to (that one showed
+      // one row per FUNCTION of a deal) — blocks entries have no function granularity at all, only per
+      // (item, event, date), which is already exactly the per-DEAL total this grouping computes, so
+      // it's a clean, unambiguous substitution.
+      const live = heldForEventOnDate(readBlocks[invId], dealKey, availDate);
+      const liveQty = live.found ? live.qty : qty;
+      m[invId] = (m[invId] || 0) + liveQty;
+      (byItem[invId] = byItem[invId] || []).push({ name: [...new Set(names)].join(" + "), qty: liveQty });
     }));
     return { qty: m, fns: byItem };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availDate, functions, eventOrders]);
+  }, [availDate, functions, eventOrders, readBlocks]);
   const blockedOf = (i) => dateBlock ? (dateBlock.qty[i.id] || 0) : (i.blocked || 0);
   const availOf = (i) => (Number(i.qty) || 0) - blockedOf(i);
 
@@ -762,21 +774,31 @@ Rules:
   // dated entry instead makes this indistinguishable from any other reservation (confirmed/held,
   // same table Studio/Deal Check/Calendar already read) — scoped to this one date, and releasable
   // the same way (releaseBlocks, or the block's own status flipping to "released").
-  function blockItem() {
+  //
+  // Writes through applyBlocksRpc (apply_block_ops, migration 066) — Phase 2b of the 2026-11-14
+  // inventory-blocks audit: this used to be a plain local read-modify-write (addBlock + setBlocks),
+  // racy against any other writer touching the same item in the same few seconds, with its own
+  // availability check against the (possibly already-stale) local readBlocks snapshot. 'cap' — not
+  // 'reject' — to actually deliver what the submit button has always promised ("🔒 Block Item
+  // (partial)" when isShort): reserve whatever real stock covers, report the rest, rather than
+  // either silently succeeding for the full requested qty or hard-refusing the whole action.
+  async function blockItem() {
     if (!canBlock) return;
     const inv = inventory.find((i) => i.id === blockModal);
     const fn = functions.find((f) => f.id === blockForm.fnId);
     if (!inv || !fn) return;
     const qty = parseInt(blockForm.qty) || 1;
-    if (qty > getAvailableQty(inv, readBlocks, fn.date)) { alert("Insufficient available qty for this function's date"); return; }
     const sizeClass = String(blockForm.sizeClass || "M").toUpperCase();
     // Tagged "ims-manual" — a deliberate human ops decision, outside Studio's build entirely. Studio's
     // own sold-deal reconcile (reconcileSoldInventoryBlocks) reads this tag and must never release it
     // just because Studio's own build doesn't need this item.
-    const newBlocks = addBlock(blocks, blockModal, fn.date, fn.eventOrderId || fn.id, qty, "confirmed", "ims-manual");
-    setBlocks(newBlocks);
-    saveBlocks?.(newBlocks);
-    setFunctions((prev) => prev.map((f) => f.id === blockForm.fnId ? { ...f, items: [...f.items, { invId: blockModal, qty, dept: blockForm.dept, remark: blockForm.remark, sizeClass }] } : f));
+    const res = await applyBlocksRpc([appendOp({ itemId: blockModal, eventId: fn.eventOrderId || fn.id, date: fn.date, qty, source: "ims-manual" })], { onShort: "cap" });
+    if (res.error || !res.applied) return; // genuine write failure — applyBlocksRpc already surfaced it
+    const short = shortfallsOf(res)[0];
+    const grantedQty = short ? Math.max(0, qty - Number(short.short || 0)) : qty;
+    if (grantedQty <= 0) { alert("Insufficient available qty for this function's date — nothing was reserved."); return; }
+    if (short) alert(`Only ${grantedQty} of ${qty} requested were available and have been reserved.`);
+    setFunctions((prev) => prev.map((f) => f.id === blockForm.fnId ? { ...f, items: [...f.items, { invId: blockModal, qty: grantedQty, dept: blockForm.dept, remark: blockForm.remark, sizeClass }] } : f));
     setBlockModal(null);
     setBlockForm({ fnId: "", qty: 1, dept: "Flower", remark: "", sizeClass: "M" });
   }
@@ -793,21 +815,33 @@ Rules:
   function updateBulkItem(id, field, val) { setBulkSel((prev) => ({ ...prev, [id]: { ...prev[id], [field]: val } })); }
 
   // Same fix as blockItem above — dated `blocks` entries for bulkFnId's own date, not the
-  // permanent, date-less `inventory.blocked` counter.
-  function submitBulk() {
+  // permanent, date-less `inventory.blocked` counter. One RPC call covers every selected item (its
+  // own row lock per item, same transaction) — 'cap' so one short item never blocks the rest of the
+  // batch; any items that came up short are reported in a single summary afterward.
+  async function submitBulk() {
     if (!bulkFnId) return;
     const fn = functions.find((f) => f.id === bulkFnId);
     if (!fn) return;
     const entries = Object.entries(bulkSel);
     if (!entries.length) return;
-    let newBlocks = blocks;
-    entries.forEach(([invId, e]) => {
-      // Tagged "ims-manual" — see blockItem's identical comment.
-      newBlocks = addBlock(newBlocks, invId, fn.date, fn.eventOrderId || fn.id, parseInt(e.qty || 1), "confirmed", "ims-manual");
+    const eventId = fn.eventOrderId || fn.id;
+    // Tagged "ims-manual" — see blockItem's identical comment.
+    const ops = entries.map(([invId, e]) => appendOp({ itemId: invId, eventId, date: fn.date, qty: parseInt(e.qty || 1), source: "ims-manual" }));
+    const res = await applyBlocksRpc(ops, { onShort: "cap" });
+    if (res.error || !res.applied) return; // genuine write failure — applyBlocksRpc already surfaced it
+    const shortByItem = new Map(shortfallsOf(res).map((s) => [s.item_id, Number(s.short) || 0]));
+    const granted = entries.map(([invId, e]) => {
+      const requested = parseInt(e.qty || 1);
+      const short = shortByItem.get(invId) || 0;
+      return [invId, e, Math.max(0, requested - short)];
     });
-    setBlocks(newBlocks);
-    saveBlocks?.(newBlocks);
-    setFunctions((prev) => prev.map((f) => f.id === bulkFnId ? { ...f, items: [...f.items, ...entries.map(([invId, e]) => ({ invId, qty: parseInt(e.qty || 1), dept: e.dept, remark: e.remark }))] } : f));
+    if (shortByItem.size) {
+      const summary = granted.filter(([invId]) => shortByItem.has(invId))
+        .map(([invId, , grantedQty]) => { const it = inventory.find((i) => i.id === invId); return `${it?.name || invId} (${grantedQty}/${parseInt(bulkSel[invId]?.qty || 1)})`; })
+        .join(", ");
+      alert(`Some items couldn't be fully reserved — reserved as available: ${summary}`);
+    }
+    setFunctions((prev) => prev.map((f) => f.id === bulkFnId ? { ...f, items: [...f.items, ...granted.filter(([, , g]) => g > 0).map(([invId, e, g]) => ({ invId, qty: g, dept: e.dept, remark: e.remark }))] } : f));
     setBulkModal(false); setBulkFnId(""); setBulkSel({}); setBulkSearch("");
   }
 
@@ -1609,8 +1643,21 @@ Rules:
                 })
                 .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
               if (blockedFns.length === 0) return <p className="text-sm text-gray-400 italic">{availDate && !selAllDates ? "Not blocked for any function on this date" : "Not blocked for any function"}</p>;
+              // The live `blocks` ledger has no per-function granularity — one entry covers the WHOLE
+              // event on one date, however many of this SAME deal's functions share that date (two
+              // functions, same night, different venues, is exactly why the shift chip above exists).
+              // Substituting the live figure into every such row showed the SAME day-level total on
+              // each one, letting ops double- (or N-) count it (confirmed regression, 2026-11-14,
+              // second review pass). Only trust it for a row that's the SOLE one of its (event, date)
+              // pair in this list; otherwise fall back to each row's own static snapshot, and surface
+              // the real combined live total once, as a shared note, instead of silently per row.
+              const eventDateCounts = new Map();
+              blockedFns.forEach((f) => { const k = `${f.eventOrderId || f.id}|${f.date}`; eventDateCounts.set(k, (eventDateCounts.get(k) || 0) + 1); });
+              const shownGroupNotes = new Set();
               return blockedFns.map((f) => {
                   const it = f.items.find((it) => it.invId === selItem.id);
+                  const groupKey = `${f.eventOrderId || f.id}|${f.date}`;
+                  const soleInGroup = eventDateCounts.get(groupKey) === 1;
                   // Guest name + venue — read from the linked event_order when there is one (the
                   // authoritative, always-plain-string copy), since a functions row's own blob carries
                   // neither reliably (only brideGroom + a {type,name,fullAddress} venue object on some
@@ -1623,14 +1670,33 @@ Rules:
                   // without it. The row's own shift, else the deal's function on that date and type.
                   const shiftRaw = f.shift || (Array.isArray(eo?.functionsDetail) ? eo.functionsDetail.find((x) => x?.date === f.date && (!f.type || x?.fnType === f.type || x?.type === f.type))?.shift : "") || "";
                   const shift = String(shiftRaw).trim();
-                  return <div key={f.id} className="flex items-center gap-3 py-2 border-b text-sm flex-wrap">
-                    <span className="font-medium">{f.name}</span><span className="text-gray-500">{f.date}</span>
-                    {shift && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 ring-1 ring-amber-200">{shift}</span>}
-                    {guestName && <span className="text-gray-700">{guestName}</span>}
-                    {venueName && <span className="text-gray-500 text-xs">{venueName}</span>}
-                    <Badge color="indigo">{it.dept}</Badge><span className="text-gray-500 text-xs">{it.remark}</span>
-                    <span className="ml-auto font-medium">×{it.qty}</span>
-                  </div>;
+                  // The live `blocks` ledger, not this row's own static qty, whenever there's a real
+                  // entry to read it from AND this row is the sole function of its deal on this date
+                  // (bug 10/15, 2026-11-14 audit; see this block's own comment above for the
+                  // multi-function-same-date caveat) — see heldForEventOnDate's own comment for why.
+                  // Falls back to f.items' snapshot otherwise (several functions sharing the entry, or
+                  // no live record matching at all — the known fallback-id gap, liveBlocks.js's own
+                  // header comment).
+                  const live = heldForEventOnDate(readBlocks[selItem.id], f.eventOrderId || f.id, f.date);
+                  const shownQty = soleInGroup && live.found ? live.qty : it.qty;
+                  const showGroupNote = !soleInGroup && live.found && !shownGroupNotes.has(groupKey);
+                  if (showGroupNote) shownGroupNotes.add(groupKey);
+                  return <React.Fragment key={f.id}>
+                    {showGroupNote && (
+                      <div className="w-full text-[11px] text-gray-400 italic -mb-1">
+                        📦 {live.qty} actually held for {f.date} across {eventDateCounts.get(groupKey)} functions of this deal{live.qtyToProduce > 0 ? ` (+${live.qtyToProduce} to produce)` : ""} — each function below shows its own planned qty, not a share of this total
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3 py-2 border-b text-sm flex-wrap">
+                      <span className="font-medium">{f.name}</span><span className="text-gray-500">{f.date}</span>
+                      {shift && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 ring-1 ring-amber-200">{shift}</span>}
+                      {guestName && <span className="text-gray-700">{guestName}</span>}
+                      {venueName && <span className="text-gray-500 text-xs">{venueName}</span>}
+                      <Badge color="indigo">{it.dept}</Badge><span className="text-gray-500 text-xs">{it.remark}</span>
+                      {soleInGroup && live.qtyToProduce > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md bg-orange-50 text-orange-700 ring-1 ring-orange-200" title="Allowed past real stock — still needs to be produced, not pulled from stock on hand">🏭 {live.qtyToProduce} to produce</span>}
+                      <span className="ml-auto font-medium">×{shownQty}</span>
+                    </div>
+                  </React.Fragment>;
                 });
             })()}
           </div>

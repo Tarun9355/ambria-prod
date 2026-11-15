@@ -91,19 +91,134 @@ describe("maxQtyForRow — crossFnSiblingsFree (cross-function reuse, same date 
     expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 10, "Aura", true)).toBe(10);
   });
 
-  it("a DIFFERENT venue's same-day function was never competing in the first place (itemRowsFor's own venue scope, unchanged by this flag)", () => {
-    // targetVenue="Aura" already drops Restro's row before the new filter ever runs, so this result
-    // (12 = nothing subtracted) is identical whether crossFnSiblingsFree is true or omitted — this
-    // test exists to confirm the flag doesn't somehow widen or defeat the EXISTING venue scope.
+  it("a DIFFERENT venue's same-day function now genuinely competes for the same physical pool (bug 8, 2026-11-14) — competingRows keeps it in the row list at its own real granularity regardless of crossFnSiblingsFree (that flag only ever excludes a SAME-venue sibling)", () => {
     const fns = multiFn([[0, "Aura", "z", 1], [1, "Restro", "z", 10]]);
-    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, "Aura")).toBe(12);
-    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, "Aura", true)).toBe(12);
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, "Aura")).toBe(2);
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, "Aura", true)).toBe(2);
   });
 
   it("the flag is a no-op without a venue (prevents a different-venue row being wrongly excluded)", () => {
     const fns = multiFn([[0, "Aura", "z", 1], [1, "Restro", "z", 10]]);
     // No targetVenue passed — crossFnSiblingsFree must not exclude Restro's row just because it's a different function.
     expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, undefined, true)).toBe(2);
+  });
+});
+
+// bug 8 (2026-11-14 audit), allocateRowAvailability's own cross-venue correctness. A first attempt at
+// competingRows built one synthetic "blob" row per other venue, sized at that venue's own total need
+// — that broke the whole point of the fix: each venue's OWN call saw itself processed against the
+// full shared pool, independent of what the OTHER venue's own call also (separately) concluded, so
+// two same-day, different-venue functions each needing all 12 of a 12-owned item could BOTH read
+// ownedQty:12/shortQty:0 — the exact silent-overbook this bug was about, one level deeper than before.
+// Fixed by keeping every row (all venues) at its own real per-function granularity in ONE shared list,
+// so the smallest-first allocation is a single consistent computation no matter which row is `target`.
+describe("allocateRowAvailability — a genuinely different venue's same-day demand is real, not a blob", () => {
+  it("12 owned; Aura needs 12, Restro needs 12, same date: NOT both 'fully covered' — the smaller-individual-row venue is served, the other is correctly short", () => {
+    const fns = [{ fnDate: "2027-04-02", fnVenue: "Aura", zoneElements: { z: [{ invId: "pod", qty: 12 }] } },
+                 { fnDate: "2027-04-02", fnVenue: "Restro", zoneElements: { z: [{ invId: "pod", qty: 12 }] } }];
+    const aura = allocateRowAvailability("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, "Aura");
+    const restro = allocateRowAvailability("pod", fns, inventory, { fnIdx: 1, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, "Restro");
+    // Stable sort, tied qty, Aura inserted first in `fns` → Aura is served first; combined they must
+    // never exceed the 12-unit pool, and the shortage must land somewhere, not vanish.
+    expect(aura).toEqual({ ownedQty: 12, shortQty: 0 });
+    expect(restro).toEqual({ ownedQty: 0, shortQty: 12 });
+    expect(aura.ownedQty + restro.ownedQty).toBe(12);
+  });
+
+  it("12 owned; Aura rows 4+4 (one function), Restro row 8 (a different function): real per-row granularity, not a per-venue blob — Aura's two rows (4 each) are served first (smaller), Restro's 8 is short exactly 4", () => {
+    const fns = [{ fnDate: "2027-04-02", fnVenue: "Aura", zoneElements: { z: [{ invId: "pod", qty: 4 }, { invId: "pod", qty: 4 }] } },
+                 { fnDate: "2027-04-02", fnVenue: "Restro", zoneElements: { z: [{ invId: "pod", qty: 8 }] } }];
+    const auraZ0 = allocateRowAvailability("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 8, "Aura");
+    const auraZ1 = allocateRowAvailability("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 1 }, "2027-04-02", 8, "Aura");
+    const restro = allocateRowAvailability("pod", fns, inventory, { fnIdx: 1, zoneKey: "z", elIdx: 0 }, "2027-04-02", 8, "Restro");
+    expect(auraZ0).toEqual({ ownedQty: 4, shortQty: 0 });
+    expect(auraZ1).toEqual({ ownedQty: 4, shortQty: 0 });
+    expect(restro).toEqual({ ownedQty: 0, shortQty: 8 }); // Restro's single 8-row is larger than either Aura row, served last
+    expect(auraZ0.ownedQty + auraZ1.ownedQty + restro.ownedQty).toBe(8); // never exceeds the pool
+  });
+
+  it("maxQtyForRow (a plain sum, no ordering) agrees that the date is over-subscribed in the first scenario", () => {
+    const fns = [{ fnDate: "2027-04-02", fnVenue: "Aura", zoneElements: { z: [{ invId: "pod", qty: 12 }] } },
+                 { fnDate: "2027-04-02", fnVenue: "Restro", zoneElements: { z: [{ invId: "pod", qty: 12 }] } }];
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, "Aura")).toBe(0);
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 1, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, "Restro")).toBe(0);
+  });
+});
+
+// Second regression review, 2026-11-14 (after the "real per-row granularity" fix above shipped, before
+// it closed out): finding #1 — an OTHER venue's own reuse-eligible sibling functions were each counted
+// in FULL (summed), when their true combined need is a max (same rule reqByDateFrom's own ledger
+// already applies). That could falsely starve a THIRD, unrelated venue (or the main venue) even though
+// true combined need across every venue exactly fit the pool.
+describe("allocateRowAvailability — an other venue's own reuse-eligible siblings are maxed, not summed (finding #1)", () => {
+  it("24 owned; venue A has two reuse-eligible functions each needing 12 (true need 12); venue B has one function needing 12: true combined need is exactly 24 — nothing should be short", () => {
+    const fns = [
+      { fnDate: "2027-04-02", fnVenue: "Venue A", zoneElements: { z: [{ invId: "pod", qty: 12 }] } },
+      { fnDate: "2027-04-02", fnVenue: "Venue A", zoneElements: { z: [{ invId: "pod", qty: 12 }] } },
+      { fnDate: "2027-04-02", fnVenue: "Venue B", zoneElements: { z: [{ invId: "pod", qty: 12 }] } },
+    ];
+    const fn0 = allocateRowAvailability("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 24, "Venue A");
+    const fn1 = allocateRowAvailability("pod", fns, inventory, { fnIdx: 1, zoneKey: "z", elIdx: 0 }, "2027-04-02", 24, "Venue A");
+    const fn2 = allocateRowAvailability("pod", fns, inventory, { fnIdx: 2, zoneKey: "z", elIdx: 0 }, "2027-04-02", 24, "Venue B");
+    expect(fn2).toEqual({ ownedQty: 12, shortQty: 0 });
+    expect(fn0.shortQty + fn1.shortQty).toBe(0); // venue A's own pair was never meant to each separately claim 12
+  });
+
+  it("maxQtyForRow agrees: venue B's own row has the full 12 free, unaffected by venue A's reuse-eligible pair", () => {
+    const fns = [
+      { fnDate: "2027-04-02", fnVenue: "Venue A", zoneElements: { z: [{ invId: "pod", qty: 12 }] } },
+      { fnDate: "2027-04-02", fnVenue: "Venue A", zoneElements: { z: [{ invId: "pod", qty: 12 }] } },
+      { fnDate: "2027-04-02", fnVenue: "Venue B", zoneElements: { z: [{ invId: "pod", qty: 0 }] } },
+    ];
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 2, zoneKey: "z", elIdx: 0 }, "2027-04-02", 24, "Venue B")).toBe(12);
+  });
+});
+
+// Second regression review, 2026-11-14, finding #2 — an "extra function" with no venue of its own ever
+// set (StudioApp.jsx: `ef.venue || ""`) must be treated as the deal's MAIN venue (fnVenueKey's own
+// fallback rule, already applied in reqByDateFrom's ledger) — not as a separate "different venue" that
+// always competes in full regardless of crossFnSiblingsFree.
+describe("competingRows — a blank-venue extra function is the main venue, not a separate one (finding #2)", () => {
+  it("crossFnSiblingsFree frees a blank-venue sibling's units exactly like an explicitly-matching venue would", () => {
+    const fns = [
+      { fnDate: "2027-04-02", fnVenue: "Pushpanjali", zoneElements: { z: [{ invId: "pod", qty: 1 }] } },
+      { fnDate: "2027-04-02", fnVenue: "", zoneElements: { z: [{ invId: "pod", qty: 10 }] } },
+    ];
+    expect(maxQtyForRow("pod", fns, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, "Pushpanjali", true)).toBe(12);
+  });
+
+  it("without the flag, the blank-venue sibling still counts (unchanged default) — same number as if it had explicitly matched the venue", () => {
+    const blank = [
+      { fnDate: "2027-04-02", fnVenue: "Pushpanjali", zoneElements: { z: [{ invId: "pod", qty: 1 }] } },
+      { fnDate: "2027-04-02", fnVenue: "", zoneElements: { z: [{ invId: "pod", qty: 10 }] } },
+    ];
+    const matching = [
+      { fnDate: "2027-04-02", fnVenue: "Pushpanjali", zoneElements: { z: [{ invId: "pod", qty: 1 }] } },
+      { fnDate: "2027-04-02", fnVenue: "Pushpanjali", zoneElements: { z: [{ invId: "pod", qty: 10 }] } },
+    ];
+    const got = maxQtyForRow("pod", blank, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, "Pushpanjali");
+    const want = maxQtyForRow("pod", matching, inventory, { fnIdx: 0, zoneKey: "z", elIdx: 0 }, "2027-04-02", 12, "Pushpanjali");
+    expect(got).toBe(want);
+  });
+});
+
+// Second regression review, 2026-11-14, finding A — a caller that resolves targetVenue to the DEAL's
+// main venue while target itself is a different, genuinely-elsewhere function (not that venue's
+// "representative") must never make the target's OWN row invisible to its own allocation call: that
+// silently priced it at ₹0 instead of surfacing the mismatch. competingRows now always keeps target's
+// own row regardless of the representative-collapsing logic.
+describe("allocateRowAvailability — target's own row is never dropped by the other-venue collapsing (finding A)", () => {
+  it("target is the SMALLER of two functions sharing a different venue than targetVenue claims: it still gets its own allocation, not the default zero", () => {
+    const fns = [
+      { fnDate: "2027-04-02", fnVenue: "Aura", zoneElements: { z: [{ invId: "pod", qty: 1 }] } },
+      { fnDate: "2027-04-02", fnVenue: "Restro", zoneElements: { z: [{ invId: "pod", qty: 10 }] } },
+      { fnDate: "2027-04-02", fnVenue: "Restro", zoneElements: { z: [{ invId: "pod", qty: 6 }] } },
+    ];
+    // Caller mistake: targetVenue passed as "Aura" (the deal's main venue) while target is actually
+    // fnIdx 2, a Restro function — and not Restro's representative (fnIdx 1, total 10, is bigger).
+    const result = allocateRowAvailability("pod", fns, inventory, { fnIdx: 2, zoneKey: "z", elIdx: 0 }, "2027-04-02", 20, "Aura");
+    expect(result).not.toEqual({ ownedQty: 0, shortQty: 0 });
+    expect(result.ownedQty + result.shortQty).toBe(6); // its own row is still seen, not silently dropped
   });
 });
 

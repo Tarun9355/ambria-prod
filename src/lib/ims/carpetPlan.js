@@ -5,6 +5,8 @@
 import { prefsOf, floorSqftOf } from "../studio/carpetPrefs.js";
 import { CARPET_OFF, carpetPricingFor, carpetTakesStockPick } from "../studio/taxonomy.js";
 import { sameVenueHolds, reuseAwareAvail } from "../studio/carpetReuse.js";
+import { isLiveBlockStatus, blockEntryQty } from "./liveBlocks.js";
+import { venueKey } from "../venueKey.js";
 
 const norm = (v) => String(v || "").trim().toLowerCase();
 
@@ -16,9 +18,11 @@ export const carpetKey = (fi, zk, ri) => `${fi}|${zk}|${ri}`;
 export function freeForEvent(item, blocks, date, eventId) {
   if (!item) return null;
   const arr = (blocks || {})[item.id] || [];
+  // isLiveBlockStatus/blockEntryQty (bug 14): one shared "is this entry live" definition with
+  // Studio's and IMS's own counts (lib/ims/liveBlocks.js), not a third independent allowlist.
   const other = arr
-    .filter((b) => b && b.date === date && b.status !== "released" && b.eventId !== eventId)
-    .reduce((s, b) => s + (Number(b.qty) || 1), 0);
+    .filter((b) => b && b.date === date && isLiveBlockStatus(b) && b.eventId !== eventId)
+    .reduce((s, b) => s + blockEntryQty(b), 0);
   return Math.max(0, (Number(item.qty) || 0) - (Number(item.blocked) || 0) - other);
 }
 
@@ -63,11 +67,11 @@ export function validDecision(entry, floor) {
 // Floors of OTHER functions of this event, at the same venue and date, that use this carpet (their decision, else their 1st choice) — it
 // stays laid between them, so it is reusable, not a conflict. Same function = a different floor of the same setup, never a sibling.
 export function siblingFloorsUsing(floor, id, floors, choice) {
-  const v = norm(floor.venue);
+  const v = venueKey(floor.venue);
   if (!v || !floor.date) return [];
   const out = [];
   (floors || []).forEach((g) => {
-    if (!g || g.key === floor.key || g.fi === floor.fi || g.date !== floor.date || norm(g.venue) !== v) return;
+    if (!g || g.key === floor.key || g.fi === floor.fi || g.date !== floor.date || venueKey(g.venue) !== v) return;
     const used = validDecision(choice?.[g.key], g)?.id || g.prefs[0]?.id;
     if (used === id) out.push(`${g.fnLabel || `Function ${(g.fi ?? 0) + 1}`} · ${g.zoneName}`);
   });

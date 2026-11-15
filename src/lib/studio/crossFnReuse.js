@@ -1,3 +1,5 @@
+import { venueKey } from "../venueKey.js";
+
 // Cross-function reuse: two functions of the SAME deal, same venue, on the same day or the next —
 // e.g. a Sundowner Cocktail followed the next night by the Wedding. The ONE shared definition of
 // "is there a reuse-eligible sibling function" — Build's guest-facing element discount, Build's
@@ -31,12 +33,12 @@
 // though both functions' setups are equally still standing at the venue for Wedding to draw on.
 export function findCrossFnReuseSource(fnData, allFns) {
   if (!fnData?.fnVenue || !fnData?.fnDate) return null;
-  const venue = fnData.fnVenue.toLowerCase().trim();
+  const venue = venueKey(fnData.fnVenue);
   const myDate = Date.parse(fnData.fnDate);
   if (!Number.isFinite(myDate)) return null;
   const eligible = (allFns || []).filter(f => {
     if (f === fnData || f.fnIdx === fnData.fnIdx || !f.fnVenue || !f.fnDate) return false;
-    if (f.fnVenue.toLowerCase().trim() !== venue) return false;
+    if (venueKey(f.fnVenue) !== venue) return false;
     const t = Date.parse(f.fnDate);
     if (!Number.isFinite(t)) return false;
     const dayDiff = Math.round((myDate - t) / (24 * 60 * 60 * 1000));
@@ -79,12 +81,12 @@ export function computeFnInvQty(fnData) {
 export function findSiblingFnInvUse(fnData, allFns) {
   const out = {};
   if (!fnData?.fnVenue || !fnData?.fnDate) return out;
-  const venue = fnData.fnVenue.toLowerCase().trim();
+  const venue = venueKey(fnData.fnVenue);
   const t = Date.parse(fnData.fnDate);
   if (!Number.isFinite(t)) return out;
   (allFns || []).forEach(f => {
     if (f.fnIdx === fnData.fnIdx || !f.fnVenue || !f.fnDate) return;
-    if (f.fnVenue.toLowerCase().trim() !== venue) return;
+    if (venueKey(f.fnVenue) !== venue) return;
     const t2 = Date.parse(f.fnDate);
     if (!Number.isFinite(t2) || Math.abs(Math.round((t2 - t) / (24 * 60 * 60 * 1000))) > 1) return;
     const label = f.fnType || `Function ${f.fnIdx + 1}`;
@@ -108,13 +110,13 @@ export function findSiblingFnInvUse(fnData, allFns) {
 export function findSiblingFnSubcatOpportunity(fnData, allFns, imsInventory) {
   const out = {};
   if (!fnData?.fnVenue || !fnData?.fnDate) return out;
-  const venue = fnData.fnVenue.toLowerCase().trim();
+  const venue = venueKey(fnData.fnVenue);
   const t = Date.parse(fnData.fnDate);
   if (!Number.isFinite(t)) return out;
   const invById = new Map((imsInventory || []).map(i => [i.id, i]));
   (allFns || []).forEach(f => {
     if (f.fnIdx === fnData.fnIdx || !f.fnVenue || !f.fnDate) return;
-    if (f.fnVenue.toLowerCase().trim() !== venue) return;
+    if (venueKey(f.fnVenue) !== venue) return;
     const t2 = Date.parse(f.fnDate);
     if (!Number.isFinite(t2) || Math.abs(Math.round((t2 - t) / (24 * 60 * 60 * 1000))) > 1) return;
     const label = f.fnType || `Function ${f.fnIdx + 1}`;
@@ -159,12 +161,12 @@ export function groupConsecutiveFns(allFns) {
   for (let i = 0; i < fns.length; i++) {
     const fi = fns[i];
     if (!fi?.fnVenue || !fi?.fnDate) continue;
-    const vi = fi.fnVenue.toLowerCase().trim();
+    const vi = venueKey(fi.fnVenue);
     const ti = Date.parse(fi.fnDate);
     if (!Number.isFinite(ti)) continue;
     for (let j = i + 1; j < fns.length; j++) {
       const fj = fns[j];
-      if (!fj?.fnVenue || !fj?.fnDate || fj.fnVenue.toLowerCase().trim() !== vi) continue;
+      if (!fj?.fnVenue || !fj?.fnDate || venueKey(fj.fnVenue) !== vi) continue;
       const tj = Date.parse(fj.fnDate);
       if (!Number.isFinite(tj)) continue;
       if (Math.abs(Math.round((tj - ti) / (24 * 60 * 60 * 1000))) <= 1) union(i, j);

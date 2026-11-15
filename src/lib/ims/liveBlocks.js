@@ -76,6 +76,66 @@ export function filterLiveBlocks(blocks, eventOrdersOrSet) {
 // whose recomputed total is 0, loses its key — matching fetchIMSData's own convention of only ever
 // carrying positive, non-empty entries. Tolerates a missing blocksDetailForDate (loadAvailability's
 // early-return shape has none) and returns the SAME object when nothing changed.
+// Bug 14 (2026-11-14 audit): Studio and IMS used to each maintain their OWN definition of "is this
+// blocks entry live" — Studio counted only confirmed/final/held statuses, IMS's getAvailableQty
+// counted everything NOT "released". An entry with an unrecognized or missing status was invisible
+// to Studio but counted by IMS, so the two could disagree about the same reservation. One shared
+// predicate, used by both from here on. Fails CLOSED (an unknown/missing status is treated as live),
+// matching IMS's prior definition — a status this app doesn't recognize is far more likely to be an
+// in-flight/legacy value than a signal that the stock was actually freed.
+// Keep RELEASED_BLOCK_STATUSES in sync with block_entry_is_live() in migration 066 if/when it ships.
+export const RELEASED_BLOCK_STATUSES = Object.freeze(["released", "cancelled"]);
+export function isLiveBlockStatus(b) { return !!b && !RELEASED_BLOCK_STATUSES.includes(String(b.status ?? "")); }
+
+// A blocks entry's qty, coerced the same way everywhere — a missing/non-numeric/non-positive qty
+// counts as 0 rather than silently defaulting to 1 the way some older write-side code does (that
+// default belongs at WRITE time, if anywhere; at READ time a qty-less entry holding nothing is the
+// safer assumption). qtyToProduce is deliberately never counted here — units still to be produced
+// are not units already held (see blockEntryQtyToProduce/heldForEventOnDate, below, for surfacing it).
+export function blockEntryQty(b) { const n = Number(b?.qty); return Number.isFinite(n) && n > 0 ? n : 0; }
+
+// A blocks entry's qtyToProduce, coerced the same way blockEntryQty is. Units flagged here were
+// explicitly allowed past the real stock ceiling (apply_block_ops, migration 066's own allowOver
+// handling) — not already-held stock, so a caller must never fold this into a "how much do we
+// physically have" total; only ever show it alongside, as "N more still need producing."
+export function blockEntryQtyToProduce(b) { const n = Number(b?.qtyToProduce); return Number.isFinite(n) && n > 0 ? n : 0; }
+
+// Bug 10 (2026-11-14 audit) — qtyToProduce had no reader anywhere in the app. The one place ops
+// needs to see it is right next to a function's own blocked qty (InventoryTab.jsx's "Blocked for
+// Functions" list) — found by matching an entry's (eventId, date) against the function row already
+// being shown, not by threading it through `functions.items` itself (a point-in-time snapshot taken
+// once at auto-confirm time, never corrected again as a LATER writer — Studio's own reconcile
+// relabelling/capping the hold, a re-block — changes the real `blocks` entries). Reading straight
+// from live `blocks` here means the qty shown always reflects whatever is ACTUALLY reserved right
+// now, regardless of which writer most recently touched it, same reasoning as heldOnDate above.
+// `found` distinguishes "there is a live blocks record for this exact (eventId, date), trust its qty
+// even if that's genuinely 0 (fully released)" from "no blocks entry at all matches this function —
+// fall back to the function row's own static qty, the only information there is."
+export function heldForEventOnDate(entries, eventId, date) {
+  let qty = 0, qtyToProduce = 0, found = false;
+  (entries || []).forEach((b) => {
+    if (!b || b.eventId !== eventId || b.date !== date) return;
+    found = true;
+    if (!isLiveBlockStatus(b)) return;
+    qty += blockEntryQty(b);
+    qtyToProduce += blockEntryQtyToProduce(b);
+  });
+  return { qty, qtyToProduce, found };
+}
+
+// Sum of live-status, non-cancelled-event entries for one item's array, on one date. cancelledSet
+// (optional — a Set, or the raw eventOrders array to build one from) applies the same cancelled-
+// event exclusion isLiveBlockEntry/filterLiveBlocks already apply elsewhere in this file; omit it
+// when the caller has already filtered cancelled events out upstream (e.g. via liveDateBlocks).
+export function heldOnDate(entries, date, cancelledSet) {
+  const cancelled = cancelledSet ? toSet(cancelledSet) : null;
+  return (entries || []).reduce((sum, b) => {
+    if (!b || b.date !== date || !isLiveBlockStatus(b)) return sum;
+    if (cancelled && cancelled.has(b.eventId)) return sum;
+    return sum + blockEntryQty(b);
+  }, 0);
+}
+
 export function liveDateBlocks(res, eventOrdersOrSet) {
   if (!res || !res.blocksDetailForDate) return res;
   const cancelled = toSet(eventOrdersOrSet);

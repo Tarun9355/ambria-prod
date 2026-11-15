@@ -53,7 +53,7 @@ import { zoneDimLabel } from "../../lib/studio/zoneDims";
 import { withKitEdit } from "../../lib/studio/dealCheckSync";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
-import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows, effectiveColorPrefRows } from "../../lib/studio/floralCost";
+import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows, effectiveColorPrefRows, floralPlanByFn } from "../../lib/studio/floralCost";
 import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements, tentingZoneUsage, fabricBangaliZone } from "../../lib/studio/manpowerCount";
 import { rowToClient } from "../../lib/studio/clientRow";
 import { DELETED_CATALOGUE_TABLE, EMPTY_DELETED_CATALOGUE, assembleDeletedCatalogue, withDeletedRates, withDeletedInventory, deletedKitParts } from "../../lib/studio/deletedCatalogue";
@@ -106,6 +106,8 @@ import { sheetItemLine } from "../../lib/studio/sheetRounding";
 import { sigHash } from "../../lib/sigHash";
 import { costSheetQtyEdit } from "../../lib/studio/costSheetQtyEdit";
 import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive, kitPartShortfalls, fnUnitQty } from "../../lib/studio/dealAvailability";
+import { ledgerPreflightShortfalls } from "../../lib/studio/ledgerPreflight";
+import { reportStockShortfall, clearStockShortfall } from "../../lib/studio/stockShortfalls";
 import { swapKitPart } from "../../lib/studio/kitPartSwap";
 import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
@@ -116,7 +118,7 @@ import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDef
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
 import { todayStr } from "../../lib/ims/attendance";
-import { cancelledEventIds, liveDateBlocks } from "../../lib/ims/liveBlocks";
+import { cancelledEventIds, liveDateBlocks, isLiveBlockStatus, blockEntryQty } from "../../lib/ims/liveBlocks";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc, claimDealPresence } from "../../lib/supabase";
 import { writeWithRetry } from "../../lib/writeRetry";
 import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
@@ -150,9 +152,12 @@ import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CA
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions } from "../../lib/studio/sessionData.js";
-import { reqByDateFrom, ownedIds, planStudioBlocks, SRC_STUDIO_CARD } from "../../lib/studio/soldBlocksPlan.js";
-import { isFoc, cardIsFoc as sharedCardIsFoc } from "../../lib/studio/foc.js";
+import { reqByDateFrom, ownedIds, planStudioBlocks, planToOps, SRC_STUDIO_CARD } from "../../lib/studio/soldBlocksPlan.js";
+import { applyBlockOps, shortfallsOf } from "../../lib/ims/blocksRpc.js";
+import { mergeManualSwaps } from "../../lib/studio/dealCheckCardMerge.js";
+import { isFoc, cardIsFoc as sharedCardIsFoc, parseCardKeyLite } from "../../lib/studio/foc.js";
 import { reindexFnIdxObject, reindexFnIdxArray, reindexCompositeKeyObject, ZONE_PIPE_KEY, TRUSS_ZONE_PIPE_KEY, TRANSPORT_COLLAPSE_KEY, FLORAL_CALC_OPEN_KEY } from "../../lib/studio/dealCheckReindex.js";
+import { removeFnFromEventOrderData } from "../../lib/studio/eventOrderFnRemoval.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry.js";
 import { thumbUrl } from "../../lib/studio/thumb.js";
@@ -1067,14 +1072,23 @@ let rawImsFetch = null; // { at, promise }
 function fetchRawIMS() {
   const now = Date.now();
   if (rawImsFetch && now - rawImsFetch.at < RAW_IMS_SHARE_MS) return rawImsFetch.promise;
-  const promise = Promise.all([fetchAll("inventory").catch(() => []), fetchAll("blocks").catch(() => [])]);
+  // A genuine fetch failure (network blip, Supabase error) must be told apart from a table that
+  // genuinely came back empty — `.catch(() => [])` made the two indistinguishable, so a real failure
+  // silently read as "zero inventory, zero blocks" instead of "unknown" (confirmed bug, 2026-11-15:
+  // this is exactly why the fail-open warning fetchIMSData's own caller shows never actually fired for
+  // a real network error — Array.isArray([]) is true, so it always looked like a clean success).
+  const promise = Promise.all([fetchAll("inventory").catch(() => null), fetchAll("blocks").catch(() => null)]);
   rawImsFetch = { at: now, promise };
+  // Don't replay a genuine failure to every caller for the rest of the share window — clear the
+  // shared cache so the next ask retries for real instead of reusing a known-bad result.
+  promise.then(([invRows, blockRows]) => { if (invRows === null || blockRows === null) rawImsFetch = null; });
   return promise;
 }
 function invalidateRawIMS() { rawImsFetch = null; }
 async function fetchIMSData(date) {
   try {
     const [invRows, blockRows] = await fetchRawIMS();
+    if (invRows === null || blockRows === null) return null; // genuine fetch failure — see fetchRawIMS's own comment
     let inventory = Array.isArray(invRows) ? invRows.map(rowToItem).filter(Boolean) : [];
     // blocks table is row-per-item: { id/item_id, data: [reservations] } → { itemId: [reservations] }
     const blocks = {};
@@ -1089,8 +1103,12 @@ async function fetchIMSData(date) {
     const blocksDetailForDate = {};
     for (const [imsId, blockList] of Object.entries(blocks)) {
       if (!Array.isArray(blockList)) continue;
-      const activeToday = blockList.filter(b => b && b.date === date && (b.status === "confirmed" || b.status === "final" || b.status === "held"));
-      const total = activeToday.reduce((sum, b) => sum + (Number(b.qty) || 0), 0);
+      // isLiveBlockStatus (bug 14, 2026-11-14 audit): this used to be its own allowlist
+      // (confirmed/final/held only), which disagreed with IMS's own getAvailableQty (everything NOT
+      // "released") — an entry with an unrecognized/missing status was invisible to Studio but
+      // counted by IMS. One shared, fail-closed definition now, lib/ims/liveBlocks.js.
+      const activeToday = blockList.filter(b => b && b.date === date && isLiveBlockStatus(b));
+      const total = activeToday.reduce((sum, b) => sum + blockEntryQty(b), 0);
       if (total > 0) blocksForDate[imsId] = total;
       if (activeToday.length) blocksDetailForDate[imsId] = activeToday.map(b => ({ eventId: b.eventId, qty: Number(b.qty) || 0 }));
     }
@@ -1929,6 +1947,12 @@ export default function StudioApp() {
     return () => el.removeAttribute("data-dc-open");
   }, [dcFullPageOpen]);
   const [dcCards, setDcCards] = useState({});
+  // Mirrors dcCards synchronously (bug 17, 2026-11-14 audit) — the reconcile below needs the LATEST
+  // manual-swap merge at the exact moment it reads cards, not whatever `dcCards` this call's own
+  // render closure happened to capture when it started (which can be stale on Deal Check's first
+  // open after a hard refresh — see the setDcCards functional-update comment further down).
+  const dcCardsRef = useRef(dcCards);
+  dcCardsRef.current = dcCards;
   const [dcZoneState, setDcZoneState] = useState({});
   const [dcKitEdits, setDcKitEdits] = useState({});
   const [dcCarpetPick, setDcCarpetPick] = useState({});
@@ -1993,6 +2017,26 @@ export default function StudioApp() {
   // object literal (not a counter) so even two removals at the identical index still change
   // reference and re-fire the watching effect.
   const [lastFnRemoval, setLastFnRemoval] = useState(null);
+  // ── FUNCTION-REMOVAL SYNC GUARDS (2026-11-14) ──
+  // reindexEventOrderForRemoval (below) read-modifies-writes event_orders.functionsDetail — the
+  // SAME row persistDeptSnapshot/persistBuildLayoutSnapshot also read-modify-write on their own
+  // debounced/periodic cycles. A removal's own write landing in the middle of one of those cycles
+  // (or vice versa) is a plain last-writer-wins race: a sync that read the row BEFORE the removal's
+  // write landed, then writes AFTER it, silently puts the just-deleted function right back — the
+  // exact "reload the deal and it comes back" symptom this closes.
+  // Bumped synchronously the instant a removal STARTS (before its own read even begins) — any sync
+  // cycle whose own committed epoch is already behind this has a function list a removal is about
+  // to invalidate, and must skip this cycle rather than race it.
+  const fnRemovalEpochRef = useRef(0);
+  // Sampled once per commit, in the SAME useLayoutEffect as collectAllFunctionDataRef (both read
+  // "the current render's committed function list", so they must agree on which render that is).
+  const committedRemovalEpochRef = useRef(0);
+  // >0 while a removal's own read-modify-write is actually in flight — a sync cycle starting here
+  // would read the row WHILE the removal is mid-write, same race as above from the other direction.
+  const fnRemovalInFlightRef = useRef(0);
+  // Chains every removal's own read-modify-write onto the previous one — two quick removals (or one
+  // racing an in-flight one) must never interleave their reads/writes to the same row.
+  const fnRemovalChainRef = useRef(Promise.resolve());
   // Per-element/per-reference stock availability picker — { zoneKey, idx, elName, subcat, date,
   // loading, items, selectedId, onPick }. Lifted here (rather than staying local to StudioBuild)
   // so both Build's own 📦 icon AND the Add Production/Buying Item modal (StudioModals.jsx) can
@@ -2009,6 +2053,11 @@ export default function StudioApp() {
   // truss/platform/batta shortage means picking a different size/material or sourcing more stock,
   // not swapping one inventory item for another).
   const [trussStockGateModal, setTrussStockGateModal] = useState(null);
+  // Pre-Sold gate #3 (Phase 4, 2026-11-14 inventory-blocks audit, finding F4 / "bug 7") — see
+  // ledgerPreflightShortfalls' own comment (lib/studio/ledgerPreflight.js). Same blocking treatment,
+  // same plain-list shape as trussStockGateModal: fixing this means reducing qty, swapping the item,
+  // or sourcing more — not a per-row swap picker, so no Fix button here either.
+  const [ledgerStockGateModal, setLedgerStockGateModal] = useState(null);
   // One flagged row's {fnIdx, zoneKey, idx} while its own function switch is still catching up to
   // openAvailModal — see the effect right below. null the rest of the time.
   const [oosFixPending, setOosFixPending] = useState(null);
@@ -4417,6 +4466,14 @@ export default function StudioApp() {
   const persistDeptSnapshot = useCallback(async (snap) => {
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     if (!eo) return;
+    // Epoch guard (2026-11-14, function-removal race — see fnRemovalEpochRef's own comment): this
+    // snap was built from a function list a removal might be about to invalidate (if this render
+    // hasn't committed past the removal yet) or a removal's own read-modify-write might still be
+    // landing right now. Either way, writing this whole-row snapshot could silently put a just-
+    // deleted function right back. Skip the cycle entirely rather than race it — the next sync
+    // (debounced edit, 15s periodic, or the removal's own trigger) re-evaluates from a clean state.
+    if (committedRemovalEpochRef.current !== fnRemovalEpochRef.current || fnRemovalInFlightRef.current > 0) return;
+    const startRemovalEpoch = fnRemovalEpochRef.current;
     // Signature of the WHOLE projected breakdown (income + per-dept manpower + inventory + fabric) —
     // used to skip redundant writes. Covering all of it (not just income totals) means a change to the
     // manpower split or fabric plan also re-syncs, so the stored snapshot can't drift out of sync.
@@ -4548,6 +4605,10 @@ export default function StudioApp() {
     try {
       // Read the FRESHEST row so we never clobber IMS-owned fields with Studio's stale local copy.
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
+      // A removal may have started (and even finished) while this read was in flight — see this
+      // function's own epoch guard above. Abort rather than write a snapshot that no longer matches
+      // what the server's functionsDetail should look like.
+      if (fnRemovalEpochRef.current !== startRemovalEpoch) return;
       if (row && row.data) {
         const cur = row.data;
         // Skip only when truly in sync: same signature AND the income snapshot is actually present.
@@ -4591,6 +4652,9 @@ export default function StudioApp() {
   const persistBuildLayoutSnapshot = useCallback(async () => {
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     if (!eo) return; // not sold yet — nothing in IMS to keep in sync
+    // Epoch guard — see persistDeptSnapshot's own identical guard and fnRemovalEpochRef's comment.
+    if (committedRemovalEpochRef.current !== fnRemovalEpochRef.current || fnRemovalInFlightRef.current > 0) return;
+    const startRemovalEpoch = fnRemovalEpochRef.current;
     const layout = new Map();
     try {
       const allFns = collectAllFunctionDataRef.current?.() || [];
@@ -4630,6 +4694,9 @@ export default function StudioApp() {
     const laySig = sigHash(JSON.stringify([...layout.entries()])); // a fingerprint, not the whole layout (was ~7 KB a row)
     try {
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
+      // See persistDeptSnapshot's identical check — a removal may have started/finished while this
+      // read was in flight.
+      if (fnRemovalEpochRef.current !== startRemovalEpoch) return;
       if (!row || !row.data) return;
       const cur = row.data;
       if (cur.layoutSig === laySig) return; // already in sync — no write
@@ -5272,6 +5339,9 @@ export default function StudioApp() {
     // path (availability-checked or plain) this element ultimately falls through to.
     let kitFlowerCost = 0;
     let kitFlowerSMB = false;
+    // Set by the non-kit floral-recipe branch below (bug fix, 2026-11-14: this used to be an early
+    // return with no availability check at all — see that branch's own comment).
+    let floralBlend = null;
     // The real/artificial mix of the function BEING PRICED. Every event-level caller (event total,
     // Summary breakdown, cost sheet) prices all functions in one pass and passes each one's own
     // ratio as opts.fnRatio; falling back to `floralRatio` (the ACTIVE function's mix) priced every
@@ -5385,11 +5455,21 @@ export default function StudioApp() {
         const subMode = subKey ? rcFloralModeByKey[subKey] : undefined;
         const modeDefault = subMode === "real" ? 100 : subMode === "artificial" ? 0 : Math.max(0, Math.min(100, 100 - fnFloralRatio));
         const realPct = (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) ? el.realPct : modeDefault;
-        // Flower cost blends by real/artificial %; the pot/container itself doesn't — this specific
-        // item's own rental (× its sub-category's scaling factor) is always added on top, alongside
-        // the recipe's own generic "extra (pot/base)" figure.
-        const unitPrice = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra + priceForInvItem(item, rcFactorByKey, invForPricing);
-        return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: true, realPct, patternSMB: pattern.mode === "smb" };
+        // Flower cost blends by real/artificial %; the pot/container itself doesn't — its own rental
+        // (× its sub-category's scaling factor) is the shared availability block's own `ownedRate`
+        // below (priceForInvItem), added on top there alongside kitFlowerCost, exactly like a kit's
+        // own recipe add-on (isKit branch above).
+        //
+        // kitFlowerCost/kitFlowerSMB/floralBlend (not an early return, as this used to be): a non-kit
+        // item that merely matches a flower recipe by name/sub-category is still real rentable stock —
+        // it was previously exempt from EVERY availability check (no outOfStock, no maxQty ceiling, no
+        // Sold-gate stop), which let it sell past real stock with no warning at all, same root cause as
+        // the kit case F2 already fixed 2026-11-13 (see that comment above). Falling through to the
+        // shared availability-check block below restores the check for this item type too;
+        // kitFlowerCost is added back on top of whatever that block computes, further down.
+        kitFlowerCost = Math.round(realPct / 100 * rates.realRate + (100 - realPct) / 100 * rates.artRate) + rates.extra;
+        kitFlowerSMB = pattern.mode === "smb";
+        floralBlend = { realPct };
       }
     }
 
@@ -5468,16 +5548,26 @@ export default function StudioApp() {
         // genuinely different venues cannot share the same installed stock (see
         // qtyUsedElsewhereInBuild's own comment, lib/studio/dealAvailability.js); without this, a
         // second same-day function at a different venue competed for the SAME pool as the first,
-        // exactly as if it were a completely different client's deal on that date.
-        const alloc = allocateRowAvailability(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName);
+        // exactly as if it were a completely different client's deal on that date. Falls back to the
+        // deal's main function's own venue (fns[0], same rule fnVenueKey applies) when this row's own
+        // function never got its own venue explicitly set — an "extra function" defaults to "" (never
+        // the main venue) — otherwise it read as a genuinely different venue from its own main
+        // function and lost its own row entirely to competingRows' finding-#1 collapsing (regression
+        // review, 2026-11-14, finding B).
+        const _venueName = opts?.venueName || _fnsForAlloc?.[0]?.fnVenue || "";
+        const alloc = allocateRowAvailability(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, _venueName);
         // crossFnSiblingsFree (last arg, only when a venue is known — see maxQtyForRow's own
         // comment): a sibling FUNCTION at this exact same date+venue is, by this deal's own
         // cross-function reuse rule (findCrossFnReuseSource, dayDiff === 0), always reuse-eligible —
         // its units were never really "someone else's" demand, just this deal's own stock already
         // standing here. allocateRowAvailability (ownedQty/shortQty, for pricing) is untouched —
         // pricing's own reuse credit (crossFnTake/crossFnBonus below) already handles that
-        // separately and correctly; this only affects the typed-quantity CEILING.
-        rowMaxQty = maxQtyForRow(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, opts?.venueName, !!opts?.venueName);
+        // separately and correctly; this only affects the typed-quantity CEILING. (2026-11-14
+        // regression review: giving allocateRowAvailability this SAME exclusion was tried and
+        // reverted — it double-counts against crossFnBonus/kitPartShortfalls' own reusePool credit
+        // for the same-day case, since those can't yet tell same-day and previous-day reuse apart;
+        // see dealAvailability.js's own comment on allocateRowAvailability.)
+        rowMaxQty = maxQtyForRow(item.id, _fnsForAlloc, imsInventory, _rowTarget, _allocDate, otherEventsAvail, _venueName, !!_venueName);
         ownedQty = alloc.ownedQty; shortQty = alloc.shortQty;
       } else {
         ownedQty = Math.min(qty, otherEventsAvail);
@@ -5572,13 +5662,13 @@ export default function StudioApp() {
       // item that ever took this availability-checked path — which is every element card in Build.
       // shortCost (raw, pre-date-multiplier) — getElPrice's own wrapper reads this to keep the
       // date-category multiplier off a true shortfall's cost-basis price (see its own comment).
-      return { rc: null, unitPrice, fullUnitPrice: ownedRate + kitFlowerCost, lineCost, area: 0, warning, isFloralBlend: false, realPct: null, patternSMB: kitFlowerSMB, available: ownedQty, shortCost, outOfStock, maxQty, shortWhy,
+      return { rc: null, unitPrice, fullUnitPrice: ownedRate + kitFlowerCost, lineCost, area: 0, warning, isFloralBlend: !!floralBlend, realPct: floralBlend ? floralBlend.realPct : null, patternSMB: kitFlowerSMB, available: ownedQty, shortCost, outOfStock, maxQty, shortWhy,
         // madeToOrder: short on the date, but the item is ticked 'Can be made' and there is time to make it - Build does not call it
         // short (owner ask 2026-11-06); it is still priced at cost% for the part past stock, and Planning still sees it to be made.
         madeToOrder: shortQty > 0 && canMakeShort };
     }
     const unitPrice = priceForInvItem(item, rcFactorByKey, invForPricing, el.kitOverrides) + kitFlowerCost;
-    return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: false, realPct: null, patternSMB: kitFlowerSMB };
+    return { rc: null, unitPrice, fullUnitPrice: unitPrice, lineCost: repeatAdjustedLineCost(item, qty, unitPrice, opts?.zc, opts?.venueName, crossFnTake, el.repeatOverride, dateFactorFor(el, opts), el.kitOverrides), area: 0, warning: null, isFloralBlend: !!floralBlend, realPct: floralBlend ? floralBlend.realPct : null, patternSMB: kitFlowerSMB };
   }, [imsInventory, invForPricing, patternById, rcFactorByKey, rcCostPctForSub, activeBlocksForDate, activeBlocksDetailForDate, blocksDetailByDate, dealCheckData, studioFloralData, rcFloralModeByKey, floralRatio, fvCfgForRepeat, eventOrders, activeClientId, clientName, activeFnIdx, activeFnMeta, clientDate, flowerRateForFn, hideDiscountFromClient]);
 
   // Thin outer wrapper: resolves live-vs-deleted `item` once, calls the core pricing body, then
@@ -5619,8 +5709,12 @@ export default function StudioApp() {
     const rawBlocks = opts.blocksForDate ?? activeBlocksForDate;
     const detail = opts.blocksDetailForDate ?? (opts.fnDate ? blocksDetailByDate[opts.fnDate] : undefined) ?? activeBlocksDetailForDate;
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
-    const venueName = opts.venueName ?? activeFnMeta?.venue;
     const fns = collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [];
+    // Falls back all the way to the deal's main function's own venue (fns[0] — same rule fnVenueKey
+    // applies) when neither opts.venueName nor the active function has one of its own: an "extra
+    // function" defaults to "" rather than ever inheriting the main venue, which otherwise read as a
+    // genuinely different venue from its own main function (regression review, 2026-11-14, finding B).
+    const venueName = opts.venueName || activeFnMeta?.venue || fns?.[0]?.fnVenue || "";
     const target = opts.zoneKey != null && opts.elIdx != null ? { fnIdx: opts.fnIdx ?? activeFnIdx, zoneKey: opts.zoneKey, elIdx: opts.elIdx } : null;
     const ownIds = [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)];
     const freeFor = (part) => combineAvailability(Number(part?.qty ?? part?.qtyOwned) || 0,
@@ -6051,7 +6145,7 @@ export default function StudioApp() {
       if (!Array.isArray(els) || !els.length) return;
       const zc = zoneConfig[zk];
       out[zk] = els.map((el, i) => {
-        const r = getElPrice(el, zc, { checkAvailability: true, zoneKey: zk, elIdx: i }, venue);
+        const r = getElPrice(el, zc, { checkAvailability: true, zoneKey: zk, elIdx: i }, activeFnMeta?.venue || venue);
         return { unitPrice: r.unitPrice, lineCost: r.lineCost, fullUnitPrice: r.fullUnitPrice ?? null, warning: r.warning || null };
       });
     });
@@ -6469,7 +6563,7 @@ export default function StudioApp() {
   }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, clientFlowerPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx, sourceVideo]);
   const collectAllFunctionData = useCallback(() => allFunctionData, [allFunctionData]);
   // Layout, same reasoning as snapshotFnRef / saveSessionRef — read from synchronous paths.
-  useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; });
+  useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; committedRemovalEpochRef.current = fnRemovalEpochRef.current; });
   // ── EARLY WARNING: TWO FUNCTIONS JUST STARTED SHARING ONE REFERENCE VIDEO ──
   // duplicateSourceVideoFnIdxs' own comment has the full story — this is a one-time, non-blocking
   // heads-up (never refuses a save, unlike suspiciousDuplicateFnIdxs) meant to catch the Sahiba-
@@ -6573,7 +6667,12 @@ export default function StudioApp() {
         const result = allocateForDate({}, date, list, trussInv, "studio-presale-check");
         if (list.find((ev) => ev.eoId === SELF_CHECK_EOID)?.shortageBorne) {
           const sm = result[date]?.stockSummary;
-          const bits = [...Object.entries(sm?.overflowPillars || {}).map(([sz, q]) => `${q}× ${sz}ft pillar`), ...Object.entries(sm?.overflowBeams || {}).map(([sz, q]) => `${q}× ${sz}ft beam`)];
+          // overflowPillars/overflowBeams are keyed "<material>|<size>" (trussEngine.js's
+          // computePoolFeasibility, 2026-11-14 — material-aware stock, see its own header comment) —
+          // "iron" is left off the label since it's the common/default case, any other material is
+          // named so the salesperson knows which skeleton is actually short.
+          const label = (k, unit) => { const [mat, sz] = k.split("|"); return `${sz}ft ${unit}${mat !== "iron" ? ` (${mat})` : ""}`; };
+          const bits = [...Object.entries(sm?.overflowPillars || {}).map(([k, q]) => `${q}× ${label(k, "pillar")}`), ...Object.entries(sm?.overflowBeams || {}).map(([k, q]) => `${q}× ${label(k, "beam")}`)];
           flagged.push({ domain: "truss", emoji: "🏗️", date, detail: bits.join(", ") || "stock shortfall" });
         }
       }
@@ -6600,6 +6699,20 @@ export default function StudioApp() {
     });
     return flagged;
   }, [studioFloralData, collectAllFunctionData, activeClientId, clientName]);
+
+  // Pre-Sold gate #3 — see ledgerPreflightShortfalls' own comment (lib/studio/ledgerPreflight.js):
+  // Build's own per-row availability check credits cross-function reuse for PRICING, but the real
+  // `blocks` ledger a sold deal reserves has no such credit — two same-day, same-venue functions each
+  // needing the full qty of an item can each independently price as "fully covered" while the real
+  // ledger need still exceeds what apply_block_ops will actually grant at write time. This catches that
+  // BEFORE Sold, instead of the RPC silently capping it after.
+  const scanLedgerShortfalls = useCallback(() => {
+    const allFns = collectAllFunctionData();
+    const eo = eventOrderFor(eventOrders, activeClientId, clientName);
+    const ownEventIds = [eo?.id, ...ownEventOrderIds(eventOrders, activeClientId, clientName)].filter(Boolean);
+    const shortfalls = ledgerPreflightShortfalls({ fns: allFns, inventory: imsInventory, blocksDetailByDate, ownEventIds });
+    return shortfalls.map((s) => ({ domain: "ledger", emoji: "🔗", date: s.date, detail: `${s.short}× ${s.name} short of what this date really needs` }));
+  }, [collectAllFunctionData, eventOrders, activeClientId, clientName, imsInventory, blocksDetailByDate]);
 
   // The SAME cross-function reuse quantities calcFunctionCost/calcFunctionBreakdown already build
   // and fold into the Live Estimate/Summary/Deal Check totals for the active function — but Build's
@@ -9595,41 +9708,53 @@ export default function StudioApp() {
   // (persistDeptSnapshot) deliberately never touches it — so this patches the live server row
   // directly and narrowly, the same surgical single-field pattern syncDealValueNow uses just above
   // (re-read the freshest row first, never write from a possibly-stale local copy of IMS's own data).
-  const reindexEventOrderDeptOpsForRemoval = useCallback(async (removedIdx) => {
+  // Reindexes event_orders.functionsDetail ITSELF (so a deleted function stops showing in every IMS
+  // PDF/display — owner report, 2026-11-14) plus its deptOps carpet/fabric choices in the SAME
+  // write (see eventOrderFnRemoval.js's own header for the full story, including why a middle/first
+  // deletion is worse than a stale trailing entry: persistDeptSnapshot's own Sangeeta-incident
+  // identity guard, and pushEventOrderPlan's matchesOtherInExisting, both misfire against a
+  // not-yet-reindexed row). removedIdentity: this function's own {type,date,venue} as
+  // StudioEventInfo.jsx's removeFunction captured it BEFORE any of its own setters ran — never
+  // trust a bare index alone to decide which server entry is "the" removed one.
+  const reindexEventOrderForRemoval = useCallback(async (removedIdx, removedIdentity) => {
+    // View-only users never get here in practice (removing a function isn't itself gated — a
+    // separate, pre-existing gap, not this fix's to close), but every OTHER write path in this file
+    // IS gated — skip the persist (the live Studio-side reindex above already happened regardless)
+    // rather than let a view-only session write straight to the server.
+    if (!canDesignEditRef.current) return;
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     // Strict id match only — eventOrderFor's own name-only fallback (for pre-id-era records) can
     // resolve to a DIFFERENT client's order that happens to share this client's name, and every
     // other reader/writer of this fallback only ever MERGES fields in; this one DELETES/renumbers
     // keys, which is too destructive to risk firing against an unrelated client's sold deal over a
     // name coincidence. Pre-id-era sold deals being re-edited in Studio today are rare enough that
-    // skipping this one patch for them is the safer tradeoff (regression-caught).
+    // skipping this one patch for them is the safer tradeoff (regression-caught, same guard the
+    // deptOps-only version of this function already had).
     if (!eo || !activeClientId || eo.clientId !== activeClientId) return;
-    try {
-      const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
-      if (!row || !row.data) return;
-      const cur = row.data;
-      const deptOps = cur.deptOps;
-      if (!deptOps || typeof deptOps !== "object") return; // nothing decided yet
-      const reindexChoice = (choiceMap) => reindexCompositeKeyObject(choiceMap, removedIdx, ZONE_PIPE_KEY.parseIdx, ZONE_PIPE_KEY.rebuildKey);
-      // changed must mean "the reindex actually altered something", not merely "a map exists" — a
-      // regression review caught this writing on every removal for any sold deal with ANY decision
-      // at all, even when nothing in that specific map needed to move, widening the (pre-existing,
-      // shared-by-every-writer-of-this-blob) clobber race with other event_orders writers for no
-      // reason. JSON-comparing is safe here: reindexCompositeKeyObject preserves insertion order and
-      // every value verbatim when it changes nothing, so a true no-op always stringifies identically.
-      let changed = false;
-      const nextDeptOps = { ...deptOps };
-      if (deptOps.Tenting?.carpetChoice) {
-        const next = reindexChoice(deptOps.Tenting.carpetChoice);
-        if (JSON.stringify(next) !== JSON.stringify(deptOps.Tenting.carpetChoice)) { nextDeptOps.Tenting = { ...deptOps.Tenting, carpetChoice: next }; changed = true; }
-      }
-      if (deptOps.Fabric?.itemChoice) {
-        const next = reindexChoice(deptOps.Fabric.itemChoice);
-        if (JSON.stringify(next) !== JSON.stringify(deptOps.Fabric.itemChoice)) { nextDeptOps.Fabric = { ...deptOps.Fabric, itemChoice: next }; changed = true; }
-      }
-      if (!changed) return;
-      await retryingUpdate("event_orders", eo.id, { data: { ...cur, deptOps: nextDeptOps } });
-    } catch { /* best effort — IMS's own next decision on this zone just re-asks the question */ }
+    // Bump BEFORE the chained run even starts — see fnRemovalEpochRef's own comment above.
+    fnRemovalEpochRef.current += 1;
+    fnRemovalInFlightRef.current += 1;
+    const run = async () => {
+      try {
+        const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
+        if (!row || !row.data) return;
+        const { next, changed, refused, reason } = removeFnFromEventOrderData(row.data, removedIdx, removedIdentity);
+        if (refused) {
+          // eslint-disable-next-line no-console
+          console.warn(`[reindexEventOrderForRemoval] refused (${reason}) — functionsDetail didn't match what Studio expected at index ${removedIdx}.`);
+          showMsg?.("Function removed in Studio, but IMS's copy didn't line up — open Summary → Apply Changes to resync IMS.", "red");
+          return;
+        }
+        if (!changed) return;
+        await retryingUpdate("event_orders", eo.id, { data: next });
+      } catch { /* best effort — Apply Changes (a full, trusted rebuild from Studio's live function list) is the backstop */ }
+      finally { fnRemovalInFlightRef.current = Math.max(0, fnRemovalInFlightRef.current - 1); }
+    };
+    // Chained onto the previous removal's own promise — two quick removals (or one racing an
+    // in-flight one) must never interleave their reads/writes to the same row.
+    const chained = fnRemovalChainRef.current.then(run);
+    fnRemovalChainRef.current = chained;
+    await chained;
   }, [eventOrders, activeClientId, clientName]);
   // ── LIVE KITS (owner ask 2026-11-10) ── An element on a kit picked in Build (Kit 2, or another item's kit) takes that kit's parts as
   // they are in IMS now: an edit in IMS → Inventory reaches the open deal in real time (the inventory subscription), and the save that
@@ -9958,7 +10083,10 @@ export default function StudioApp() {
         total: Math.round(artTotal),
       } : null;
       const income = { real: Math.round(incReal), artificial: Math.round(incArt), total: Math.round(incReal + incArt) };
-      floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, artificial, income, capturedAt: Date.now() };
+      // byFn — see floralPlanByFn's own header (lib/studio/floralCost.js) for why: Dept Ops' Mandi
+      // Shopping List reads this to show one tab per function instead of one combined total.
+      const byFn = floralPlanByFn(allFns, calcFnFloralSourcingCost);
+      floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, artificial, income, byFn, capturedAt: Date.now() };
     } catch {}
     // Snapshot the system manpower plan (counts + how each was derived) so dept heads see it.
     let manpowerPlan = [];
@@ -10027,7 +10155,16 @@ export default function StudioApp() {
       const isActualChange = !prior || prior.type !== f.type || prior.date !== f.date;
       if (!isActualChange) return;
       const matchesSiblingInThisBooking = fnEOs.some((other, j) => j !== idx && other.type === f.type && other.date === f.date);
-      const matchesOtherInExisting = (existingActive?.functionsDetail || []).some((other) => other?.fnIdx !== f.fnIdx && other?.type === f.type && other?.date === f.date);
+      // A function removed in Studio since the last booking leaves the existing row's functionsDetail
+      // one entry longer than fnEOs (this wholesale replace is about to discard those stale slots
+      // anyway) — without this, a survivor correctly renumbered DOWN into a now-out-of-range index
+      // still collided against its own OLD self sitting at that stale slot, and this guard stamped
+      // the deleted function's identity onto it (confirmed, 2026-11-14 — the middle/first-deletion
+      // case: "Mehendi"(1) removed, "Wedding" becomes fnIdx 1, the stale row's OLD fnIdx-1 entry was
+      // still "Mehendi" — matchesOtherInExisting fired and rewrote Wedding's own type/date to
+      // Mehendi's). Harmless for the ordinary Sangeeta case this guard still exists for (old and new
+      // function counts equal — nothing here is out of range, so nothing changes).
+      const matchesOtherInExisting = (existingActive?.functionsDetail || []).some((other, j) => (other?.fnIdx ?? j) < fnEOs.length && other?.fnIdx !== f.fnIdx && other?.type === f.type && other?.date === f.date);
       if (!matchesSiblingInThisBooking && !matchesOtherInExisting) return;
       if (prior?.type && prior?.date) {
         console.warn(`[pushEventOrderPlan] Function ${idx + 1}'s type/date ("${f.type}", ${f.date}) matches a DIFFERENT function — booking the existing, already-booked identity instead.`);
@@ -10116,6 +10253,9 @@ export default function StudioApp() {
       // truss/platform/batta stock instead of a tagged inventory item.
       const trussFlagged = scanTrussStockShortage();
       if (trussFlagged.length > 0) { setTrussStockGateModal(trussFlagged); return; }
+      // Pre-Sold gate #3 — see scanLedgerShortfalls' own comment.
+      const ledgerFlagged = scanLedgerShortfalls();
+      if (ledgerFlagged.length > 0) { setLedgerStockGateModal(ledgerFlagged); return; }
       // Same IMS Calendar category the Build panel's date badge uses (King's = Saya day) - see dateDemand
       // in StudioBuild.jsx. The legacy dateTypes list is only a fallback when datePricing hasn't loaded.
       const dpSave = sharedFloralSettings?.datePricing;
@@ -10206,7 +10346,7 @@ export default function StudioApp() {
       setTimeout(() => setShowSoldConfetti(false), 4000);
       showMsg("🎉 Booking confirmed for " + client.name, "green");
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); }
-  }, [scanOutOfStockElements, scanTrussStockShortage, saveSession, authUser, saveClientLedger, clientName, clientDate, venue, dateTypes, sharedFloralSettings, clientLedger,
+  }, [scanOutOfStockElements, scanTrussStockShortage, scanLedgerShortfalls, saveSession, authUser, saveClientLedger, clientName, clientDate, venue, dateTypes, sharedFloralSettings, clientLedger,
     // Listed because the ₹0 check above reads it. Without this the callback holds whatever
     // eventGrandTotal was when it was last rebuilt — which could warn "nothing has been built" on a
     // deal that has since been priced, or worse, stay silent on one that has been emptied.
@@ -10234,6 +10374,13 @@ export default function StudioApp() {
       // booking" baseline (eventGrandTotal - bookedSystemTotal) to 0 while IMS's copy is still
       // actually out of date. See markSold's identical check for the full reasoning.
       if (blockIfEoNotLoaded()) return false;
+      // After blockIfEoNotLoaded, not before (regression review, 2026-11-14): scanLedgerShortfalls'
+      // own-hold netting depends on eventOrders already being loaded — run too early, with eventOrders
+      // still empty, this deal's own existing reservation would read as nobody's, and a perfectly fine
+      // re-push could flag a false shortfall. The oos/truss gates above have the same pre-existing
+      // exposure (unchanged here, out of scope for this phase) — only the new gate is moved.
+      const ledgerFlagged = scanLedgerShortfalls();
+      if (ledgerFlagged.length > 0) { setLedgerStockGateModal(ledgerFlagged); return false; }
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return false; }
       const { client: savedClient, ledger } = result;
@@ -10279,7 +10426,7 @@ export default function StudioApp() {
       showMsg(`Changes applied for ${freshClient.name}`, "green");
       return true;
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); return false; }
-  }, [activeClient, scanOutOfStockElements, scanTrussStockShortage, saveSession, showMsg, eventGrandTotal, saveClientLedger, pushEventOrderPlan]);
+  }, [activeClient, scanOutOfStockElements, scanTrussStockShortage, scanLedgerShortfalls, saveSession, showMsg, eventGrandTotal, saveClientLedger, pushEventOrderPlan]);
 
   // ── Load client session — VERBATIM ──
   const loadClientSession = useCallback((client, session, landingStep = 3, opts = {}) => {
@@ -12900,8 +13047,18 @@ export default function StudioApp() {
     const inflight = availInflightRef.current[date];
     if (inflight && inflight.gen === gen) return inflight.promise;
     const promise = fetchIMSData(date).then((res) => {
-      const val = (res && Array.isArray(res.inventory)) ? res : { inventory: [], blocksForDate: {} };
-      if (availGenRef.current === gen) availCacheRef.current[date] = val;
+      const ok = res && Array.isArray(res.inventory);
+      // A failed fetch (network blip, IMS unreachable) fails OPEN here — nothing blocked, everything
+      // reads as available — so Build's own pricing/badges never crash on a transient error. That's
+      // fine for the DATA itself: the actual reservation write (apply_block_ops, migration 066) does
+      // its own authoritative, row-locked check at commit time regardless of what this local read saw,
+      // so a stale/empty read here can never cause a real overbook (confirmed, 2026-11-14 inventory-
+      // blocks audit). What it CAN do is mislead the salesperson in the moment — but only if the
+      // failure is silently CACHED and never retried. `__fetchFailed` marks this result as transient so
+      // it's used for THIS render but never written to availCacheRef — the next read for this date
+      // (a re-render, a retry) tries the real fetch again instead of being stuck on a stale "all clear".
+      const val = ok ? res : { inventory: [], blocksForDate: {}, __fetchFailed: true };
+      if (ok && availGenRef.current === gen) availCacheRef.current[date] = val;
       if (availInflightRef.current[date]?.promise === promise) delete availInflightRef.current[date];
       return val;
     });
@@ -12947,9 +13104,22 @@ export default function StudioApp() {
     const date = activeFnMeta?.date || clientDate || "";
     if (!date) { setActiveBlocksForDate({}); setActiveBlocksDetailForDate({}); return; }
     let cancelled = false;
-    loadAvailability(date).then(({ blocksForDate, blocksDetailForDate }) => { if (!cancelled) { setActiveBlocksForDate(blocksForDate || {}); setActiveBlocksDetailForDate(blocksDetailForDate || {}); } }).catch(() => { if (!cancelled) { setActiveBlocksForDate({}); setActiveBlocksDetailForDate({}); } });
+    loadAvailability(date).then((res) => {
+      if (cancelled) return;
+      setActiveBlocksForDate(res.blocksForDate || {});
+      setActiveBlocksDetailForDate(res.blocksDetailForDate || {});
+      // A transient fetch failure reads as "nothing blocked" for this render (see loadAvailabilityRaw's
+      // own comment) — real stock COUNTS are still protected (the reservation RPC checks for real,
+      // under a row lock, at commit time regardless of what this local read saw), but PRICE is not:
+      // a "can be made" item reading as fully in stock here prices at the owned rate instead of the
+      // shortfall/cost-% rate, and that wrong price can reach the client and persist — the RPC has no
+      // opinion on price, only on how many units it will actually grant. The salesperson should know
+      // the figures on screen right now might be stale, not silently trust an "available" that's
+      // really just "couldn't check" (confirmed by regression review, 2026-11-15).
+      if (res.__fetchFailed) showMsg?.("Couldn't check live stock for this date — figures shown may be stale. Try again in a moment.", "red");
+    }).catch(() => { if (!cancelled) { setActiveBlocksForDate({}); setActiveBlocksDetailForDate({}); } });
     return () => { cancelled = true; };
-  }, [activeFnMeta?.date, clientDate, loadAvailability, blocksVersion]);
+  }, [activeFnMeta?.date, clientDate, loadAvailability, blocksVersion, showMsg]);
 
   // Same warm-up, for every function's date — not just the active one. loadAvailability already
   // caches per date (availCacheRef), so re-fetching a date already warmed by the effect above (or by
@@ -13799,7 +13969,19 @@ export default function StudioApp() {
         if (!c.imsId) return;
         const qty = Number(c.qty) || 0;
         if (qty <= 0) return;
-        const tgt = cardIsFoc(fn, cardKey) ? focByItem : byItem;
+        // A card backed by a Deal Check manual item (_dcManualId — syncManualItemToBuild mirrors it
+        // into Build's zoneElements while the deal is still ongoing) is NOT counted here — manualByFn
+        // below is now the single source of truth for every Deal Check manual item, mirrored into
+        // Build or not, so counting it again via this card loop would double-reserve it (regression
+        // review finding, 2026-11-14: the exact double-count finding C's own manualByFn addition
+        // introduced for a manual item added before the deal was marked Sold). A FOC'd manual card
+        // still routes through the ordinary FOC path below (cardIsFoc) — manualByFn has no FOC
+        // awareness of its own, so that routing is still this card's only path to functions.data.focItems.
+        const manualParsed = parseCardKeyLite(cardKey);
+        const manualEl = manualParsed ? fn?.zoneElements?.[manualParsed.zoneKey]?.[manualParsed.idx] : null;
+        const isFoc_ = cardIsFoc(fn, cardKey);
+        if (manualEl?._dcManualId && !isFoc_) return;
+        const tgt = isFoc_ ? focByItem : byItem;
         const topItem = (inventoryList || []).find((x) => x.id === c.imsId);
         if (topItem && Array.isArray(topItem.subItems) && topItem.subItems.length > 0) {
           const edited = dcKitEdits?.[fnIdx]?.[cardKey];
@@ -13814,6 +13996,43 @@ export default function StudioApp() {
       });
       requiredByFn[fnIdx] = byItem;
       focByFn[fnIdx] = focByItem;
+    });
+
+    // Deal Check manual items (finding C, bug 6 audit, 2026-11-14): this is NEW reservation behavior,
+    // not a hand-off — IMS's own auto-confirm engine (eventAutoConfirm.js's executeConfirmBlocks) was
+    // fed eo.manualItems (which carries `imsId`), but its own lookup there reads `itemId`, a key that
+    // never existed on that object — confirmed dead code, regression review: manual items were never
+    // actually reserved by anyone before this. Studio's OWN reconcile is now the one place that does,
+    // same as it already does for matched cards above. Kit expansion mirrors the card loop above
+    // exactly (walkKitUnits), so a manual kit pick's components get their own reservation too, not
+    // just the kit's own top-level id — manual items have no per-instance dcKitEdits override of
+    // their own, so kits expand with their default sub-items.
+    //
+    // Double-count guard (regression review, 2026-11-14): a manual item added while the deal was still
+    // ONGOING gets mirrored into Build's own zoneElements (syncManualItemToBuild, dealCheckSync.js,
+    // tagged `_dcManualId`), which ALSO becomes a pinned card above (getCardSpecsForZone doesn't
+    // distinguish it) — the card loop above now skips any non-FOC `_dcManualId` card for exactly this
+    // reason, so manualByFn here is the single source of truth for every Deal Check manual item,
+    // mirrored into Build or not, with nothing double-counting it.
+    const manualByFn = {};
+    fnsToProcess.forEach((fn, i) => {
+      const fnIdx = fn.fnIdx ?? i;
+      const byItem = {};
+      (dcManualItems || []).filter((mi) => (mi.fnIdx ?? 0) === fnIdx).forEach((mi) => {
+        if (!mi.imsId) return;
+        const qty = Number(mi.qty) || 0;
+        if (qty <= 0) return;
+        const topItem = (inventoryList || []).find((x) => x.id === mi.imsId);
+        if (topItem && Array.isArray(topItem.subItems) && topItem.subItems.length > 0) {
+          walkKitUnits(topItem, qty, inventoryList, undefined, (node, nodeQty) => {
+            if (!node?.id) return;
+            byItem[node.id] = (byItem[node.id] || 0) + nodeQty;
+          });
+        } else {
+          byItem[mi.imsId] = (byItem[mi.imsId] || 0) + qty;
+        }
+      });
+      manualByFn[fnIdx] = byItem;
     });
 
     const prevByFn = (cli.dcReservedInventory && typeof cli.dcReservedInventory === "object") ? cli.dcReservedInventory : {};
@@ -13888,6 +14107,12 @@ export default function StudioApp() {
     // never disagree about whether this run is trusted or frozen.
     const cardReq = reqByDateFrom(fnsToProcess, requiredByFn);
     const focReq = reqByDateFrom(fnsToProcess, focByFn);
+    const manualReq = reqByDateFrom(fnsToProcess, manualByFn);
+    // dcStateReadyForClientRef.current === cli.id: Deal Check's own dc* state (including
+    // dcManualItems) has actually finished restoring for THIS client — never dcManualItems.length > 0,
+    // which is indistinguishable from "genuinely has no manual items" and would let an UNLOADED empty
+    // list release real manual holds the moment this ran before the restore effect caught up.
+    const manualReady = dcStateReadyForClientRef.current === cli.id;
     const processedDates = new Set(fnsToProcess.map((fn) => fn?.fnDate).filter(Boolean));
     const liveRaw = collectAllFunctionDataRef.current?.();
     const liveList = (Array.isArray(liveRaw) && liveRaw.length) ? liveRaw : fnsToProcess;
@@ -14140,36 +14365,93 @@ export default function StudioApp() {
     if (!rowsById) return;   // the blocks fetch above failed — same posture as the old code's own fetch failure.
 
     const plan = planStudioBlocks({
-      eventId: eo.id, rowsById, cardReq, manualReq: {}, focReq, processedDates, liveDates,
-      legacyScopeIds, manualReady: false, freezeCard: false, now: Date.now(),
+      eventId: eo.id, rowsById, cardReq, manualReq, focReq, processedDates, liveDates,
+      legacyScopeIds, manualReady, freezeCard: false, now: Date.now(),
     });
 
     if (plan.changedIds.length) {
+      // planToOps (bug 4, 2026-11-14): turns the plan into remove/add ops for apply_block_ops, the
+      // locked, availability-checking RPC — never a plain upsert of the whole computed array, which
+      // had no row lock and no stock check of its own (the exact root cause the "Roman Fibre pot"
+      // overbook traced back to). allowOver mirrors the SAME "is this item exempt from a stock
+      // ceiling" rule Build's own maxQty already uses (getElPriceFromInventoryCore, above) — an item
+      // with zero owned qty (made-to-order) or ticked "Can be made" may go past real stock as a
+      // tracked qtyToProduce; anything else is capped at what's really free and reported as short.
+      const allowOver = (id) => {
+        const item = (inventoryList || []).find((x) => x.id === id);
+        return item?.canBeMade === true || !(Number(item?.qty) > 0);
+      };
+      const ops = planToOps({ eventId: eo.id, rowsById, plan, allowOver });
+      let rpcResult = null;
       try {
-        // Scoped to THIS event's changed items, not per-item: unlike IMS's own per-item blocks writer,
-        // this is already one batched multi-row upsert (not a sequential loop with its own ordering
-        // race), so retrying the whole batch together as this event's own reconcile attempt is the
-        // proportionate fix. retryable:false: rowsById is a merge of a point-in-time read, not re-read
-        // fresh, same caution as every other blocks/event_orders write in this rollout.
+        // Scoped to THIS event's ops, not per-item: apply_block_ops already takes one lock per item
+        // inside a single transaction, so retrying the whole batch together as this event's own
+        // reconcile attempt is the proportionate fix. retryable:false: rowsById is a merge of a
+        // point-in-time read, not re-read fresh, same caution as every other blocks/event_orders
+        // write in this rollout — the RPC's OWN re-read under its lock is what's actually
+        // authoritative, this is only about which CLIENT-SIDE attempt gets to retry.
+        // factory returns {data, error} (writeWithRetry's own expected shape) — `data` is the FULL
+        // RPC result ({ok, applied, items, rows}); writeWithRetry's own top-level `ok`/`error` are
+        // about whether the WRITE ROUND-TRIP succeeded, not whether anything came back short (a
+        // 'cap' run can succeed perfectly while still reporting plenty of shortfalls in `data.items`).
         const res = await writeWithRetry(
-          () => supabase.from("blocks").upsert(plan.changedIds.map((id) => ({ id, item_id: id, data: plan.nextById.get(id) })), { onConflict: "id" }),
+          async () => { const r = await applyBlockOps(supabase, ops, { onShort: "cap" }); return { data: r, error: r.error }; },
           { target: `blocks:reconcile:${eo.id}`, label: "blocks reconcile", retryable: false },
         );
         if (res.superseded) {
           // A newer reconcile of this SAME event already took over and owns the ledger
-          // save/department notifications below — falling through here (res.error is undefined on a
-          // superseded result, so `if (error) throw` alone would wrongly read as success) would log a
-          // false "wrote blocks", save requiredByFn into dcReservedInventory as if it landed when the
-          // actual write never did, and double-send the department notifications.
+          // save/department notifications below — falling through here would log a false "wrote
+          // blocks", save requiredByFn into dcReservedInventory as if it landed when the actual write
+          // never did, and double-send the department notifications.
           console.info("[reconcile] blocks write superseded by a newer reconcile of event", eo.id);
           return;
         }
-        if (res.error) throw res.error;
+        if (!res.ok) throw res.error;
+        rpcResult = res.data;
       } catch (e) {
-        console.error("[reconcile] blocks upsert failed:", e?.message || e);
+        console.error("[reconcile] blocks RPC write failed:", e?.message || e);
         return;
       }
+      const shorts = shortfallsOf(rpcResult);
+      if (shorts.length) {
+        console.warn("[reconcile] blocks: event", eo.id, "could not fully reserve", shorts.length, "item(s)/date(s) — other bookings hold the rest:", shorts);
+        const names = shorts.slice(0, 3).map((s) => {
+          const item = (inventoryList || []).find((x) => x.id === s.item_id);
+          return `${item?.name || s.item_id} short ${Math.round(s.short)} on ${s.date}`;
+        }).join("; ");
+        showMsg(`Couldn't fully reserve ${shorts.length} item${shorts.length > 1 ? "s" : ""} for this date — other bookings hold the rest: ${names}${shorts.length > 3 ? "…" : ""}`, "red");
+        // Persistent banner (Phase 4, 2026-11-14 inventory-blocks audit, finding F3) — the toast above
+        // fades in 2s and can fire after the salesperson has already moved to a different client.
+        // Replaces (not merges) this event's own entry wholesale — correct only because every current
+        // caller of this reconcile processes the WHOLE deal at once (fnIdxFilter is always null today,
+        // runDealCheckGenerate's own signature above). A future single-function-only run would need
+        // this to merge per fnIdx instead of overwrite, or it would wipe other functions' shortfalls.
+        reportStockShortfall(eo.id, {
+          clientId: cli.id,
+          clientName: cli.name,
+          items: shorts.map((s) => ({
+            itemId: s.item_id,
+            name: (inventoryList || []).find((x) => x.id === s.item_id)?.name || s.item_id,
+            date: s.date,
+            requested: Math.round(s.requested),
+            granted: Math.round((Number(s.requested) || 0) - (Number(s.short) || 0)),
+            short: Math.round(s.short),
+          })),
+        });
+      } else {
+        // A clean reconcile (nothing short this run) means whatever this deal needed IS now fully
+        // reserved — clear any earlier shortfall report for it rather than leaving a stale banner.
+        clearStockShortfall(eo.id);
+      }
       console.info("[reconcile] blocks: event", eo.id, "changed", plan.changedIds.length, "item(s)", plan.log);
+    } else if (manualReady) {
+      // Nothing to change this run — every already-processed item already holds exactly what it
+      // needs (regression review, 2026-11-14: clearStockShortfall only ran inside the branch above,
+      // so a banner from an EARLIER capped run survived forever once the salesperson's own fix made
+      // the plan stop changing, e.g. lowering the qty to what was actually granted last time).
+      // manualReady-gated: manual items aren't re-checked at all when it's false, so an unchanged
+      // plan isn't yet a trustworthy "fully resolved" signal in that case.
+      clearStockShortfall(eo.id);
     }
 
     if (!changed) return;
@@ -14190,7 +14472,7 @@ export default function StudioApp() {
       }), status: "logged" };
       submitAmendRequest(amendReq);
     }
-  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, dcKitEdits]);
+  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, dcKitEdits, dcManualItems, showMsg]);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   // `skipAi` runs the matcher deterministically — knowledge + name-match only, no vision calls.
@@ -14442,32 +14724,28 @@ export default function StudioApp() {
     // to protect it. Re-applying the manual-swap guard here against `prev` (guaranteed current by
     // React's functional-update contract) closes that race regardless of what this call's own
     // dcCards looked like when it started.
-    setDcCards(prev => {
-      const merged = { ...newCards };
-      Object.keys(prev || {}).forEach((fi) => {
-        const prevFn = prev[fi] || {};
-        // Only defined for an fnIdx this run actually touched — undefined means this fn wasn't
-        // processed at all this pass, so there is no fresh prune to respect; carry every manual-swap
-        // card forward unconditionally, same as before. When it IS defined, a key missing from it was
-        // genuinely pruned (its Build element is gone/renamed/reindexed) — resurrecting it here would
-        // put a stale "ghost" card back on screen next to whatever now correctly occupies its slot.
-        const vKeys = validKeysByFn[fi];
-        let mergedFn = null;
-        Object.keys(prevFn).forEach((key) => {
-          if (prevFn[key]?.source === "manual-swap" && (!vKeys || vKeys.has(key))) {
-            if (!mergedFn) mergedFn = { ...(merged[fi] || {}) };
-            mergedFn[key] = prevFn[key];
-          }
-        });
-        if (mergedFn) merged[fi] = mergedFn;
-      });
-      return merged;
-    });
+    // mergeManualSwaps (lib/studio/dealCheckCardMerge.js) — used against dcCardsRef.current
+    // (synchronous, guaranteed current) for what the reconcile below actually reserves, AND again
+    // inside the functional setDcCards update (React's own `prev`, guaranteed current at commit
+    // time) for what gets written to state. Two calls, not one shared value, because React's
+    // functional-update contract is the only thing that guarantees `prev` is current AT THE MOMENT
+    // it applies — the ref read happens earlier, synchronously, on this same tick (bug 17,
+    // 2026-11-14 audit: before this fix, the reconcile was handed the UN-merged `newCards` directly,
+    // so a manual swap made in Deal Check could reserve the original item instead of the swapped one).
+    // activeClientId !== cli.id (regression review finding, 2026-11-14): this run started for `cli`,
+    // but the salesperson switched to a DIFFERENT client while this async call was still in flight
+    // (the IMS fetches above can take 1-4s) — openDealCheck's own client-switch reset has by now
+    // replaced dcCardsRef.current with the NEWLY ACTIVE client's own cards. Merging those in here
+    // would reserve a manual swap belonging to a different client/deal under THIS event's id, if the
+    // two clients' cardKeys (zone|name|idx) happen to collide. Falling back to plain `newCards`
+    // (nothing merged) is always safe — strictly no worse than skipping this fix entirely.
+    const mergedForReconcile = activeClientId === cli.id ? mergeManualSwaps(newCards, dcCardsRef.current, validKeysByFn) : newCards;
+    setDcCards(prev => mergeManualSwaps(newCards, prev, validKeysByFn));
     setDcZoneState(newZoneState);
     if (kitEditsSeeded) setDcKitEdits(newKitEdits);
     // Owner decision: a SOLD deal's inventory changes reserve immediately (no approval gate) —
     // see reconcileSoldInventoryBlocks above.
-    if (isSold) { try { await reconcileSoldInventoryBlocks(fnsToProcess, newCards, inventory, cli); } catch (e) { console.warn("[reconcile] sold-deal block reconcile failed:", e?.message || e); } }
+    if (isSold) { try { await reconcileSoldInventoryBlocks(fnsToProcess, mergedForReconcile, inventory, cli); } catch (e) { console.warn("[reconcile] sold-deal block reconcile failed:", e?.message || e); } }
     setDcGenerating(false);
     setDcGenStatus("");
     setDcAbortRef(null);
@@ -14792,8 +15070,8 @@ export default function StudioApp() {
     deleteSessionRows: designDeleteSessionRows,
     showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger: designSaveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
-    pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval, reindexEventOrderDeptOpsForRemoval,
-    lastFnRemoval, setLastFnRemoval,
+    pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval, reindexEventOrderForRemoval,
+    lastFnRemoval, setLastFnRemoval, autoSaveBuild,
     sessionHistoryExpanded, setSessionHistoryExpanded,
     // LMS
     lmsLeads, setLmsLeads, lmsLoading, setLmsLoading, lmsError, setLmsError, lmsFilling, setLmsFilling, lmsRefreshCounter, setLmsRefreshCounter,
@@ -14896,6 +15174,7 @@ export default function StudioApp() {
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
     oosGateModal, setOosGateModal, openOosFix, kitPartShorts,
     trussStockGateModal, setTrussStockGateModal,
+    ledgerStockGateModal, setLedgerStockGateModal,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
     // pricing helpers
     rcIsSMB, buildZoneConfig, getFloralMode, applyFloralRatio, getElPrice, getElPriceForFn, calcElsCost, calcElsCostForFn, rcCostPctForSub,

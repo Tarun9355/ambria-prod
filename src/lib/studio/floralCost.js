@@ -60,6 +60,7 @@
 import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass, convertFlowerQty, walkKitFloralParts } from "../ims/flowerHelpers";
 import { repeatCatFor, parseFlowerPalette, fuzzyColourMatch } from "./pricing";
 import { shiftToTiming } from "./manpowerCount";
+import { venueKey } from "../venueKey.js";
 
 // The one reuse rate — credited the same way against both real (fresh) quantity and
 // artificial-bunch-equivalent quantity, per the owner's own call (no separate real/artificial
@@ -87,14 +88,14 @@ function fnSortKey(f) {
  */
 export function findImmediatePrecedingFn(fn, allFns) {
   if (!fn?.fnVenue || !fn?.fnDate) return null;
-  const venue = fn.fnVenue.toLowerCase().trim();
+  const venue = venueKey(fn.fnVenue);
   const myKey = fnSortKey(fn);
   if (myKey == null) return null;
   const myDay = Math.floor(myKey / 10);
   let best = null, bestKey = -Infinity;
   (allFns || []).forEach((f) => {
     if (f === fn || f.fnIdx === fn.fnIdx || !f.fnVenue || !f.fnDate) return;
-    if (f.fnVenue.toLowerCase().trim() !== venue) return;
+    if (venueKey(f.fnVenue) !== venue) return;
     const k = fnSortKey(f);
     if (k == null || k >= myKey) return; // must be strictly chronologically before fn
     const fDay = Math.floor(k / 10);
@@ -833,4 +834,32 @@ export function buildMandiBreakdown(flowerAgg) {
     const qty = Math.ceil(f.qty);
     return { ...f, qty, rate, cost: Math.round(qty * rate) };
   }).sort((a, b) => b.cost - a.cost);
+}
+
+/**
+ * One entry per function, each carrying its OWN flower breakdown (calcFn(fn).breakdown, the
+ * exact same rows a whole-event floralPlan.flowers aggregation already folds together) tagged
+ * with enough metadata (fnIdx/label/date/venue) for a UI to render one tab per function (owner
+ * ask, 2026-11-14 — Loveleen, a 2-venue deal: "I don't want the flower quantities combined,
+ * separate them into tabs, 1 per function"). Two functions at different venues never share
+ * flowers physically (no reuse credit either — dealAvailability.js's own bug 7/8), so splitting
+ * here loses nothing a combined total ever meant. calcFn is the caller's own calcFnFloralSourcingCost
+ * closure (StudioApp.jsx / DealCheckOverlay.jsx each have their own, same signature) — this module
+ * stays a pure function of whatever the caller already computes, not a new pricing path.
+ * A function with zero real flower need (nothing in its own breakdown) is omitted entirely — no
+ * empty tab for a function Florals never touched.
+ */
+export function floralPlanByFn(allFns, calcFn) {
+  return (allFns || []).map((fn) => {
+    const r = calcFn(fn);
+    const flowers = (r?.breakdown || []).filter((f) => (Number(f.qty) || 0) > 0);
+    if (!flowers.length) return null;
+    return {
+      fnIdx: fn?.fnIdx ?? 0,
+      fnLabel: fn?.fnType || `Function ${(fn?.fnIdx ?? 0) + 1}`,
+      fnDate: fn?.fnDate || "",
+      fnVenue: fn?.fnVenue || "",
+      flowers,
+    };
+  }).filter(Boolean);
 }

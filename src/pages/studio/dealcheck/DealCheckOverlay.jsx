@@ -7,6 +7,7 @@
 // ═══════════════════════════════════════════════════════════════
 import { useState, useEffect, useRef } from "react";
 import { dealAgencyFeePct } from "../../../lib/studio/agencyFee";
+import { floralPlanByFn } from "../../../lib/studio/floralCost";
 import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
 import { validDecision } from "../../../lib/ims/carpetPlan";
 import { elementChoices, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
@@ -2211,7 +2212,13 @@ export default function DealCheckOverlay({ ctx }) {
             const artificial = (afBunches + agBunches) > 0 ? { flowerBunches: Math.round(afBunches), greenBunches: Math.round(agBunches), flowerBPK: afBPK, greenBPK: agBPK, flowerRate: afRate, greenRate: agRate, flowerKg: Math.round(flowerKg * 100) / 100, greenKg: Math.round(greenKg * 100) / 100, flowerCost: Math.round(flowerKg * afRate), greenCost: Math.round(greenKg * agRate), total: Math.round(artTotal), ...(colorSplit.length ? { colorSplit } : {}) } : null;
             // Billed floral income split (what the client pays at real vs artificial rates).
             const income = { real: Math.round(incReal), artificial: Math.round(incArt), total: Math.round(incReal + incArt) };
-            floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, artificial, income, season: dcSeasonInfo, capturedAt: Date.now() };
+            // byFn — see floralPlanByFn's own header (lib/studio/floralCost.js): Dept Ops' Mandi
+            // Shopping List reads this to show one tab per function instead of one combined total.
+            // Mirrors StudioApp.jsx's identical persistBuildLayoutSnapshot-area wiring exactly (same
+            // iteration this block's own agg loop above already runs, same calcFn signature) so the
+            // two floralPlan builders stay unable to drift, per this file's own established rule.
+            const byFn = floralPlanByFn(dcCostRollup.fns || [], calcFnFloralSourcingCost);
+            floralPlan = { projected: Math.round(flowers.reduce((s, f) => s + f.cost, 0)), flowers, artificial, income, byFn, season: dcSeasonInfo, capturedAt: Date.now() };
             // `sub: "Artificial Flowers"` on BOTH rows (greens included) — Studio's own guest-facing
             // truck/transport cost (StudioApp.jsx's addSub call sites) already lumps flower + green
             // bunches into that ONE sub-category's capacity; a separate "Artificial Greens" capacity

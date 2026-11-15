@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTopology, buildEventAllocation, pillarCountForSpanRaw, materialHasSpanPadding, reservedTrussStockOnDate, skeletonMaterialKey, resolveBeamSegment } from "./trussEngine";
+import { buildTopology, buildEventAllocation, pillarCountForSpanRaw, materialHasSpanPadding, reservedTrussStockOnDate, skeletonMaterialKey, resolveBeamSegment, allocateForDate } from "./trussEngine";
 
 // §23 Phase 7 mirror — this file's buildTopology must never drift from pricing.js's own copy
 // (pricing.test.js has the full Phase 7 padded-span suite; these three cases are repeated here just
@@ -170,6 +170,86 @@ describe("reservedTrussStockOnDate — Build's truss tip reading real per-date c
   it("no date entry at all: empty, no throw", () => {
     expect(reservedTrussStockOnDate(undefined, { trussInv: {} })).toEqual({});
     expect(reservedTrussStockOnDate(null, {})).toEqual({});
+  });
+});
+
+// CONFIRMED BUG (2026-11-14, owner report — Lakshay/2026-11-22): allocateForDate's own stock check
+// used to read demand by bare size only, against Iron's stock table alone — a Material whose own
+// sizes don't exist in Iron at all (e.g. Aluminium's own 5ft pillar/6ft beam) always read as 100%
+// short regardless of that material's real stock. Fixed by scoping demand+stock to the SAME
+// (material,size) pair throughout (eventMaterialTotals, same skeletonMaterialKey fallback
+// reservedTrussStockOnDate already uses).
+describe("allocateForDate — demand/stock scoped per truss material (2026-11-14 fix)", () => {
+  const ev = (eoId, state, trusses, createdAt = 1) => ({ eoId, clientId: eoId, clientName: eoId, state, createdAt, trusses });
+  const truss = (trussMaterial, pillarsUsed, beamsUsed) => ({ trussMaterial, allocation: { totals: { pillarsUsed, beamsUsed } } });
+
+  it("an Aluminium-only event is NOT flagged short against Iron's stock, when Aluminium's own pool covers it", () => {
+    const trussInv = {
+      pillars: { 12: { stock: 50 } }, beams: { 10: { stock: 50 } }, // Iron — no size 5/6 at all
+      materials: { aluminium: { pillars: { 5: { stock: 4 } }, beams: { 6: { stock: 30 } } } },
+    };
+    const events = [ev("eo_lakshay", "hard", [truss("aluminium", { 5: 4 }, { 6: 6 })])];
+    const result = allocateForDate({}, "2026-11-22", events, trussInv, "test");
+    expect(result["2026-11-22"].stockSummary.feasible).toBe(true);
+    expect(result["2026-11-22"].events[0].shortageBorne).toBe(false);
+  });
+
+  it("the SAME demand genuinely IS short when checked against the real (tiny) Aluminium pool", () => {
+    const trussInv = {
+      pillars: {}, beams: {},
+      materials: { aluminium: { pillars: { 5: { stock: 1 } }, beams: { 6: { stock: 2 } } } },
+    };
+    const events = [ev("eo_lakshay", "hard", [truss("aluminium", { 5: 4 }, { 6: 6 })])];
+    const result = allocateForDate({}, "2026-11-22", events, trussInv, "test");
+    const sm = result["2026-11-22"].stockSummary;
+    expect(sm.feasible).toBe(false);
+    expect(sm.overflowPillars).toEqual({ "aluminium|5": 3 });
+    expect(sm.overflowBeams).toEqual({ "aluminium|6": 4 });
+  });
+
+  it("a pre-existing Aluminium shortage never falsely blocks an unrelated Iron-only self-check on the same date (the exact Rao Yashvardhan symptom)", () => {
+    const trussInv = {
+      pillars: { 12: { stock: 5 } }, beams: { 10: { stock: 5 } },
+      materials: { aluminium: { pillars: { 5: { stock: 1 } }, beams: { 6: { stock: 2 } } } }, // too little for the hard event below
+    };
+    const hardLakshay = ev("eo_lakshay", "hard", [truss("aluminium", { 5: 4 }, { 6: 6 })], 1);
+    const selfCheckRao = ev("__self_check__", "hard", [truss("iron", { 12: 2 }, { 10: 2 })], 2);
+    const result = allocateForDate({}, "2026-11-22", [hardLakshay, selfCheckRao], trussInv, "test");
+    const roa = result["2026-11-22"].events.find((e) => e.eoId === "__self_check__");
+    const lakshay = result["2026-11-22"].events.find((e) => e.eoId === "eo_lakshay");
+    expect(roa.shortageBorne).toBe(false); // Rao's own Iron demand fits Iron's own stock fine
+    expect(lakshay.shortageBorne).toBe(true); // the real Aluminium shortage is Lakshay's own, even though Rao sorts later
+  });
+
+  it("a SOFT event's own 'does it fit' check is also material-scoped — a hard event's Iron demand must not be blamed for a soft event's separate Aluminium ask", () => {
+    const trussInv = {
+      pillars: { 10: { stock: 5 } },
+      beams: {},
+      materials: { aluminium: { pillars: { 10: { stock: 3 } }, beams: {} } },
+    };
+    const hardMixed = ev("eo_hard", "hard", [truss("iron", { 10: 2 }, {}), truss("aluminium", { 10: 3 }, {})], 1);
+    const softAluminium = ev("eo_soft", "soft", [truss("aluminium", { 10: 1 }, {})], 2);
+    const result = allocateForDate({}, "2026-11-22", [hardMixed, softAluminium], trussInv, "test");
+    const hard = result["2026-11-22"].events.find((e) => e.eoId === "eo_hard");
+    const soft = result["2026-11-22"].events.find((e) => e.eoId === "eo_soft");
+    // Old (size-only) logic would have pooled 2+3+1=6 against Iron's 5 and wrongly blamed the hard event.
+    expect(hard.shortageBorne).toBe(false);
+    expect(soft.shortageBorne).toBe(true); // Aluminium's own pool (3) is already fully used by the hard event
+  });
+
+  it("Iron and Aluminium demand of the SAME bare size never share one pool", () => {
+    const trussInv = {
+      pillars: { 10: { stock: 2 } }, // Iron: only 2 units of size 10
+      beams: {},
+      materials: { aluminium: { pillars: { 10: { stock: 10 } }, beams: {} } }, // Aluminium: plenty of size 10
+    };
+    const events = [
+      ev("eo_a", "hard", [truss("iron", { 10: 2 }, {})], 1),
+      ev("eo_b", "hard", [truss("aluminium", { 10: 10 }, {})], 2),
+    ];
+    const result = allocateForDate({}, "2026-11-22", events, trussInv, "test");
+    expect(result["2026-11-22"].stockSummary.feasible).toBe(true);
+    result["2026-11-22"].events.forEach((e) => expect(e.shortageBorne).toBe(false));
   });
 });
 

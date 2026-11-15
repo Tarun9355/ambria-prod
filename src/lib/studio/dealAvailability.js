@@ -9,6 +9,7 @@
 
 import { walkKitUnits } from "../ims/helpers";
 import { cardIsFoc } from "./foc.js";
+import { venueKey, fnVenueKey } from "../venueKey.js";
 
 // A zone that is switched off in Build keeps its element list but is not part of the deal — it is not priced,
 // not on the PDFs, so it must not hold stock either. (enabledEls missing/empty = nothing recorded yet: every
@@ -35,9 +36,10 @@ const zoneIsOff = (fn, zk) => {
 export function qtyUsedElsewhereInBuild(invId, fns, imsInventory, exclude = {}, targetDate, targetVenue) {
   if (!invId) return 0;
   let used = 0;
+  const tvkElsewhere = venueKey(targetVenue) || venueKey(fns?.[0]?.fnVenue);
   (fns || []).forEach((fn, fnIdx) => {
     if (targetDate && (fn?.fnDate || "") !== targetDate) return;
-    if (targetVenue && (fn?.fnVenue || "") !== targetVenue) return;
+    if (targetVenue && fnVenueKey(fn, fns) !== tvkElsewhere) return;
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (zoneIsOff(fn, zk)) return;
       (elems || []).forEach((el, elIdx) => {
@@ -62,29 +64,25 @@ export function qtyUsedElsewhereInBuild(invId, fns, imsInventory, exclude = {}, 
   return used;
 }
 
-// Every row of the booking (on targetDate, and targetVenue when given — see qtyUsedElsewhereInBuild's
-// own comment) that draws on each inventory id — its own qty, or via a kit's component — as one
-// index: invId → [{ fnIdx, zk, elIdx, qty }], rows in booking order. Build asks this for every
-// element card on every render, and walking the whole booking (with an inventory search per element)
-// each time was the main cost of a keystroke; the index is built once per (function list, inventory,
-// date, venue) and reused while those are the same objects.
-const rowIndexCache = new WeakMap(); // fns → Map<imsInventory, Map<date, Map<venue, Map<invId, rows>>>>
-function bookingRowIndex(fns, imsInventory, targetDate, targetVenue) {
+// Every row of the booking on targetDate (ACROSS EVERY VENUE — see competingRows' own comment for why
+// a per-venue filter lives there, not here) that draws on each inventory id — its own qty, or via a
+// kit's component — as one index: invId → [{ fnIdx, zk, elIdx, qty }], rows in booking order. Build
+// asks this for every element card on every render, and walking the whole booking (with an inventory
+// search per element) each time was the main cost of a keystroke; the index is built once per
+// (function list, inventory, date) and reused while those are the same objects.
+const rowIndexCache = new WeakMap(); // fns → Map<imsInventory, Map<date, Map<invId, rows>>>
+function bookingRowIndex(fns, imsInventory, targetDate) {
   const key = fns || [];
   let byInv = rowIndexCache.get(key);
   if (!byInv) { byInv = new Map(); rowIndexCache.set(key, byInv); }
   let byDate = byInv.get(imsInventory);
   if (!byDate) { byDate = new Map(); byInv.set(imsInventory, byDate); }
   const dk = targetDate || "";
-  let byVenue = byDate.get(dk);
-  if (!byVenue) { byVenue = new Map(); byDate.set(dk, byVenue); }
-  const vk = targetVenue || "";
-  if (byVenue.has(vk)) return byVenue.get(vk);
+  if (byDate.has(dk)) return byDate.get(dk);
   const invById = new Map((imsInventory || []).map((i) => [i.id, i]));
   const index = new Map();
   key.forEach((fn, fnIdx) => {
     if (targetDate && (fn?.fnDate || "") !== targetDate) return;
-    if (targetVenue && (fn?.fnVenue || "") !== targetVenue) return;
     Object.entries(fn?.zoneElements || {}).forEach(([zk, elems]) => {
       if (zoneIsOff(fn, zk)) return;
       (elems || []).forEach((el, elIdx) => {
@@ -106,11 +104,93 @@ function bookingRowIndex(fns, imsInventory, targetDate, targetVenue) {
       });
     });
   });
-  byVenue.set(vk, index);
+  byDate.set(dk, index);
   return index;
 }
-function itemRowsFor(invId, fns, imsInventory, targetDate, targetVenue) {
-  return (bookingRowIndex(fns, imsInventory, targetDate, targetVenue).get(invId) || []).map((r) => ({ ...r }));
+function itemRowsFor(invId, fns, imsInventory, targetDate) {
+  return (bookingRowIndex(fns, imsInventory, targetDate).get(invId) || []).map((r) => ({ ...r }));
+}
+
+// Every function's own total draw on invId for targetDate (Σ across its own rows — every zone of ONE
+// function competes simultaneously, never collapsed), keyed by fnIdx. competingRows uses this to find,
+// for each OTHER venue, which ONE function there carries that venue's real peak need — same
+// "max across same-venue functions sharing a date", not sum, rule reqByDateFrom's own ledger already
+// applies (soldBlocksPlan.js). Any OTHER function sharing that same other venue is reuse-eligible with
+// it and contributes zero additional rows of its own (see competingRows' own comment, finding #1).
+function fnTotalsOnDate(invId, fns, imsInventory, targetDate) {
+  const totals = new Map();
+  itemRowsFor(invId, fns, imsInventory, targetDate).forEach((r) => {
+    totals.set(r.fnIdx, (totals.get(r.fnIdx) || 0) + r.qty);
+  });
+  return totals;
+}
+
+// The single row-selection logic allocateRowAvailability and maxQtyForRow both build their own
+// competing-demand figure from (regression review, 2026-11-14 audit — see the file's own history for
+// why this exists). Returns every row across the WHOLE booking on targetDate, from EVERY venue, at
+// full per-row granularity for TARGET's own venue — minus same-deal, same-VENUE, same-date SIBLING
+// FUNCTIONS when crossFnSiblingsFree (see maxQtyForRow's own comment for why those are reuse-eligible,
+// not real competing demand). A row at a genuinely DIFFERENT venue is NEVER excluded by
+// crossFnSiblingsFree, whatever its value — a different venue can never be a reuse-eligible sibling
+// (bug 8: it needs its own physical units), so it always counts as real competing demand — but if that
+// OTHER venue itself has more than one same-venue sibling function sharing the date, only the ONE with
+// the largest own total there (ties → lowest fnIdx) contributes rows; its siblings there are excluded
+// entirely, never summed (second regression review, 2026-11-14, finding #1 — see below). Venue
+// comparisons go through fnVenueKey, not a bare venueKey, so a blank-venue "extra function" (no venue
+// of its own ever set) is treated as the deal's main venue, same as the ledger already does (finding #2).
+//
+// First attempt at this (bug 8, shipped same day, caught by regression review before it reached a
+// second review pass): built ONE synthetic "blob" row per other venue, sized at that venue's own
+// total demand, instead of keeping every OTHER venue's rows at their own real per-row granularity.
+// That broke the whole point of the fix: allocateRowAvailability's smallest-first allocation decides
+// each row's own outcome from ITS OWN call, and a single coarse blob let EACH venue's own call see
+// itself processed before the other venue's blob (or vice versa, depending on which side's own rows
+// happened to be smaller) — so BOTH venues' own rows could independently read "fully covered" even
+// when their combined real demand exceeded the shared pool (two 12-need functions at different
+// venues, 12 owned, BOTH read ownedQty:12/shortQty:0 — the exact failure this whole bug was about,
+// now happening one level deeper).
+//
+// Second attempt (shipped same day, caught by a SECOND regression review before a third pass): kept
+// every OTHER venue's rows at full per-function granularity with no collapsing at all. That fixed the
+// blob's tie-break issue but introduced a different one: when an other venue has TWO reuse-eligible
+// sibling functions (same venue, same date, true combined need = max, not sum — exactly how
+// reqByDateFrom's own ledger already treats them), counting both in full doubles that venue's real
+// demand and can falsely starve a THIRD, genuinely unrelated venue (or the main venue) even when true
+// combined need across every venue exactly fits the pool. Collapsing to one REPRESENTATIVE function per
+// other venue (its own rows, unmodified — never a synthetic blob) fixes this without reintroducing the
+// first attempt's tie-break problem: the representative's rows are real, ordinary rows in the SAME
+// single ordered list every caller's allocation is computed from, not a separate coarse figure that
+// could race a different call's own "which side processes first" ordering.
+function competingRows(invId, fns, imsInventory, target, targetDate, targetVenue, crossFnSiblingsFree) {
+  const rows = itemRowsFor(invId, fns, imsInventory, targetDate); // every venue, real rows
+  if (!targetVenue) return rows;
+  const tvk = venueKey(targetVenue) || venueKey(fns?.[0]?.fnVenue);
+
+  // For every OTHER venue, the one function with the largest own total there (processed in increasing
+  // fnIdx order, so a later tie never replaces an earlier one — lowest fnIdx wins ties deterministically).
+  const totals = fnTotalsOnDate(invId, fns, imsInventory, targetDate);
+  const repFnByOtherVenue = new Map(); // venueKey -> fnIdx
+  (fns || []).forEach((fn, fnIdx) => {
+    const vk = fnVenueKey(fn, fns);
+    if (vk === tvk) return;
+    const total = totals.get(fnIdx) || 0;
+    if (total <= 0) return;
+    if (!repFnByOtherVenue.has(vk) || total > (totals.get(repFnByOtherVenue.get(vk)) || 0)) {
+      repFnByOtherVenue.set(vk, fnIdx);
+    }
+  });
+  const repOtherFnIdxs = new Set(repFnByOtherVenue.values());
+
+  return rows.filter((r) => {
+    // Target's own row always counts, whatever venue bookkeeping says — a caller that resolves
+    // targetVenue to the DEAL's main venue while target itself is a different, genuinely-elsewhere
+    // function (a caller bug, not a competingRows concern) must never make a row invisible to its own
+    // allocation call (regression review, 2026-11-14, finding A): that silently priced it at ₹0 instead
+    // of surfacing the mismatch.
+    if (target && r.fnIdx === target.fnIdx && r.zk === target.zoneKey && r.elIdx === target.elIdx) return true;
+    if (fnVenueKey(fns?.[r.fnIdx], fns) !== tvk) return repOtherFnIdxs.has(r.fnIdx); // other venue: only its own peak function competes
+    return !(crossFnSiblingsFree && target && r.fnIdx !== target.fnIdx); // same-venue sibling: excluded only when asked
+  });
 }
 
 // Build: full scarce-stock allocation for ONE item across the WHOLE booking (same date) — every
@@ -125,10 +205,20 @@ function itemRowsFor(invId, fns, imsInventory, targetDate, targetVenue) {
 // ever called from getElPriceFromInventory's own per-row shortfall pricing). targetVenue (optional,
 // trailing so every existing caller/test keeps its exact old date-only behavior) — see
 // qtyUsedElsewhereInBuild's own comment for why two same-day functions at different venues must not
-// share one pool.
+// share one pool (bug 8 — competingRows handles this).
+//
+// Deliberately does NOT take a crossFnSiblingsFree flag the way maxQtyForRow does (a same-venue
+// sibling function's demand always counts here, full stop) — a same-session attempt to add it here
+// too (so a sibling's units would never price as a shortage caused by a different deal) was caught by
+// regression review: this is also where a kit-part check's `reusePool` and the pricing layer's own
+// `crossFnTake`/`crossFnBonus` credit (StudioApp.jsx) ALREADY give same-day/day-before reuse its own
+// separate credit — stacking a row-level exclusion on top of those double-counts the same physical
+// reuse for the same-day case specifically (`findCrossFnReuseSource` can blend same-day and
+// previous-day sources with no way to tell them apart, so the two credits can't be cleanly merged
+// without that being untangled first). Left for a dedicated future pass.
 export function allocateRowAvailability(invId, fns, imsInventory, target, targetDate, otherEventsAvail, targetVenue) {
   if (!invId) return { ownedQty: 0, shortQty: 0 };
-  const rows = itemRowsFor(invId, fns, imsInventory, targetDate, targetVenue);
+  const rows = competingRows(invId, fns, imsInventory, target, targetDate, targetVenue, false);
   // Array.prototype.sort is stable (spec-guaranteed) — ties keep their original relative order, so
   // the result doesn't reshuffle between renders just because two rows happen to match on qty.
   rows.sort((a, b) => a.qty - b.qty);
@@ -172,12 +262,12 @@ export function allocateRowAvailability(invId, fns, imsInventory, target, target
 export function maxQtyForRow(invId, fns, imsInventory, target, targetDate, otherEventsAvail, targetVenue, crossFnSiblingsFree) {
   const pool = Math.max(0, Math.floor(Number(otherEventsAvail) || 0));
   if (!invId) return pool;
-  // targetVenue required here too (not just documented as a precondition) — without it, itemRowsFor
-  // doesn't filter by venue at all, so a same-date row at a genuinely DIFFERENT venue would wrongly
-  // be excluded as if it were a reuse-eligible sibling.
-  const othersQty = itemRowsFor(invId, fns, imsInventory, targetDate, targetVenue)
+  // targetVenue required here too (not just documented as a precondition) — competingRows only ever
+  // excludes a sibling function as "reuse-eligible" when it KNOWS which venue target is at (a row at
+  // a genuinely different venue always counts regardless of targetVenue, bug 8 — only a SAME-venue
+  // sibling's exclusion depends on targetVenue being given at all).
+  const othersQty = competingRows(invId, fns, imsInventory, target, targetDate, targetVenue, crossFnSiblingsFree)
     .filter((r) => !(r.fnIdx === target.fnIdx && r.zk === target.zoneKey && r.elIdx === target.elIdx))
-    .filter((r) => !(crossFnSiblingsFree && targetVenue && r.fnIdx !== target.fnIdx))
     .reduce((s, r) => s + r.qty, 0);
   return Math.max(0, pool - othersQty);
 }
