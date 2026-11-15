@@ -383,12 +383,36 @@ export default function StudioModals({ ctx }) {
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:12}}>
                   {availModal.items.map(it=>{
                     const sel = multi ? multiIds.includes(it.id) : inSplit ? splitIds.includes(it.id) : availModal.selectedId===it.id;
-                    const out = it.free<=0;
-                    // Out of stock AND can't be made in production (IMS Inventory's "Can be made"
-                    // checkbox, default on) — genuinely unpickable, not a shortfall Build can price
-                    // at cost%. Greyed out and inert rather than selectable only to price wrong or
-                    // get caught later by the pre-Sold gate (markDealSold, StudioApp.jsx).
-                    const unpickable = out && it.canMake === false;
+                    // Red means "free is less than what THIS row needs", not just "nothing at
+                    // all" — a candidate with 6 free for a row needing 10 used to read fully green
+                    // (only free<=0 turned it red), so picking it came back as "4 out of stock" the
+                    // instant Build re-priced the row, directly contradicting what the picker had
+                    // just shown (owner-reported, 2026-11-15). Scoped to the one path where origQty
+                    // reliably means "the whole amount this candidate must cover": the plain Build
+                    // zoneElements swap (no onPick, not a split, not multi/carpet). Split divides
+                    // origQty across 2+ items, so each candidate only needs a SHARE of it, not all
+                    // of it (regression review, 2026-11-15: this previously made every item with
+                    // less than the full qty free unpickable, breaking Split for exactly the
+                    // shortage case it exists for). onPick callers (Deal Check's card swap, a kit
+                    // component swap, the oosGate kit-part picker) pass origQty values that mean
+                    // something other than "this candidate's real total need" — a kit component's
+                    // own splitQty is its PER-KIT qty, not per-kit × kit-count, and Deal Check's
+                    // picker excludes the wrong zoneElements row entirely (idx is always 0) — so
+                    // they keep the old "any stock at all" read rather than a misleadingly precise
+                    // one. Multi/carpet mode already makes its own comparison (needSqft/shortBy
+                    // below). None of this affects `unpickable` below, which still uses the
+                    // unconditional old rule — see its own note.
+                    const singleRowCompare = !multi && !inSplit && !availModal.onPick;
+                    const out = (singleRowCompare && origQty > 0) ? it.free < origQty : it.free<=0;
+                    // Deliberately NOT `out && canMake===false` — unpickable must stay keyed to the
+                    // unconditional "is there truly zero free" read even where `out` above is now
+                    // the stricter need-based one, so a candidate Build would actually accept in
+                    // full (e.g. covered by its own cross-function same-day/next-day reuse credit,
+                    // which this picker doesn't model) never gets greyed out and inert over a
+                    // shortfall that isn't real (regression review, 2026-11-15). Out of stock AND
+                    // can't be made in production (IMS Inventory's "Can be made" checkbox, default
+                    // on) is genuinely unpickable, not a shortfall Build can price at cost%.
+                    const unpickable = it.free<=0 && it.canMake === false;
                     // Multi-select with a size (carpet preferences): free is already for THIS date (other events' holds are off it),
                     // so a carpet with less free than the floor needs is short — marked, and it cannot be added. One already
                     // chosen stays removable.
@@ -408,7 +432,7 @@ export default function StudioModals({ ctx }) {
                     const SWAP = "#F97316";
                     return (
                       <div key={it.id} className="ui-hover-grow" onClick={()=>{ if (unpickable || blockedShort) return; multi ? toggleMulti(it) : inSplit ? toggleSplitId(it.id) : setAvailModal(m=>({...m,selectedId: sel?null:it.id})); }}
-                        title={blockedShort ? `Short for this date — only ${it.free} ${mUnit} free, this ${mNeedNoun} needs ${needSqft}` : unpickable ? "Out of stock and can't be made in production — pick a different item" : swap ? `Already used for this guest: ${usedIn.join(" · ")}` : it.venueSlack?.length ? `Allocated to other Fixed Venues (not counted as free): ${it.venueSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
+                        title={blockedShort ? `Short for this date — only ${it.free} ${mUnit} free, this ${mNeedNoun} needs ${needSqft}` : unpickable ? "Out of stock and can't be made in production — pick a different item" : (singleRowCompare && out) ? `Only ${it.free} free — this needs ${origQty}, the rest prices at the production cost% rate` : swap ? `Already used for this guest: ${usedIn.join(" · ")}` : it.venueSlack?.length ? `Allocated to other Fixed Venues (not counted as free): ${it.venueSlack.map(s=>`${s.slack} ${s.name}`).join(" · ")}` : undefined}
                         style={{cursor:(unpickable||blockedShort)?"not-allowed":"pointer",borderRadius:12,overflow:"hidden",border:`2px solid ${sel?"#059669":(swap||reuseShown)?SWAP:border}`,background:isDark?"#0F0F1A":"#FAFAFA",position:"relative",opacity:(unpickable||blockedShort)?0.55:1}}>
                         {sel&&<span style={{position:"absolute",top:6,left:6,zIndex:2,fontSize:multi?10.5:9,fontWeight:700,padding:"2px 7px",borderRadius:6,background:"#059669",color:"#fff"}}>{multi?`${MULTI_RANK[multiIds.indexOf(it.id)]||multiIds.indexOf(it.id)+1} choice`:"✓"}</span>}
                         <div title="Free on the event date" style={{position:"absolute",top:6,right:6,zIndex:2,fontSize:12,fontWeight:800,minWidth:22,textAlign:"center",padding:"2px 7px",borderRadius:8,background:out?"rgba(239,68,68,0.92)":"rgba(16,185,129,0.92)",color:"#fff"}}>{it.free}</div>

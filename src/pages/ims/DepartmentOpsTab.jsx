@@ -4955,6 +4955,13 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                 (() => {
                   const anyRentalQty = invShown.some(rentalDiffers);
                   const qtyHeaderLabel = anyRentalQty ? "To load" : "Qty";
+                  // Artificial flowers/greens already get their own detailed card above (bunches,
+                  // kg, by-colour split) when it's showing — don't also list them as plain rows
+                  // here, same item twice on one screen (owner ask 2026-11-15). Loading & dispatch
+                  // (blockedItems/loadItems, built separately from blockedItemsGrouped) is untouched,
+                  // so Transport still sees them for truck planning.
+                  const artificialShown = dept === "Floral" && fp.artificial && ((fp.artificial.flowerBunches || 0) > 0 || (fp.artificial.greenBunches || 0) > 0);
+                  const isDupArtificial = (it) => artificialShown && it.sub === "Artificial Flowers";
                   return (
                 /* Two earlier attempts at pinning this: a plain `sticky` while the card still had
                    overflow-hidden (never attached to the real scroll — overflow-hidden makes an
@@ -4967,7 +4974,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                    what made the previous attempt look broken. */
                 <div className="p-2.5 space-y-2">
                   {fabricGroupInfo.groups.length > 0 && <FabricBlock groups={fabricGroupInfo.groups} fmt={fmt} onZoom={setZoomImg} fnDates={mpFns.map(f => String(f?.date || "").slice(0, 10))} />}
-                  {invShown.some(it => !fabricGroupInfo.groupedLineIds.has(it.id)) && <div className="hidden sm:flex items-center gap-x-3 px-2.5 sticky top-0 z-10 bg-white rounded-lg ring-1 ring-gray-100 py-1.5 -mt-0.5 mb-1">
+                  {invShown.some(it => !fabricGroupInfo.groupedLineIds.has(it.id) && !isDupArtificial(it)) && <div className="hidden sm:flex items-center gap-x-3 px-2.5 sticky top-0 z-10 bg-white rounded-lg ring-1 ring-gray-100 py-1.5 -mt-0.5 mb-1">
                     <span className="flex-1 min-w-0" />
                     <div className="w-full sm:w-auto flex items-start gap-0 sm:pl-1">
                       {showDates && dateCols.map(c => <div key={c.date} title={c.names} className={"text-right text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 " + STAT_W.qty}>{c.label}</div>)}
@@ -4979,7 +4986,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                     </div>
                   </div>}
                   {/* items already at the venue (📌 Fixed / ♻ Repeat, atVenueOf) go last - nothing to load for them; the rest keep their order */}
-                  {invShown.filter(it => !fabricGroupInfo.groupedLineIds.has(it.id))
+                  {invShown.filter(it => !fabricGroupInfo.groupedLineIds.has(it.id) && !isDupArtificial(it))
                     .map((it, i) => { const a = atVenueOf(it.src || it); return { it, i, last: (a.repeat || a.fixed > 0) ? 1 : a.foc ? 2 : 0 }; })
                     .sort((x, y) => x.last - y.last || x.i - y.i).map(x => x.it).map(it => {
                     // ── TWO DIFFERENT QUANTITIES, ON PURPOSE ──

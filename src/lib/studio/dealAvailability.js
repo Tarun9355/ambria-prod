@@ -14,7 +14,7 @@ import { venueKey, fnVenueKey } from "../venueKey.js";
 // A zone that is switched off in Build keeps its element list but is not part of the deal — it is not priced,
 // not on the PDFs, so it must not hold stock either. (enabledEls missing/empty = nothing recorded yet: every
 // zone counts, as before.)
-const zoneIsOff = (fn, zk) => {
+export const zoneIsOff = (fn, zk) => {
   const en = fn?.enabledEls;
   return !!en && typeof en === "object" && Object.keys(en).length > 0 && !en[zk];
 };
