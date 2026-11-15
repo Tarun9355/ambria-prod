@@ -903,9 +903,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // DIFFERENT event (e.g. "fn:1" when this event only has one function) never sticks; the derived
   // activeMandiTabKey below falls back to the first real tab whenever this doesn't match one.
   const [mandiActiveTab, setMandiActiveTab] = useState(null);
-  // Which kits have their components showing. OPEN by default (owner ask 2026-11-15): every part of a kit is a
-  // separate piece to pull, load and dispatch, so nobody should have to open a kit to find out what goes on the truck.
-  // Only an explicit `false` (the KIT badge pressed) folds one away.
+  // Open/closed state of a line's "How" and "how?" explainers. A kit's parts are no longer in here: they always show
+  // (owner ask 2026-11-15) - every part is a separate piece to pull, load and dispatch.
   const [kitOpen, setKitOpen] = useState({});
   // Set while the PDF is being built. The first export also downloads the jsPDF chunk, so there
   // is a real pause — without a busy state the button looks broken and gets pressed again.
@@ -5032,19 +5031,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                     what you are unfolding before you unfold it.
                                     A kit with no components stays a plain label: a control that
                                     reveals nothing is worse than no control. */}
-                                {it.isKit && ((it.components || []).length > 0 ? (
-                                  <button onClick={() => setKitOpen(o => ({ ...o, [it.id]: o[it.id] === false }))}
-                                    aria-expanded={kitOpen[it.id] !== false}
-                                    title={kitOpen[it.id] !== false ? "Hide the kit's contents" : "Show what is inside this kit"}
-                                    className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold hover:bg-blue-200 transition-colors">
-                                    KIT · {it.components.length}
-                                    <span aria-hidden="true" className={"transition-transform duration-150 " + (kitOpen[it.id] !== false ? "rotate-180" : "")}>
-                                      <svg width="9" height="9" viewBox="0 0 14 14" fill="none"><path d="M3.5 5 L7 8.5 L10.5 5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                                    </span>
-                                  </button>
-                                ) : (
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">KIT</span>
-                                ))}
+                                {/* a kit is always open (owner ask 2026-11-15) - the badge only says how many parts it holds */}
+                                {it.isKit && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">{(it.components || []).length > 0 ? `KIT · ${it.components.length}` : "KIT"}</span>}
                                 {it.shortQty > 0 && (it.outOfStock
                                   ? <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-bold">OUT OF STOCK</span>
                                   : <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>)}
@@ -5214,7 +5202,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                           </div>
                         </div>
                       )}
-                      {it.isKit && kitOpen[it.id] !== false && it.components && it.components.length > 0 && (
+                      {it.isKit && it.components && it.components.length > 0 && (
                         <div className="ui-reveal-in bg-blue-50/50 px-2.5 py-1.5 space-y-1">
                           {it.components.map((cp, ci) => (
                             <div key={"c" + ci} className="flex items-center gap-2">
