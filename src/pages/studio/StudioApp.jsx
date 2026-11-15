@@ -1338,6 +1338,17 @@ async function fetchClientHeavyFields(clientId) {
   return data || null;
 }
 
+// What the last sold-deal reconcile reserved (dcReservedInventory), read FRESH from the row - never the in-memory copy, which is
+// loaded once per session and goes stale the moment another person's reconcile saves a newer one. Diffing against a stale copy
+// re-logged someone else's change under this user's name and re-applied it (owner report 2026-11-15: Ritika's 20-item change
+// logged again as Tarun's and salim's; one change x9). undefined when the read fails (the caller falls back to memory).
+async function fetchReservedInventory(clientId) {
+  if (!clientId) return undefined;
+  const { data, error } = await supabase.from("client_ledger").select("r:data->dcReservedInventory").eq("id", clientId).maybeSingle();
+  if (error) throw error;
+  return data ? (data.r ?? null) : null;
+}
+
 // A FOC'd element is priced at zero everywhere — guest, internal cost/margin, and everything
 // downstream of it (paint/manpower/transport each have their own guard). Shared by both
 // getElPriceRaw and getElPriceForFnRaw so they never drift on what "free" returns.
@@ -4291,6 +4302,9 @@ export default function StudioApp() {
             // eslint-disable-next-line no-unused-vars
             const { applyDiscountToClient: _a, applyDiscountBy: _b, applyDiscountAt: _t, ...rest } = row.data;
             if (!opts.discount) { delete rest.guestDiscount; delete rest.guestDiscountBy; delete rest.guestDiscountAt; }
+            // The same for the sold-deal reservation baseline: only the reconcile (and a function's removal, which reindexes it) writes
+            // it - every other save (autosave, a second tab) carried its own stale copy back over the newer one (owner report 2026-11-15).
+            if (!opts.reserved) delete rest.dcReservedInventory;
             row.data = rest;
           }
           return { ...row, updated_at: new Date().toISOString() };
@@ -9745,7 +9759,7 @@ export default function StudioApp() {
         dcReservedInventory: reindexFnIdxObject(c.dcReservedInventory, removedIdx),
       };
       const cur = clientLedgerRef.current || [];
-      try { saveClientLedger(cur.map((x) => (x.id === id ? { ...x, ...patch } : x))); } catch { /* best effort — the live state above is already correct for this tab */ }
+      try { saveClientLedger(cur.map((x) => (x.id === id ? { ...x, ...patch } : x)), null, { reserved: true }); } catch { /* best effort — the live state above is already correct for this tab */ }
       // The in-session Deal Check cache is the same shape again — stale otherwise, same reasoning as
       // the ledger patch above, just for this tab's own memory instead of the server.
       setDcCache((prev) => {
@@ -14176,7 +14190,11 @@ export default function StudioApp() {
       manualByFn[fnIdx] = byItem;
     });
 
-    const prevByFn = (cli.dcReservedInventory && typeof cli.dcReservedInventory === "object") ? cli.dcReservedInventory : {};
+    // the baseline fresh from the row (fetchReservedInventory) - the in-memory one can be another session's old copy
+    let reservedNow = cli.dcReservedInventory;
+    try { const fresh = await fetchReservedInventory(cli.id); if (fresh !== undefined) reservedNow = fresh; }
+    catch (e) { console.warn("[reconcile] fresh reservation read failed, using this tab's copy:", e?.message || e); }
+    const prevByFn = (reservedNow && typeof reservedNow === "object") ? reservedNow : {};
     const isFirstRun = Object.keys(prevByFn).length === 0;
 
     // legacyScopeIds: items required now, or previously reserved per cli's own dcReservedInventory
@@ -14598,8 +14616,10 @@ export default function StudioApp() {
     if (!changed) return;
 
     // Persist what we just reserved so the NEXT run diffs against this, not the initial markSold state.
+    // reserved: true - the only save that writes dcReservedInventory (saveClientLedger leaves it out of every other one). Awaited, so
+    // a reconcile queued right behind this one reads the new baseline instead of logging the same change again.
     const nextLedger = (clientLedgerRef.current || clientLedger).map((c) => (c.id === cli.id ? { ...c, dcReservedInventory: requiredByFn } : c));
-    saveClientLedger(nextLedger);
+    await saveClientLedger(nextLedger, null, { reserved: true });
 
     // Notify department heads — one plain, terminal log entry per affected department. Never gates
     // anything: the reservation above already happened regardless of this.
