@@ -5761,7 +5761,18 @@ undefined
                           multi:{max:ELEMENT_PREF_MAX,need:Number(o?.need)||0,current:ch.length?ch.map(c=>c.id):[part.itemId],noun,needNoun:"part",noReuse:true,designsOnly:true,
                             onSave:(picks)=>onSave(picks)}});
                       }}
-                      onCheckAvailability={(cItem,onPick,opts)=>openAvailModal(null,null,{invId:cItem.id,name:cItem.name},null,onPick,{pickHint:"Pick the item to use for this part of the kit — shown at its rental price.",splitQty:opts?.splitQty,onSplit:opts?.onSplit})}
+                      // k,idx (not null,null) — this kit's own row, so openAvailModal can tell it's
+                      // THIS kit being edited; currentPartId/slotDraw (cItem.id, the real total need
+                      // just computed above) tell it which ONE component is actually changing, so it
+                      // counts every OTHER part's own continuing draw as real demand and only adds
+                      // this one slot's qty back for its own current item's candidate card — not the
+                      // whole kit's usage, which would wrongly ignore a sibling part's demand on the
+                      // very candidate being picked (round 3 regression review, 2026-11-15, finding
+                      // F1 — the previous whole-kit exclusion showed a candidate green that a sibling
+                      // component's own demand made short the instant it was picked). need/strictAvail
+                      // opt into the real free-vs-need comparison now that both the exclusion and the
+                      // real total (not qtyEach's per-kit figure) are correct.
+                      onCheckAvailability={(cItem,onPick,opts)=>openAvailModal(k,idx,{invId:cItem.id,name:cItem.name},null,onPick,{pickHint:"Pick the item to use for this part of the kit — shown at its rental price.",splitQty:opts?.splitQty,need:opts?.need,currentPartId:cItem.id,slotDraw:opts?.need,strictAvail:true,onSplit:opts?.onSplit})}
                       rcSubcatFactors={rcSubcatFactors}
                       rcFactorByKey={rcFactorByKey}
                       mandiCatalogue={sharedFloralSettings.mandiCatalogue||[]} studioMarkup={Number(sharedFloralSettings.defaultStudioMarkup)||3} elSize={el.size}
