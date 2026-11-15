@@ -181,12 +181,32 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
   // Studio-booked deals (event_orders) — a separate source from the external LMS/CRM contracts
   // above, so a deal only shows here if it's booked in Studio, whether or not it also exists in
   // the CRM. `functionsDetail[]` covers multi-function events; single-date EOs fall back to `.date`.
+  // A client with 2+ LIVE (non-cancelled) event_orders rows is either a legitimate re-booking/
+  // amendment or an accidental duplicate — lib/studio/eventOrderFor.js's own ownEventOrderIds already
+  // nets a client's stock correctly across every one of their live orders (so the DATA never double-
+  // counts), but nothing has ever told ops the duplication happened at all (confirmed gap, 2026-11-14
+  // inventory-blocks audit) — the 2026-11-02 eoId-badge fix above only helps tell two such cards
+  // APART once you already know to look; it doesn't flag that there's more than one to begin with.
+  // Same clientId-else-clientName grouping ownEventOrderIds itself uses, computed once for every
+  // client instead of per-call.
+  const liveOrderCountByClient = useMemo(() => {
+    const m = new Map();
+    (eventOrders || []).forEach((eo) => {
+      if (!eo || eo.status === "cancelled" || !eo.id) return;
+      const key = eo.clientId || (String(eo.clientName || "").trim() ? `name:${String(eo.clientName).trim()}` : null);
+      if (!key) return;
+      m.set(key, (m.get(key) || 0) + 1);
+    });
+    return m;
+  }, [eventOrders]);
   const studioEvents = useMemo(() => {
     const events = [];
     for (const eo of (eventOrders || [])) {
       if (!eo || eo.status === "cancelled") continue;
       const fnsDetail = Array.isArray(eo.functionsDetail) ? eo.functionsDetail : null;
       const fnList = fnsDetail && fnsDetail.length ? fnsDetail : [{ date: eo.date, venue: eo.venue, type: (eo.functions || [])[0] }];
+      const dupKey = eo.clientId || (String(eo.clientName || "").trim() ? `name:${String(eo.clientName).trim()}` : null);
+      const liveOrderCount = dupKey ? (liveOrderCountByClient.get(dupKey) || 0) : 0;
       fnList.forEach((fn, fi) => {
         const date = fn.date || eo.date;
         if (!date) return;
@@ -201,11 +221,12 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
           // of its function cards with nothing saying so, which read as N separate ₹X bookings rather
           // than one ₹X deal covering all of them together.
           isMultiFn: fnList.length > 1,
+          liveOrderCount,
         });
       });
     }
     return events;
-  }, [eventOrders]);
+  }, [eventOrders, liveOrderCountByClient]);
 
   const allEvents = useMemo(() => [...calEvents, ...studioEvents], [calEvents, studioEvents]);
 
@@ -422,6 +443,11 @@ export default function CalendarTab({ lmsContracts, studioLmsCache, onSyncLms, l
                     {e.eoStatus && <span className="text-xs px-2 py-0.5 rounded-md font-semibold bg-gray-100 text-gray-600 capitalize">{e.eoStatus}</span>}
                     {e.priority && <span className="text-xs px-2 py-0.5 rounded-md font-semibold bg-yellow-50 text-yellow-700">{e.priority}</span>}
                     {e.matched && <span className="text-xs px-2 py-0.5 rounded-md font-bold bg-green-50 text-green-700">🔗 {e.matchType === "exact" ? "Exact" : "Fuzzy"}</span>}
+                    {e.dept === "studio" && e.liveOrderCount > 1 && (
+                      <span className="text-xs px-2 py-0.5 rounded-md font-semibold bg-amber-50 text-amber-700" title="This client has more than one live (non-cancelled) Studio booking — check it's a deliberate re-booking/amendment, not an accidental duplicate">
+                        ⚠ {e.liveOrderCount} live bookings
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     {e.entryNo && <span className="text-xs text-gray-400">#{e.entryNo}</span>}

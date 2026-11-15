@@ -1072,14 +1072,23 @@ let rawImsFetch = null; // { at, promise }
 function fetchRawIMS() {
   const now = Date.now();
   if (rawImsFetch && now - rawImsFetch.at < RAW_IMS_SHARE_MS) return rawImsFetch.promise;
-  const promise = Promise.all([fetchAll("inventory").catch(() => []), fetchAll("blocks").catch(() => [])]);
+  // A genuine fetch failure (network blip, Supabase error) must be told apart from a table that
+  // genuinely came back empty — `.catch(() => [])` made the two indistinguishable, so a real failure
+  // silently read as "zero inventory, zero blocks" instead of "unknown" (confirmed bug, 2026-11-15:
+  // this is exactly why the fail-open warning fetchIMSData's own caller shows never actually fired for
+  // a real network error — Array.isArray([]) is true, so it always looked like a clean success).
+  const promise = Promise.all([fetchAll("inventory").catch(() => null), fetchAll("blocks").catch(() => null)]);
   rawImsFetch = { at: now, promise };
+  // Don't replay a genuine failure to every caller for the rest of the share window — clear the
+  // shared cache so the next ask retries for real instead of reusing a known-bad result.
+  promise.then(([invRows, blockRows]) => { if (invRows === null || blockRows === null) rawImsFetch = null; });
   return promise;
 }
 function invalidateRawIMS() { rawImsFetch = null; }
 async function fetchIMSData(date) {
   try {
     const [invRows, blockRows] = await fetchRawIMS();
+    if (invRows === null || blockRows === null) return null; // genuine fetch failure — see fetchRawIMS's own comment
     let inventory = Array.isArray(invRows) ? invRows.map(rowToItem).filter(Boolean) : [];
     // blocks table is row-per-item: { id/item_id, data: [reservations] } → { itemId: [reservations] }
     const blocks = {};
@@ -13038,8 +13047,18 @@ export default function StudioApp() {
     const inflight = availInflightRef.current[date];
     if (inflight && inflight.gen === gen) return inflight.promise;
     const promise = fetchIMSData(date).then((res) => {
-      const val = (res && Array.isArray(res.inventory)) ? res : { inventory: [], blocksForDate: {} };
-      if (availGenRef.current === gen) availCacheRef.current[date] = val;
+      const ok = res && Array.isArray(res.inventory);
+      // A failed fetch (network blip, IMS unreachable) fails OPEN here — nothing blocked, everything
+      // reads as available — so Build's own pricing/badges never crash on a transient error. That's
+      // fine for the DATA itself: the actual reservation write (apply_block_ops, migration 066) does
+      // its own authoritative, row-locked check at commit time regardless of what this local read saw,
+      // so a stale/empty read here can never cause a real overbook (confirmed, 2026-11-14 inventory-
+      // blocks audit). What it CAN do is mislead the salesperson in the moment — but only if the
+      // failure is silently CACHED and never retried. `__fetchFailed` marks this result as transient so
+      // it's used for THIS render but never written to availCacheRef — the next read for this date
+      // (a re-render, a retry) tries the real fetch again instead of being stuck on a stale "all clear".
+      const val = ok ? res : { inventory: [], blocksForDate: {}, __fetchFailed: true };
+      if (ok && availGenRef.current === gen) availCacheRef.current[date] = val;
       if (availInflightRef.current[date]?.promise === promise) delete availInflightRef.current[date];
       return val;
     });
@@ -13085,9 +13104,22 @@ export default function StudioApp() {
     const date = activeFnMeta?.date || clientDate || "";
     if (!date) { setActiveBlocksForDate({}); setActiveBlocksDetailForDate({}); return; }
     let cancelled = false;
-    loadAvailability(date).then(({ blocksForDate, blocksDetailForDate }) => { if (!cancelled) { setActiveBlocksForDate(blocksForDate || {}); setActiveBlocksDetailForDate(blocksDetailForDate || {}); } }).catch(() => { if (!cancelled) { setActiveBlocksForDate({}); setActiveBlocksDetailForDate({}); } });
+    loadAvailability(date).then((res) => {
+      if (cancelled) return;
+      setActiveBlocksForDate(res.blocksForDate || {});
+      setActiveBlocksDetailForDate(res.blocksDetailForDate || {});
+      // A transient fetch failure reads as "nothing blocked" for this render (see loadAvailabilityRaw's
+      // own comment) — real stock COUNTS are still protected (the reservation RPC checks for real,
+      // under a row lock, at commit time regardless of what this local read saw), but PRICE is not:
+      // a "can be made" item reading as fully in stock here prices at the owned rate instead of the
+      // shortfall/cost-% rate, and that wrong price can reach the client and persist — the RPC has no
+      // opinion on price, only on how many units it will actually grant. The salesperson should know
+      // the figures on screen right now might be stale, not silently trust an "available" that's
+      // really just "couldn't check" (confirmed by regression review, 2026-11-15).
+      if (res.__fetchFailed) showMsg?.("Couldn't check live stock for this date — figures shown may be stale. Try again in a moment.", "red");
+    }).catch(() => { if (!cancelled) { setActiveBlocksForDate({}); setActiveBlocksDetailForDate({}); } });
     return () => { cancelled = true; };
-  }, [activeFnMeta?.date, clientDate, loadAvailability, blocksVersion]);
+  }, [activeFnMeta?.date, clientDate, loadAvailability, blocksVersion, showMsg]);
 
   // Same warm-up, for every function's date — not just the active one. loadAvailability already
   // caches per date (availCacheRef), so re-fetching a date already warmed by the effect above (or by

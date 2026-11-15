@@ -380,13 +380,23 @@ Rules:
       });
     });
     const m = {}, byItem = {};
-    Object.values(perDeal).forEach((d) => Object.entries(d).forEach(([invId, { qty, names }]) => {
-      m[invId] = (m[invId] || 0) + qty;
-      (byItem[invId] = byItem[invId] || []).push({ name: [...new Set(names)].join(" + "), qty });
+    Object.entries(perDeal).forEach(([dealKey, d]) => Object.entries(d).forEach(([invId, { qty, names }]) => {
+      // The live `blocks` ledger, not this deal's own static per-function snapshot, whenever there's a
+      // real entry to read it from — same reasoning as the item popup's own fix (Phase 5): `functions`'
+      // own qty is a point-in-time snapshot taken once at auto-confirm time, never corrected as a LATER
+      // writer (Studio's reconcile, a re-block, a release) changes the real `blocks` entries. No
+      // per-function ambiguity to guard against here the way the popup's fix had to (that one showed
+      // one row per FUNCTION of a deal) — blocks entries have no function granularity at all, only per
+      // (item, event, date), which is already exactly the per-DEAL total this grouping computes, so
+      // it's a clean, unambiguous substitution.
+      const live = heldForEventOnDate(readBlocks[invId], dealKey, availDate);
+      const liveQty = live.found ? live.qty : qty;
+      m[invId] = (m[invId] || 0) + liveQty;
+      (byItem[invId] = byItem[invId] || []).push({ name: [...new Set(names)].join(" + "), qty: liveQty });
     }));
     return { qty: m, fns: byItem };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availDate, functions, eventOrders]);
+  }, [availDate, functions, eventOrders, readBlocks]);
   const blockedOf = (i) => dateBlock ? (dateBlock.qty[i.id] || 0) : (i.blocked || 0);
   const availOf = (i) => (Number(i.qty) || 0) - blockedOf(i);
 
