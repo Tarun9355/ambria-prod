@@ -31,6 +31,24 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   // submitBulk below write through applyBlocksRpc (the locked, availability-checking RPC, Phase 2b
   // of the 2026-11-14 inventory-blocks audit), never this local snapshot.
   const readBlocks = useMemo(() => filterLiveBlocks(blocks, eventOrders), [blocks, eventOrders]);
+  // Which (eventId, date) combos have ANY live blocks entry, for ANY item — scanned once across
+  // every item's own array, so a per-deal/per-function check elsewhere can tell "this deal HAS been
+  // reconciled for this date (just not for this particular item — trust that as a genuine zero)"
+  // apart from "never reconciled for this date at all (no information — the stale `functions`
+  // snapshot is the only thing available)". Without this, an item removed from a deal after its
+  // functions-table snapshot was taken kept showing its old qty forever: heldForEventOnDate only
+  // looks at ONE item's own entries, which an edit that dropped that item leaves empty for this
+  // date — indistinguishable, until now, from a deal that was simply never reconciled (owner
+  // report, 2026-11-15: Sahej Singh's deal no longer holds "Ivory 2 Seater Sofa" — confirmed via a
+  // direct blocks query — yet it kept showing "×3" here because the deal HAD been reconciled, with
+  // other items, on this same date).
+  const reconciledEventDates = useMemo(() => {
+    const out = new Set();
+    Object.values(readBlocks || {}).forEach((entries) => {
+      (entries || []).forEach((b) => { if (b?.eventId && b?.date) out.add(b.eventId + "|" + b.date); });
+    });
+    return out;
+  }, [readBlocks]);
   // Tier 1.2 — Studio cat labels. Top-level categories (Florals/Fabric/Structure/...) are a
   // small, stable set still sourced from Studio's live Rate-Card categories — only the
   // SUB-category list moves to rate_card_categories below (see studioSubcats/studioSubcatsByCat).
@@ -424,7 +442,8 @@ Rules:
         // granularity at all, only per (item, event, date), which is already exactly the per-DEAL
         // total this grouping computes, so it's a clean, unambiguous substitution.
         const live = heldForEventOnDate(readBlocks[invId], dealKey, availDate);
-        const liveQty = live.found ? live.qty : qty;
+        const everReconciledThisDate = reconciledEventDates.has(dealKey + "|" + availDate);
+        const liveQty = live.found ? live.qty : (everReconciledThisDate ? 0 : qty);
         (byItemEntries[invId] = byItemEntries[invId] || []).push({ qty: liveQty, venueName, shift });
         (byItem[invId] = byItem[invId] || []).push({ name: [...new Set(names)].join(" + "), qty: liveQty });
       });
@@ -440,7 +459,7 @@ Rules:
     });
     return { qty: m, fns: byItem };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availDate, functions, eventOrders, readBlocks, fvSettings, inventory]);
+  }, [availDate, functions, eventOrders, readBlocks, fvSettings, inventory, reconciledEventDates]);
   const blockedOf = (i) => dateBlock ? (dateBlock.qty[i.id] || 0) : (i.blocked || 0);
   const availOf = (i) => (Number(i.qty) || 0) - blockedOf(i);
 
@@ -1686,7 +1705,6 @@ Rules:
                   return !fnCancelled(f);
                 })
                 .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
-              if (blockedFns.length === 0) return <p className="text-sm text-gray-400 italic">{availDate && !selAllDates ? "Not blocked for any function on this date" : "Not blocked for any function"}</p>;
               // The live `blocks` ledger has no per-function granularity — one entry covers the WHOLE
               // event on one date, however many of this SAME deal's functions share that date (two
               // functions, same night, different venues, is exactly why the shift chip above exists).
@@ -1698,7 +1716,7 @@ Rules:
               const eventDateCounts = new Map();
               blockedFns.forEach((f) => { const k = `${f.eventOrderId || f.id}|${f.date}`; eventDateCounts.set(k, (eventDateCounts.get(k) || 0) + 1); });
               const shownGroupNotes = new Set();
-              return blockedFns.map((f) => {
+              const rows = blockedFns.map((f) => {
                   const it = f.items.find((it) => it.invId === selItem.id);
                   const groupKey = `${f.eventOrderId || f.id}|${f.date}`;
                   const soleInGroup = eventDateCounts.get(groupKey) === 1;
@@ -1722,7 +1740,17 @@ Rules:
                   // no live record matching at all — the known fallback-id gap, liveBlocks.js's own
                   // header comment).
                   const live = heldForEventOnDate(readBlocks[selItem.id], f.eventOrderId || f.id, f.date);
-                  const shownQty = soleInGroup && live.found ? live.qty : it.qty;
+                  // Same "was this deal ever reconciled for this date at all" check as dateBlock above
+                  // — a deal whose Build no longer includes THIS item still gets a genuine zero here
+                  // (not the stale f.items snapshot) once it's confirmed the deal WAS reconciled, with
+                  // other items, on this exact date (owner report, 2026-11-15: this exact row is what
+                  // showed Sahej Singh's stale "×3" for an item his deal no longer holds at all).
+                  const everReconciledThisDate = reconciledEventDates.has((f.eventOrderId || f.id) + "|" + f.date);
+                  const shownQty = soleInGroup ? (live.found ? live.qty : (everReconciledThisDate ? 0 : it.qty)) : it.qty;
+                  // Never drop a row that still needs units PRODUCED (qty can be genuinely 0 while
+                  // qtyToProduce > 0 — a made-to-order item, or one capped past real stock with
+                  // allowOver — this list is the one place ops sees that 🏭 chip at all).
+                  if (soleInGroup && shownQty <= 0 && !(live.found && live.qtyToProduce > 0)) return null;
                   const showGroupNote = !soleInGroup && live.found && !shownGroupNotes.has(groupKey);
                   if (showGroupNote) shownGroupNotes.add(groupKey);
                   return <React.Fragment key={f.id}>
@@ -1742,6 +1770,9 @@ Rules:
                     </div>
                   </React.Fragment>;
                 });
+              const visibleRows = rows.filter(Boolean);
+              if (visibleRows.length === 0) return <p className="text-sm text-gray-400 italic">{availDate && !selAllDates ? "Not blocked for any function on this date" : "Not blocked for any function"}</p>;
+              return visibleRows;
             })()}
           </div>
           {(() => {
