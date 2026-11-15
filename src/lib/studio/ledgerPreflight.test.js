@@ -105,3 +105,74 @@ describe("ledgerPreflightShortfalls — never stricter than apply_block_ops itse
     expect(out).toEqual([]);
   });
 });
+
+// Regression review, 2026-11-15, finding 4: with eventOrders/settings passed, this gate must use the
+// SAME Fixed Venue shift-pair sharing rule apply_block_ops' own write (migration 067) applies — or a
+// Sold confirm gets wrongly blocked for a booking the RPC would actually grant in full.
+describe("ledgerPreflightShortfalls — Fixed Venue shift-pair sharing parity with apply_block_ops (finding 4)", () => {
+  const settings = { fixedVenues: [{ id: "fv_push", name: "Pushpanjali", items: [{ invId: "chair", qty: 12 }] }] };
+  const eventOrders = [
+    { id: "eo_np", venue: "Pushpanjali", functionsDetail: [{ date: "2027-05-01", venue: "Pushpanjali", shift: "Lunch" }] },
+  ];
+
+  it("a day-shift hold at the SAME Fixed Venue is credited, not flagged as competing demand", () => {
+    // This deal's own Dinner function at Pushpanjali needs 12; another deal (eo_np) already holds
+    // 12 there for Lunch — without the sharing rule this reads as 12 need vs 0 free (short 12); with
+    // it, the two share the same 12 standing units and nothing is short. fnShift must be set on this
+    // deal's OWN function too — the free zone only ever applies when THIS deal's own shift is a safe,
+    // recognized pairing (see sharingFreeZone's own header).
+    const fns = [{ ...fn(0, "2027-05-01", "Pushpanjali", { z: [row("chair", 12)] }), fnShift: "Dinner" }];
+    const inventory = [inv("chair", 12)];
+    const blocksDetailByDate = { "2027-05-01": { chair: [{ eventId: "eo_np", qty: 12, status: "confirmed" }] } };
+    const out = ledgerPreflightShortfalls({ fns, inventory, blocksDetailByDate, ownEventIds: ["eo_mine"], eventOrders, settings });
+    expect(out).toEqual([]);
+  });
+
+  it("without eventOrders/settings (omitted), the exact same scenario still flags short — old behavior preserved for every existing caller", () => {
+    const fns = [{ ...fn(0, "2027-05-01", "Pushpanjali", { z: [row("chair", 12)] }), fnShift: "Dinner" }];
+    const inventory = [inv("chair", 12)];
+    const blocksDetailByDate = { "2027-05-01": { chair: [{ eventId: "eo_np", qty: 12, status: "confirmed" }] } };
+    const out = ledgerPreflightShortfalls({ fns, inventory, blocksDetailByDate, ownEventIds: ["eo_mine"] });
+    expect(out).toEqual([{ date: "2027-05-01", itemId: "chair", name: "chair", need: 12, free: 0, short: 12 }]);
+  });
+
+  it("the day group is already over standing qty, but this deal's own Dinner still costs nothing extra (finding M3: the free zone is unconditional slack, not netted into an already-negative pool)", () => {
+    const eventOrdersTwoLunch = [
+      { id: "eo_np", venue: "Pushpanjali", functionsDetail: [{ date: "2027-05-01", venue: "Pushpanjali", shift: "Lunch" }] },
+      { id: "eo_other_lunch", venue: "Pushpanjali", functionsDetail: [{ date: "2027-05-01", venue: "Pushpanjali", shift: "Morning" }] },
+    ];
+    const fns = [{ ...fn(0, "2027-05-01", "Pushpanjali", { z: [row("chair", 12)] }), fnShift: "Dinner" }]; // this deal's own Dinner need
+    const inventory = [inv("chair", 12)];
+    const blocksDetailByDate = { "2027-05-01": { chair: [
+      { eventId: "eo_np", qty: 12, status: "confirmed" },
+      { eventId: "eo_other_lunch", qty: 6, status: "confirmed" },
+    ] } };
+    const out = ledgerPreflightShortfalls({ fns, inventory, blocksDetailByDate, ownEventIds: ["eo_mine"], eventOrders: eventOrdersTwoLunch, settings });
+    // others: day total 12+6=18 (same group, sums — two Lunch/Morning functions can't share with each
+    // other), night total 0, standing 12 -> othersTotal = 18+0-min(18,0,12) = 18 (already over the 12
+    // owned — the OTHER deals' own over-commitment, not this one's doing). Free zone (own = night):
+    // min(opposite=18, standing=12) - same(0) = 12 — fully unconditional, so free =
+    // max(max(12-18,0)+12, 0, 0) = 12. need 12 <= free 12 -> nothing short. (The old, wrong formula —
+    // owned - (othersTotal - freeZone) = 12 - 6 = 6 — would have wrongly flagged this deal's own
+    // Dinner as short 6, blaming it for a shortfall that's entirely the OTHER two Lunch-side deals'
+    // own over-commitment, which this Dinner function never touches.)
+    expect(out).toEqual([]);
+  });
+
+  it("this deal's own Dinner request bigger than the free zone is short only for the genuine excess", () => {
+    const eventOrdersTwoLunch = [
+      { id: "eo_np", venue: "Pushpanjali", functionsDetail: [{ date: "2027-05-01", venue: "Pushpanjali", shift: "Lunch" }] },
+      { id: "eo_other_lunch", venue: "Pushpanjali", functionsDetail: [{ date: "2027-05-01", venue: "Pushpanjali", shift: "Morning" }] },
+    ];
+    const fns = [{ ...fn(0, "2027-05-01", "Pushpanjali", { z: [row("chair", 20)] }), fnShift: "Dinner" }]; // needs 20, not 12
+    const inventory = [inv("chair", 12)];
+    const blocksDetailByDate = { "2027-05-01": { chair: [
+      { eventId: "eo_np", qty: 12, status: "confirmed" },
+      { eventId: "eo_other_lunch", qty: 6, status: "confirmed" },
+    ] } };
+    const out = ledgerPreflightShortfalls({ fns, inventory, blocksDetailByDate, ownEventIds: ["eo_mine"], eventOrders: eventOrdersTwoLunch, settings });
+    // Same othersTotal (18) and free zone (12) as above; free = max(max(12-18,0)+12,0,0) = 12.
+    // need 20 > free 12 -> short 8 (the genuine amount beyond what the free zone covers).
+    expect(out).toEqual([{ date: "2027-05-01", itemId: "chair", name: "chair", need: 20, free: 12, short: 8 }]);
+  });
+});

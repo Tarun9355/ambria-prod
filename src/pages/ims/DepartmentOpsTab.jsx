@@ -3852,10 +3852,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
           56 rather than the bare 48: this sits inside a `flex items-center` row that adds a few
           pixels of its own above the control, which the raw height calculation does not see. */}
       <div className="w-fit max-w-full ml-auto -mt-14 sm:mt-0 sm:ml-0 sm:bg-white sm:rounded-xl sm:shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] sm:px-3 sm:py-2">
+      <div className="flex items-center gap-1.5">
         {/* Scrolls sideways rather than wrapping to a second row: eight departments at a phone
             width would otherwise turn a one-line control into a four-line block. Bar hidden, as
-            everywhere else on this page. */}
-        <div className="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+            everywhere else on this page. min-w-0 so THIS part shrinks/scrolls first — without it,
+            a flex child with no min-width never shrinks below its content size, so the department
+            chips pushed the always-visible action group (below) off the right edge entirely, with
+            the hidden scrollbar giving no sign anything was cut off (owner report, 2026-11-15). */}
+        <div className="flex items-center gap-1.5 overflow-x-auto min-w-0 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
           {/* The eyebrow earns its place beside a row of chips, where the row needs naming. Beside
               a dropdown that already reads "🛋 Furniture" it is just a second label for the same
               thing, so it drops out on phone. */}
@@ -3888,17 +3892,21 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
               </button>
             );
           })}
-          {/* ── ONE BOOK FOR THE WHOLE EVENT ──
-              Sits after the last department because that is what it is: not another department,
-              but every one of them in a single file, in the order of the row it follows.
-              Only the departments that actually have something on this event are included — a
-              seven-book file where four books are empty is worse than four books.
-              Hidden until an event is picked, since there is nothing to export before that. */}
-          {/* Always on the bar (owner ask 2026-10-31) - hiding it with no event picked, or when Deal Check had synced
-              fewer than two departments, read as the button having been removed. Disabled with a reason before an
-              event is picked. It is always the all-departments book - every department with work on the event, or every
-              department on the bar when Deal Check hasn't synced any yet - never just the one on screen (the icon by
-              the bell does that). */}
+        </div>
+        {/* ── ONE BOOK FOR THE WHOLE EVENT, + sync ──
+            Sits after the department chips, but OUTSIDE their scrolling strip (shrink-0 — never
+            compressed, never scrolled out of view): a hidden-scrollbar row gave no sign these were
+            still there once the chips alone filled the width, so Download PDF and the sync button
+            read as having disappeared entirely (owner report, 2026-11-15). Only the departments that
+            actually have something on this event are included in the book — a seven-book file where
+            four books are empty is worse than four books. Hidden until an event is picked, since
+            there is nothing to export before that. */}
+        {/* Always on the bar (owner ask 2026-10-31) - hiding it with no event picked, or when Deal Check had synced
+            fewer than two departments, read as the button having been removed. Disabled with a reason before an
+            event is picked. It is always the all-departments book - every department with work on the event, or every
+            department on the bar when Deal Check hasn't synced any yet - never just the one on screen (the icon by
+            the bell does that). */}
+        <div className="flex items-center gap-1.5 shrink-0">
           {/* The PDF's language, right before the button it applies to (the phone has its own by the PDF icons). */}
           <PdfLangToggle value={pdfLang} onChange={setPdfLang} disabled={!!exporting} display="hidden sm:inline-flex" className="ml-1" />
           <button onClick={() => { const allDepts = deptsWithWork.length ? deptsWithWork : bookDepts; exportDeptPdf(allDepts, { combined: allDepts.length > 1 || allDepts[0] !== dept }); }} disabled={!sel || !!exporting}
@@ -3913,6 +3921,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
           {/* Only while an event's planning is older than an IMS setting / inventory change. */}
           <PlanningSyncButton eventOrders={eventOrders} onlyOrder={sel} />
         </div>
+      </div>
       </div>
       </div>
 
