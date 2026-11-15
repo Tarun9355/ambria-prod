@@ -16,6 +16,7 @@ import { catToDept, canSeeDept } from "../../lib/ims/deptClassify";
 import ItemHoverThumb from "../../components/shared/ItemHoverThumb";
 import { getAvailableQty } from "../../lib/ims/eventAutoConfirm";
 import { filterLiveBlocks, heldForEventOnDate } from "../../lib/ims/liveBlocks";
+import { effectiveBlockedTotal, collapseVenueShift } from "../../lib/ims/fixedVenueSharing";
 import { appendOp, shortfallsOf } from "../../lib/ims/blocksRpc";
 
 export default function InventoryTab({ inventory, setInventory, functions, setFunctions, categories, setCategories, settings, studio, rateCardCategories = [], authUser, eventOrders = [], blocks, applyBlocksRpc }) {
@@ -367,10 +368,34 @@ Rules:
     // any one of its functions needs, not the sum - the rule Studio's own reservation (`blocks`) uses. Summing made a deal with two
     // rows on one date read 110 blocked of 55 (owner report 2026-11-13). Different deals still add up.
     const perDeal = {}; // dealKey -> { invId -> { qty, names[] } }
+    const dealPairs = {}; // dealKey -> [{venueName,shift}] — every function of the deal on availDate, regardless of item
     (functions || []).forEach((f) => {
       if (f.date !== availDate || fnCancelled(f)) return;
       const dealKey = f.eventOrderId || f.projectId || f.id;
       const d = perDeal[dealKey] || (perDeal[dealKey] = {});
+      // A `functions` row's own venue can be a plain string OR a {type,name,fullAddress} object
+      // (regression review, 2026-11-15 — treating the object itself as a venue NAME made
+      // fixedVenueFor never match anything, silently turning every entry into "outdoor" and leaving
+      // the old flat sum in place). THIS function's own venue is the most direct source and is
+      // preferred first; the event_order's functionsDetail entry for this exact date is the next-best
+      // (authoritative per-date) source; the event_order's own TOP-LEVEL venue is only function 0's
+      // venue and is a last resort for a multi-function deal, never preferred over either of the
+      // above (regression review, 2026-11-15, round 2, finding M2 — preferring it unconditionally
+      // could misclassify a later function's own, different venue/date).
+      const eo = f.eventOrderId ? (eventOrders || []).find((e) => e.id === f.eventOrderId) : null;
+      const ownVenueRaw = f.venue;
+      const ownVenueName = typeof ownVenueRaw === "string" ? ownVenueRaw : (ownVenueRaw?.name || "");
+      const fdMatch = Array.isArray(eo?.functionsDetail) ? eo.functionsDetail.find((x) => x?.date === f.date && (!f.type || x?.fnType === f.type || x?.type === f.type)) : null;
+      const eoVenueRaw = eo?.venue;
+      const eoVenueName = typeof eoVenueRaw === "string" ? eoVenueRaw : (eoVenueRaw?.name || "");
+      const venueName = ownVenueName || fdMatch?.venue || fdMatch?.fnVenue || eoVenueName || "";
+      const shift = f.shift || fdMatch?.shift || "";
+      // Tracked per DEAL, not per item — a Lunch function that doesn't even touch this item still
+      // occupies the day window for whatever IS standing there, so credit-eligibility is decided once
+      // per deal+date for the whole event, matching event_fn_venue_shift's own per-EVENT (not
+      // per-item) ambiguity check in migration 067 (regression review, 2026-11-15, round 2, finding
+      // M1 — a per-item collapse here disagreed with the RPC's own per-event collapse).
+      (dealPairs[dealKey] = dealPairs[dealKey] || []).push({ venueName, shift });
       (f.items || []).forEach((it) => {
         if (it.invId == null) return;
         const q = Number(it.qty) || 0; if (q <= 0) return;
@@ -379,24 +404,40 @@ Rules:
         cur.names.push(f.name || "Function");
       });
     });
-    const m = {}, byItem = {};
-    Object.entries(perDeal).forEach(([dealKey, d]) => Object.entries(d).forEach(([invId, { qty, names }]) => {
-      // The live `blocks` ledger, not this deal's own static per-function snapshot, whenever there's a
-      // real entry to read it from — same reasoning as the item popup's own fix (Phase 5): `functions`'
-      // own qty is a point-in-time snapshot taken once at auto-confirm time, never corrected as a LATER
-      // writer (Studio's reconcile, a re-block, a release) changes the real `blocks` entries. No
-      // per-function ambiguity to guard against here the way the popup's fix had to (that one showed
-      // one row per FUNCTION of a deal) — blocks entries have no function granularity at all, only per
-      // (item, event, date), which is already exactly the per-DEAL total this grouping computes, so
-      // it's a clean, unambiguous substitution.
-      const live = heldForEventOnDate(readBlocks[invId], dealKey, availDate);
-      const liveQty = live.found ? live.qty : qty;
-      m[invId] = (m[invId] || 0) + liveQty;
-      (byItem[invId] = byItem[invId] || []).push({ name: [...new Set(names)].join(" + "), qty: liveQty });
-    }));
+    const byItemEntries = {}; // invId -> [{ qty, venueName, shift }], one per competing deal
+    const byItem = {};
+    Object.entries(perDeal).forEach(([dealKey, d]) => {
+      // Collapse this deal's own functions on this date to ONE representative {venueName,shift} —
+      // credit-eligible with ANOTHER deal only when this deal's own functions all agree on exactly
+      // one venue and one safe shift group. A deal spanning more than one venue or shift group already
+      // needs its own units in more than one window and has nothing left to share (regression review,
+      // 2026-11-15 — tagging "whichever function set the max" let a deal already using an item in both
+      // windows also look free for an unrelated deal to share with: a real overbook, not just display).
+      const { venueName, shift } = collapseVenueShift(dealPairs[dealKey] || []);
+      Object.entries(d).forEach(([invId, { qty, names }]) => {
+        // The live `blocks` ledger, not this deal's own static per-function snapshot, whenever there's
+        // a real entry to read it from — same reasoning as the item popup's own fix (Phase 5):
+        // `functions`' own qty is a point-in-time snapshot taken once at auto-confirm time, never
+        // corrected as a LATER writer (Studio's reconcile, a re-block, a release) changes the real
+        // `blocks` entries. No per-function ambiguity to guard against here the way the popup's fix
+        // had to (that one showed one row per FUNCTION of a deal) — blocks entries have no function
+        // granularity at all, only per (item, event, date), which is already exactly the per-DEAL
+        // total this grouping computes, so it's a clean, unambiguous substitution.
+        const live = heldForEventOnDate(readBlocks[invId], dealKey, availDate);
+        const liveQty = live.found ? live.qty : qty;
+        (byItemEntries[invId] = byItemEntries[invId] || []).push({ qty: liveQty, venueName, shift });
+        (byItem[invId] = byItem[invId] || []).push({ name: [...new Set(names)].join(" + "), qty: liveQty });
+      });
+    });
+    // Cross-deal total: different deals at the SAME Fixed Venue property, in a safe day/night shift
+    // pairing, share the same standing units rather than each counting in full (owner ask, 2026-11-15
+    // — see lib/ims/fixedVenueSharing.js). Everything else (outdoor bookings, same-shift siblings,
+    // Sundowner/Evening/unrecognized shifts) still sums exactly as before.
+    const m = {};
+    Object.entries(byItemEntries).forEach(([invId, entries]) => { m[invId] = effectiveBlockedTotal(entries, fvSettings, invId); });
     return { qty: m, fns: byItem };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availDate, functions, eventOrders, readBlocks]);
+  }, [availDate, functions, eventOrders, readBlocks, fvSettings]);
   const blockedOf = (i) => dateBlock ? (dateBlock.qty[i.id] || 0) : (i.blocked || 0);
   const availOf = (i) => (Number(i.qty) || 0) - blockedOf(i);
 

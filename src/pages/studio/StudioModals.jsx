@@ -73,7 +73,7 @@ export default function StudioModals({ ctx }) {
     normalizePaintAllocation, imsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, savePaletteData,
     isSubcatPaintable, PAINT_TOKENS_FALLBACK,
     // live soft-blocking (used by the zone-upload-review "+ Add element" and kit-component searches)
-    collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, clientDate, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey, floralRatio,
+    collectAllFunctionData, activeFnMeta, activeBlocksForDate, getStudioAvailable, freeOnActiveDate, clientDate, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey, floralRatio,
     // per-element / per-reference stock availability picker — shared by Build's own 📦 icon and
     // the Add Production/Buying Item modal above
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
@@ -106,7 +106,13 @@ export default function StudioModals({ ctx }) {
     const exclude = elIdx == null ? { fnIdx: activeFnIdx, zoneKey } : { fnIdx: activeFnIdx, zoneKey, elIdx };
     const usedElsewhere = qtyUsedElsewhereInBuild(itemId, fns, imsInventory, exclude, activeFnMeta?.date || clientDate, activeFnMeta?.venue || fns?.[0]?.fnVenue);
     if (usedElsewhere <= 0) return null;
-    const otherEventsAvail = getStudioAvailable(it, activeBlocksForDate);
+    // freeOnActiveDate (Fixed Venue day/night sharing + own-hold netting + Fixed-Venue lock, all
+    // already folded in — StudioApp.jsx) in preference to the flat getStudioAvailable, same as every
+    // StudioBuild.jsx call site already does (round 3 regression review, 2026-11-15, LOW finding —
+    // this was the one remaining place still showing a shared item as fully blocked while Build's own
+    // canvas showed it free). getStudioAvailable kept as the fallback for the one caller that has no
+    // freeOnActiveDate at all.
+    const otherEventsAvail = freeOnActiveDate ? freeOnActiveDate(it).free : getStudioAvailable(it, activeBlocksForDate);
     return Math.max(0, otherEventsAvail - usedElsewhere);
   };
   const [zurHoveredElIdx, setZurHoveredElIdx] = useState(null);

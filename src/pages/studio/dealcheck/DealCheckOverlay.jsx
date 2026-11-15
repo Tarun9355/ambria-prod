@@ -104,11 +104,12 @@ const NUM = { fontVariantNumeric: "tabular-nums" };
 import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../../lib/ims/constants";
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor, combineAvailability, fixedVenueOverlap, fixedVenueOverlapOnDate } from "../../../lib/ims/fixedVenues";
+import { getSharingAwareAvailable, collapsedDealShiftFor } from "../../../lib/ims/fixedVenueSharing";
 import { calcZoneFabric, resolveFabricAllocation, fabricAnchorsForRow, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial, platformStandingDiscount, scaleTrussPreview } from "../../../lib/studio/pricing";
 import { resolveBeamSegment, resolvePillarHeight } from "../../../lib/ims/trussEngine";
 import { platformAvgRatePerSqft } from "../../../lib/ims/platformEngine";
 import { carpetPricingFor, CARPET_OFF, carpetTakesStockPick } from "../../../lib/studio/taxonomy";
-import { qtyUsedElsewhereInDealCheck, netOwnReservedBlocksLive } from "../../../lib/studio/dealAvailability";
+import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { matchKit } from "../../../lib/studio/kitVariants";
 import { findCrossFnReuseSource, computeFnInvQty, groupConsecutiveFns } from "../../../lib/studio/crossFnReuse";
@@ -268,8 +269,6 @@ export default function DealCheckOverlay({ ctx }) {
     isZoneDirty, parseCardKey,
     // Settings → Zones' own drag-ordered priority (Object.keys(zoneMeta), same list Build sorts by)
     zoneKeys, zoneLabelsD,
-    // orchestration + persistence
-    getStudioAvailable,
     // misc
     showMsg, saveClientLedger, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
   } = ctx;
@@ -491,12 +490,18 @@ export default function DealCheckOverlay({ ctx }) {
     const targetDate = fnDate || fns[fnIdx]?.fnDate || clientDate;
     const usedElsewhere = qtyUsedElsewhereInDealCheck(imsId, fns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ...exclude }, targetDate);
     if (usedElsewhere <= 0) return null;
-    const fnBlocks = (dealCheckData?.blocksByDate || {})[targetDate] || {};
-    // Net this SAME deal's own already-recorded reservation out first — see netOwnReservedBlocksLive.
+    // Net this SAME deal's own already-recorded reservation out first — see getSharingAwareAvailable's
+    // own excludeEventIds param (replaces netOwnReservedBlocksLive here).
     const cliForAvail = clientLedger.find(c => c.id === activeClientId);
     const eoForAvail = eventOrderFor(eventOrders, activeClientId, cliForAvail?.name);
     const blocksDetail = (dealCheckData?.blocksDetailByDate || {})[targetDate] || {};
-    const otherEventsAvail = getStudioAvailable(it, netOwnReservedBlocksLive(fnBlocks, it.id, blocksDetail, [eoForAvail?.id, ...ownEventOrderIds(eventOrders, activeClientId, cliForAvail?.name)]));
+    // getSharingAwareAvailable (not getStudioAvailable) — Fixed Venue day/night sharing (owner ask,
+    // 2026-11-15, src/lib/ims/fixedVenueSharing.js), same as dcAvailable below (regression review,
+    // 2026-11-15, round 2, finding H1). Credit-eligibility decided once per deal per date via
+    // collapsedDealShiftFor, not per function (round 3 regression review, 2026-11-15, finding H2).
+    const fvCfgHere = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+    const _dealShift = collapsedDealShiftFor(fns, targetDate);
+    const otherEventsAvail = getSharingAwareAvailable(it, blocksDetail, eventOrders, fvCfgHere, targetDate, _dealShift.venueName, _dealShift.shift, [eoForAvail?.id, ...ownEventOrderIds(eventOrders, activeClientId, cliForAvail?.name)]);
     return Math.max(0, otherEventsAvail - usedElsewhere);
   };
 
@@ -632,9 +637,22 @@ export default function DealCheckOverlay({ ctx }) {
         const dcAvailable = (item, fnBlocks, fnIdx) => {
           if (!item) return 0;
           const fns = collectAllFunctionData ? collectAllFunctionData() : [];
-          const fnDate = fns[fnIdx]?.fnDate;
+          // A function with no date of its own falls back to clientDate (function 0's date) — same
+          // fallback the OLD fnBlocks lookup used (`fn.fnDate || clientDate`, see lines 860/2949/4365
+          // in this same file) and dcRemainingForItem's own targetDate, so a dateless function doesn't
+          // silently see "nothing blocked anywhere" instead of function 0's real holds (round 3
+          // regression review, 2026-11-15, LOW finding).
+          const fnDate = fns[fnIdx]?.fnDate || clientDate;
           const blocksDetail = fnDate ? (dealCheckData?.blocksDetailByDate || {})[fnDate] || {} : {};
-          return getStudioAvailable(item, netOwnReservedBlocksLive(fnBlocks, item.id, blocksDetail, [eoForAvail?.id, ...ownEventOrderIds(eventOrders, activeClientId, cli?.name)]));
+          // getSharingAwareAvailable (not getStudioAvailable) — Fixed Venue day/night sharing (owner
+          // ask, 2026-11-15, src/lib/ims/fixedVenueSharing.js): the same credit Build's own pricing,
+          // apply_block_ops (migration 067) and the pre-Sold ledger gate already apply, so Deal Check
+          // never disagrees with Build about how much of a shared item is really free (regression
+          // review, 2026-11-15, round 2, finding H1). Credit-eligibility decided once per deal per
+          // date via collapsedDealShiftFor, not per function (round 3, finding H2).
+          const fvCfgHere = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+          const _dealShift = collapsedDealShiftFor(fns, fnDate);
+          return getSharingAwareAvailable(item, blocksDetail, eventOrders, fvCfgHere, fnDate, _dealShift.venueName, _dealShift.shift, [eoForAvail?.id, ...ownEventOrderIds(eventOrders, activeClientId, cli?.name)]);
         };
         // combineAvailability's overlap correction (confirmed bug, 2026-11-11 — "Emerald Green"
         // couldn't add an item with real free stock): a Fixed Venue's own event using its OWN
