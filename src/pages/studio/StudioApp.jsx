@@ -6675,7 +6675,11 @@ export default function StudioApp() {
             flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, fnDate: fnData.fnDate || "", zoneKey: zk, idx: i, invId: el.invId, name: item?.name || el.name || "Item",
               parts: partsOut.map((p) => `${p.name} (${p.short} short)`),
               // the gate lists each short part as its own row, and its Fix opens the picker on that part, not the kit
-              itemOut: !!r.outOfStock, shortParts: partsOut.map((p) => ({ id: p.id, name: p.name })),
+              // need: p.need (not dropped) — the oosGate picker's own currentPartId/slotDraw add-back
+              // (StudioModals.jsx's partNeed, openOosPicker) reads this; without it, slotDraw was
+              // always undefined so the gate's own swap picker never added the slot back for its
+              // current item at all (round 3 regression review verification, 2026-11-15).
+              itemOut: !!r.outOfStock, shortParts: partsOut.map((p) => ({ id: p.id, name: p.name, need: p.need })),
               // what is short, by name only - the gate modal shows just this: the item itself when it is out, and/or the kit part(s) that are
               shortNames: [...new Set([...(r.outOfStock ? [item?.name || el.name || "Item"] : []), ...partsOut.map((p) => p.name)])] });
           }
@@ -13203,13 +13207,31 @@ export default function StudioApp() {
     // reading as "no item at all".
     const invItem = el?.invId ? ((imsInventory || []).find(i => i.id === el.invId) || deletedCatalogue.inventoryById.get(el.invId) || null) : null;
     const subcat = (invItem ? (invItem.subCat || invItem.subcategory) : "") || (rc ? itemImsSubcat(rc) : "") || rc?.sub || "";
-    const date = activeFnMeta?.date || clientDate || "";
+    // opts.date: a caller whose row isn't Build's own active function — Deal Check's card/kit-
+    // component pickers, which can be open on a DIFFERENT function than Build's activeFnMeta — names
+    // its own row's real date instead of silently getting Build's (regression review, 2026-11-15:
+    // this picker always read Build's active function's date/venue regardless of which function's
+    // card actually opened it).
+    const date = opts?.date || activeFnMeta?.date || clientDate || "";
     // splitQty / onSplit let a caller that isn't the zoneElements path still offer Split.
     // Deal Check needs both: it MUST pass onPick (or the pick lands in Build's zoneElements),
     // and onPick was the very flag that used to mean "no split here". So the capability is now
     // declared rather than inferred — the same correction made for priceMode above.
     const reqId = ++availReqSeq.current;
     setAvailModal({ reqId, zoneKey, idx, elName: el?.name || "", subcat, date, loading: true, items: [], selectedId: el?.imsId || el?.invId || null, onPick: onPick || (opts?.multi ? (() => {}) : null), onPickAll: opts?.onPickAll || null, splitQty: Number(opts?.splitQty) || 0, onSplit: opts?.onSplit || null, pickHint: opts?.pickHint || "", neededLabel: opts?.neededLabel || "", unitLabel: opts?.unitLabel || "", hidePrice: !!opts?.hidePrice,
+      // Explicit opt-in (not inferred from onPick-ness) for the free-vs-need red/green comparison —
+      // only a caller that KNOWS the real total need (origQty, or the separate `need` below), and
+      // that its row is properly excluded from its own candidates' free count (via opts.availFn, or
+      // because it's Build's own direct zoneElements row), should set this (regression review,
+      // 2026-11-15).
+      strictAvail: !!opts?.strictAvail,
+      // Separate from splitQty: a kit component's splitQty is deliberately its PER-KIT qty (Split
+      // divides THAT, writing the result back as each new row's own per-kit qty) — but the real
+      // total this candidate must cover is per-kit × kit count. Lets a caller declare that total for
+      // the badge/tooltip comparison without disturbing what Split actually divides. Falls back to
+      // origQty (itself falling back to splitQty) when omitted — every caller but a kit component
+      // swap already has splitQty/the original row's own qty equal to its real total need.
+      need: Number(opts?.need) || 0,
       // multi: pick up to N items in one go, ranked in the order tapped (carpet preferences) — { max, current: [ids], onSave(picks), onSaveAll?(picks) }
       multi: opts?.multi ? { max: Number(opts.multi.max) || 3, need: Number(opts.multi.need) || 0, onSave: opts.multi.onSave || null, onSaveAll: opts.multi.onSaveAll || null, saveAllTitle: opts.multi.saveAllTitle || "", noun: opts.multi.noun || "", needNoun: opts.multi.needNoun || "" } : null, multiIds: Array.isArray(opts?.multi?.current) ? opts.multi.current : [], multiNote: "" });
     try {
@@ -13218,7 +13240,7 @@ export default function StudioApp() {
       const heldBy = invItem ? holdersOnDate(invItem.id, date, blocksDetailForDate) : [];
       setAvailModal(m => (m && m.reqId === reqId) ? { ...m, heldBy } : m);
       const target = String(subcat).toLowerCase().trim();
-      const pickerVenue = activeFnMeta?.venue || venue || "";
+      const pickerVenue = opts?.venue || activeFnMeta?.venue || venue || "";
       // Credit-eligibility decided once per deal per date, not per function — see
       // collapsedDealShiftFor's own header (round 3 regression review, 2026-11-15, finding H2).
       const _dealFnsPicker = collectAllFunctionDataRef.current ? collectAllFunctionDataRef.current() : [];
@@ -13260,7 +13282,19 @@ export default function StudioApp() {
             // picker counted an FOC row's qty against "free" when nothing else in the app does,
             // under-stating a candidate's real availability).
             if (e.foc) return;
-            if (f.fnIdx === activeFnIdx && zk === zoneKey && ei === idx) return;
+            // Swapping a whole element (opts.currentPartId unset): this element's ENTIRE draw is
+            // excluded, same as always — the whole row is being replaced. Swapping one COMPONENT
+            // inside a kit (opts.currentPartId set — KitComponentsEditor/Deal Check's own kit-part
+            // swap buttons pass the kit's own zoneKey/idx so self-exclusion still finds the kit at
+            // all) must NOT skip the whole kit's walk: a sibling part of the SAME kit can need the
+            // very candidate being considered here, and that demand is real — only the ONE slot
+            // actually being swapped should stop counting, added back below for whichever candidate
+            // matches the part's current item (regression review, 2026-11-15, round 3: excluding the
+            // whole kit showed a candidate green that a sibling part's own continuing draw made
+            // short the instant it was picked — worse than the old null/null self-exclusion, which
+            // at least counted every part's real demand even though it then wrongly colored the
+            // self-replaced part's own candidates too).
+            if (f.fnIdx === activeFnIdx && zk === zoneKey && ei === idx && !opts?.currentPartId) return;
             // Stock only competes on the SAME date — a row on another function's date does not hold units
             // today (it still gets the "used elsewhere" note below, which is about reusing the same piece).
             const sameDate = !date || (f.fnDate || "") === date;
@@ -13364,7 +13398,24 @@ export default function StudioApp() {
           // ask 2026-11-15's direct-total editing) can land a hair above 0 (e.g. 4.4e-16) from
           // plain float subtraction, which used to read green with an unreadable number even
           // though the card's own shortfall math treats that as 0 free.
-          const free = Math.round(Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getSharingAwareAvailable(it, blocksDetailForDate, eventOrders, fvCfgForRepeat, date, _dealShiftPicker.venueName, _dealShiftPicker.shift, _ownIdsPicker), availableAtVenue(fvCfgForRepeat, pickerVenue, it), _fvOverlap) - (usedQty[it.id] || 0)) * 1e6) / 1e6;
+          // opts.availFn: a caller that already knows how to work out ITS OWN "free", correctly
+          // excluding its own current row — Deal Check's two swap pickers, whose row is never a real
+          // Build zoneElements entry (a card swap's own (zoneKey, idx) is a fake idx of 0; a kit
+          // component swap's passes the kit's own card as its row, not the one component actually
+          // changing), so this function's own usedQty self-exclusion above can't scope to "just this
+          // one component" the way opts.currentPartId/opts.slotDraw do below (regression review,
+          // 2026-11-15). Bypasses usedQty entirely rather than trying to retrofit a Build-shaped
+          // exclusion onto a Deal Check-only row.
+          // opts.currentPartId/opts.slotDraw: the kit-component-swap case above counts the WHOLE kit's
+          // usage (no element-level skip) because a sibling component's own continuing draw on this
+          // candidate is real demand that doesn't go away just because a DIFFERENT slot is being
+          // swapped. The one slot that IS being swapped stops drawing the moment the pick lands, so
+          // its own current item's free count gets that slot's qty added back — but only for THAT
+          // item, never for any other candidate (round 3 regression review, 2026-11-15, finding F1).
+          const _addBack = (opts?.currentPartId && it.id === opts.currentPartId) ? (Number(opts.slotDraw) || 0) : 0;
+          const free = opts?.availFn
+            ? Math.round(Math.max(0, Number(opts.availFn(it)) || 0) * 1e6) / 1e6
+            : Math.round(Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getSharingAwareAvailable(it, blocksDetailForDate, eventOrders, fvCfgForRepeat, date, _dealShiftPicker.venueName, _dealShiftPicker.shift, _ownIdsPicker), availableAtVenue(fvCfgForRepeat, pickerVenue, it), _fvOverlap) - (usedQty[it.id] || 0) + _addBack) * 1e6) / 1e6;
           return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, reuse: carpetReuseOf(it), usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, ownStanding: _ownStanding, ownVenueName: _ownStanding > 0 ? (fixedVenueFor(fvCfgForRepeat, pickerVenue)?.name || pickerVenue) : null, unit: it.unit || "", photos: Array.isArray(it.photoUrls) ? it.photoUrls : [],
             // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox,
             // or not enough production lead time left before `date`) — genuinely unpickable here,
@@ -13421,7 +13472,14 @@ export default function StudioApp() {
   // part that was actually short could not be fixed from here. Deal Check's copy of the kit's parts follows, as Build's own swap does.
   const openOosPicker = useCallback((f) => {
     if (!f.partId) { openAvailModal(f.zoneKey, f.idx, { invId: f.invId, name: f.name }, null); return; }
-    openAvailModal(null, null, { invId: f.partId, name: f.partName }, null, (picked) => {
+    // f.zoneKey/f.idx (not null/null) — the kit's own row, so openAvailModal can tell it's THIS kit;
+    // currentPartId/slotDraw (f.partId, f.partNeed — the real total need StudioModals.jsx's oosGateModal
+    // flattening already carries from kitPartShortfalls) tell it which ONE part is actually changing,
+    // so every OTHER part's own continuing draw still counts as real demand against a candidate, and
+    // only this one slot's qty is added back for its own current item (round 3 regression review,
+    // 2026-11-15, finding F1 — excluding the whole kit showed a candidate pickable that a sibling
+    // part's own demand would immediately re-flag as short).
+    openAvailModal(f.zoneKey, f.idx, { invId: f.partId, name: f.partName }, null, (picked) => {
       if (!picked || picked.id === f.partId) return;
       const el = (oosZoneElsRef.current?.[f.zoneKey] || [])[f.idx];
       const kit = el?.invId === f.invId ? (imsInventory || []).find((i) => i.id === el.invId) : null;
@@ -13437,7 +13495,7 @@ export default function StudioApp() {
       const ck = buildElCardKey(f.zoneKey, el.name || "", f.idx);
       setDcKitEdits((prev) => ({ ...prev, [f.fnIdx]: { ...(prev?.[f.fnIdx] || {}), [ck]: next } }));
       persistDcKitEditsNow(f.fnIdx, ck, next);
-    }, { pickHint: `Pick the item to use for ${f.partName} inside ${f.name}` });
+    }, { pickHint: `Pick the item to use for ${f.partName} inside ${f.name}`, currentPartId: f.partId, slotDraw: f.partNeed });
   }, [openAvailModal, imsInventory, setZoneElements, persistDcKitEditsNow]);
   const openOosFix = useCallback((f) => {
     // Bail out BEFORE stashing/pending anything if a switch is already mid-flight — switchActiveFn

@@ -364,6 +364,14 @@ export default function KitComponentsEditor({ item, overrides, onChange, imsInve
                   {cItem && onCheckAvailability && !(onCheckChoices && itemTakesChoices(cItem)) && (
                     <span onClick={() => onCheckAvailability(cItem, (picked) => { if (picked) setComps(comps.map((x, i) => i === ci ? { ...x, itemId: picked.id } : x)); }, {
                         splitQty: qtyEach,
+                        // The real total this component needs across every kit in this row — qtyEach
+                        // above is deliberately its PER-KIT qty (Split divides THAT, writing each
+                        // result back as a new row's own per-kit qty), so it understates what the
+                        // picker should actually compare a candidate's free stock against (regression
+                        // review, 2026-11-15: a candidate with less than the full per-kit × kit-count
+                        // free read as green here even when Build's own kitPartShortfalls would flag
+                        // it short the moment it was picked).
+                        need: round2(qtyEach * qtyMultiplier),
                         // Replaces THIS ONE component row with one row per picked item — the split's
                         // own overrides (realPct/subOverrides/size) don't carry over to the new rows,
                         // same as a fresh top-level split: each is a genuinely different item, so

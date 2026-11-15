@@ -670,6 +670,41 @@ export default function DealCheckOverlay({ ctx }) {
           const entries = ((dealCheckData?.blocksDetailByDate || {})[fnDate] || {})[item.id];
           return fixedVenueOverlapOnDate(fvCfg, venueName, item, entries, eventOrders, { excludeEventIds: dcOwnIdsForAvail, date: fnDate });
         };
+        // Deal Check's own per-candidate availability, for its two openAvailModal swap pickers (a
+        // card's own "alternatives" swap button, and a kit component's own swap button). Build's
+        // openAvailModal only recognises a real Build zoneElements row for excluding "this row's own
+        // current draw" from its candidates' free count — neither of Deal Check's rows ever was one
+        // (the card swap passes a fake idx of 0; the kit component swap passes the kit's own card,
+        // not the one component actually changing), so each picker's own current pick was silently
+        // counting against itself, and openAvailModal's own "used elsewhere in this deal" tally only
+        // ever walks Build's live zoneElements, never dcCards — a swap/split made here and never
+        // written back to Build (deliberately — see dcCards' own comments) was invisible to it either
+        // way (regression review, 2026-11-15). Passed as opts.availFn, which bypasses openAvailModal's
+        // own composition entirely in favour of this one — same composition the card's own pricing
+        // and shortfall check already use elsewhere in this file (dcAvailable/availableAtVenue/
+        // dcOverlap, e.g. `_cardAvail`/kitShortfallSplit's own availFor), which is what decides
+        // "short" after a pick lands, so the picker now agrees with the thing it needs to agree with
+        // (round 3 regression review, 2026-11-15, finding F2 — this does NOT mirror the separate
+        // "Browse all" modal further below, which also folds in idle stock at OTHER Fixed Venues;
+        // that's a different, more generous question than "is this candidate short here"). fnIdx is
+        // this card/component's OWN function (not necessarily Build's active one), so the date/venue
+        // read are always the right ones for whichever card opened the picker.
+        // exclude: a whole dcCards row to leave out of "used elsewhere" — correct for the card swap
+        // (the WHOLE card is being replaced). addBack ({itemId, qty}): for the kit-component swap,
+        // where only ONE part of the kit is changing — exclude nothing (every sibling part's own
+        // continuing draw on a candidate is real demand that doesn't go away), and instead add back
+        // this one slot's own qty, but only for the part's current item's own candidate card (round 3
+        // regression review, 2026-11-15, finding F1 — excluding the whole kit card showed a candidate
+        // free that a sibling part's own demand would immediately re-flag as short).
+        const dcAvailFnFor = (fnIdx, exclude, addBack) => (it) => {
+          const fns = collectAllFunctionData ? collectAllFunctionData() : [];
+          const fn = fns[fnIdx] || {};
+          const fnDate = fn.fnDate || clientDate;
+          const fnVenue = fn.fnVenue || "";
+          const _fvCfgHere = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
+          const usedElsewhereInDeal = qtyUsedElsewhereInDealCheck(it.id, fns, dcCards, dcManualItems, dcKitEdits, dcInventoryCache, { fnIdx, ...exclude }, fnDate) - ((addBack && it.id === addBack.itemId) ? (Number(addBack.qty) || 0) : 0);
+          return Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, dcAvailable(it, null, fnIdx), availableAtVenue(_fvCfgHere, fnVenue, it), dcOverlap(it, fnIdx, fnVenue, _fvCfgHere)) - usedElsewhereInDeal);
+        };
         // The 2-run counter came out with the Generate button — nothing starts a run from this
         // screen any more, so there is no allowance left to display. dcRunCounter is still written
         // by runDealCheckGenerate in StudioApp; only this read of it is gone.
@@ -3921,6 +3956,11 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                                                     // even after array indices shift.
                                                     splitGroupId: prevCard.splitGroupId || newSplitGroupId(),
                                                     source: "manual-swap" } } }; }); setTimeout(() => flushDcAutosaveRef?.current?.(), 0); },
+                                                // This card's own function's real date/venue (not whatever Build's active
+                                                // function happens to be) and its own correctly-excluded free count — see
+                                                // dcAvailFnFor's own note (regression review, 2026-11-15).
+                                                date: _fnDateForRepeat || clientDate, venue: _venue, strictAvail: true,
+                                                availFn: dcAvailFnFor(fnIdx, { cardKey: card._cardKey }),
                                                 priceMode: "rental",
                                                 // Same discount this card itself already shows (_effRate above) — Fixed-
                                                 // Venue/Repeat/date-category, always on regardless of Build's guest-discount
@@ -4192,6 +4232,19 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                                                             // through to Build's guest-facing formula (wrong venue/date context
                                                             // entirely for a Deal Check picker).
                                                             rateFn: (it) => repeatAdjustedRental(_rep, _venue, it, 1, effKitRental(it, fnIdx, null), _fnDateForRepeat, _crossFnTakeCards(it.id, 1)),
+                                                            // The real total need (per-kit × kit count, already shown above as
+                                                            // "need ${needed}") plus this card's own real date/venue and a
+                                                            // correctly-excluded free count — see dcAvailFnFor's own note
+                                                            // (regression review, 2026-11-15). No cardKey exclusion here — a
+                                                            // sibling component of THIS SAME kit can need the very candidate
+                                                            // being considered, and that demand is real; only this ONE
+                                                            // component's own qty (c.itemId, needed) is added back for its own
+                                                            // current item's candidate card (round 3 regression review,
+                                                            // 2026-11-15, finding F1 — excluding the whole kit card showed a
+                                                            // candidate free that a sibling component's own demand would
+                                                            // immediately re-flag as short the instant it was picked).
+                                                            need: needed, date: _fnDateForRepeat || clientDate, venue: _venue, strictAvail: true,
+                                                            availFn: dcAvailFnFor(fnIdx, {}, { itemId: c.itemId, qty: needed }),
                                                           })}
                                                           style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:6,border:"1px solid rgba(239,68,68,0.35)",background:"rgba(239,68,68,0.08)",color:"#EF4444",fontSize:11,fontWeight:600,cursor:"pointer"}}>
                                                           <IconBox size={12}/> {cItem ? `⚠ need ${needed}, only ${owned} — swap` : "⚠ not in IMS — pick one"}
