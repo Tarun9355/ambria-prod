@@ -106,7 +106,7 @@ import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintT
 import { sheetItemLine } from "../../lib/studio/sheetRounding";
 import { sigHash } from "../../lib/sigHash";
 import { costSheetQtyEdit } from "../../lib/studio/costSheetQtyEdit";
-import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive, kitPartShortfalls, fnUnitQty } from "../../lib/studio/dealAvailability";
+import { allocateRowAvailability, maxQtyForRow, netOwnReservedBlocksLive, kitPartShortfalls, fnUnitQty, zoneIsOff } from "../../lib/studio/dealAvailability";
 import { ledgerPreflightShortfalls } from "../../lib/studio/ledgerPreflight";
 import { reportStockShortfall, clearStockShortfall } from "../../lib/studio/stockShortfalls";
 import { swapKitPart } from "../../lib/studio/kitPartSwap";
@@ -13247,9 +13247,19 @@ export default function StudioApp() {
       const usedQty = {};
       (collectAllFunctionData() || []).forEach((f) => {
         Object.entries(f.zoneElements || {}).forEach(([zk, elems]) => {
-          if (!f.enabledEls?.[zk] || !Array.isArray(elems)) return;
+          // zoneIsOff (not a bare `!f.enabledEls?.[zk]` check): a function with no enabledEls
+          // recorded yet means every zone still counts, same as everywhere else that reads stock
+          // usage — this picker used to read "not recorded" as "zone off" and skip it, so it
+          // under-counted what this deal already had placed and showed a candidate as more free
+          // than the card would agree with the moment it was picked (owner-reported, 2026-11-15).
+          if (zoneIsOff(f, zk) || !Array.isArray(elems)) return;
           elems.forEach((e, ei) => {
             if (!e?.invId) return;
+            // Left at the venue from a previous event — never competes for stock, same skip
+            // dealAvailability.js's own allocation makes (regression review, 2026-11-15: this
+            // picker counted an FOC row's qty against "free" when nothing else in the app does,
+            // under-stating a candidate's real availability).
+            if (e.foc) return;
             if (f.fnIdx === activeFnIdx && zk === zoneKey && ei === idx) return;
             // Stock only competes on the SAME date — a row on another function's date does not hold units
             // today (it still gets the "used elsewhere" note below, which is about reusing the same piece).
@@ -13350,7 +13360,11 @@ export default function StudioApp() {
           // getStudioAvailable(it, netOwnReservedBlocksLive(...)) here — same reasoning as every other
           // availability call site in this file (regression review, 2026-11-15, round 2, finding H1).
           const _fvOverlap = fixedVenueOverlapOnDate(fvCfgForRepeat, pickerVenue, it, blocksDetailForDate?.[it.id], eventOrders, { excludeEventIds: _ownIdsPicker, date });
-          const free = Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getSharingAwareAvailable(it, blocksDetailForDate, eventOrders, fvCfgForRepeat, date, _dealShiftPicker.venueName, _dealShiftPicker.shift, _ownIdsPicker), availableAtVenue(fvCfgForRepeat, pickerVenue, it), _fvOverlap) - (usedQty[it.id] || 0));
+          // Rounded to 6dp — a kit-component pool netted against a fractional per-kit qty (owner
+          // ask 2026-11-15's direct-total editing) can land a hair above 0 (e.g. 4.4e-16) from
+          // plain float subtraction, which used to read green with an unreadable number even
+          // though the card's own shortfall math treats that as 0 free.
+          const free = Math.round(Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getSharingAwareAvailable(it, blocksDetailForDate, eventOrders, fvCfgForRepeat, date, _dealShiftPicker.venueName, _dealShiftPicker.shift, _ownIdsPicker), availableAtVenue(fvCfgForRepeat, pickerVenue, it), _fvOverlap) - (usedQty[it.id] || 0)) * 1e6) / 1e6;
           return { id: it.id, name: it.name, photo: (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "", free, total: Number(it.qty) || 0, reuse: carpetReuseOf(it), usedIn: usedElsewhere[it.id] || [], venueSlack: _slack, ownStanding: _ownStanding, ownVenueName: _ownStanding > 0 ? (fixedVenueFor(fvCfgForRepeat, pickerVenue)?.name || pickerVenue) : null, unit: it.unit || "", photos: Array.isArray(it.photoUrls) ? it.photoUrls : [],
             // Out of stock AND can't be made in production (IMS Inventory's "Can be made" checkbox,
             // or not enough production lead time left before `date`) — genuinely unpickable here,
