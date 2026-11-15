@@ -666,7 +666,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // no fragments to mis-close around bodies hundreds of lines long — and leaves their inputs
   // mounted, so a half-typed truck number survives opening and closing the dialog.
   const [modal, setModal] = useState(null);
-  const [changesOpen, setChangesOpen] = useState(false); // the "changed in the last 48 h" list, all lines or the first few
   // ── "ADD A SITE" MENU ──
   // A real popover, not a <select>. The option list of a native select is drawn by the OS, so
   // none of it can be styled — the dates and day-offsets could only ever be crammed into one
@@ -936,12 +935,24 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // the chip's tooltip: "Changed in the last 48 h — Floral: Inventory blocked, Actuals · Anmol, 2 h ago"
   // a line of the "changed in the last 48 hours" list, clicked: that department (if this person can open it), the planning
   // view, the block that changed open, and the page scrolled to it
+  // ...and the rows of the items that changed light up warm for a few seconds (owner ask 2026-11-15), the first one scrolled to.
+  const [flash, setFlash] = useState(null); // { names: Set (lower-case) } while lit
+  const flashTimer = useRef(null);
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
   const goToChange = (c) => {
     if (!deptOptions.includes(c.dept)) return;
     if (c.dept !== dept) setDept(c.dept);
     setOpsView("planning");
     setModal(c.section === "plan" ? null : c.section);
-    setTimeout(() => document.getElementById("dept-ops-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+    const names = c.section === "inv" ? (c.names || []).map((n) => n.toLowerCase()) : [];
+    clearTimeout(flashTimer.current);
+    setFlash(names.length ? { names: new Set(names) } : null);
+    if (names.length) flashTimer.current = setTimeout(() => setFlash(null), 3600);
+    const calm = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    setTimeout(() => {
+      const target = document.querySelector('[data-flash="1"]') || document.getElementById("dept-ops-panel");
+      target?.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: target?.dataset?.flash ? "center" : "start" });
+    }, 120);
   };
   const changeTip = (list) => {
     const byDept = new Map();
@@ -4387,7 +4398,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
               if (!all.length) return null;
               const mine = all.filter(c => c.dept === dept), others = all.filter(c => c.dept !== dept);
               const list = [...mine, ...others];
-              const shown = changesOpen ? list : list.slice(0, 4);
               return (
                 <div className="rounded-xl bg-amber-50 ring-1 ring-amber-200 px-3.5 py-3" role="status">
                   <div className="flex items-center gap-2">
@@ -4395,8 +4405,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                     <div className="text-[13px] font-semibold text-amber-900">Changed in the last 48 hours</div>
                     <span className="ml-auto text-[11px] text-amber-700 tabular-nums">{`${all.length} ${all.length === 1 ? "change" : "changes"}${mine.length ? ` · ${dept} ${mine.length}` : ""}`}</span>
                   </div>
-                  <ul className="mt-2 space-y-1">
-                    {shown.map((c, i) => {
+                  {/* every line of the 48 hours, no "show all" - the list scrolls past a few lines; anything older is in the
+                      Activity log (owner ask 2026-11-15) */}
+                  <ul className="mt-2 space-y-1 max-h-[232px] overflow-y-auto overscroll-contain pr-1">
+                    {list.map((c, i) => {
                       const own = c.dept === dept;
                       const canGo = deptOptions.includes(c.dept);
                       const body = (
@@ -4420,11 +4432,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       );
                     })}
                   </ul>
-                  {list.length > 4 && (
-                    <button type="button" onClick={() => setChangesOpen(v => !v)} className="mt-1 ml-2 text-[11px] font-semibold text-amber-800 hover:text-amber-950">
-                      {changesOpen ? "Show less" : `Show all ${list.length}`}
-                    </button>
-                  )}
+                  <button type="button" onClick={() => setLogOpen(true)} className="mt-1.5 ml-2 text-[11px] font-semibold text-amber-800 hover:text-amber-950">
+                    Older changes → Activity log
+                  </button>
                 </div>
               );
             })()}
@@ -4771,8 +4781,12 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                     // total" case this badge exists to explain.
                     const derived = Math.round((Number(it.unit) || 0) * rentalQty);
                     const mismatch = derived !== Math.round(Number(it.total) || 0);
+                    // opened from the "changed in the last 48 hours" list: this item is one that changed - lit warm for a few seconds
+                    const lit = !!flash && flash.names.has(String(it.name || "").trim().toLowerCase());
                     return (
-                    <div key={it.id} className="rounded-xl bg-white ring-1 ring-gray-100 shadow-[0_1px_2px_rgba(16,24,40,0.05)] overflow-hidden">
+                    <div key={it.id} data-flash={lit ? "1" : undefined}
+                      className={"rounded-xl ring-1 shadow-[0_1px_2px_rgba(16,24,40,0.05)] overflow-hidden transition-[background-color,box-shadow] duration-700 ease-out "
+                        + (lit ? "bg-amber-50 ring-2 ring-amber-400 shadow-[0_0_0_4px_rgba(251,191,36,0.25)]" : "bg-white ring-gray-100")}>
                       {/* flex-wrap, so the figures drop to their own full-width line on a phone
                           and sit inline beside the name from sm up — one rule instead of two
                           layouts. */}

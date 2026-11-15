@@ -406,8 +406,7 @@ Nobody's gone shopping yet — the numbers below are just the plan shown as a st
 needed for this ¦ इसके लिए चाहिए
 Changed in the last 48 hours ¦ पिछले 48 घंटों में बदलाव
 Changed in the last 48 h ¦ पिछले 48 घंटों में बदला
-Show all ¦ सब दिखाएँ
-Show less ¦ कम दिखाएँ
+Older changes → Activity log ¦ पुराने बदलाव → एक्टिविटी लॉग
 just now ¦ अभी-अभी
 min ago ¦ मिनट पहले
 hr ago ¦ घंटा पहले

@@ -64,7 +64,9 @@ export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHA
     if (!r || r.eventOrderId !== eo.id || r.status !== "logged") return;
     const at = Number(r.requestedAt) || 0;
     if (at < since || at > now + 60000) return;
-    out.push({ at, by: r.requestedBy || "—", dept: r.department || "", section: "inv", label: SECTION_LABEL.inv, text: itemsSummary(r.items) });
+    // names: the items as they stand now (added / changed / swapped in) - the rows to light up when the line is opened
+    const names = (Array.isArray(r.items) ? r.items : []).filter((it) => it && it.change !== "removed").map((it) => String(it.name || "").trim()).filter(Boolean);
+    out.push({ at, by: r.requestedBy || "—", dept: r.department || "", section: "inv", label: SECTION_LABEL.inv, text: itemsSummary(r.items), names });
   });
   Object.entries(eo.deptOps || {}).forEach(([dept, ops]) => {
     Object.entries((ops && ops.changes) || {}).forEach(([section, c]) => {

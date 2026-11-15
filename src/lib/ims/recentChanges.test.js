@@ -27,6 +27,7 @@ describe("eventChanges", () => {
     const out = eventChanges(eo, reqs, NOW);
     expect(out.map((c) => [c.dept, c.section, c.by])).toEqual([["Floral", "inv", "Anmol"], ["Floral", "actuals", "Sudhir"]]);
     expect(out[0].text).toBe("+2 Round Table");
+    expect(out[0].names).toEqual(["Round Table"]);
   });
   it("the same change logged again and again is one line, with how many times", () => {
     const again = [1, 2, 3].map((h) => ({ eventOrderId: "e1", status: "logged", department: "Furniture", requestedAt: NOW - h * H, requestedBy: "P", items: [{ name: "Chair", change: "added", to: 4 }] }));
