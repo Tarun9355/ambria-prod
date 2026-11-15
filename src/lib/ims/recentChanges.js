@@ -28,7 +28,7 @@ export const SECTION_LABEL = {
   truck: "Truck planning", dism: "Dismantle plan", fabreq: "Fabric plan", route: "Dismantle & routing", plan: "Plan",
 };
 // keys a save carries that are bookkeeping, not a change anyone made to the plan
-const NOT_A_CHANGE = new Set(["updatedAt", "updatedBy", "changes", "seen", "mpSeen"]);
+const NOT_A_CHANGE = new Set(["updatedAt", "updatedBy", "changes", "seen", "mpSeen", "changesSeen"]);
 
 export const sectionOfKey = (k) => KEY_SECTION[k] || "plan";
 
@@ -85,7 +85,9 @@ export function dedupeChangeLogs(rows) {
 // Every change to `eo` within `windowMs` of `now`, newest first: { at, by, dept, section, label, text, times }. The same change
 // logged again and again (Studio re-logs a sold deal's inventory on every reconcile - one event showed 99 lines, most repeats) is
 // one line: the newest, with how many times it was logged.
-export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHANGE_WINDOW_MS) {
+// userKey: a department head's, to leave out what they have already seen (unseenChanges) BEFORE repeats are counted - a change
+// logged again after their download is one new line, not "x9" with the nine they already saw.
+export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHANGE_WINDOW_MS, userKey = "") {
   if (!eo) return [];
   const since = now - windowMs;
   const out = [];
@@ -104,10 +106,11 @@ export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHA
       out.push({ at, by: c.by || "—", dept, section, label: SECTION_LABEL[section] || SECTION_LABEL.plan, text: "" });
     });
   });
-  out.sort((a, b) => b.at - a.at);
+  const fresh = unseenChanges(out, eo, userKey);
+  fresh.sort((a, b) => b.at - a.at);
   const seen = new Map();
   const merged = [];
-  out.forEach((c) => {
+  fresh.forEach((c) => {
     const k = `${c.dept}|${c.section}|${c.sig ?? c.text}`;
     const first = seen.get(k);
     if (first) { first.times += 1; return; }
@@ -116,6 +119,14 @@ export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHA
     merged.push(line);
   });
   return merged;
+}
+
+// A department head has seen a department's changes once they download its PDF (owner ask 2026-11-15): everything changed up to
+// then leaves their list and their calendar mark; anything after shows again. Kept per person on the event,
+// deptOps[dept].changesSeen = { [userKey]: at }. Others (an admin) pass no userKey and see every change.
+export function unseenChanges(list, eo, userKey) {
+  if (!userKey) return list;
+  return (list || []).filter((c) => !(Number(eo?.deptOps?.[c.dept]?.changesSeen?.[userKey]) >= c.at));
 }
 
 // "just now", "25 min ago", "3 hrs ago", "30 hrs ago", "3 days ago" - hours right up to 48, not "yesterday": inside a 48-hour

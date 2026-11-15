@@ -1076,16 +1076,35 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // ── Changed in the last 48 hours (owner ask 2026-11-15) ── per event: its inventory change logs and Dept Ops edits
   // (lib/ims/recentChanges). A ⚠ on the calendar chip, and inside the event a list + a badge on each block that changed.
   // lockNow (ticks every minute) is the clock, so a change ages out of the window without a reload.
+  // A department head (a "... Head" role tied to departments, never an admin) stops seeing the changes once they download that
+  // department's PDF (owner ask 2026-11-15) - per person, so another head or an admin still sees them (unseenChanges).
+  const isDeptHead = !isAdmin && Array.isArray(myDepts) && myDepts.length > 0 && /head/i.test(String(authUser?.role || ""));
+  const seenKey = isDeptHead ? String(authUser?.id || authUser?.name || "") : "";
   const changedByEo = useMemo(() => {
     const reqsByEo = new Map();
     (amendRequests || []).forEach((r) => { if (r?.status === "logged" && r.eventOrderId) (reqsByEo.get(r.eventOrderId) || reqsByEo.set(r.eventOrderId, []).get(r.eventOrderId)).push(r); });
     const m = new Map();
     (eventOrders || []).forEach((eo) => {
-      const list = eventChanges(eo, reqsByEo.get(eo.id) || [], lockNow);
+      const list = eventChanges(eo, reqsByEo.get(eo.id) || [], lockNow, undefined, seenKey);
       if (list.length) m.set(eo.id, list);
     });
     return m;
-  }, [amendRequests, eventOrders, lockNow]);
+  }, [amendRequests, eventOrders, lockNow, seenKey]);
+  // The PDF downloaded by a department head: this event's changes up to now are seen, for them, in each of their departments the
+  // book covers. Not a plan edit - no updatedAt, no change stamp (recentChanges NOT_A_CHANGE), and saved whatever Planning-edit
+  // permission says, as it only records that they read it.
+  const markChangesSeen = (depts) => {
+    if (!sel || !seenKey) return;
+    const mine = (depts || []).filter((d) => myDepts.includes(d));
+    if (!mine.length) return;
+    const at = Date.now();
+    setEventOrders(prev => prev.map(e => {
+      if (e.id !== sel.id) return e;
+      const ops = { ...(e.deptOps || {}) };
+      mine.forEach((d) => { const cur = ops[d] || {}; ops[d] = { ...cur, changesSeen: { ...(cur.changesSeen || {}), [seenKey]: at } }; });
+      return { ...e, deptOps: ops };
+    }));
+  };
   // Department-wise (owner ask 2026-11-15): a change shows only in the department it happened in - the calendar marks an event
   // when the department being planned changed on it, and the list inside lists that department's changes.
   const deptChangesOf = (eoId, d = dept) => (changedByEo.get(eoId) || []).filter((c) => c.dept === d);
@@ -1269,6 +1288,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const blockedItemsGrouped = useMemo(() => blockedGroupedOf(dept, swapInfo), [sel, blocks, inventory, dept, swapInfo]);
+  // What this department is short of (owner ask 2026-11-15): named in red on the Inventory blocked tile and atop its panel.
+  const invShortItems = useMemo(() => blockedItemsGrouped.filter(it => Number(it.shortQty) > 0), [blockedItemsGrouped]);
+  const shortNames = (list, max) => list.slice(0, max).map(it => `${it.name} ×${it.shortQty}`).join(", ") + (list.length > max ? ` +${list.length - max} more` : "");
   // FLAT view — kits expanded into the kit shell + each component as its own physical row. Used by
   // Loading & dispatch, Receiving and Dismantle (the ops manager loads/moves each real item).
   // blockedFlatOf(grouped, d): any department's flat list (the shared Fabric & Tenting book).
@@ -3588,6 +3610,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       buildHtml, lang: pdfLang, multi, dept, depts, group: shared, sel, selDateStr, view,
       onNote: setExportNote,
     });
+    // a department head's download: the changes so far are seen (markChangesSeen) - not a View, and not an admin's download
+    if (!view && ok) markChangesSeen(inThisBook);
     if (view && ok && url) {
       if (deckCacheRef.current) URL.revokeObjectURL(deckCacheRef.current.url);
       deckCacheRef.current = { key: cacheKey, url, name };
@@ -4599,7 +4623,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                   const bad = rows.filter(r => r.status === "short").length;
                   return { k: "fabreq", icon: "🧵", title: "Fabric plan", sub: bad ? <span className="text-red-600 font-semibold">{bad} need{bad === 1 ? "s" : ""} attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
                 })(),
-                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(invBlockedTotal) },
+                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(invBlockedTotal), shortList: invShortItems },
                 dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
                   const rows = carpetPlanOf().rows;
                   const decided = rows.filter(r => r.status === "decided").length;
@@ -4635,6 +4659,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                         <div className="min-w-0 flex-1">
                           <div className="text-[13px] font-semibold text-gray-900 leading-snug">{t.title}</div>
                           <div className="text-[11px] text-gray-500 leading-snug mt-0.5">{t.sub}</div>
+                          {t.shortList?.length > 0 && <div className="mt-1 text-[11px] font-semibold text-red-700 leading-snug" title={`Short: ${shortNames(t.shortList, 99)}`}><span aria-hidden="true">⛔</span> {`Short: ${shortNames(t.shortList, 2)}`}</div>}
                           {(() => {
                             const c = (changedByEo.get(sel.id) || []).find(x => x.dept === dept && x.section === t.k);
                             return c ? <div className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5" title={`${c.label} · ${c.by} · ${agoText(c.at, lockNow)}${c.text ? ` — ${c.text}` : ""}`}>{`⚠ Updated ${agoText(c.at, lockNow)}`}</div> : null;
@@ -4736,6 +4761,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                 </div>
                 <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(invScoped ? invShownTotal : invBlockedTotal)}</div>
               </div>
+              {/* what is short, first thing under the head (owner ask 2026-11-15) - each item and how many are missing */}
+              {invShortItems.length > 0 && (
+                <div role="alert" className="m-2.5 mb-0 px-3 py-2 rounded-xl bg-red-50 ring-1 ring-red-200 text-red-700">
+                  <div className="text-[12.5px] font-semibold"><span aria-hidden="true">⛔</span> {`${invShortItems.length} ${invShortItems.length === 1 ? "item" : "items"} short`}</div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[12px]">
+                    {invShortItems.map((it, i) => <span key={it.id || i} className="tabular-nums">{`${it.name} ×${it.shortQty}${it.outOfStock ? " · out of stock" : ""}`}</span>)}
+                  </div>
+                </div>
+              )}
               {fnChipRow(invFn, setInvFn)}
               {/* The same Department Income table Deal Check shows, opened here — this department's lines, a
                   chip for each other department, and how the blocked-inventory list adds up. */}
@@ -6445,6 +6479,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                         <div className="min-w-0 flex-1">
                           <div className="text-[13px] font-semibold text-gray-900 leading-snug">{t.title}</div>
                           <div className="text-[11px] text-gray-500 leading-snug mt-0.5">{t.sub}</div>
+                          {t.shortList?.length > 0 && <div className="mt-1 text-[11px] font-semibold text-red-700 leading-snug" title={`Short: ${shortNames(t.shortList, 99)}`}><span aria-hidden="true">⛔</span> {`Short: ${shortNames(t.shortList, 2)}`}</div>}
                           {(() => {
                             const c = (changedByEo.get(sel.id) || []).find(x => x.dept === dept && x.section === t.k);
                             return c ? <div className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5" title={`${c.label} · ${c.by} · ${agoText(c.at, lockNow)}${c.text ? ` — ${c.text}` : ""}`}>{`⚠ Updated ${agoText(c.at, lockNow)}`}</div> : null;
