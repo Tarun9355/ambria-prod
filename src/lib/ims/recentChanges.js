@@ -15,13 +15,16 @@ const KEY_SECTION = {
   mp: "mp", mpOverrides: "mp", mpExtra: "mp", mpDay: "mp", mpWin: "mp", mpWinCount: "mp", mpWinBasis: "mp",
   trussPlan: "truss", trussFabric: "truss",
   carpetChoice: "carpet",
-  itemChoice: "inv", shortAlloc: "inv",
+  itemChoice: "fabreq", shortAlloc: "inv",
   dispatch: "truck", loaded: "truck",
-  dismantlePlan: "dism", dismantleSites: "dism", movements: "dism",
+  dismantlePlan: "dism", dismantleSites: "dism",
+  movements: "route", // logged on site after the event - the On-site view's Dismantle & routing block
 };
+// blocks that live on the On-site view, not Planning
+export const ONSITE_SECTIONS = new Set(["route", "rcv", "oscrew"]);
 export const SECTION_LABEL = {
   inv: "Inventory blocked", actuals: "Actuals", mp: "Manpower plan", truss: "Truss plan", carpet: "Carpet plan",
-  truck: "Truck planning", dism: "Dismantle plan", plan: "Plan",
+  truck: "Truck planning", dism: "Dismantle plan", fabreq: "Fabric plan", route: "Dismantle & routing", plan: "Plan",
 };
 // keys a save carries that are bookkeeping, not a change anyone made to the plan
 const NOT_A_CHANGE = new Set(["updatedAt", "updatedBy", "changes", "seen", "mpSeen"]);

@@ -41,7 +41,7 @@ import { buildDeptBookHtml, buildFinish } from "../../lib/ims/deptBookHtml";
 import { renderDeptBook, loadPdfLibs, loadPdfLogosOnce, isStaleChunk, reloadForUpdate } from "../../lib/ims/deptBookPdf";
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
-import { stampDeptChanges, eventChanges, agoText, SECTION_LABEL } from "../../lib/ims/recentChanges";
+import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS } from "../../lib/ims/recentChanges";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { logWrite } from "../../lib/studio/userActions";
 
@@ -942,7 +942,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const goToChange = (c) => {
     if (!deptOptions.includes(c.dept)) return;
     if (c.dept !== dept) setDept(c.dept);
-    setOpsView("planning");
+    setOpsView(ONSITE_SECTIONS.has(c.section) ? "onsite" : "planning");
     setModal(c.section === "plan" ? null : c.section);
     const names = c.section === "inv" ? (c.names || []).map((n) => n.toLowerCase()) : [];
     clearTimeout(flashTimer.current);
@@ -950,7 +950,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     if (names.length) flashTimer.current = setTimeout(() => setFlash(null), 3600);
     const calm = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     setTimeout(() => {
-      const target = document.querySelector('[data-flash="1"]') || document.getElementById("dept-ops-panel");
+      // the lit row, else the open block's panel (Planning or On-site - whichever is on screen)
+      const target = document.querySelector('[data-flash="1"]') || [...document.querySelectorAll("[data-ops-panel]")].find((el) => el.offsetParent !== null);
       target?.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: target?.dataset?.flash ? "center" : "start" });
     }, 120);
   };
@@ -4520,7 +4521,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                 income cards and the event header all stay in view while you read it.
                 Same mechanic as before: every block still lives here and hides itself unless it
                 is the open one (modalCls), so nothing had to be moved or re-parented. */}
-            <div id="dept-ops-panel" onClick={onPanelBackdrop} className={modal ? PANEL_WRAP : "hidden"}>
+            <div data-ops-panel onClick={onPanelBackdrop} className={modal ? PANEL_WRAP : "hidden"}>
               <div className={PANEL_CARD}>
                 {/* NOT sticky from sm up. It was, back when this panel was a dialog with its own
                     scroll — but inline the page scrolls instead, so a sticky bar just hovers over
@@ -6307,7 +6308,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                 income cards and the event header all stay in view while you read it.
                 Same mechanic as before: every block still lives here and hides itself unless it
                 is the open one (modalCls), so nothing had to be moved or re-parented. */}
-            <div onClick={onPanelBackdrop} className={modal ? PANEL_WRAP : "hidden"}>
+            <div data-ops-panel onClick={onPanelBackdrop} className={modal ? PANEL_WRAP : "hidden"}>
               <div className={PANEL_CARD}>
                 {/* NOT sticky — see the Planning panel above: inline, a sticky bar just hovers
                     over the block beneath it and hides its subtitle. */}

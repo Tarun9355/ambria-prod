@@ -9,6 +9,9 @@ describe("stampDeptChanges", () => {
     const c = stampDeptChanges({}, { mandiLines: [], expenses: [] }, NOW, "Sudhir");
     expect(c).toEqual({ actuals: { at: NOW, by: "Sudhir" } });
   });
+  it("an overlay / cushion choice is the Fabric plan; a movement is the on-site routing", () => {
+    expect(stampDeptChanges({}, { itemChoice: {}, movements: [] }, NOW, "X")).toEqual({ fabreq: { at: NOW, by: "X" }, route: { at: NOW, by: "X" } });
+  });
   it("keeps other blocks' stamps and ignores bookkeeping keys", () => {
     const c = stampDeptChanges({ truss: { at: 1, by: "A" } }, { mpDay: {}, updatedAt: NOW }, NOW, "B");
     expect(c).toEqual({ truss: { at: 1, by: "A" }, mp: { at: NOW, by: "B" } });
