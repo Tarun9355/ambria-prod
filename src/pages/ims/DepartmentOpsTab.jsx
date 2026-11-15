@@ -43,7 +43,7 @@ import { buildDeptBookHtml, buildFinish } from "../../lib/ims/deptBookHtml";
 import { renderDeptBook, loadPdfLibs, loadPdfLogosOnce, isStaleChunk, reloadForUpdate } from "../../lib/ims/deptBookPdf";
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
-import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS } from "../../lib/ims/recentChanges";
+import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeLogs } from "../../lib/ims/recentChanges";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { logWrite } from "../../lib/studio/userActions";
 
@@ -1164,9 +1164,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // Lifted out of the activity-log block so the bell in the event header can show the count
   // without recomputing it — one query, two readers, and they cannot disagree about how many
   // changes there are.
-  const recentChanges = useMemo(() => (amendRequests || [])
+  // The same change logged again and again is one entry, the newest, with how many times (dedupeChangeLogs).
+  const recentChanges = useMemo(() => dedupeChangeLogs((amendRequests || [])
     .filter(r => r.eventOrderId === sel?.id && r.department === dept && r.status === "logged")
-    .sort((a, b) => (b.requestedAt || 0) - (a.requestedAt || 0)), [amendRequests, sel, dept]);
+    .sort((a, b) => (b.requestedAt || 0) - (a.requestedAt || 0))), [amendRequests, sel, dept]);
   // The whole log, 10 entries a page (owner ask 2026-11-13) - it used to stop at the newest 8. Back to page 1 for another event /
   // department, and whenever the log is opened.
   const LOG_PAGE = 10;
@@ -4415,7 +4416,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       entries apart meant reading both in full. */}
                   <div className="divide-y divide-gray-100">
                     {shown.map(r => (
-                      <ChangeLogEntry key={r.id} items={r.items} by={r.requestedBy} when={relTime(r.requestedAt)}
+                      <ChangeLogEntry key={r.id} items={r.items} by={r.requestedBy} when={relTime(r.requestedAt)} times={r.times}
                         stamp={r.requestedAt ? new Date(r.requestedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : ""} />
                     ))}
                   </div>

@@ -57,6 +57,31 @@ export function itemsSummary(items, max = 3) {
   return shown.join(", ") + (list.length > max ? ` +${list.length - max} more` : "");
 }
 
+// What a logged inventory change says, whatever order its items came in: "Fabric → Iron, −4 Takhat, −8 Buffee" and
+// "−8 Buffee, −4 Takhat, Fabric → Iron" are the same change (owner report 2026-11-15: they showed as two entries).
+export function changeSignature(items) {
+  const one = (it) => [it.change || "", String(it.fromName || "").trim().toLowerCase(), String(it.name || "").trim().toLowerCase(),
+    it.from ?? "", it.to ?? "", it.qty ?? "", it.fn || "", (Array.isArray(it.zones) ? it.zones : []).join(",")].join("|");
+  return (Array.isArray(items) ? items : []).filter(Boolean).map(one).sort().join(" ; ");
+}
+
+// Studio logs the same change again and again (one sold deal showed the same switch 7 times): one entry per change per
+// department, the newest, with `times` = how often it was logged. rows: amend_requests rows, newest first.
+export function dedupeChangeLogs(rows) {
+  const seen = new Map();
+  const out = [];
+  (rows || []).forEach((r) => {
+    if (!r) return;
+    const k = `${r.department || ""}|${changeSignature(r.items)}`;
+    const first = seen.get(k);
+    if (first) { first.times += 1; return; }
+    const row = { ...r, times: 1 };
+    seen.set(k, row);
+    out.push(row);
+  });
+  return out;
+}
+
 // Every change to `eo` within `windowMs` of `now`, newest first: { at, by, dept, section, label, text, times }. The same change
 // logged again and again (Studio re-logs a sold deal's inventory on every reconcile - one event showed 99 lines, most repeats) is
 // one line: the newest, with how many times it was logged.
@@ -70,7 +95,7 @@ export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHA
     if (at < since || at > now + 60000) return;
     // names: the items as they stand now (added / changed / swapped in) - the rows to light up when the line is opened
     const names = (Array.isArray(r.items) ? r.items : []).filter((it) => it && it.change !== "removed").map((it) => String(it.name || "").trim()).filter(Boolean);
-    out.push({ at, by: r.requestedBy || "—", dept: r.department || "", section: "inv", label: SECTION_LABEL.inv, text: itemsSummary(r.items), names, items: Array.isArray(r.items) ? r.items : [] });
+    out.push({ at, by: r.requestedBy || "—", dept: r.department || "", section: "inv", label: SECTION_LABEL.inv, text: itemsSummary(r.items), names, items: Array.isArray(r.items) ? r.items : [], sig: changeSignature(r.items) });
   });
   Object.entries(eo.deptOps || {}).forEach(([dept, ops]) => {
     Object.entries((ops && ops.changes) || {}).forEach(([section, c]) => {
@@ -83,7 +108,7 @@ export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHA
   const seen = new Map();
   const merged = [];
   out.forEach((c) => {
-    const k = `${c.dept}|${c.section}|${c.text}`;
+    const k = `${c.dept}|${c.section}|${c.sig ?? c.text}`;
     const first = seen.get(k);
     if (first) { first.times += 1; return; }
     const line = { ...c, times: 1 };

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { stampDeptChanges, eventChanges, itemsSummary, agoText, CHANGE_WINDOW_MS } from "./recentChanges.js";
+import { stampDeptChanges, eventChanges, itemsSummary, agoText, CHANGE_WINDOW_MS, dedupeChangeLogs } from "./recentChanges.js";
 
 const NOW = Date.parse("2026-11-15T12:00:00Z");
 const H = 3600 * 1000;
@@ -66,5 +66,24 @@ describe("itemsSummary / agoText", () => {
     expect(agoText(NOW - 3 * H, NOW)).toBe("3 hrs ago");
     expect(agoText(NOW - 1 * H, NOW)).toBe("1 hr ago");
     expect(agoText(NOW - 30 * H, NOW)).toBe("30 hrs ago");
+  });
+});
+
+describe("the same change in another order is one entry", () => {
+  const sw = { name: "Iron Wooden Cocktail Table", fromName: "Fabric Cocktail Table", change: "swapped", from: 4, to: 4 };
+  const tk = { name: "Takhat", change: "removed", from: 4 };
+  const bt = { name: "Buffee Table", change: "removed", from: 8 };
+  const rows = [
+    { id: "a", eventOrderId: "e1", status: "logged", department: "Furniture", requestedBy: "Tarun", requestedAt: NOW - 1 * H, items: [sw, tk, bt] },
+    { id: "b", eventOrderId: "e1", status: "logged", department: "Furniture", requestedBy: "Tarun", requestedAt: NOW - 3 * H, items: [bt, sw, tk] },
+    { id: "c", eventOrderId: "e1", status: "logged", department: "Furniture", requestedBy: "salim", requestedAt: NOW - 5 * H, items: [{ ...sw, name: "Fabric Cocktail Table", fromName: "Iron Wooden Cocktail Table" }] },
+  ];
+  it("the 48 h list", () => {
+    const out = eventChanges({ id: "e1" }, rows, NOW);
+    expect(out.map(c => c.times)).toEqual([2, 1]);
+  });
+  it("the Activity log", () => {
+    const out = dedupeChangeLogs(rows);
+    expect(out.map(r => [r.id, r.times])).toEqual([["a", 2], ["c", 1]]);
   });
 });
