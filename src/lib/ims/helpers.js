@@ -231,9 +231,16 @@ export function priceForInvItem(item, factorByKey, allInventory, overrideSubItem
 // unchanged, so callers can use this uniformly for both kit and non-kit elements. `qty` is the
 // OUTER element's own qty; each component's nodeQty is qty × that component's own qty-per-kit,
 // so a kit element with qty 3 and a component listed at qty 2 visits that component at nodeQty 6.
+// Rounds to 6dp — a kit component's per-kit qty can be a deliberately non-whole value (a user
+// directly editing a kit's "× Kits = total" column, e.g. 5 total over 2 kits → 2.5 per kit) and
+// every multiplication here would otherwise compound ordinary binary floating-point noise
+// (15/11*11 → 14.999999999999998) into a quantity that gets BLOCKED, trucked and printed —
+// bounding it here, at the single shared walker every one of those consumers goes through,
+// keeps the noise below anything a 2dp display or an isInteger check downstream would notice.
+const round6 = (n) => Math.round((Number(n) || 0) * 1e6) / 1e6;
 export function walkKitUnits(item, qty, allInventory, overrideSubItems, visit, _seen) {
   if (!item || !(Number(qty) > 0)) return;
-  visit(item, Number(qty));
+  visit(item, round6(qty));
   if (!(Array.isArray(item.subItems) && item.subItems.length > 0)) return;
   const seen = _seen ? new Set(_seen) : new Set();
   if (item.id) { if (seen.has(item.id)) return; seen.add(item.id); } // cycle guard, same as priceForInvItem
@@ -243,7 +250,7 @@ export function walkKitUnits(item, qty, allInventory, overrideSubItems, visit, _
     const ci = (allInventory || []).find((i) => i.id === si.itemId);
     if (!ci) return;
     const subOv = Array.isArray(si.subOverrides) ? si.subOverrides : undefined;
-    walkKitUnits(ci, qty * (Number(si.qty) || 0), allInventory, subOv, visit, seen);
+    walkKitUnits(ci, round6(qty * (Number(si.qty) || 0)), allInventory, subOv, visit, seen);
   });
 }
 

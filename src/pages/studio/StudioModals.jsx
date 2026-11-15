@@ -199,7 +199,10 @@ export default function StudioModals({ ctx }) {
         // Two sources for "how many units are we dividing". Build's zoneElements path reads the
         // element it is about to replace; a caller that owns its own storage — Deal Check, whose
         // quantity lives on the card, not in zoneElements — declares it as opts.splitQty.
-        const origQty = Number(original?.qty) || Number(availModal.splitQty) || 0;
+        // Rounded to 2dp — origQty can be a kit component's per-kit qty now (directly edited via its
+        // "× Kits = total" column), and this figure is both displayed verbatim in several spots below
+        // and used as the Split math's own input, so ordinary floating-point noise must not leak in.
+        const origQty = Math.round(((Number(original?.qty) || Number(availModal.splitQty) || 0)) * 100) / 100;
         // Two separate questions, kept separate on purpose.
         // CAPABLE — is there anywhere to commit a split? The zoneElements path, or an explicit
         // onSplit. This used to be tested as `!onPick`, which stood in for "a real zone element"
@@ -241,14 +244,21 @@ export default function StudioModals({ ctx }) {
           const ids = s?.key === modalKey ? s.ids : [];
           return { key: modalKey, ids: ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id] };
         });
-        // Live preview of the split — same integer math as saveAvailSplit (see StudioApp.jsx), so
-        // what's shown here is exactly what Save will produce.
+        // Live preview of the split — same whole+fraction math as allocateSplit (see StudioApp.jsx),
+        // so what's shown here is exactly what Save will produce. origQty can be fractional now (a
+        // kit component's per-kit qty, directly edited via its "× Kits = total" column) — any
+        // leftover fraction lands on the first part alone, same as allocateSplit, so the parts always
+        // sum back to the exact origQty instead of a whole-number floor+remainder silently rounding
+        // it up (regression review, 2026-11-15: 2.5 split 2 ways used to preview "2 · 1" while Save
+        // actually wrote [1.5, 1]).
         const splitPreview = (() => {
           if (!inSplit || splitIds.length < 2) return null;
           const n = splitIds.length;
-          const base = Math.floor(origQty / n);
-          const remainder = origQty - base * n;
-          const parts = Array.from({ length: n }, (_, i) => base + (i < remainder ? 1 : 0));
+          const whole = Math.floor(origQty);
+          const frac = origQty - whole;
+          const base = Math.floor(whole / n);
+          const remainder = whole - base * n;
+          const parts = Array.from({ length: n }, (_, i) => Math.round((base + (i < remainder ? 1 : 0) + (i === 0 ? frac : 0)) * 100) / 100);
           return parts.join(" · ");
         })();
         const closeModal = () => { setAvailModal(null); setAvailSplit(null); };

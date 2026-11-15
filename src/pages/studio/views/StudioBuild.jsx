@@ -2249,7 +2249,10 @@ export default function StudioBuild({ ctx }) {
     const usedElsewhere = qtyUsedElsewhereInBuild(itemId, fns, imsInventory, exclude, fnDate, aVenue);
     if (usedElsewhere <= 0) return null;
     const otherEventsAvail = freeOnActiveDate ? freeOnActiveDate(it).free : getStudioAvailable(it, activeBlocksForDate);
-    return Math.max(0, otherEventsAvail - usedElsewhere);
+    // Rounded — a kit component's qty can be fractional now (a directly-edited "× Kits = total"),
+    // and ordinary floating-point noise from walking/summing those fractions left this showing e.g.
+    // "1.7763568394002505e-15 left" instead of a clean 0, and failing the <= 0 "fully used" check.
+    return Math.max(0, Math.round((otherEventsAvail - usedElsewhere) * 1e6) / 1e6);
   };
 
   // ── Scale By (Centre Pieces) ─────────────────────────────────────────────────────────────────

@@ -370,7 +370,7 @@ export function kitPartShortfalls(kitItem, elQty, kitOverrides, fns, imsInventor
       ? allocateRowAvailability(id, fns, imsInventory, target, targetDate, avail, targetVenue).shortQty
       : Math.max(0, qty - avail);
     if (short > 0 && reusePool) { const take = Math.min(short, reusePool.get(id) || 0); if (take > 0) { reusePool.set(id, (reusePool.get(id) || 0) - take); short -= take; } }
-    if (short > 0) out.push({ id, name: item.name || id, need: qty, short: Math.round(short * 100) / 100 });
+    if (short > 0) out.push({ id, name: item.name || id, need: Math.round(qty * 100) / 100, short: Math.round(short * 100) / 100 });
   });
   return out;
 }
