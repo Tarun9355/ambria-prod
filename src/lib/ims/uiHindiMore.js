@@ -404,6 +404,16 @@ Total available counts Old + New stock. Update live quantities in Planning → F
 The crew plan changed since you last opened it — the deal was edited in Studio (an item added or removed, a rate or a multiplier): ¦ पिछली बार खोलने के बाद क्रू प्लान बदला — स्टूडियो में डील बदली गई (आइटम जोड़ा या हटाया, रेट या मल्टीप्लायर):
 Nobody's gone shopping yet — the numbers below are just the plan shown as a starting point. Edit a row once the real mandi purchase happens; ¦ अभी कोई ख़रीद पर नहीं गया — नीचे के आंकड़े सिर्फ़ प्लान हैं। असली मंडी ख़रीद के बाद लाइन बदलें;
 needed for this ¦ इसके लिए चाहिए
+Changed in the last 48 hours ¦ पिछले 48 घंटों में बदलाव
+Changed in the last 48 h ¦ पिछले 48 घंटों में बदला
+Show all ¦ सब दिखाएँ
+Show less ¦ कम दिखाएँ
+just now ¦ अभी-अभी
+min ago ¦ मिनट पहले
+hr ago ¦ घंटा पहले
+hrs ago ¦ घंटे पहले
+days ago ¦ दिन पहले
+Carpet plan ¦ कार्पेट प्लान
 `;
 
 export const UI_HI_MORE = Object.fromEntries(LIST.split("\n").map(l => l.split(" ¦ ")).filter(p => p.length === 2 && p[0].trim()).map(([en, hi]) => [en.trim(), hi.trim()]));

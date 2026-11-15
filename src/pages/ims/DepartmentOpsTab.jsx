@@ -4378,7 +4378,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                   <div className="flex items-center gap-2">
                     <span aria-hidden="true" className="w-6 h-6 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-[13px]">⚠</span>
                     <div className="text-[13px] font-semibold text-amber-900">Changed in the last 48 hours</div>
-                    <span className="ml-auto text-[11px] text-amber-700 tabular-nums">{all.length} change{all.length === 1 ? "" : "s"}{mine.length ? ` · ${mine.length} in ${dept}` : ""}</span>
+                    <span className="ml-auto text-[11px] text-amber-700 tabular-nums">{`${all.length} ${all.length === 1 ? "change" : "changes"}${mine.length ? ` · ${dept} ${mine.length}` : ""}`}</span>
                   </div>
                   <ul className="mt-2 space-y-1">
                     {shown.map((c, i) => {
@@ -4462,7 +4462,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                           <div className="text-[11px] text-gray-500 leading-snug mt-0.5">{t.sub}</div>
                           {(() => {
                             const c = (changedByEo.get(sel.id) || []).find(x => x.dept === dept && x.section === t.k);
-                            return c ? <div className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5" title={`${c.label} changed by ${c.by}, ${agoText(c.at, lockNow)}${c.text ? ` — ${c.text}` : ""}`}>⚠ Updated {agoText(c.at, lockNow)}</div> : null;
+                            return c ? <div className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5" title={`${c.label} · ${c.by} · ${agoText(c.at, lockNow)}${c.text ? ` — ${c.text}` : ""}`}>{`⚠ Updated ${agoText(c.at, lockNow)}`}</div> : null;
                           })()}
                         </div>
                         {/* gray-300 put this at ~1.5:1 on white — present in the markup, absent
@@ -6253,7 +6253,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                           <div className="text-[11px] text-gray-500 leading-snug mt-0.5">{t.sub}</div>
                           {(() => {
                             const c = (changedByEo.get(sel.id) || []).find(x => x.dept === dept && x.section === t.k);
-                            return c ? <div className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5" title={`${c.label} changed by ${c.by}, ${agoText(c.at, lockNow)}${c.text ? ` — ${c.text}` : ""}`}>⚠ Updated {agoText(c.at, lockNow)}</div> : null;
+                            return c ? <div className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5" title={`${c.label} · ${c.by} · ${agoText(c.at, lockNow)}${c.text ? ` — ${c.text}` : ""}`}>{`⚠ Updated ${agoText(c.at, lockNow)}`}</div> : null;
                           })()}
                         </div>
                         {/* gray-300 put this at ~1.5:1 on white — present in the markup, absent

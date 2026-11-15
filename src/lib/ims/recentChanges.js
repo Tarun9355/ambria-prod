@@ -74,12 +74,13 @@ export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHA
   return out.sort((a, b) => b.at - a.at);
 }
 
-// "just now", "25 min ago", "3 h ago", "yesterday", "2 days ago"
+// "just now", "25 min ago", "3 hrs ago", "yesterday", "2 days ago" - "hrs", not "h": the Hindi screen reads words one by one, and a
+// lone "h" would turn every "H 12 ft" into hours
 export function agoText(at, now = Date.now()) {
   const m = Math.max(0, Math.round((now - at) / 60000));
   if (m < 1) return "just now";
   if (m < 60) return `${m} min ago`;
   const h = Math.round(m / 60);
-  if (h < 24) return `${h} h ago`;
+  if (h < 24) return `${h} ${h === 1 ? "hr" : "hrs"} ago`;
   return h < 48 ? "yesterday" : `${Math.round(h / 24)} days ago`;
 }

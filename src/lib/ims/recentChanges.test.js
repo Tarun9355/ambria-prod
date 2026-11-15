@@ -45,7 +45,8 @@ describe("itemsSummary / agoText", () => {
   });
   it("reads as a person would say it", () => {
     expect(agoText(NOW - 20 * 60000, NOW)).toBe("20 min ago");
-    expect(agoText(NOW - 3 * H, NOW)).toBe("3 h ago");
+    expect(agoText(NOW - 3 * H, NOW)).toBe("3 hrs ago");
+    expect(agoText(NOW - 1 * H, NOW)).toBe("1 hr ago");
     expect(agoText(NOW - 30 * H, NOW)).toBe("yesterday");
   });
 });

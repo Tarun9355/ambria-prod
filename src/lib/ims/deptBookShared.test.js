@@ -148,7 +148,8 @@ describe("book: a recipe renamed since Deal Check ran prints one card, not two (
   it("the old name's bunches and lines land on the renamed piece's card", () => {
     const html = buildDeptBookHtml({ ...ctx("Floral", []), sel: selR, inventory: inv2, flowerPatterns: pats, floralModeBySub: new Map() }, {}, {}, { combined: true });
     expect(html).toContain("Flower Trail Rft");
-    expect(html.split("43").length - 1).toBe(1); // the bunches once, on the one card
+    // the bunches once, on the one card (not a count of "43" - the footer's generated-at time can hold that too)
+    expect(html.split("Artificial flowers").length - 1).toBe(1);
     expect(html).not.toMatch(/🌸 Flower Trail</);
   });
 });
