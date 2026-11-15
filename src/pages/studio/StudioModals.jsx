@@ -79,7 +79,7 @@ export default function StudioModals({ ctx }) {
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
     // Pre-Sold gate (markSold's scanOutOfStockElements, StudioApp.jsx) — a hard block, not a
     // warning, so closing it just cancels the Sold confirm rather than letting it proceed.
-    oosGateModal, setOosGateModal, openOosFix,
+    oosGateModal, setOosGateModal, oosGateReason, setOosGateReason, openOosFix,
     // Pre-Sold gate #2 (markSold's scanTrussStockShortage, StudioApp.jsx) — truss/platform/batta
     // stock instead of a tagged inventory item. Same hard-block treatment, no per-item fix button.
     trussStockGateModal, setTrussStockGateModal,
@@ -537,19 +537,39 @@ export default function StudioModals({ ctx }) {
         );
       })()}
 
-      {/* Pre-Sold gate — markSold (StudioApp.jsx) scans the whole build and opens this instead of
-          its usual confirm dialog when anything is both short and can't be made in production
-          (canFulfillShortfall, lib/rateCard.js). Deliberately has no "Sold anyway" — closing it
-          just cancels the confirm, same as a missing name/date/venue does above it. The 📦 button
-          opens the availability picker right here (openOosFix, StudioApp.jsx) — switching to the
-          flagged element's own function tab first if it isn't the active one — instead of the old
-          "Go fix" that only switched tabs and left the salesperson to hunt the element down by hand. */}
-      {oosGateModal && oosGateModal.length > 0 && (
-        <div onClick={() => setOosGateModal(null)} style={{position:"fixed",inset:0,zIndex:9400,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      {/* Pre-Sold gate — scanOutOfStockElements (StudioApp.jsx) scans the whole build and opens this
+          when anything is both short and can't be made in production (canFulfillShortfall,
+          lib/rateCard.js). Four call sites, same array/modal, different wording via oosGateReason:
+          markSold and applyBookedChanges open it in place of their usual confirm dialog (deliberately
+          no "Sold anyway" — closing it just cancels the confirm, same as a missing name/date/venue
+          does above it); runDealCheckGenerate's own sold-deal reconcile (its headless auto-fill fires
+          on every Deal Check open) opens it with no confirm dialog pending at all — it just refuses
+          that one write into the real `blocks` table and leaves whatever was already reserved as-is;
+          DealCheckOverlay.jsx's explicit "📤 push to IMS" button (syncToOps) opens it the same way,
+          defense-in-depth on a push that is display-only to begin with (no `blocks` write of its own).
+          The 📦 button opens the availability picker right here (openOosFix, StudioApp.jsx) —
+          switching to the flagged element's own function tab first if it isn't the active one —
+          instead of the old "Go fix" that only switched tabs and left the salesperson to hunt the
+          element down by hand. */}
+      {oosGateModal && oosGateModal.length > 0 && (() => {
+        // Wording branches on WHY the gate fired (oosGateReason, set alongside oosGateModal at each
+        // of its four call sites — markSold/applyBookedChanges/runDealCheckGenerate, StudioApp.jsx,
+        // and syncToOps, DealCheckOverlay.jsx) without reshaping oosGateModal itself — it's still
+        // read elsewhere as a bare array via .length/.flatMap.
+        const headline = oosGateReason === "dealCheckAutoSync" ? "Items out of stock — stock not updated"
+          : oosGateReason === "syncToOps" ? "Can't push to IMS — items out of stock"
+          : "Can't confirm — items out of stock";
+        const body = oosGateReason === "dealCheckAutoSync"
+          ? "These items are out of stock for this date and can't be made in production. The last change to this build couldn't be reserved — pick an alternative below, or the reserved stock stays at whatever was already confirmed until this is fixed."
+          : oosGateReason === "syncToOps"
+          ? "These items are out of stock for this date and can't be made in production. Pick an alternative below for each one before pushing this department breakdown to IMS Dept Ops."
+          : "These items are out of stock for this date and can't be made in production. Pick an alternative below for each one before this deal can be marked Sold.";
+        return (
+      <div onClick={() => { setOosGateModal(null); setOosGateReason(null); }} style={{position:"fixed",inset:0,zIndex:9400,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div onClick={e => e.stopPropagation()} style={{width:"min(520px, 100%)",maxHeight:"80vh",background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
             <div style={{padding:"18px 20px",borderBottom:`1px solid ${border}`}}>
-              <div style={{fontSize:16,fontWeight:700,color:"#EF4444",display:"flex",alignItems:"center",gap:8}}><IconBox size={16}/> Can't confirm — items out of stock</div>
-              <div style={{fontSize:12.5,color:textS,marginTop:6,lineHeight:1.5}}>These items are out of stock for this date and can't be made in production. Pick an alternative below for each one before this deal can be marked Sold.</div>
+              <div style={{fontSize:16,fontWeight:700,color:"#EF4444",display:"flex",alignItems:"center",gap:8}}><IconBox size={16}/> {headline}</div>
+              <div style={{fontSize:12.5,color:textS,marginTop:6,lineHeight:1.5}}>{body}</div>
             </div>
             <div style={{padding:"4px 20px",overflowY:"auto",flex:1}}>
               {/* One row per thing that is short: the item itself, and each short part of a kit on its own row, whose Fix opens the
@@ -572,11 +592,12 @@ export default function StudioModals({ ctx }) {
               )); })()}
             </div>
             <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,textAlign:"right"}}>
-              <button onClick={() => setOosGateModal(null)} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Close</button>
+              <button onClick={() => { setOosGateModal(null); setOosGateReason(null); }} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Close</button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Pre-Sold gate #2 — markSold/applyBookedChanges (StudioApp.jsx) scan the whole build's
           truss/platform/batta demand against each date's REAL stock pool (scanTrussStockShortage)

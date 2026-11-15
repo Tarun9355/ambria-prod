@@ -2060,6 +2060,11 @@ export default function StudioApp() {
   // returned. Blocking, not a warning: closing it just cancels markSold, same as a failed
   // name/date/venue check above it. See scanOutOfStockElements's own comment for why.
   const [oosGateModal, setOosGateModal] = useState(null);
+  // Which hard-block trigger opened oosGateModal — "markSold" | "applyBookedChanges" |
+  // "dealCheckAutoSync" | "syncToOps". oosGateModal itself stays a bare array (read in several
+  // places via .length/.flatMap) — this rides alongside it so StudioModals.jsx's gate can show
+  // accurate wording per trigger instead of reshaping that array.
+  const [oosGateReason, setOosGateReason] = useState(null);
   // Pre-Sold gate #2 (truss/platform/batta stock) — see scanTrussStockShortage's own comment. Same
   // blocking treatment as oosGateModal, just a plain list (no per-item swap picker — fixing a
   // truss/platform/batta shortage means picking a different size/material or sourcing more stock,
@@ -6687,6 +6692,12 @@ export default function StudioApp() {
             // exact element (openAvailModal(zoneKey, idx, el, rc)) instead of only pointing the
             // salesperson at the right function/zone and making them find it by hand.
             flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, fnDate: fnData.fnDate || "", zoneKey: zk, idx: i, invId: el.invId, name: item?.name || el.name || "Item",
+              // The BUILD element's own raw .name — NOT the same as `name` above (which prefers the
+              // IMS catalog name for display). buildElCardKey/getCardSpecsForZone key every Deal
+              // Check card off el.name specifically, so a cardKey rebuilt from this row (round 4
+              // regression review, 2026-11-15 — the "already fixed via a Deal Check swap" gap) has to
+              // use this field, not the display name, or the lookup silently misses.
+              elName: el.name || "",
               parts: partsOut.map((p) => `${p.name} (${p.short} short)`),
               // the gate lists each short part as its own row, and its Fix opens the picker on that part, not the kit
               // need: p.need (not dropped) — the oosGate picker's own currentPartId/slotDraw add-back
@@ -10322,7 +10333,7 @@ export default function StudioApp() {
       // proceed past, this isn't — a deal physically can't be delivered with an item that's both out
       // of stock and can't be produced, so it never reaches the confirm dialog at all.
       const oosFlagged = scanOutOfStockElements();
-      if (oosFlagged.length > 0) { setOosGateModal(oosFlagged); return; }
+      if (oosFlagged.length > 0) { setOosGateReason("markSold"); setOosGateModal(oosFlagged); return; }
       // Pre-Sold gate #2 — see scanTrussStockShortage's own comment. Same hard block, now for
       // truss/platform/batta stock instead of a tagged inventory item.
       const trussFlagged = scanTrussStockShortage();
@@ -10440,7 +10451,7 @@ export default function StudioApp() {
       const client = activeClient;
       if (!client || client.status !== "booked") return false;
       const oosFlagged = scanOutOfStockElements();
-      if (oosFlagged.length > 0) { setOosGateModal(oosFlagged); return false; }
+      if (oosFlagged.length > 0) { setOosGateReason("applyBookedChanges"); setOosGateModal(oosFlagged); return false; }
       const trussFlagged = scanTrussStockShortage();
       if (trussFlagged.length > 0) { setTrussStockGateModal(trussFlagged); return false; }
       // Checked here, BEFORE the bookedSystemTotal rebase below — not just inside
@@ -14935,7 +14946,69 @@ export default function StudioApp() {
     if (kitEditsSeeded) setDcKitEdits(newKitEdits);
     // Owner decision: a SOLD deal's inventory changes reserve immediately (no approval gate) —
     // see reconcileSoldInventoryBlocks above.
-    if (isSold) { try { await reconcileSoldInventoryBlocks(fnsToProcess, mergedForReconcile, inventory, cli); } catch (e) { console.warn("[reconcile] sold-deal block reconcile failed:", e?.message || e); } }
+    // Hard gate (production gap confirmed via direct DB inspection, 2026-11-15): this is the ONLY
+    // place that writes a real reservation into `blocks` for an already-sold deal, and until now
+    // nothing here ever checked scanOutOfStockElements — markSold/applyBookedChanges both run that
+    // scan before THEY get anywhere near here, but this auto-fill/regenerate path (the headless
+    // effect below fires it on every Deal Check open, sold or not) had no such check at all, so a
+    // build edit that introduced a real shortage could still push a worsened reservation into the
+    // live table with nobody told. Re-scan the CURRENT build right here — if anything is flagged,
+    // skip the write entirely (whatever `blocks` already holds is left exactly as-is, not released
+    // or re-written) and surface the same hard-block modal markSold/applyBookedChanges use, instead
+    // of handing reconcileSoldInventoryBlocks a build it can't actually fulfill. Everything above
+    // this (card matching, pricing, dcCards/dcZoneState) already ran and still applies normally —
+    // only this final write is gated.
+    if (isSold) {
+      // Mirrors reconcileSoldInventoryBlocks' OWN early-exit precondition (eventOrderFor above,
+      // cancelled check) before even running the scan (round 4 regression review, 2026-11-15,
+      // finding b/5): without this, a client whose event_orders row hasn't finished loading yet, or
+      // whose only order is cancelled, read as "its own holds count as someone else's" inside
+      // scanOutOfStockElements' cross-reuse netting — popping the hard-block modal over a reconcile
+      // that was always going to be a safe no-op anyway (reconcileSoldInventoryBlocks's own guard
+      // just below warns and returns for exactly this case). Skip straight to it in that case, same
+      // as before this gate existed.
+      const eoForGate = eventOrderFor(eventOrders, cli.id, cli.name);
+      if (!eoForGate || eoForGate.status === "cancelled") {
+        try { await reconcileSoldInventoryBlocks(fnsToProcess, mergedForReconcile, inventory, cli); } catch (e) { console.warn("[reconcile] sold-deal block reconcile failed:", e?.message || e); }
+      } else {
+        const rawOosFlagged = scanOutOfStockElements();
+        // A shortage already fixed by swapping the CARD inside Deal Check itself (the documented way
+        // to fix a sold deal's inventory — Build freezes once sold, DealCheckOverlay.jsx's own
+        // dealCheckSync comment) must not keep blocking forever just because Build's own zoneElements
+        // still show the old, short invId — scanOutOfStockElements only ever reads Build (round 4
+        // regression review finding #2). Drop a flagged row whose own card (same cardKey
+        // buildElCardKey/getCardSpecsForZone would derive) now points at a split fulfilment or a
+        // different imsId than the one flagged — that's not what reconcileSoldInventoryBlocks is
+        // about to reserve for this slot, so Build's stale copy of it is no longer the right question
+        // to ask. apply_block_ops' own server-side cap (onShort: "cap") still protects against an
+        // oversell even if the swapped-to item turns out to ALSO be short — this only decides whether
+        // the gate keeps nagging about a shortage that's already moot.
+        const oosFlagged = rawOosFlagged.filter((f) => {
+          const card = mergedForReconcile?.[f.fnIdx]?.[buildElCardKey(f.zoneKey, f.elName ?? "", f.idx)];
+          if (!card) return true;
+          if (Array.isArray(card.split) && card.split.some((s) => s?.imsId && (Number(s.qty) || 0) > 0)) return false;
+          return !(card.imsId && card.imsId !== f.invId);
+        });
+        if (oosFlagged.length > 0) {
+          // Only surface the modal if this is STILL the active client on screen (round 4 regression
+          // review, finding #1): this call's own `cli`/`activeClientId` are frozen as of whenever it
+          // started, but the IMS fetch above can take 1-4s — long enough for the salesperson to
+          // switch to a different client before this point runs. Popping client A's shortage list,
+          // with its Fix button writing into whatever function/zone/idx is CURRENTLY on screen for
+          // client B, is exactly the cross-client array-index identity risk this codebase has been
+          // burned by before (see memory: Sangeeta function-corruption, Rakesh Taneja
+          // resumeSavedSession). Skipping the write below is unconditional regardless — only showing
+          // the modal is conditioned on staying the active client; the headless auto-fill re-runs (and
+          // re-gates) the moment that client becomes active again anyway.
+          if (activeClientIdRef.current === activeClientId) {
+            setOosGateReason("dealCheckAutoSync");
+            setOosGateModal(oosFlagged);
+          }
+        } else {
+          try { await reconcileSoldInventoryBlocks(fnsToProcess, mergedForReconcile, inventory, cli); } catch (e) { console.warn("[reconcile] sold-deal block reconcile failed:", e?.message || e); }
+        }
+      }
+    }
     setDcGenerating(false);
     setDcGenStatus("");
     setDcAbortRef(null);
@@ -14970,7 +15043,7 @@ export default function StudioApp() {
         }
       }
     }
-  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, dcKitEdits, floralHardPropMap, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, reconcileSoldInventoryBlocks]);
+  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, dcKitEdits, floralHardPropMap, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, reconcileSoldInventoryBlocks, scanOutOfStockElements, eventOrders]);
   useEffect(() => { runDealCheckGenerateRef.current = runDealCheckGenerate; });
 
   // Fill Deal Check from the build as soon as it opens, deterministically. The Generate button that
@@ -15362,7 +15435,7 @@ export default function StudioApp() {
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerAllocSrc, setDcArtFlowerAllocSrc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
     dcCustomItems, setDcCustomItems: setDcCustomItemsAndFlush, dcCustomModal, setDcCustomModal,
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
-    oosGateModal, setOosGateModal, openOosFix, kitPartShorts,
+    oosGateModal, setOosGateModal, oosGateReason, setOosGateReason, openOosFix, kitPartShorts, scanOutOfStockElements,
     trussStockGateModal, setTrussStockGateModal,
     ledgerStockGateModal, setLedgerStockGateModal,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,

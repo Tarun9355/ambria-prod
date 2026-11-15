@@ -271,6 +271,10 @@ export default function DealCheckOverlay({ ctx }) {
     zoneKeys, zoneLabelsD,
     // misc
     showMsg, saveClientLedger, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
+    // Pre-Sold/pre-reserve hard gate (StudioApp.jsx) — same scan markSold/applyBookedChanges run,
+    // reused here so the explicit "📤 push to IMS" button can't push a department breakdown for a
+    // build that's actually out of stock either (defense in depth; see syncToOps below).
+    scanOutOfStockElements, setOosGateModal, setOosGateReason,
   } = ctx;
 
   // Effective per-unit rental for a card's item — the ONE answer to "what does this cost", used by
@@ -2440,6 +2444,14 @@ export default function DealCheckOverlay({ ctx }) {
             : dcCostRollup.deptInv;
           return { income: incomeRounded, inventory, floralPlan, manpowerPlan, manpowerDetail, season: dcSeasonInfo, fabricPlan, mpPhases: dcCostRollup.mpPhases || null, dealValue, transportPlan };
         };
+        // Deliberately NOT gated on scanOutOfStockElements, unlike syncToOps/markSold/
+        // applyBookedChanges/the sold-deal reconcile above: confirmed by reading persistDeptSnapshot
+        // in full (StudioApp.jsx) — this silent, 200ms-debounced push only ever writes the
+        // deptIncome/deptInventory DISPLAY snapshot into event_orders.data (what IMS Dept Ops shows);
+        // it never touches the real `blocks` reservation (reconcileSoldInventoryBlocks's job alone,
+        // triggered separately). Gating it would mean a stale display with no warning the moment
+        // someone opens Deal Check on a deal with a shortage, for no correctness gain — and popping
+        // the hard-block modal out of nowhere while this fires mid-typing would be its own regression.
         if (isSold && persistDeptSnapshot) {
           // Department $ totals alone miss a flower SWAP that happens to leave a department's
           // rounded total unchanged (two similarly-priced flowers) — the mandi list's actual
@@ -6075,7 +6087,16 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                     ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
                     ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport], ["⚡ Power / genset", cur.power],
                   ].filter(([, v]) => v > 0);
-                  const syncToOps = async () => { const r = await (persistDeptSnapshot && persistWithDetail(buildDeptSnapshot())); showMsg && (r === false ? showMsg("Deal Check is still loading — try again in a moment", "orange") : showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green")); };
+                  // Same hard block markSold/applyBookedChanges use (defense in depth — this push is
+                  // display-only, buildDeptSnapshot/persistDeptSnapshot never touch the real `blocks`
+                  // reservation, but the owner asked for "the Deal Check button itself" gated too).
+                  const syncToOps = async () => {
+                    if (isSoldForSync) {
+                      const oosFlagged = scanOutOfStockElements();
+                      if (oosFlagged.length > 0) { setOosGateReason("syncToOps"); setOosGateModal(oosFlagged); return; }
+                    }
+                    const r = await (persistDeptSnapshot && persistWithDetail(buildDeptSnapshot())); showMsg && (r === false ? showMsg("Deal Check is still loading — try again in a moment", "orange") : showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"));
+                  };
                   return (
                     <div style={{ padding: "4px" }}>
                       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
@@ -6120,7 +6141,16 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                 ["🧵 Fabric / draping", cur.fabric], ["👷 Manpower", cur.manpower], ["🏭 Production", cur.production],
                 ["🛒 Buying", cur.buying], ["🚚 Transport", cur.transport], ["⚡ Power / genset", cur.power],
               ].filter(([, v]) => v > 0);
-              const syncToOps = async () => { const r = await (persistDeptSnapshot && persistWithDetail(buildDeptSnapshot())); showMsg && (r === false ? showMsg("Deal Check is still loading — try again in a moment", "orange") : showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green")); };
+              // Same hard block markSold/applyBookedChanges use (defense in depth — this push is
+              // display-only, buildDeptSnapshot/persistDeptSnapshot never touch the real `blocks`
+              // reservation, but the owner asked for "the Deal Check button itself" gated too).
+              const syncToOps = async () => {
+                if (isSoldForSync) {
+                  const oosFlagged = scanOutOfStockElements();
+                  if (oosFlagged.length > 0) { setOosGateReason("syncToOps"); setOosGateModal(oosFlagged); return; }
+                }
+                const r = await (persistDeptSnapshot && persistWithDetail(buildDeptSnapshot())); showMsg && (r === false ? showMsg("Deal Check is still loading — try again in a moment", "orange") : showMsg("📤 Department breakdown pushed to IMS Dept Ops", "green"));
+              };
               return (
                 <div onClick={()=>setDcDeptModalOpen(false)} style={{position:"fixed",inset:0,zIndex:9100,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
                   <div onClick={e=>e.stopPropagation()} style={{width:"min(560px, 100%)",maxHeight:"82vh",background:"#FFFFFF",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
