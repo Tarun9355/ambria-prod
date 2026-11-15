@@ -98,6 +98,14 @@ describe("a department head's PDF download marks the changes seen", () => {
   it("an admin (no key) sees everything", () => {
     expect(unseenChanges(list, eo, "")).toEqual(list);
   });
+  it("a repeat logged after the download is one new line, not counted with the ones already seen", () => {
+    const items = [{ name: "Takhat", change: "removed", from: 4 }];
+    const row = (id, at) => ({ id, eventOrderId: "e1", status: "logged", department: "Floral", requestedBy: "Tarun", requestedAt: at, items });
+    const seenEo = { id: "e1", deptOps: { Floral: { changesSeen: { u_sudhir: NOW - 2 * H } } } };
+    const reqs = [row("a", NOW - 1 * H), row("b", NOW - 3 * H), row("c", NOW - 4 * H)];
+    expect(eventChanges(seenEo, reqs, NOW, undefined, "u_sudhir").map(c => c.times)).toEqual([1]);
+    expect(eventChanges(seenEo, reqs, NOW).map(c => c.times)).toEqual([3]);
+  });
   it("saving the mark is not itself a change", () => {
     expect(stampDeptChanges({}, { changesSeen: { u_sudhir: NOW } }, NOW, "Sudhir")).toEqual({});
   });

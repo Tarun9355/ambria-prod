@@ -85,7 +85,9 @@ export function dedupeChangeLogs(rows) {
 // Every change to `eo` within `windowMs` of `now`, newest first: { at, by, dept, section, label, text, times }. The same change
 // logged again and again (Studio re-logs a sold deal's inventory on every reconcile - one event showed 99 lines, most repeats) is
 // one line: the newest, with how many times it was logged.
-export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHANGE_WINDOW_MS) {
+// userKey: a department head's, to leave out what they have already seen (unseenChanges) BEFORE repeats are counted - a change
+// logged again after their download is one new line, not "x9" with the nine they already saw.
+export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHANGE_WINDOW_MS, userKey = "") {
   if (!eo) return [];
   const since = now - windowMs;
   const out = [];
@@ -104,10 +106,11 @@ export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHA
       out.push({ at, by: c.by || "—", dept, section, label: SECTION_LABEL[section] || SECTION_LABEL.plan, text: "" });
     });
   });
-  out.sort((a, b) => b.at - a.at);
+  const fresh = unseenChanges(out, eo, userKey);
+  fresh.sort((a, b) => b.at - a.at);
   const seen = new Map();
   const merged = [];
-  out.forEach((c) => {
+  fresh.forEach((c) => {
     const k = `${c.dept}|${c.section}|${c.sig ?? c.text}`;
     const first = seen.get(k);
     if (first) { first.times += 1; return; }

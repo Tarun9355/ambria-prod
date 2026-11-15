@@ -43,7 +43,7 @@ import { buildDeptBookHtml, buildFinish } from "../../lib/ims/deptBookHtml";
 import { renderDeptBook, loadPdfLibs, loadPdfLogosOnce, isStaleChunk, reloadForUpdate } from "../../lib/ims/deptBookPdf";
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
-import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeLogs, unseenChanges } from "../../lib/ims/recentChanges";
+import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeLogs } from "../../lib/ims/recentChanges";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { logWrite } from "../../lib/studio/userActions";
 
@@ -1085,7 +1085,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     (amendRequests || []).forEach((r) => { if (r?.status === "logged" && r.eventOrderId) (reqsByEo.get(r.eventOrderId) || reqsByEo.set(r.eventOrderId, []).get(r.eventOrderId)).push(r); });
     const m = new Map();
     (eventOrders || []).forEach((eo) => {
-      const list = unseenChanges(eventChanges(eo, reqsByEo.get(eo.id) || [], lockNow), eo, seenKey);
+      const list = eventChanges(eo, reqsByEo.get(eo.id) || [], lockNow, undefined, seenKey);
       if (list.length) m.set(eo.id, list);
     });
     return m;
