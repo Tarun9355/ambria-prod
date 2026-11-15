@@ -53,6 +53,14 @@ describe("itemsSummary / agoText", () => {
     ]);
     expect(s).toBe("Ivory Couch → Beige Couch, Chair 10 → 12, −1 Lamp +1 more");
   });
+  it("reads Studio's qty_changed as a change, not a bare count", () => {
+    expect(itemsSummary([{ name: "Coffee Table", change: "qty_changed", from: 5, to: 6, qty: 6 }])).toBe("Coffee Table 5 → 6");
+  });
+  it("hands the inventory entry its items, for the log-style list", () => {
+    const items = [{ name: "Round Table", change: "added", to: 2 }];
+    const out = eventChanges({ id: "e1" }, [{ eventOrderId: "e1", status: "logged", requestedAt: NOW - H, requestedBy: "Ritika", department: "Floral", items }], NOW);
+    expect(out[0].items).toEqual(items);
+  });
   it("reads as a person would say it", () => {
     expect(agoText(NOW - 20 * 60000, NOW)).toBe("20 min ago");
     expect(agoText(NOW - 3 * H, NOW)).toBe("3 hrs ago");

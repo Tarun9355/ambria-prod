@@ -49,7 +49,7 @@ export function itemsSummary(items, max = 3) {
   const one = (it) => {
     const name = String(it.name || "Item").trim();
     if (it.change === "swapped") return `${String(it.fromName || "item").trim()} → ${name}`;
-    if (it.change === "changed") return `${name} ${it.from ?? "?"} → ${it.to ?? "?"}`;
+    if (it.change === "changed" || it.change === "qty_changed") return `${name} ${it.from ?? "?"} → ${it.to ?? "?"}`;
     const q = Number(it.qty ?? (it.change === "removed" ? it.from : it.to)) || 0;
     return `${sign[it.change] || ""}${q ? q + " " : ""}${name}`;
   };
@@ -70,7 +70,7 @@ export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHA
     if (at < since || at > now + 60000) return;
     // names: the items as they stand now (added / changed / swapped in) - the rows to light up when the line is opened
     const names = (Array.isArray(r.items) ? r.items : []).filter((it) => it && it.change !== "removed").map((it) => String(it.name || "").trim()).filter(Boolean);
-    out.push({ at, by: r.requestedBy || "—", dept: r.department || "", section: "inv", label: SECTION_LABEL.inv, text: itemsSummary(r.items), names });
+    out.push({ at, by: r.requestedBy || "—", dept: r.department || "", section: "inv", label: SECTION_LABEL.inv, text: itemsSummary(r.items), names, items: Array.isArray(r.items) ? r.items : [] });
   });
   Object.entries(eo.deptOps || {}).forEach(([dept, ops]) => {
     Object.entries((ops && ops.changes) || {}).forEach(([section, c]) => {
