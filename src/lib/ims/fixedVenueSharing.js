@@ -15,10 +15,17 @@
 // whole day free beforehand). Two functions in the SAME shift group never share either (physically
 // simultaneous demand), whatever venue they're at within the property.
 //
-// Capped at the property's own registered standing qty for the item — reuse can only ever be as big
-// as what's actually standing there; demand beyond that still has to be trucked in separately for
-// each shift, same as a non-Fixed-Venue booking would.
-import { fixedVenueFor, standingQty } from "./fixedVenues.js";
+// Capped at the item's own total owned quantity — reuse can only ever be as big as how many units
+// of it actually exist company-wide; demand beyond that still has to be trucked in/produced
+// separately for each shift, same as a non-Fixed-Venue booking would. (Owner clarification,
+// 2026-11-15, a second live report: "Arch panel small" — 2 used in a Lunch function, 4 in a same-day
+// Dinner function at the same property, 4 owned total — got NO credit at all and summed flat to 6,
+// because it had never been separately registered in that property's own standing-inventory list
+// (Admin → Settings → 🏛️ Fixed Venues). The owner's original "capped at the standing qty" meant
+// "capped at how many actually exist," not "only for items an ops admin has separately listed at
+// that specific property" — this cap is now the item's own `qty` field, so it applies to literally
+// every item with no registration step, matching the original "all items" instruction.)
+import { fixedVenueFor } from "./fixedVenues.js";
 import { isCancelledEO, isLiveBlockStatus } from "./liveBlocks.js";
 
 const DAY_SHIFTS = new Set(["brunch", "morning", "lunch"]);
@@ -33,7 +40,8 @@ export function shiftGroupOf(shift) {
 }
 
 // Same-group demand always sums (physically simultaneous, never reusable). Cross-group demand reuses
-// the same units up to whichever side is smaller, capped at what's actually standing at the property.
+// the same units up to whichever side is smaller, capped at how many actually exist (`standing`,
+// the item's own owned qty).
 export function combinedFixedVenueRequirement(dayTotal, nightTotal, standing) {
   const d = Math.max(0, Number(dayTotal) || 0);
   const n = Math.max(0, Number(nightTotal) || 0);
@@ -92,8 +100,9 @@ export function collapsedDealShiftFor(fns, date) {
 // can lack a stable `.id` on some entries; fixedVenueFor always returns the SAME element of this ONE
 // settings object for equivalent venue names within a single call, so the object reference itself is
 // already a correct, id-independent grouping key.
-function classify(entries, settings, invId) {
+function classify(entries, settings, invId, ownedQty) {
   let outdoor = 0;
+  const standing = Math.max(0, Number(ownedQty) || 0);
   const byProperty = new Map(); // fv object -> { day, night, other, standing }
   (entries || []).forEach((e) => {
     const qty = Number(e?.qty) || 0;
@@ -101,7 +110,7 @@ function classify(entries, settings, invId) {
     const fv = fixedVenueFor(settings, e?.venueName);
     if (!fv) { outdoor += qty; return; }
     const group = shiftGroupOf(e?.shift);
-    const bucket = byProperty.get(fv) || { day: 0, night: 0, other: 0, standing: standingQty(settings, fv.name, invId) };
+    const bucket = byProperty.get(fv) || { day: 0, night: 0, other: 0, standing };
     if (group === "day") bucket.day += qty;
     else if (group === "night") bucket.night += qty;
     else bucket.other += qty;
@@ -119,10 +128,11 @@ function classify(entries, settings, invId) {
 // THIS NEW specific request fit" check — see sharingFreeZone below for that (regression review,
 // 2026-11-15, finding 4: the two questions are different sums).
 // settings: the IMS settings blob with `.fixedVenues` assembled (assembleFixedVenuesFromRows) and
-// `.venueParents` (sub-venue → parent map), i.e. what fixedVenueFor/standingQty already expect.
-// invId: the inventory item these entries are all for (standingQty needs it per property).
-export function effectiveBlockedTotal(entries, settings, invId) {
-  const { outdoor, byProperty } = classify(entries, settings, invId);
+// `.venueParents` (sub-venue → parent map), i.e. what fixedVenueFor already expects.
+// invId: the inventory item these entries are all for. ownedQty: that item's own total owned
+// quantity (inventory.qty) — the cap on how much of it can ever be shared between shifts.
+export function effectiveBlockedTotal(entries, settings, invId, ownedQty) {
+  const { outdoor, byProperty } = classify(entries, settings, invId, ownedQty);
   let total = outdoor;
   byProperty.forEach((b) => { total += combinedFixedVenueRequirement(b.day, b.night, b.standing) + b.other; });
   return total;
@@ -142,15 +152,15 @@ export function effectiveBlockedTotal(entries, settings, invId) {
 // (regression review, 2026-11-15, finding 4: NP's existing Lunch hold must make Sahej's NEW Dinner
 // request cost nothing, not just reduce the on-screen total after the fact).
 // Returns 0 (no special treatment — same as "other"/outdoor) when ownShift isn't a safe day/night
-// pairing, ownVenueName doesn't resolve to a Fixed Venue, or that property doesn't hold this item.
-export function sharingFreeZone(otherEntries, settings, invId, ownVenueName, ownShift) {
+// pairing, ownVenueName doesn't resolve to a Fixed Venue, or ownedQty is 0 (nothing to share).
+export function sharingFreeZone(otherEntries, settings, invId, ownVenueName, ownShift, ownedQty) {
   const ownGroup = shiftGroupOf(ownShift);
   if (!ownGroup) return 0;
   const fv = fixedVenueFor(settings, ownVenueName);
   if (!fv) return 0;
-  const standing = standingQty(settings, fv.name, invId);
+  const standing = Math.max(0, Number(ownedQty) || 0);
   if (standing <= 0) return 0;
-  const { byProperty } = classify(otherEntries, settings, invId);
+  const { byProperty } = classify(otherEntries, settings, invId, ownedQty);
   const bucket = byProperty.get(fv) || { day: 0, night: 0 };
   const same = ownGroup === "day" ? bucket.day : bucket.night;
   const opposite = ownGroup === "day" ? bucket.night : bucket.day;
@@ -221,9 +231,10 @@ export function blockEntriesWithVenueShift(blockEntriesForItem, eventOrders, dat
 // rather than a pre-netted flat number, since this function needs the raw per-event detail anyway.
 export function getSharingAwareAvailable(item, blocksDetailForDate, eventOrders, settings, date, ownVenueName, ownShift, excludeEventIds) {
   if (!item) return 0;
-  const owned = Math.max(0, (Number(item.qty) || 0) - (Number(item.blocked) || 0));
+  const ownedQty = Number(item.qty) || 0;
+  const owned = Math.max(0, ownedQty - (Number(item.blocked) || 0));
   const entries = blockEntriesWithVenueShift(blocksDetailForDate?.[item?.id] || [], eventOrders, date, excludeEventIds);
-  const othersTotal = effectiveBlockedTotal(entries, settings, item?.id);
-  const freeZone = sharingFreeZone(entries, settings, item?.id, ownVenueName, ownShift);
+  const othersTotal = effectiveBlockedTotal(entries, settings, item?.id, ownedQty);
+  const freeZone = sharingFreeZone(entries, settings, item?.id, ownVenueName, ownShift, ownedQty);
   return Math.max(Math.max(owned - othersTotal, 0) + freeZone, 0);
 }

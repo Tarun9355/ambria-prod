@@ -434,10 +434,13 @@ Rules:
     // — see lib/ims/fixedVenueSharing.js). Everything else (outdoor bookings, same-shift siblings,
     // Sundowner/Evening/unrecognized shifts) still sums exactly as before.
     const m = {};
-    Object.entries(byItemEntries).forEach(([invId, entries]) => { m[invId] = effectiveBlockedTotal(entries, fvSettings, invId); });
+    Object.entries(byItemEntries).forEach(([invId, entries]) => {
+      const ownedQty = Number((inventory || []).find((x) => x.id === invId)?.qty) || 0;
+      m[invId] = effectiveBlockedTotal(entries, fvSettings, invId, ownedQty);
+    });
     return { qty: m, fns: byItem };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availDate, functions, eventOrders, readBlocks, fvSettings]);
+  }, [availDate, functions, eventOrders, readBlocks, fvSettings, inventory]);
   const blockedOf = (i) => dateBlock ? (dateBlock.qty[i.id] || 0) : (i.blocked || 0);
   const availOf = (i) => (Number(i.qty) || 0) - blockedOf(i);
 

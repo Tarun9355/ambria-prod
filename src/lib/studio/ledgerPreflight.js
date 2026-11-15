@@ -101,14 +101,15 @@ export function ledgerPreflightShortfalls({ fns, inventory, blocksDetailByDate, 
       const ownHeld = entries.filter((b) => b && ownIds.has(b.eventId)).reduce((s, b) => s + (Number(b.qty) || 0), 0);
       let free;
       if (eventOrders) {
+        const ownedQty = Number(item.qty) || 0;
         const otherEntries = blockEntriesWithVenueShift(entries, eventOrders, date, [...ownIds]);
-        const othersTotal = effectiveBlockedTotal(otherEntries, settings, itemId);
+        const othersTotal = effectiveBlockedTotal(otherEntries, settings, itemId, ownedQty);
         // The free zone is unconditional slack — it costs nothing regardless of whether OTHERS already
         // exceed owned stock (a pre-existing shortfall that isn't this request's doing), so it adds on
         // TOP of whatever headroom is left after others, rather than being netted into `others` first
         // (regression review, 2026-11-15, round 2, finding M3: owned - (othersTotal - freeZone) can
         // under-state free capacity once othersTotal alone already exceeds owned).
-        const freeZone = sharingFreeZone(otherEntries, settings, itemId, ownVenue, ownShift);
+        const freeZone = sharingFreeZone(otherEntries, settings, itemId, ownVenue, ownShift, ownedQty);
         free = Math.max(Math.max(owned - othersTotal, 0) + freeZone, ownHeld, 0);
       } else {
         const others = entries.filter((b) => b && !ownIds.has(b.eventId)).reduce((s, b) => s + (Number(b.qty) || 0), 0);

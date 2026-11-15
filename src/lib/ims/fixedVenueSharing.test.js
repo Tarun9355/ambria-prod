@@ -41,25 +41,25 @@ describe("combinedFixedVenueRequirement", () => {
 });
 
 describe("effectiveBlockedTotal", () => {
-  const settingsFor = (standing) => ({
-    fixedVenues: [
-      { id: "fv_push", name: "Pushpanjali", items: [{ invId: "ITEM1", qty: standing }] },
-    ],
-  });
+  // ownedQty is now a plain 4th argument — the item's own total owned quantity (owner clarification,
+  // 2026-11-15, 2nd report: "Arch panel small" got zero credit because it had never been separately
+  // registered at Pushpanjali's own standing-inventory list; the cap is the item's own `qty`, not a
+  // per-venue registration, so settings here no longer need a per-item `items` list at all).
+  const settings = { fixedVenues: [{ id: "fv_push", name: "Pushpanjali" }] };
 
-  it("the reported Pushpanjali scenario: lunch 12 + dinner 12, standing 12 -> one 12-unit block", () => {
+  it("the reported Pushpanjali scenario: lunch 12 + dinner 12, owned 12 -> one 12-unit block", () => {
     const entries = [
       { qty: 12, venueName: "Pushpanjali", shift: "Lunch" },
       { qty: 12, venueName: "Pushpanjali", shift: "Dinner" },
     ];
-    expect(effectiveBlockedTotal(entries, settingsFor(12), "ITEM1")).toBe(12);
+    expect(effectiveBlockedTotal(entries, settings, "ITEM1", 12)).toBe(12);
   });
 
   it("a different Fixed Venue property never shares with Pushpanjali's own demand", () => {
-    const settings = {
+    const settings2 = {
       fixedVenues: [
-        { id: "fv_push", name: "Pushpanjali", items: [{ invId: "ITEM1", qty: 12 }] },
-        { id: "fv_emerald", name: "Emerald Green", items: [{ invId: "ITEM1", qty: 5 }] },
+        { id: "fv_push", name: "Pushpanjali" },
+        { id: "fv_emerald", name: "Emerald Green" },
       ],
     };
     const entries = [
@@ -68,7 +68,7 @@ describe("effectiveBlockedTotal", () => {
       { qty: 20, venueName: "Emerald Green", shift: "Dinner" },
     ];
     // Pushpanjali combines to 12 (fully shared), Emerald Green has no opposite-shift partner there -> 20 in full
-    expect(effectiveBlockedTotal(entries, settings, "ITEM1")).toBe(32);
+    expect(effectiveBlockedTotal(entries, settings2, "ITEM1", 12)).toBe(32);
   });
 
   it("same shift at two different sub-venues of the same property still sums (no reuse)", () => {
@@ -76,7 +76,7 @@ describe("effectiveBlockedTotal", () => {
       { qty: 12, venueName: "Pushpanjali", shift: "Morning" },
       { qty: 8, venueName: "Pushpanjali", shift: "Morning" },
     ];
-    expect(effectiveBlockedTotal(entries, settingsFor(12), "ITEM1")).toBe(20);
+    expect(effectiveBlockedTotal(entries, settings, "ITEM1", 12)).toBe(20);
   });
 
   it("an unsafe shift (Sundowner) never shares, even with an otherwise-compatible opposite", () => {
@@ -85,7 +85,7 @@ describe("effectiveBlockedTotal", () => {
       { qty: 12, venueName: "Pushpanjali", shift: "Sundowner" },
     ];
     // Sundowner's 12 is "other" -> always added in full; Lunch alone (no night partner) also adds in full
-    expect(effectiveBlockedTotal(entries, settingsFor(12), "ITEM1")).toBe(24);
+    expect(effectiveBlockedTotal(entries, settings, "ITEM1", 12)).toBe(24);
   });
 
   it("an outdoor (non-Fixed-Venue) booking always sums in full, regardless of shift", () => {
@@ -93,34 +93,34 @@ describe("effectiveBlockedTotal", () => {
       { qty: 10, venueName: "Client's Own Lawn", shift: "Lunch" },
       { qty: 7, venueName: "Client's Own Lawn", shift: "Dinner" },
     ];
-    expect(effectiveBlockedTotal(entries, settingsFor(12), "ITEM1")).toBe(17);
+    expect(effectiveBlockedTotal(entries, settings, "ITEM1", 12)).toBe(17);
   });
 
-  it("an item not standing at the resolved property gets no credit (standing 0)", () => {
+  it("an item owned 0 units gets no credit", () => {
     const entries = [
       { qty: 12, venueName: "Pushpanjali", shift: "Lunch" },
       { qty: 12, venueName: "Pushpanjali", shift: "Dinner" },
     ];
-    expect(effectiveBlockedTotal(entries, settingsFor(0), "ITEM1")).toBe(24);
+    expect(effectiveBlockedTotal(entries, settings, "ITEM1", 0)).toBe(24);
   });
 
   it("a sub-venue resolves to its parent property via fixedVenueFor/venueParents", () => {
-    const settings = {
-      fixedVenues: [{ id: "fv_exotica", name: "Exotica", items: [{ invId: "ITEM1", qty: 12 }] }],
+    const settingsP = {
+      fixedVenues: [{ id: "fv_exotica", name: "Exotica" }],
       venueParents: { Aura: "Exotica" },
     };
     const entries = [
       { qty: 12, venueName: "Aura", shift: "Lunch" },
       { qty: 12, venueName: "Exotica", shift: "Dinner" },
     ];
-    expect(effectiveBlockedTotal(entries, settings, "ITEM1")).toBe(12);
+    expect(effectiveBlockedTotal(entries, settingsP, "ITEM1", 12)).toBe(12);
   });
 
   it("the RAKESH/NP Singh/Sahej Singh scenario reproduces the real 7-unit shortfall, not -19", () => {
-    const settings = {
+    const settings2 = {
       fixedVenues: [
-        { id: "fv_push", name: "Pushpanjali", items: [{ invId: "ITEM1", qty: 12 }] },
-        { id: "fv_emerald", name: "Emerald Green", items: [{ invId: "ITEM1", qty: 0 }] },
+        { id: "fv_push", name: "Pushpanjali" },
+        { id: "fv_emerald", name: "Emerald Green" },
       ],
     };
     const entries = [
@@ -128,31 +128,50 @@ describe("effectiveBlockedTotal", () => {
       { qty: 20, venueName: "Emerald Green", shift: "Dinner" }, // RAKESH
       { qty: 12, venueName: "Pushpanjali", shift: "Dinner" }, // Sahej Singh
     ];
-    const total = effectiveBlockedTotal(entries, settings, "ITEM1");
+    const total = effectiveBlockedTotal(entries, settings2, "ITEM1", 25); // item owned 25 total
     expect(total).toBe(32); // Pushpanjali combines to 12, Emerald Green's 20 stands alone
     expect(25 - total).toBe(-7); // owned 25 -> genuinely short by 7, not -19
   });
 
+  it("two DIFFERENT properties each running their own day/night pair for the same item never double-dip the same owned-qty cap (each property's own credit is bounded by its own min(day,night), so the cross-property SUM still reflects the true simultaneous peak)", () => {
+    const settings2 = {
+      fixedVenues: [
+        { id: "fv_a", name: "Property A" },
+        { id: "fv_b", name: "Property B" },
+      ],
+    };
+    const entries = [
+      { qty: 2, venueName: "Property A", shift: "Lunch" },
+      { qty: 4, venueName: "Property A", shift: "Dinner" },
+      { qty: 2, venueName: "Property B", shift: "Lunch" },
+      { qty: 4, venueName: "Property B", shift: "Dinner" },
+    ];
+    const total = effectiveBlockedTotal(entries, settings2, "ITEM1", 4); // 4 owned total
+    // A combines to 4 (max(2,4)), B combines to 4 too — summed, not shared across properties, since
+    // the two properties' dinners genuinely happen at the same time and each needs its own 4.
+    expect(total).toBe(8);
+    expect(4 - total).toBe(-4); // correctly a real shortfall of 4, never silently hidden by the cap
+  });
+
   it("multiple same-group entries at a property combine correctly against the opposite group (order independent)", () => {
     // night 12 + night 12 (two separate night functions, same property) = 24; day 12 added later
-    const settings = settingsFor(12);
     const night1 = [{ qty: 12, venueName: "Pushpanjali", shift: "Dinner" }];
     const night2 = [{ qty: 12, venueName: "Pushpanjali", shift: "Dinner" }];
     const day1 = [{ qty: 12, venueName: "Pushpanjali", shift: "Lunch" }];
-    expect(effectiveBlockedTotal([...night1, ...night2, ...day1], settings, "ITEM1")).toBe(24);
+    expect(effectiveBlockedTotal([...night1, ...night2, ...day1], settings, "ITEM1", 12)).toBe(24);
   });
 
   it("legacy settings without a stable .id on fixedVenues entries still group correctly (regression review finding 7)", () => {
-    const settings = {
+    const settingsNoId = {
       fixedVenues: [
-        { name: "Pushpanjali", items: [{ invId: "ITEM1", qty: 12 }] }, // no .id at all
+        { name: "Pushpanjali" }, // no .id at all
       ],
     };
     const entries = [
       { qty: 12, venueName: "Pushpanjali", shift: "Lunch" },
       { qty: 12, venueName: "Pushpanjali", shift: "Dinner" },
     ];
-    expect(effectiveBlockedTotal(entries, settings, "ITEM1")).toBe(12);
+    expect(effectiveBlockedTotal(entries, settingsNoId, "ITEM1", 12)).toBe(12);
   });
 
   it("a deal that is ITSELF at the property in both shift groups (pre-collapsed via collapseVenueShift) never looks free to share with someone else (regression review finding 2: the overbook repro)", () => {
@@ -172,28 +191,26 @@ describe("effectiveBlockedTotal", () => {
     // E1's 12 lands in "other" (always full, never shared) + E2's 12 is alone in "night" (no day
     // partner to share with) -> 12 + 12 = 24, the correct real total, not 12 (which the pre-fix
     // "pick whichever function set the max" classification would have wrongly produced).
-    expect(effectiveBlockedTotal(entries, settingsFor(12), "ITEM1")).toBe(24);
+    expect(effectiveBlockedTotal(entries, settings, "ITEM1", 12)).toBe(24);
   });
 });
 
 describe("sharingFreeZone — admission-time marginal credit (regression review, 2026-11-15, finding 4)", () => {
-  const settings = {
-    fixedVenues: [{ id: "fv_push", name: "Pushpanjali", items: [{ invId: "ITEM1", qty: 12 }] }],
-  };
+  const settings = { fixedVenues: [{ id: "fv_push", name: "Pushpanjali" }] };
 
   it("a new Dinner request fully pairs with an existing Lunch hold -> free zone covers it entirely", () => {
     const others = [{ qty: 12, venueName: "Pushpanjali", shift: "Lunch" }];
-    expect(sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner")).toBe(12);
+    expect(sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner", 12)).toBe(12);
   });
 
   it("a new request bigger than the opposite group's existing hold only gets a partial free zone", () => {
     const others = [{ qty: 5, venueName: "Pushpanjali", shift: "Lunch" }];
-    expect(sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner")).toBe(5);
+    expect(sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner", 12)).toBe(5);
   });
 
-  it("capped at standing qty even if the opposite group's existing hold is bigger", () => {
+  it("capped at owned qty even if the opposite group's existing hold is bigger", () => {
     const others = [{ qty: 20, venueName: "Pushpanjali", shift: "Lunch" }];
-    expect(sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner")).toBe(12); // standing cap
+    expect(sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner", 12)).toBe(12); // owned-qty cap
   });
 
   it("an existing SAME-group hold reduces the free zone (it's already competing with the new request too)", () => {
@@ -201,44 +218,63 @@ describe("sharingFreeZone — admission-time marginal credit (regression review,
       { qty: 12, venueName: "Pushpanjali", shift: "Lunch" }, // opposite
       { qty: 8, venueName: "Pushpanjali", shift: "Dinner" }, // same group as the new request
     ];
-    // free zone = min(opposite=12, standing=12) - same=8 = 4
-    expect(sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner")).toBe(4);
+    // free zone = min(opposite=12, owned=12) - same=8 = 4
+    expect(sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner", 12)).toBe(4);
   });
 
   it("no opposite-group demand at all -> no free zone", () => {
     const others = [{ qty: 12, venueName: "Pushpanjali", shift: "Dinner" }];
-    expect(sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner")).toBe(0);
+    expect(sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner", 12)).toBe(0);
   });
 
   it("an unsafe own shift (Sundowner) never gets a free zone", () => {
     const others = [{ qty: 12, venueName: "Pushpanjali", shift: "Lunch" }];
-    expect(sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Sundowner")).toBe(0);
+    expect(sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Sundowner", 12)).toBe(0);
   });
 
   it("a different Fixed Venue property never credits against Pushpanjali's own demand", () => {
     const others = [{ qty: 12, venueName: "Pushpanjali", shift: "Lunch" }];
-    expect(sharingFreeZone(others, settings, "ITEM1", "Emerald Green", "Dinner")).toBe(0);
+    expect(sharingFreeZone(others, settings, "ITEM1", "Emerald Green", "Dinner", 12)).toBe(0);
   });
 
   it("an outdoor own venue never gets a free zone", () => {
     const others = [{ qty: 12, venueName: "Pushpanjali", shift: "Lunch" }];
-    expect(sharingFreeZone(others, settings, "ITEM1", "Client's Own Lawn", "Dinner")).toBe(0);
+    expect(sharingFreeZone(others, settings, "ITEM1", "Client's Own Lawn", "Dinner", 12)).toBe(0);
   });
 
-  it("reproduces the real NP/RAKESH/Sahej scenario end to end (owned 12, standing 12 at Pushpanjali)", () => {
+  it("an item owned 0 units never gets a free zone, however big the opposite-group hold is", () => {
+    const others = [{ qty: 12, venueName: "Pushpanjali", shift: "Lunch" }];
+    expect(sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner", 0)).toBe(0);
+  });
+
+  it("reproduces the real NP/RAKESH/Sahej scenario end to end (owned 12)", () => {
     // Sahej's own new Dinner request of 12, with NP's existing Lunch 12 as the only other entry.
     const others = [{ qty: 12, venueName: "Pushpanjali", shift: "Lunch" }];
-    const othersTotal = effectiveBlockedTotal(others, settings, "ITEM1"); // 12 (NP alone, no partner yet)
-    const freeZone = sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner"); // 12
+    const othersTotal = effectiveBlockedTotal(others, settings, "ITEM1", 12); // 12 (NP alone, no partner yet)
+    const freeZone = sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner", 12); // 12
     const effectiveOthers = Math.max(0, othersTotal - freeZone);
     const owned = 12;
     const free = Math.max(owned - effectiveOthers, 0);
     expect(free).toBeGreaterThanOrEqual(12); // Sahej's own 12 is fully grantable, not short
   });
+
+  it("the live-reported Arch panel small scenario: 2 owned by Lunch, 4 by Dinner, 4 owned total -> fully shares, nothing short", () => {
+    // Owner report, 2026-11-15: this item was never separately registered at Pushpanjali's own
+    // standing-inventory list, so it got ZERO credit under the old per-venue-registration design
+    // (2 + 4 summed to 6 against 4 owned, a false "0 available"). The cap is now the item's own
+    // owned qty, so it needs no registration at all.
+    const others = [{ qty: 2, venueName: "Pushpanjali", shift: "Lunch" }];
+    const othersTotal = effectiveBlockedTotal(others, settings, "ITEM1", 4);
+    const freeZone = sharingFreeZone(others, settings, "ITEM1", "Pushpanjali", "Dinner", 4);
+    const effectiveOthers = Math.max(0, othersTotal - freeZone);
+    const owned = 4;
+    const free = Math.max(owned - effectiveOthers, 0);
+    expect(free).toBeGreaterThanOrEqual(4); // the new 4-unit Dinner request is fully grantable
+  });
 });
 
 describe("getSharingAwareAvailable — Build's own live availability (regression review, 2026-11-15, round 2, finding H1)", () => {
-  const settings = { fixedVenues: [{ id: "fv_push", name: "Pushpanjali", items: [{ invId: "ITEM1", qty: 12 }] }] };
+  const settings = { fixedVenues: [{ id: "fv_push", name: "Pushpanjali" }] };
   const eventOrders = [
     { id: "eo_np", venue: "Pushpanjali", functionsDetail: [{ date: "2027-05-01", venue: "Pushpanjali", shift: "Lunch" }] },
   ];
