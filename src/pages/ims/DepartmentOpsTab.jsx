@@ -12,6 +12,7 @@ import ProductionRequestsCard from "./ProductionRequestsCard.jsx";
 import ShortfallAllocation from "./ShortfallAllocation.jsx";
 import { allocKeyOf, shortfallBreakdown, shortfallLine } from "../../lib/ims/shortfallAlloc";
 import { IconPrinter } from "../../components/icons";
+import ChangeLogEntry from "../../components/shared/ChangeLogEntry";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { fetchOpsVendors } from "../../lib/ims/opsVendors";
@@ -4413,92 +4414,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       the author, the change and the timestamp together as prose, so telling two
                       entries apart meant reading both in full. */}
                   <div className="divide-y divide-gray-100">
-                    {shown.map(r => {
-                      /* ── THE VERB IS SAID ONCE, NOT PER ITEM ──
-                         This was one run-on sentence that repeated the verb for every item:
-                         "added X ×1, added Y ×2, added Z ×16, added W ×8". Four items meant four
-                         "added"s and the names buried between them. Grouping by the change means
-                         the verb is stated once and the items sit under it as chips, so what
-                         happened is one word and what it happened to is a scannable list. The
-                         three verbs get their own colour and their own mark — added, removed and
-                         qty-changed are genuinely different events. */
-                      const VERB = {
-                        swapped: { label: "Switched", mark: "⇄", tile: "bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200", qty: "text-indigo-700" },
-                        added: { label: "Added", mark: "+", tile: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200", qty: "text-emerald-700" },
-                        removed: { label: "Removed", mark: "−", tile: "bg-rose-50 text-rose-700 ring-1 ring-rose-200", qty: "text-rose-700" },
-                        qty_changed: { label: "Quantity changed", mark: "±", tile: "bg-amber-50 text-amber-700 ring-1 ring-amber-200", qty: "text-amber-700" },
-                      };
-                      const groups = {};
-                      (r.items || []).forEach(it => {
-                        const k = it.change === "swapped" ? "swapped" : it.change === "removed" ? "removed" : it.change === "qty_changed" ? "qty_changed" : "added";
-                        (groups[k] = groups[k] || []).push(it);
-                      });
-                      const keys = ["swapped", "added", "qty_changed", "removed"].filter(k => groups[k]);
-                      // What the row says on its right: the count, "151 → 157 (+6)" for a change, "×8 → ×4" for a switch. Entries logged
-                      // before from / to were recorded have only qty.
-                      const qtyText = (k, it) => {
-                        const from = Number(it.from), to = Number(it.to);
-                        const has = Number.isFinite(from) && Number.isFinite(to) && it.from != null && it.to != null;
-                        if (k === "qty_changed" && has) { const d = to - from; return `${from} → ${to} (${d > 0 ? "+" : ""}${d})`; }
-                        if (k === "swapped" && has) return `×${from} → ×${to}`;
-                        if (k === "removed" && has) return `×${from}`;
-                        if (has) return `×${to}`;
-                        return it.qty ? `×${it.qty}` : "";
-                      };
-                      // where: the function and zone(s), and the kit a part sits in
-                      const whereText = (it) => [it.fn, (Array.isArray(it.zones) ? it.zones : []).join(", ")].filter(Boolean).join(" · ");
-                      // The tile takes the verb of the entry's largest group. An entry that mixes
-                      // verbs still lists each one below; the tile is a glance-level mark, and a
-                      // mixed entry has no single true colour — so it takes the dominant one
-                      // rather than inventing a fourth "mixed" state.
-                      const lead = keys.slice().sort((a, b) => groups[b].length - groups[a].length)[0] || "added";
-                      const count = (r.items || []).length;
-                      const stamp = r.requestedAt ? new Date(r.requestedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
-                      return (
-                        <div key={r.id} className="flex gap-3 py-3.5">
-                          <span aria-hidden="true" className={"shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-sm font-semibold leading-none " + VERB[lead].tile}>{VERB[lead].mark}</span>
-                          <div className="min-w-0 flex-1">
-                            {/* What happened on the first line; who and when under it. Squeezed
-                                onto one line, the author read as part of the headline. */}
-                            <div className="flex items-baseline justify-between gap-3">
-                              <span className="min-w-0 truncate text-[13px] font-semibold text-gray-900">
-                                {keys.length === 1 ? `${VERB[lead].label} ${count} item${count === 1 ? "" : "s"}` : `${count} item${count === 1 ? "" : "s"} changed`}
-                              </span>
-                              {/* Exact time stays on the title — the shorthand is for scanning,
-                                  not a replacement for the record. */}
-                              <span className="shrink-0 text-[11px] text-gray-400 whitespace-nowrap tabular-nums" title={stamp}>{relTime(r.requestedAt)}</span>
-                            </div>
-                            <div className="mt-0.5 text-xs text-gray-500">by {r.requestedBy || "—"}</div>
-                            {/* ── A LIST, NOT CHIPS ──
-                                Outlined green chips wrapped into a ragged block with the quantity
-                                buried at the end of each name. One row per item — name left, qty
-                                right-aligned in a column — scans like the inventory it is. */}
-                            {keys.map(k => (
-                              <div key={k} className="mt-2.5">
-                                {keys.length > 1 && <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{VERB[k].label}</div>}
-                                <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
-                                  {groups[k].map((it, ii) => {
-                                    const where = whereText(it);
-                                    const q = qtyText(k, it);
-                                    return (
-                                      <div key={ii} className="flex items-start justify-between gap-3 px-3 py-2">
-                                        <div className="min-w-0">
-                                          {k === "swapped"
-                                            ? <div className="text-xs text-gray-700" title={`${it.fromName || "?"} → ${it.name}`}><span className="text-gray-500 line-through decoration-gray-300">{it.fromName || "?"}</span> <span aria-hidden="true" className="text-indigo-500">→</span> <span className="font-semibold text-gray-900">{it.name}</span></div>
-                                            : <div className={"truncate text-xs " + (k === "removed" ? "text-gray-500 line-through decoration-gray-300" : "text-gray-700")} title={it.name}>{it.name}</div>}
-                                          {where && <div className="mt-0.5 truncate text-[11px] text-gray-400" title={where}>{where}</div>}
-                                        </div>
-                                        {q ? <span className={"shrink-0 text-xs font-semibold tabular-nums whitespace-nowrap " + VERB[k].qty}>{q}</span> : null}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {shown.map(r => (
+                      <ChangeLogEntry key={r.id} items={r.items} by={r.requestedBy} when={relTime(r.requestedAt)}
+                        stamp={r.requestedAt ? new Date(r.requestedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : ""} />
+                    ))}
                   </div>
                   </div>
                   {/* 10 entries a page: which ones these are of how many, and Previous / Next - kept below the list, outside its scroll */}
@@ -4632,41 +4551,35 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
               const list = deptChangesOf(sel.id);
               if (!list.length) return null;
               return (
-                <div className="rounded-xl bg-amber-50 ring-1 ring-amber-200 px-3.5 py-3" role="status">
-                  <div className="flex items-center gap-2">
+                <div className="rounded-xl bg-white ring-1 ring-amber-300 shadow-[0_1px_2px_rgba(16,24,40,0.05)] overflow-hidden" role="status">
+                  {/* the Activity log's own look (owner ask 2026-11-15) - an amber head so it still reads as a warning */}
+                  <div className="px-4 py-2.5 flex items-center gap-2 bg-amber-50 border-b border-amber-200">
                     <span aria-hidden="true" className="w-6 h-6 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-[13px]">⚠</span>
-                    <div className="text-[13px] font-semibold text-amber-900">Changed in the last 48 hours</div>
-                    <span className="ml-auto text-[11px] text-amber-700 tabular-nums">{`${list.length} ${list.length === 1 ? "change" : "changes"}`}</span>
+                    <span className="text-[14px] font-semibold text-amber-900">Changed in the last 48 hours</span>
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 tabular-nums">{list.length}</span>
                   </div>
-                  {/* every line of the 48 hours, no "show all" - the list scrolls past a few lines; anything older is in the
-                      Activity log (owner ask 2026-11-15) */}
-                  <ul className="mt-2 space-y-1 max-h-[232px] overflow-y-auto overscroll-contain pr-1">
+                  {/* every entry of the 48 hours, no "show all" - the list scrolls; anything older is in the Activity log. An entry opens
+                      the block it changed (goToChange). */}
+                  <div className="max-h-[360px] overflow-y-auto overscroll-contain px-4 divide-y divide-gray-100">
                     {list.map((c, i) => {
-                      const own = c.dept === dept;
                       const canGo = deptOptions.includes(c.dept);
-                      const body = (
-                        <>
-                          <span className="font-semibold text-gray-900 shrink-0">{c.label}</span>
-                          {c.text && <span className="min-w-0 truncate text-gray-600">· {c.text}</span>}
-                          {c.times > 1 && <span className="shrink-0 text-[10px] font-semibold text-amber-800 bg-amber-100 rounded px-1">×{c.times}</span>}
-                          <span className="ml-auto shrink-0 text-gray-500 tabular-nums">{c.by} · {agoText(c.at, lockNow)}</span>
-                        </>
+                      const entry = (
+                        <ChangeLogEntry items={c.section === "inv" ? c.items : null} title={`${c.label} updated`} by={c.by} when={agoText(c.at, lockNow)}
+                          stamp={new Date(c.at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                          sub={c.section === "inv" ? c.label : ""} times={c.times}
+                          trailing={canGo ? <span aria-hidden="true" className="text-amber-700 font-semibold">›</span> : null} />
                       );
-                      return (
-                        <li key={i}>
-                          {canGo
-                            ? <button type="button" onClick={() => goToChange(c)} title={`Open ${c.dept} · ${c.label}`}
-                                className={"w-full flex items-center gap-2 text-left text-[12px] rounded-lg px-2 py-1.5 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 transition-colors" + (own ? "" : " opacity-90")}>
-                                {body}<span aria-hidden="true" className="shrink-0 text-amber-700">›</span>
-                              </button>
-                            : <div className="flex items-center gap-2 text-[12px] px-2 py-1.5 opacity-70">{body}</div>}
-                        </li>
-                      );
+                      return canGo
+                        ? <div key={i} role="button" tabIndex={0} onClick={() => goToChange(c)} onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goToChange(c); } }}
+                            title={`Open ${c.label}`} className="-mx-2 px-2 rounded-lg cursor-pointer hover:bg-amber-50/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 transition-colors">{entry}</div>
+                        : <div key={i}>{entry}</div>;
                     })}
-                  </ul>
-                  <button type="button" onClick={() => setLogOpen(true)} className="mt-1.5 ml-2 text-[11px] font-semibold text-amber-800 hover:text-amber-950">
-                    Older changes → Activity log
-                  </button>
+                  </div>
+                  <div className="px-4 py-2 border-t border-gray-100">
+                    <button type="button" onClick={() => setLogOpen(true)} className="text-[11px] font-semibold text-amber-800 hover:text-amber-950">
+                      Older changes → Activity log
+                    </button>
+                  </div>
                 </div>
               );
             })()}
