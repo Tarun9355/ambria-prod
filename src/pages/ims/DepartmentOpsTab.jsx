@@ -934,6 +934,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     return m;
   }, [amendRequests, eventOrders, lockNow]);
   // the chip's tooltip: "Changed in the last 48 h — Floral: Inventory blocked, Actuals · Anmol, 2 h ago"
+  // a line of the "changed in the last 48 hours" list, clicked: that department (if this person can open it), the planning
+  // view, the block that changed open, and the page scrolled to it
+  const goToChange = (c) => {
+    if (!deptOptions.includes(c.dept)) return;
+    if (c.dept !== dept) setDept(c.dept);
+    setOpsView("planning");
+    setModal(c.section === "plan" ? null : c.section);
+    setTimeout(() => document.getElementById("dept-ops-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+  };
   const changeTip = (list) => {
     const byDept = new Map();
     list.forEach((c) => { const s = byDept.get(c.dept) || new Set(); s.add(c.label); byDept.set(c.dept, s); });
@@ -4389,20 +4398,24 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                   <ul className="mt-2 space-y-1">
                     {shown.map((c, i) => {
                       const own = c.dept === dept;
+                      const canGo = deptOptions.includes(c.dept);
                       const body = (
                         <>
                           <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (own ? "bg-amber-200 text-amber-900" : "bg-white text-gray-500 ring-1 ring-gray-200")}>{c.dept || "—"}</span>
                           <span className="font-semibold text-gray-900 shrink-0">{c.label}</span>
                           {c.text && <span className="min-w-0 truncate text-gray-600">· {c.text}</span>}
+                          {c.times > 1 && <span className="shrink-0 text-[10px] font-semibold text-amber-800 bg-amber-100 rounded px-1">×{c.times}</span>}
                           <span className="ml-auto shrink-0 text-gray-500 tabular-nums">{c.by} · {agoText(c.at, lockNow)}</span>
                         </>
                       );
                       return (
                         <li key={i}>
-                          {own
-                            ? <button type="button" onClick={() => setModal(c.section === "plan" ? null : c.section)} title={`Open ${c.label}`}
-                                className="w-full flex items-center gap-2 text-left text-[12px] rounded-lg px-2 py-1.5 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 transition-colors">{body}</button>
-                            : <div className="flex items-center gap-2 text-[12px] px-2 py-1.5 opacity-80">{body}</div>}
+                          {canGo
+                            ? <button type="button" onClick={() => goToChange(c)} title={`Open ${c.dept} · ${c.label}`}
+                                className={"w-full flex items-center gap-2 text-left text-[12px] rounded-lg px-2 py-1.5 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 transition-colors" + (own ? "" : " opacity-90")}>
+                                {body}<span aria-hidden="true" className="shrink-0 text-amber-700">›</span>
+                              </button>
+                            : <div className="flex items-center gap-2 text-[12px] px-2 py-1.5 opacity-70">{body}</div>}
                         </li>
                       );
                     })}
@@ -4497,7 +4510,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                 income cards and the event header all stay in view while you read it.
                 Same mechanic as before: every block still lives here and hides itself unless it
                 is the open one (modalCls), so nothing had to be moved or re-parented. */}
-            <div onClick={onPanelBackdrop} className={modal ? PANEL_WRAP : "hidden"}>
+            <div id="dept-ops-panel" onClick={onPanelBackdrop} className={modal ? PANEL_WRAP : "hidden"}>
               <div className={PANEL_CARD}>
                 {/* NOT sticky from sm up. It was, back when this panel was a dialog with its own
                     scroll — but inline the page scrolls instead, so a sticky bar just hovers over

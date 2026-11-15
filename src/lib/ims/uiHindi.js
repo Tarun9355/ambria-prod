@@ -96,6 +96,7 @@ export const UI_HI = {
 // Small words that read right on their own in the middle of a label ("12 pcs", "3 trucks"), checked before the phonetic spelling.
 const UI_WORDS = {
   // the "changed in the last 48 hours" marks (owner ask 2026-11-15)
+  furniture: "फ़र्नीचर", lighting: "लाइटिंग", tenting: "टेंटिंग", fabric: "फ़ैब्रिक", floral: "फ़्लोरल", structure: "स्ट्रक्चर",
   ago: "पहले", actuals: "असल खर्च", updated: "अपडेट", yesterday: "कल", latest: "ताज़ा", change: "बदलाव", changes: "बदलाव", open: "खोलें",
   pcs: "पीस", pc: "पीस", nos: "नग", sqft: "वर्ग फुट", bundle: "बंडल", bundles: "बंडल", dihari: "दिहाड़ी", qty: "मात्रा", total: "कुल",
   truck: "ट्रक", trucks: "ट्रक", item: "आइटम", items: "आइटम", zone: "ज़ोन", zones: "ज़ोन", day: "दिन", days: "दिन", event: "इवेंट",

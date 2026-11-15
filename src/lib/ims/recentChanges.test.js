@@ -28,6 +28,12 @@ describe("eventChanges", () => {
     expect(out.map((c) => [c.dept, c.section, c.by])).toEqual([["Floral", "inv", "Anmol"], ["Floral", "actuals", "Sudhir"]]);
     expect(out[0].text).toBe("+2 Round Table");
   });
+  it("the same change logged again and again is one line, with how many times", () => {
+    const again = [1, 2, 3].map((h) => ({ eventOrderId: "e1", status: "logged", department: "Furniture", requestedAt: NOW - h * H, requestedBy: "P", items: [{ name: "Chair", change: "added", to: 4 }] }));
+    const out = eventChanges({ id: "e1" }, again, NOW);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ times: 3, at: NOW - 1 * H, text: "+4 Chair" });
+  });
   it("nothing recent, nothing", () => {
     expect(eventChanges({ id: "x" }, reqs, NOW)).toEqual([]);
   });
@@ -47,6 +53,6 @@ describe("itemsSummary / agoText", () => {
     expect(agoText(NOW - 20 * 60000, NOW)).toBe("20 min ago");
     expect(agoText(NOW - 3 * H, NOW)).toBe("3 hrs ago");
     expect(agoText(NOW - 1 * H, NOW)).toBe("1 hr ago");
-    expect(agoText(NOW - 30 * H, NOW)).toBe("yesterday");
+    expect(agoText(NOW - 30 * H, NOW)).toBe("30 hrs ago");
   });
 });

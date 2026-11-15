@@ -53,7 +53,9 @@ export function itemsSummary(items, max = 3) {
   return shown.join(", ") + (list.length > max ? ` +${list.length - max} more` : "");
 }
 
-// Every change to `eo` within `windowMs` of `now`, newest first: { at, by, dept, section, label, text }.
+// Every change to `eo` within `windowMs` of `now`, newest first: { at, by, dept, section, label, text, times }. The same change
+// logged again and again (Studio re-logs a sold deal's inventory on every reconcile - one event showed 99 lines, most repeats) is
+// one line: the newest, with how many times it was logged.
 export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHANGE_WINDOW_MS) {
   if (!eo) return [];
   const since = now - windowMs;
@@ -71,16 +73,28 @@ export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHA
       out.push({ at, by: c.by || "—", dept, section, label: SECTION_LABEL[section] || SECTION_LABEL.plan, text: "" });
     });
   });
-  return out.sort((a, b) => b.at - a.at);
+  out.sort((a, b) => b.at - a.at);
+  const seen = new Map();
+  const merged = [];
+  out.forEach((c) => {
+    const k = `${c.dept}|${c.section}|${c.text}`;
+    const first = seen.get(k);
+    if (first) { first.times += 1; return; }
+    const line = { ...c, times: 1 };
+    seen.set(k, line);
+    merged.push(line);
+  });
+  return merged;
 }
 
-// "just now", "25 min ago", "3 hrs ago", "yesterday", "2 days ago" - "hrs", not "h": the Hindi screen reads words one by one, and a
-// lone "h" would turn every "H 12 ft" into hours
+// "just now", "25 min ago", "3 hrs ago", "30 hrs ago", "3 days ago" - hours right up to 48, not "yesterday": inside a 48-hour
+// list "yesterday" read as older than the list claims (owner report 2026-11-15). "hrs", not "h": the Hindi screen reads words one
+// by one, and a lone "h" would turn every "H 12 ft" into hours
 export function agoText(at, now = Date.now()) {
   const m = Math.max(0, Math.round((now - at) / 60000));
   if (m < 1) return "just now";
   if (m < 60) return `${m} min ago`;
   const h = Math.round(m / 60);
-  if (h < 24) return `${h} ${h === 1 ? "hr" : "hrs"} ago`;
-  return h < 48 ? "yesterday" : `${Math.round(h / 24)} days ago`;
+  if (h <= 48) return `${h} ${h === 1 ? "hr" : "hrs"} ago`;
+  return `${Math.round(h / 24)} days ago`;
 }
