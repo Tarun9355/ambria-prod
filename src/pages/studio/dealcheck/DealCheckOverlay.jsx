@@ -1427,7 +1427,9 @@ export default function DealCheckOverlay({ ctx }) {
               // (nothing billed/blocked vs. a real reservation) — merging them under whichever row
               // happened to be seen first would wrongly stamp the whole combined qty with one row's
               // foc value, telling ops to either load billed stock or leave blocked stock at the venue.
-              const key = (it.name || "") + "|" + (it.sub || "") + "|" + (it.imsId || "") + "|" + (it.prodOrBuy || "") + "|" + (it.foc ? "foc" : "");
+              // fromKit too (owner report 2026-11-15): a part of another department's kit (Pillar Candle of the 3D candle wall) and the
+              // same item placed loose (Pillar Candle on a table) are two lines - merged, the loose ones read "part of" the kit and the qty doubled.
+              const key = (it.name || "") + "|" + (it.sub || "") + "|" + (it.imsId || "") + "|" + (it.prodOrBuy || "") + "|" + (it.foc ? "foc" : "") + "|" + String(it.fromKit || "").trim().toLowerCase();
               // rentalQty: the raw per-function qty this line was actually billed against, summed
               // straight across every function with NO cross-function dedup — unlike `qty` ("to
               // load"), which nets out the same physical units a sibling function already reuses.
