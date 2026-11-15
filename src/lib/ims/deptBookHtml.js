@@ -336,8 +336,11 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // reads `held` unconditionally for the item's kit/photo/dims/recipe fields, so a kit filed on
     // another department's sheet silently looked un-kitted (held undefined -> kit: 0) instead of
     // missing just its own card. Rebased on kitSourceItems, which is already all-departments-aware.
-    const heldByInv = new Map(kitSourceItems.filter(b => b.invId).map(b => [String(b.invId), b]));
-    const heldByName = new Map(kitSourceItems.map(b => [String(b.name || "").trim().toLowerCase(), b]));
+    // An item can be held twice - loose, and as a part of another department's kit (Deal Check keeps them apart since 2026-11-15):
+    // the loose row wins (later entries overwrite), the zone card it describes is the loose placement.
+    const heldOrder = [...kitSourceItems.filter(b => b.fromKit), ...kitSourceItems.filter(b => !b.fromKit)];
+    const heldByInv = new Map(heldOrder.filter(b => b.invId).map(b => [String(b.invId), b]));
+    const heldByName = new Map(heldOrder.map(b => [String(b.name || "").trim().toLowerCase(), b]));
     // ── WHERE A KIT'S PARTS HIDE ──
     // Deal Check splits a kit across departments by each PART's own category, so Floral ends up
     // holding a terracotta element bolted to a coffee table that Furniture owns. The zone lists

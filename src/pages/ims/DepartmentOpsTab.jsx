@@ -5023,14 +5023,6 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                   it — in a fixed-width ITEM column four inline badges pushed the
                                   name out of sight, which is the opposite of what they are for. */}
                               <div className="flex items-center gap-1 flex-wrap mt-0.5">
-                                {/* ── THE KIT BADGE IS THE TOGGLE ──
-                                    The components are the one thing on this row that can be
-                                    opened, and the badge is already the thing that says there
-                                    are any — so it opens them rather than a separate control
-                                    competing with it. It carries the count, so you can tell
-                                    what you are unfolding before you unfold it.
-                                    A kit with no components stays a plain label: a control that
-                                    reveals nothing is worse than no control. */}
                                 {/* a kit is always open (owner ask 2026-11-15) - the badge only says how many parts it holds */}
                                 {it.isKit && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">{(it.components || []).length > 0 ? `KIT · ${it.components.length}` : "KIT"}</span>}
                                 {it.shortQty > 0 && (it.outOfStock
