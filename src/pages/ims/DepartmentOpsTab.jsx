@@ -572,8 +572,14 @@ function DeptIncomeModal({ eo, depts, startDept, onClose }) {
 // A small amber ⚠ on a calendar chip: the event changed in the last 48 hours (owner ask 2026-11-15). `tip` says what.
 function ChangedMark({ tip }) {
   return (
-    <span title={tip} aria-label={tip} role="img"
-      className="ml-auto shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-400 text-white text-[9px] font-bold leading-none shadow-[0_0_0_2px_rgba(255,255,255,0.9)]">!</span>
+    <span title={tip} aria-label={tip} role="img" className="ml-auto shrink-0 inline-flex text-amber-500">
+      {/* a warning triangle, drawn - not a font glyph, so it sits centred at every size */}
+      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M8 1.6c.4 0 .8.2 1 .6l6 10.6c.4.8-.1 1.7-1 1.7H2c-.9 0-1.4-.9-1-1.7L7 2.2c.2-.4.6-.6 1-.6Z" fill="currentColor" />
+        <rect x="7.25" y="5.4" width="1.5" height="4.6" rx=".75" fill="#fff" />
+        <circle cx="8" cy="12" r=".9" fill="#fff" />
+      </svg>
+    </span>
   );
 }
 
