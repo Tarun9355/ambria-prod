@@ -41,6 +41,7 @@ import { buildDeptBookHtml, buildFinish } from "../../lib/ims/deptBookHtml";
 import { renderDeptBook, loadPdfLibs, loadPdfLogosOnce, isStaleChunk, reloadForUpdate } from "../../lib/ims/deptBookPdf";
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
+import { stampDeptChanges, eventChanges, agoText, SECTION_LABEL } from "../../lib/ims/recentChanges";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { logWrite } from "../../lib/studio/userActions";
 
@@ -568,6 +569,14 @@ function DeptIncomeModal({ eo, depts, startDept, onClose }) {
   );
 }
 
+// A small amber ⚠ on a calendar chip: the event changed in the last 48 hours (owner ask 2026-11-15). `tip` says what.
+function ChangedMark({ tip }) {
+  return (
+    <span title={tip} aria-label={tip} role="img"
+      className="ml-auto shrink-0 inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-400 text-white text-[9px] font-bold leading-none shadow-[0_0_0_2px_rgba(255,255,255,0.9)]">!</span>
+  );
+}
+
 export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [] }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
@@ -651,6 +660,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // no fragments to mis-close around bodies hundreds of lines long — and leaves their inputs
   // mounted, so a half-typed truck number survives opening and closing the dialog.
   const [modal, setModal] = useState(null);
+  const [changesOpen, setChangesOpen] = useState(false); // the "changed in the last 48 h" list, all lines or the first few
   // ── "ADD A SITE" MENU ──
   // A real popover, not a <select>. The option list of a native select is drawn by the OS, so
   // none of it can be styled — the dates and day-offsets could only ever be crammed into one
@@ -904,6 +914,26 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // refresh right as a booking crosses its lock time.
   const [lockNow, setLockNow] = useState(() => Date.now());
   useEffect(() => { const id = setInterval(() => setLockNow(Date.now()), 60000); return () => clearInterval(id); }, []);
+  // ── Changed in the last 48 hours (owner ask 2026-11-15) ── per event: its inventory change logs and Dept Ops edits
+  // (lib/ims/recentChanges). A ⚠ on the calendar chip, and inside the event a list + a badge on each block that changed.
+  // lockNow (ticks every minute) is the clock, so a change ages out of the window without a reload.
+  const changedByEo = useMemo(() => {
+    const reqsByEo = new Map();
+    (amendRequests || []).forEach((r) => { if (r?.status === "logged" && r.eventOrderId) (reqsByEo.get(r.eventOrderId) || reqsByEo.set(r.eventOrderId, []).get(r.eventOrderId)).push(r); });
+    const m = new Map();
+    (eventOrders || []).forEach((eo) => {
+      const list = eventChanges(eo, reqsByEo.get(eo.id) || [], lockNow);
+      if (list.length) m.set(eo.id, list);
+    });
+    return m;
+  }, [amendRequests, eventOrders, lockNow]);
+  // the chip's tooltip: "Changed in the last 48 h — Floral: Inventory blocked, Actuals · Anmol, 2 h ago"
+  const changeTip = (list) => {
+    const byDept = new Map();
+    list.forEach((c) => { const s = byDept.get(c.dept) || new Set(); s.add(c.label); byDept.set(c.dept, s); });
+    const parts = [...byDept].map(([d, s]) => `${d || "—"}: ${[...s].join(", ")}`);
+    return `Changed in the last 48 h — ${parts.join(" · ")} (latest: ${list[0].by}, ${agoText(list[0].at, lockNow)})`;
+  };
   const lock = actualsLockState(sel, settings, lockNow);
   const [reopenPrompt, setReopenPrompt] = useState(false); // admin's "Reopen for editing" reason dialog
   const [reopenReason, setReopenReason] = useState("");
@@ -1201,7 +1231,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       // that just kicked in must block a write already in flight from before the UI caught up.
       if (patchTouchesActuals(patch) && actualsLockState(e, settings, Date.now()).locked) return e;
       const ops = { ...(e.deptOps || {}) };
-      ops[dept] = { ...(ops[dept] || {}), ...patch, updatedAt: Date.now(), updatedBy: authUser?.name || "—" };
+      const at = Date.now(), by = authUser?.name || "—";
+      // which block this save changed, for the "changed in the last 48 h" marks (lib/ims/recentChanges)
+      ops[dept] = { ...(ops[dept] || {}), ...patch, updatedAt: at, updatedBy: by, changes: stampDeptChanges(ops[dept]?.changes, patch, at, by) };
       return { ...e, deptOps: ops };
     }));
   };
@@ -3785,7 +3817,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                             {/* A dot only where there is something — the tile tint already says
                                 it too, but the dot survives at a glance when the row is scanned
                                 rather than read. */}
-                            <span className={"w-1.5 h-1.5 rounded-full " + (on ? "bg-white" : evs.length ? "bg-blue-500" : "bg-transparent")} />
+                            <span className={"w-1.5 h-1.5 rounded-full " + (on ? "bg-white" : evs.some(eo => changedByEo.has(eo.id)) ? "bg-amber-500" : evs.length ? "bg-blue-500" : "bg-transparent")} />
                           </button>
                         );
                       })}
@@ -3812,6 +3844,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                     <span className="flex items-center gap-1.5 min-w-0">
                                       <span className="text-[15px] font-semibold text-gray-900 leading-snug truncate">{eo.clientName || "Event"}</span>
                                       <span className={`shrink-0 text-[9.5px] font-bold px-1 rounded ${vc.bg} ${vc.text}`}>{vc.code}</span>
+                                      {changedByEo.has(eo.id) && <ChangedMark tip={changeTip(changedByEo.get(eo.id))} />}
                                     </span>
                                     {/* Venue and shift, because that is what an event_order actually
                                         carries — there are no start/end times on one to show. */}
@@ -3861,10 +3894,11 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                               // venue gets "ADD"'s color (lib/ims/fixedVenues.js's venueCalendarColor).
                               const vc = venueCalendarColor(settings, eo.functionsDetail?.[0]?.venue || eo.venue || "");
                               return (
-                                <button key={eo.id} onClick={() => setSelId(eo.id)} title={`Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
+                                <button key={eo.id} onClick={() => setSelId(eo.id)} title={changedByEo.has(eo.id) ? changeTip(changedByEo.get(eo.id)) : `Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
                                   className={`w-full flex items-center gap-1 text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
                                   <span className="shrink-0 text-[9px] font-bold opacity-70">{vc.code}</span>
                                   <span className="min-w-0 truncate">{eo.clientName || "Event"}</span>
+                                  {changedByEo.has(eo.id) && <ChangedMark tip={changeTip(changedByEo.get(eo.id))} />}
                                 </button>
                               );
                             })}
@@ -4331,6 +4365,51 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
               <div className="bg-amber-50 rounded-lg px-4 py-3 text-xs text-amber-800">No Deal Check breakdown synced yet for this event. In Studio → Deal Check → <b>Dept Income</b>, click <b>📤 Sync to IMS Dept Ops</b> to push the numbers here.</div>
             )}
 
+            {/* ── CHANGED IN THE LAST 48 HOURS ── (owner ask 2026-11-15) what changed on this event, where and by whom - this
+                department's own lines first and clickable (they open their block); other departments' for context. */}
+            {(() => {
+              const all = changedByEo.get(sel.id) || [];
+              if (!all.length) return null;
+              const mine = all.filter(c => c.dept === dept), others = all.filter(c => c.dept !== dept);
+              const list = [...mine, ...others];
+              const shown = changesOpen ? list : list.slice(0, 4);
+              return (
+                <div className="rounded-xl bg-amber-50 ring-1 ring-amber-200 px-3.5 py-3" role="status">
+                  <div className="flex items-center gap-2">
+                    <span aria-hidden="true" className="w-6 h-6 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-[13px]">⚠</span>
+                    <div className="text-[13px] font-semibold text-amber-900">Changed in the last 48 hours</div>
+                    <span className="ml-auto text-[11px] text-amber-700 tabular-nums">{all.length} change{all.length === 1 ? "" : "s"}{mine.length ? ` · ${mine.length} in ${dept}` : ""}</span>
+                  </div>
+                  <ul className="mt-2 space-y-1">
+                    {shown.map((c, i) => {
+                      const own = c.dept === dept;
+                      const body = (
+                        <>
+                          <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (own ? "bg-amber-200 text-amber-900" : "bg-white text-gray-500 ring-1 ring-gray-200")}>{c.dept || "—"}</span>
+                          <span className="font-semibold text-gray-900 shrink-0">{c.label}</span>
+                          {c.text && <span className="min-w-0 truncate text-gray-600">· {c.text}</span>}
+                          <span className="ml-auto shrink-0 text-gray-500 tabular-nums">{c.by} · {agoText(c.at, lockNow)}</span>
+                        </>
+                      );
+                      return (
+                        <li key={i}>
+                          {own
+                            ? <button type="button" onClick={() => setModal(c.section === "plan" ? null : c.section)} title={`Open ${c.label}`}
+                                className="w-full flex items-center gap-2 text-left text-[12px] rounded-lg px-2 py-1.5 hover:bg-amber-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 transition-colors">{body}</button>
+                            : <div className="flex items-center gap-2 text-[12px] px-2 py-1.5 opacity-80">{body}</div>}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {list.length > 4 && (
+                    <button type="button" onClick={() => setChangesOpen(v => !v)} className="mt-1 ml-2 text-[11px] font-semibold text-amber-800 hover:text-amber-950">
+                      {changesOpen ? "Show less" : `Show all ${list.length}`}
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* ── THE TILE GRID ──
                 One tile per content block, four to a row. Each carries the one figure you open
                 the block for, so the common case — "what is the manpower cost" — is answered
@@ -4381,6 +4460,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                         <div className="min-w-0 flex-1">
                           <div className="text-[13px] font-semibold text-gray-900 leading-snug">{t.title}</div>
                           <div className="text-[11px] text-gray-500 leading-snug mt-0.5">{t.sub}</div>
+                          {(() => {
+                            const c = (changedByEo.get(sel.id) || []).find(x => x.dept === dept && x.section === t.k);
+                            return c ? <div className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5" title={`${c.label} changed by ${c.by}, ${agoText(c.at, lockNow)}${c.text ? ` — ${c.text}` : ""}`}>⚠ Updated {agoText(c.at, lockNow)}</div> : null;
+                          })()}
                         </div>
                         {/* gray-300 put this at ~1.5:1 on white — present in the markup, absent
                             on screen. gray-500 is 4.8:1, and it darkens on hover so the chevron
@@ -6168,6 +6251,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                         <div className="min-w-0 flex-1">
                           <div className="text-[13px] font-semibold text-gray-900 leading-snug">{t.title}</div>
                           <div className="text-[11px] text-gray-500 leading-snug mt-0.5">{t.sub}</div>
+                          {(() => {
+                            const c = (changedByEo.get(sel.id) || []).find(x => x.dept === dept && x.section === t.k);
+                            return c ? <div className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5" title={`${c.label} changed by ${c.by}, ${agoText(c.at, lockNow)}${c.text ? ` — ${c.text}` : ""}`}>⚠ Updated {agoText(c.at, lockNow)}</div> : null;
+                          })()}
                         </div>
                         {/* gray-300 put this at ~1.5:1 on white — present in the markup, absent
                             on screen. gray-500 is 4.8:1, and it darkens on hover so the chevron
