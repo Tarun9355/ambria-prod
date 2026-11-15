@@ -239,6 +239,12 @@ export default function StudioModals({ ctx }) {
         // broken rather than as not applying here — asked about twice before this note existed.
         const splitEligible = splitCapable && origQty >= 2;
         const inSplit = splitEligible && availSplit?.key === modalKey;
+        // Hoisted out of the per-candidate map below (it used to be computed again inside it) so the
+        // header can show the same "you need X" figure the red/green comparison itself uses — owner
+        // report, 2026-11-15: the picker showed each candidate's free stock but never said what this
+        // row actually needs, so there was nothing to compare that number against.
+        const needQty = Number(availModal.need) || origQty;
+        const singleRowCompare = !multi && !inSplit && (!availModal.onPick || availModal.strictAvail);
         const splitIds = inSplit ? availSplit.ids : [];
         const toggleSplitId = (id) => setAvailSplit(s => {
           const ids = s?.key === modalKey ? s.ids : [];
@@ -289,17 +295,24 @@ export default function StudioModals({ ctx }) {
                     ? `Splitting ${origQty} × ${availModal.elName} — pick 2 or more items below`
                     : <>{availModal.subcat||"—"} · free on {availModal.date||"event date"} · tap to pick</>}
                 </div>
-                {/* Owner-reported confusion: this card's own current qty is excluded from every
-                    "free" count below (you aren't competing with yourself), which read as the
-                    numbers ignoring what's already committed here. Spelled out so it's clear the
-                    card's own qty IS accounted for, just not subtracted from its own candidates. */}
-                {!inSplit && origQty > 0 && (
+                {/* Owner-reported confusion, 2026-11-15: this picker showed every candidate's free
+                    stock but never said what THIS row actually needs, so there was nothing to
+                    compare the free numbers against. Shown wherever the red/green comparison itself
+                    applies (singleRowCompare) — Split/multi-select already state their own needed
+                    figure elsewhere (origQty-per-share, multi.need). */}
+                {singleRowCompare && needQty > 0 ? (
+                  // Merged with the "already holds" explanation below (same number — showing both as
+                  // separate lines read as two different figures, regression review, 2026-11-15).
+                  <div style={{fontSize:12.5,color:textP,marginTop:4,fontWeight:700}}>Needed for this build: <span style={{color:accent}}>{needQty}</span> {availModal.unitLabel || "pc"}
+                    <span style={{fontSize:10.5,color:textS,fontWeight:400,opacity:0.8}}> — already held by this card, so the counts below exclude it (you're not competing with your own pick)</span>
+                  </div>
+                ) : (!inSplit && origQty > 0 && (
                   // Number(availModal.need) || origQty, not bare origQty — a kit component's own
                   // origQty/splitQty is deliberately its PER-KIT qty (what Split divides), which
                   // understated what this row really holds across every kit in it (round 3
                   // regression review, 2026-11-15, finding F4).
                   <div style={{fontSize:10.5,color:textS,marginTop:3,opacity:0.8}}>This card already holds {Number(availModal.need) || origQty} — the counts below exclude that (you're not competing with your own pick), so the current item can show its full pool.</div>
-                )}
+                ))}
                 {/* Caller-supplied context (e.g. Deal Check's carpet card: "1200 sqft needed") — the
                     modal covers whatever showed this figure behind it, so it's restated here rather
                     than making the caller remember it. Opt-in (opts.neededLabel); most callers (a
@@ -408,8 +421,8 @@ export default function StudioModals({ ctx }) {
                     // carpet mode already makes its own comparison (needSqft/shortBy below). None of
                     // this affects `unpickable` below, which still uses the unconditional old rule —
                     // see its own note.
-                    const needQty = Number(availModal.need) || origQty;
-                    const singleRowCompare = !multi && !inSplit && (!availModal.onPick || availModal.strictAvail);
+                    // needQty/singleRowCompare are hoisted above (outside this map) so the header can
+                    // show the same figure.
                     const out = (singleRowCompare && needQty > 0) ? it.free < needQty : it.free<=0;
                     // Deliberately NOT `out && canMake===false` — unpickable must stay keyed to the
                     // unconditional "is there truly zero free" read even where `out` above is now
@@ -476,6 +489,12 @@ export default function StudioModals({ ctx }) {
                               already, so "Piece" was mislabeling the exact same 42 as a count of rugs
                               instead of the sqft that number has always meant. */}
                           <div style={{fontSize:9.5,marginTop:2,color:out?"#EF4444":"#059669",fontWeight:600}}>{it.total ?? it.free} {availModal.unitLabel || it.unit || "pc"} total</div>
+                          {/* Needed qty restated on every card (not just the header) so each one's free
+                              count has something to be compared against without hovering for the
+                              tooltip — owner report, 2026-11-15. */}
+                          {singleRowCompare && needQty > 0 && (
+                            <div style={{fontSize:9.5,marginTop:1,color:out?"#EF4444":textS,fontWeight:700}}>needs {needQty}</div>
+                          )}
                           {/* This venue's OWN standing stock — already folded into the green free
                               badge above (availableAtVenue's own-venue skip), with nothing saying so
                               until now. Without this line, a venue's own fixed-standing units looked
@@ -582,6 +601,10 @@ export default function StudioModals({ ctx }) {
                   <div style={{minWidth:0}}>
                     <div style={{fontSize:13,fontWeight:600,color:textP,whiteSpace:"normal"}}>
                       {f.partId ? f.partName : f.name}
+                      {/* Qty needed — a kit part's own need (partNeed) or the plain item's el.qty
+                          (need) — so it's clear how much is short, not just that something is
+                          (owner ask, 2026-11-15). */}
+                      {(() => { const raw = Number(f.partId ? f.partNeed : f.need) || 0; const n = Math.round(raw * 100) / 100; return n > 0 ? <span style={{color:"#EF4444",fontWeight:700}}> — need {n}</span> : null; })()}
                     </div>
                     <div style={{fontSize:11,color:textS,marginTop:2}}>
                       {[f.partId ? `in ${f.name}` : "", f.fnLabel, f.fnDate ? new Date(f.fnDate + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""].filter(Boolean).join(" · ")}

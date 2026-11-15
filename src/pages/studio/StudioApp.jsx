@@ -6704,7 +6704,10 @@ export default function StudioApp() {
               // (StudioModals.jsx's partNeed, openOosPicker) reads this; without it, slotDraw was
               // always undefined so the gate's own swap picker never added the slot back for its
               // current item at all (round 3 regression review verification, 2026-11-15).
-              itemOut: !!r.outOfStock, shortParts: partsOut.map((p) => ({ id: p.id, name: p.name, need: p.need })),
+              // el.qty — the item-level counterpart of a kit part's own `need` above — so the gate
+              // modal can show how much is needed for a plain short item too, not just a kit's short
+              // parts (owner ask, 2026-11-15: "they see availability but not their need qty").
+              itemOut: !!r.outOfStock, need: Number(el.qty) || 0, shortParts: partsOut.map((p) => ({ id: p.id, name: p.name, need: p.need })),
               // what is short, by name only - the gate modal shows just this: the item itself when it is out, and/or the kit part(s) that are
               shortNames: [...new Set([...(r.outOfStock ? [item?.name || el.name || "Item"] : []), ...partsOut.map((p) => p.name)])] });
           }
