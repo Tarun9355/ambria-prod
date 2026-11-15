@@ -43,7 +43,7 @@ import { buildDeptBookHtml, buildFinish } from "../../lib/ims/deptBookHtml";
 import { renderDeptBook, loadPdfLibs, loadPdfLogosOnce, isStaleChunk, reloadForUpdate } from "../../lib/ims/deptBookPdf";
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
-import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeLogs } from "../../lib/ims/recentChanges";
+import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeLogs, unseenChanges } from "../../lib/ims/recentChanges";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { logWrite } from "../../lib/studio/userActions";
 
@@ -1076,16 +1076,35 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // ── Changed in the last 48 hours (owner ask 2026-11-15) ── per event: its inventory change logs and Dept Ops edits
   // (lib/ims/recentChanges). A ⚠ on the calendar chip, and inside the event a list + a badge on each block that changed.
   // lockNow (ticks every minute) is the clock, so a change ages out of the window without a reload.
+  // A department head (a "... Head" role tied to departments, never an admin) stops seeing the changes once they download that
+  // department's PDF (owner ask 2026-11-15) - per person, so another head or an admin still sees them (unseenChanges).
+  const isDeptHead = !isAdmin && Array.isArray(myDepts) && myDepts.length > 0 && /head/i.test(String(authUser?.role || ""));
+  const seenKey = isDeptHead ? String(authUser?.id || authUser?.name || "") : "";
   const changedByEo = useMemo(() => {
     const reqsByEo = new Map();
     (amendRequests || []).forEach((r) => { if (r?.status === "logged" && r.eventOrderId) (reqsByEo.get(r.eventOrderId) || reqsByEo.set(r.eventOrderId, []).get(r.eventOrderId)).push(r); });
     const m = new Map();
     (eventOrders || []).forEach((eo) => {
-      const list = eventChanges(eo, reqsByEo.get(eo.id) || [], lockNow);
+      const list = unseenChanges(eventChanges(eo, reqsByEo.get(eo.id) || [], lockNow), eo, seenKey);
       if (list.length) m.set(eo.id, list);
     });
     return m;
-  }, [amendRequests, eventOrders, lockNow]);
+  }, [amendRequests, eventOrders, lockNow, seenKey]);
+  // The PDF downloaded by a department head: this event's changes up to now are seen, for them, in each of their departments the
+  // book covers. Not a plan edit - no updatedAt, no change stamp (recentChanges NOT_A_CHANGE), and saved whatever Planning-edit
+  // permission says, as it only records that they read it.
+  const markChangesSeen = (depts) => {
+    if (!sel || !seenKey) return;
+    const mine = (depts || []).filter((d) => myDepts.includes(d));
+    if (!mine.length) return;
+    const at = Date.now();
+    setEventOrders(prev => prev.map(e => {
+      if (e.id !== sel.id) return e;
+      const ops = { ...(e.deptOps || {}) };
+      mine.forEach((d) => { const cur = ops[d] || {}; ops[d] = { ...cur, changesSeen: { ...(cur.changesSeen || {}), [seenKey]: at } }; });
+      return { ...e, deptOps: ops };
+    }));
+  };
   // Department-wise (owner ask 2026-11-15): a change shows only in the department it happened in - the calendar marks an event
   // when the department being planned changed on it, and the list inside lists that department's changes.
   const deptChangesOf = (eoId, d = dept) => (changedByEo.get(eoId) || []).filter((c) => c.dept === d);
@@ -3588,6 +3607,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       buildHtml, lang: pdfLang, multi, dept, depts, group: shared, sel, selDateStr, view,
       onNote: setExportNote,
     });
+    // a department head's download: the changes so far are seen (markChangesSeen) - not a View, and not an admin's download
+    if (!view && ok) markChangesSeen(inThisBook);
     if (view && ok && url) {
       if (deckCacheRef.current) URL.revokeObjectURL(deckCacheRef.current.url);
       deckCacheRef.current = { key: cacheKey, url, name };

@@ -28,7 +28,7 @@ export const SECTION_LABEL = {
   truck: "Truck planning", dism: "Dismantle plan", fabreq: "Fabric plan", route: "Dismantle & routing", plan: "Plan",
 };
 // keys a save carries that are bookkeeping, not a change anyone made to the plan
-const NOT_A_CHANGE = new Set(["updatedAt", "updatedBy", "changes", "seen", "mpSeen"]);
+const NOT_A_CHANGE = new Set(["updatedAt", "updatedBy", "changes", "seen", "mpSeen", "changesSeen"]);
 
 export const sectionOfKey = (k) => KEY_SECTION[k] || "plan";
 
@@ -116,6 +116,14 @@ export function eventChanges(eo, amendRequests, now = Date.now(), windowMs = CHA
     merged.push(line);
   });
   return merged;
+}
+
+// A department head has seen a department's changes once they download its PDF (owner ask 2026-11-15): everything changed up to
+// then leaves their list and their calendar mark; anything after shows again. Kept per person on the event,
+// deptOps[dept].changesSeen = { [userKey]: at }. Others (an admin) pass no userKey and see every change.
+export function unseenChanges(list, eo, userKey) {
+  if (!userKey) return list;
+  return (list || []).filter((c) => !(Number(eo?.deptOps?.[c.dept]?.changesSeen?.[userKey]) >= c.at));
 }
 
 // "just now", "25 min ago", "3 hrs ago", "30 hrs ago", "3 days ago" - hours right up to 48, not "yesterday": inside a 48-hour

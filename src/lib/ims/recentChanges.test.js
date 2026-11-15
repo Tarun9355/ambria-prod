@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { stampDeptChanges, eventChanges, itemsSummary, agoText, CHANGE_WINDOW_MS, dedupeChangeLogs } from "./recentChanges.js";
+import { stampDeptChanges, eventChanges, itemsSummary, agoText, CHANGE_WINDOW_MS, dedupeChangeLogs, unseenChanges } from "./recentChanges.js";
 
 const NOW = Date.parse("2026-11-15T12:00:00Z");
 const H = 3600 * 1000;
@@ -85,5 +85,20 @@ describe("the same change in another order is one entry", () => {
   it("the Activity log", () => {
     const out = dedupeChangeLogs(rows);
     expect(out.map(r => [r.id, r.times])).toEqual([["a", 2], ["c", 1]]);
+  });
+});
+
+describe("a department head's PDF download marks the changes seen", () => {
+  const list = [{ at: NOW - 1 * H, dept: "Floral" }, { at: NOW - 5 * H, dept: "Floral" }, { at: NOW - 5 * H, dept: "Fabric" }];
+  const eo = { deptOps: { Floral: { changesSeen: { u_sudhir: NOW - 2 * H } } } };
+  it("hides what changed up to their download, in their department, for them only", () => {
+    expect(unseenChanges(list, eo, "u_sudhir")).toEqual([list[0], list[2]]);
+    expect(unseenChanges(list, eo, "u_other")).toEqual(list);
+  });
+  it("an admin (no key) sees everything", () => {
+    expect(unseenChanges(list, eo, "")).toEqual(list);
+  });
+  it("saving the mark is not itself a change", () => {
+    expect(stampDeptChanges({}, { changesSeen: { u_sudhir: NOW } }, NOW, "Sudhir")).toEqual({});
   });
 });
