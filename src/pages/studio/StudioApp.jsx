@@ -10621,6 +10621,13 @@ export default function StudioApp() {
     pendingFnTotalsRemapRef.current = null;
     setClientDate(client.eventDate || "");
     setVenue(client.venue || "");
+    // Function 1's own custom-venue display text is never persisted (unlike extraFunctions'
+    // venueOther — see sessionData.js) — only `venue` itself is. Without this, a text left over
+    // from whatever deal/LMS lead was open before this load (StudioEventInfo.jsx's Others-venue
+    // panel/gate both read it) could silently survive the switch and apply to THIS client instead:
+    // the gate would check the WRONG name's pricing, and typing into the still-stale field would
+    // overwrite this client's real venue (owner report, 2026-11-16, regression review).
+    setClientVenueOther("");
     setFn(client.fn || "");
     setClientShift(client.shift || "");
     setClientPax(client.pax || "");
@@ -15661,7 +15668,7 @@ export default function StudioApp() {
     // deal check
     dealCheckData, setDealCheckData, dealCheckLoading, setDealCheckLoading, dealCheckError, setDealCheckError, catDeptMap, saveCatDeptMap,
     // mount-loaded fallbacks so Build works before Deal Check opens (fixed-venue Repeat chip, floral auto-derive)
-    studioFloralData, sharedFloralSettings, venueParents,
+    studioFloralData, sharedFloralSettings, venueParents, resolveTrVenue,
     imsColourCatalogue, setImsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, paletteCatalogueLoaded, imsPaintableCategories, setImsPaintableCategories,
     imsDefaultPaintCost, setImsDefaultPaintCost, savePaletteData, paintPickerTarget, setPaintPickerTarget, fabricPickerTarget, setFabricPickerTarget,
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,

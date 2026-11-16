@@ -198,7 +198,7 @@ export default function StudioEventInfo({ ctx }) {
     customTripRate, setCustomTripRate, customGensets, setCustomGensets,
     setFilterFn, setBrowseVenues, setVenueGroup,
     allInhouseVenues, allOutdoorDB, allInhouseGroups, autoPersistCustomVenue,
-    trVenues,
+    trVenues, venueParents, resolveTrVenue,
     mode, setMode, canManageAny,
   } = ctx;
 
@@ -600,6 +600,37 @@ export default function StudioEventInfo({ ctx }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [confirmRemove]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── "Others" (new/custom) venue — still mid-setup? ──
+  // Shared with the per-function card's own new-venue panel below (same variables, same result) so
+  // the two can never disagree about whether Function 1's venue still needs a trip rate/gensets.
+  //
+  // othersVenueName: the typed custom-venue text (clientVenueOther) — used ONLY to decide whether a
+  // name has been typed yet ("New venue name" vs. moving on to trip rate/gensets). NOT what gets
+  // resolved against trVenues below: an LMS lead can set `venue` straight to the literal sentinel
+  // "Others" while `clientVenueOther` holds a DIFFERENT, already-priced property name (see the LMS
+  // loader) — resolving on that instead of `venue` let the gate/panel both wave this through as
+  // "already priced" while Build's own transportCalc, which resolves on `venue` verbatim, still saw
+  // the unresolvable literal "Others" and priced transport at ₹0 anyway (regression review: the two
+  // sides must check the exact same input or they can silently disagree). Resolving on `venue` alone
+  // means this LMS case correctly stays gated until the salesperson either types a real answer into
+  // the revealed field (which syncs straight into `venue`, see its own onChange) or picks the real
+  // sub-venue from the dropdown.
+  const othersVenueName = (clientVenueOther || "").trim();
+  // needsCustomVenueSetup: picked "Others", or typed a custom name (which also writes itself into
+  // `venue`, so this clause and the resolve below end up checking the same thing in that case), AND
+  // not yet actually priced. Deliberately resolveTrVenue — the SAME lookup transport pricing itself
+  // uses — never "is this name in the venues list": autoPersistCustomVenue (onBlur of the name
+  // field) registers the TYPED NAME into the venues table the moment the field is left, before any
+  // rate/gensets exist, so list-membership alone flips true long before the venue is actually
+  // priced. A gate (or this panel's own visibility) built on list-membership would stop asking for a
+  // trip rate the instant someone tabs out of the name field — "type a name, tab away, Continue"
+  // would then still produce ₹0 transport (owner report, 2026-11-16, root cause confirmed by
+  // regression review). The duplicate-name warning a little further down is a related but distinct
+  // check — see its own comment for why it must NOT treat this deal's own just-auto-registered,
+  // still-unpriced name as a duplicate (that dead-ends Continue with no field left to fix it).
+  const needsCustomVenueSetup = (venue === "Others" || !!othersVenueName)
+    && !resolveTrVenue(trVenues, venue, venueParents);
+
   // Continue gating — requires a complete 10-digit phone, not merely a non-empty one, and a date.
   // Scope is Function 1, matching where Event Type is already enforced. Functions 2+ are checked by
   // neither, so a half-filled extra function can't lock the deal shut — see the note by the Event
@@ -615,6 +646,10 @@ export default function StudioEventInfo({ ctx }) {
     // priced on, and shift feeds the manpower plan. Leaving either blank produced a deal that
     // costed as if the venue were "new" and the day had no shift.
     !venue && "Venue",
+    // A brand-new venue passes the bare !venue check above on its own (non-empty either way)
+    // without this — see needsCustomVenueSetup's own comment for why list-membership alone can't
+    // be trusted to mean "actually priced".
+    needsCustomVenueSetup && (!othersVenueName ? "New venue name" : !(customTripRate > 0) ? "Est. trip rate" : customGensets == null ? "Gensets needed" : false),
     !clientShift && "Shift",
   ].filter(Boolean);
   const canContinue = missing.length === 0;
@@ -1883,7 +1918,7 @@ export default function StudioEventInfo({ ctx }) {
                       function before the client has settled its date, which is the normal order. */}
                   <div><div style={label}>Event Date <span style={{color:C.red}}>*</span></div><input type="date" value={f.date || ""} onChange={e => updateDate(e.target.value)} style={S.input}/></div>
                 </div>
-                <div className="ei-two" style={{gap:14,marginBottom:f.venue === "Others" && idx === 0 ? 0 : 12}}>
+                <div className="ei-two" style={{gap:14,marginBottom:idx === 0 && needsCustomVenueSetup ? 0 : 12}}>
                   {/* Required now. Asterisked on every function but gated only on Function 1 — the
                       same rule Event Type and Event Date above already follow, for the same reason:
                       blocking on Functions 2+ would trap anyone who adds the next function before
@@ -1909,13 +1944,26 @@ export default function StudioEventInfo({ ctx }) {
                   </div>
                   <div><div style={label}>Shift <span style={{color:C.red}}>*</span></div><select value={f.shift || ""} onChange={e => updateShift(e.target.value)} style={{...S.select,width:"100%"}}><option value="">Select shift</option>{CLIENT_SHIFTS_DD.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
                 </div>
-                {venueVal === "Others" && idx === 0 && (() => {
-                  // Duplicate check: does the typed custom name match any known venue (case-insensitive, trimmed)?
-                  // Known = inhouse + all outside (empanelled OR other) + any trVenues entry.
+                {/* needsCustomVenueSetup (not venueVal === "Others") keeps this panel open through
+                    autoPersistCustomVenue's own save — that write registers the typed NAME into the
+                    venues table (which venueVal reads) the moment the field is blurred, well before
+                    any trip rate/gensets exist, and closing the panel right then is what silently
+                    let "type a name, tab away, Continue" through with ₹0 transport. See
+                    needsCustomVenueSetup's own comment above for the full reasoning. */}
+                {idx === 0 && needsCustomVenueSetup && (() => {
+                  // Duplicate check: does the typed custom name match any ALREADY-COMPLETE venue
+                  // (case-insensitive, trimmed)? Deliberately NOT allOutdoorDB here (regression
+                  // review, 2026-11-16): autoPersistCustomVenue registers the typed name into that
+                  // same outdoor-venues list the moment this field is blurred, well before any trip
+                  // rate/gensets exist — so a plain allOutdoorDB check flagged THIS deal's own,
+                  // still-unpriced venue as a "duplicate" within about a second of typing it,
+                  // hiding the trip-rate/gensets panel (needsCustomVenueSetup still true) with no
+                  // field left to finish it — a dead end. Inhouse (a protected, closed set, never
+                  // self-registered here) and trVenues (only ever written once this venue is
+                  // ACTUALLY priced) are both safe signals of a genuine, already-usable duplicate.
                   const typedLc = (clientVenueOther || "").trim().toLowerCase();
                   const matchName = !typedLc ? null : (
                     allInhouseVenues.find(v => v.toLowerCase() === typedLc) ||
-                    (allOutdoorDB.find(v => (v.name || "").toLowerCase() === typedLc) || {}).name ||
                     (trVenues.find(v => (v.name || "").toLowerCase() === typedLc) || {}).name ||
                     null
                   );
@@ -1923,7 +1971,13 @@ export default function StudioEventInfo({ ctx }) {
                   <>
                     <div style={{marginTop:10,marginBottom:matchName?6:12}}>
                       <div style={label}>Venue Name</div>
-                      <input value={clientVenueOther} onChange={e => { setClientVenueOther(e.target.value); if (e.target.value) setVenue(e.target.value); }} onBlur={matchName ? undefined : autoPersistCustomVenue} placeholder="Enter venue name" style={{...S.input, ...(matchName ? {borderColor:"#EF4444"} : {})}}/>
+                      {/* Clearing the field back to "" must put `venue` back on the sentinel
+                          "Others", not leave it sitting on the last non-empty partial text typed
+                          (e.g. backspacing "Roseate" down to "" used to leave venue="R") — that
+                          stale fragment reads as a real, if odd, venue name to needsCustomVenueSetup,
+                          which quietly let Continue through with it still unpriced (regression
+                          review, 2026-11-16). */}
+                      <input value={clientVenueOther} onChange={e => { setClientVenueOther(e.target.value); setVenue(e.target.value.trim() ? e.target.value : "Others"); }} onBlur={matchName ? undefined : autoPersistCustomVenue} placeholder="Enter venue name" style={{...S.input, ...(matchName ? {borderColor:"#EF4444"} : {})}}/>
                     </div>
                     {matchName && <div style={{marginBottom:12,padding:"8px 12px",borderRadius:8,background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.25)",fontSize:11,color:C.red,display:"flex",gap:8,alignItems:"flex-start"}}>
                       <span style={{fontSize:13}}>⚠️</span>
