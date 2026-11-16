@@ -5169,19 +5169,21 @@ undefined
                         const it=(imsInventory||[]).find(i=>i.id===el.invId);
                         if(it) kitDescendantIds(it,imsInventory,el.kitOverrides).forEach(id=>{ if(!kitOfPart.has(id)) kitOfPart.set(id,el.name||it.name); });
                       });
-                      // An item/pattern/mandi commodity already sitting in this zone used to be filtered
-                      // out of its own search results entirely, so there was no way to add a SECOND row
-                      // of the same thing at a different size/config (owner report, 2026-11-16: a Floral
-                      // Reet recipe added as Big couldn't be added again as Small — the search box just
-                      // never showed it). Same reasoning as the kit-parts relax above: each row prices and
-                      // blocks on its own qty/size, so a second row is a legitimate extra, not a slip —
-                      // countInZone below drives an "ALREADY ADDED ×N" badge instead of hiding the result,
-                      // so it's a visible choice rather than a silent block.
+                      // A flower-recipe pattern or mandi commodity already sitting in this zone used to
+                      // be filtered out of its own search results entirely, so there was no way to add a
+                      // SECOND row of the same thing at a different size/config (owner report,
+                      // 2026-11-16: a Floral Reet recipe added as Big couldn't be added again as Small —
+                      // the search box just never showed it). Relaxed for patterns/mandi only (owner ask,
+                      // same day): each row prices and blocks on its own qty/size, so a second row is a
+                      // legitimate extra, not a slip — countInZone below drives an "ALREADY ADDED ×N"
+                      // badge instead of hiding the result. Plain inventory items stay gated to one row
+                      // per zone, same as before — the owner wants that duplicate-add guard kept for
+                      // direct inventory, just not for recipes/mandi.
                       const countInZone=(key,val)=>(zoneElements[k]||[]).filter(el=>el[key]===val).length;
                       // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                       // (Rate Card is not consulted here — see getElPriceFromInventory /
                       // getElPriceFromPattern in StudioApp.jsx).
-                      const invMatches=smartFilter((imsInventory||[]).filter(it=>!isHiddenSubcat(it,rcSubcatFactors)),q,it=>[it.name,it.cat,it.subCat||it.subcategory]);
+                      const invMatches=smartFilter((imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!isHiddenSubcat(it,rcSubcatFactors)),q,it=>[it.name,it.cat,it.subCat||it.subcategory]);
                       const patMatches=smartFilter(recipeOnlyPatterns||[],q,pt=>[pt.name]);
                       // A raw mandi commodity is directly addable as its own element (by the kg,
                       // variant picked afterward on the element card), unlike every other mandi
@@ -5238,20 +5240,14 @@ undefined
                               <div style={{fontSize:11,color:textS,marginTop:2}}>{variants.length?`Choose a variant after adding (${variants.length} available)`:"Raw flower — no recipe/inventory item"}</div>
                             </div>
                           </div>; }
-                          const it=m.it; const isKit=Array.isArray(it.subItems)&&it.subItems.length>0; const src=it.img||it.photoUrls?.[0]; const nInZone=countInZone("invId",it.id);
+                          const it=m.it; const isKit=Array.isArray(it.subItems)&&it.subItems.length>0; const src=it.img||it.photoUrls?.[0];
                           // Fully used elsewhere in this deal no longer blocks adding it — it still
                           // adds, and prices through the same short-stock logic zoneTotal already runs
                           // with checkAvailability:true (getElPriceFromInventory in StudioApp.jsx): the
                           // portion actually free in stock at rental, the rest at cost% (an admin-set
                           // % of the item's production cost, per sub-category). The badge stays as a
                           // heads-up, not a lock.
-                          // elIdx:-1 (not omitted) — a row already in THIS zone must now count as
-                          // real competing demand, not be excluded, since a second row of the same
-                          // item can be added on top of it (regression review, 2026-11-16): omitting
-                          // elIdx excludes every row in the whole zone (the "replacing this exact
-                          // row" case elsewhere), which let this badge show "free to add" even when
-                          // the zone's own existing row had already used up all the stock.
-                          const remaining=remainingForItem(it.id,k,-1); const isFullyUsed=remaining!=null&&remaining<=0;
+                          const remaining=remainingForItem(it.id,k); const isFullyUsed=remaining!=null&&remaining<=0;
                           // No asOfDate — adding this item here is a brand-new commitment happening
                           // right now, judged against the live "today" countdown to the active
                           // function's own date, same as openAvailModal's own candidate list.
@@ -5278,7 +5274,11 @@ undefined
                               // made, not just today's live date — markSold bulk-freezes every
                               // element present at sale time to the sold date, so this stamp only
                               // ever matters for an item added to a deal that's already Sold.
-                              setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr(),...(isRepeatCat(k,"elements")?{repeatOverride:false}:{})}]}));
+                              // invId stays gated to one row per zone (owner ask, 2026-11-16: only
+                              // patterns/mandi get the duplicate-add relax below) — invMatches above
+                              // already excludes it from these results once added, this guard is just
+                              // the same defensive belt-and-suspenders the pattern/mandi adds dropped.
+                              if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr(),...(isRepeatCat(k,"elements")?{repeatOverride:false}:{})}]}));}
                               setZoneElSearch(prev=>({...prev,[k]:""}));
                             }}
                             style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
@@ -5288,7 +5288,6 @@ undefined
                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.name}</span>
                                 {isKit&&<span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(99,102,241,0.15)",color:"#6366F1",fontWeight:700,flexShrink:0}}>KIT</span>}
                                 {kitOfPart.has(it.id)&&<span title={`Already inside "${kitOfPart.get(it.id)}" in this zone — adding it here is an extra piece on top of the kit's own`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(14,165,233,0.15)",color:"#0284C7",fontWeight:700,flexShrink:0}}>IN KIT</span>}
-                                {nInZone>0&&<span title={`Already added ${nInZone} time(s) to this zone — this adds another row (e.g. a different size), not a duplicate of the same one`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(5,150,105,0.15)",color:"#059669",fontWeight:700,flexShrink:0}}>✓ ADDED ×{nInZone}</span>}
                                 {isDateUnavail
                                   ? <span title={(canMake?"0 free for this event date — will price at cost% instead of rental":"0 free for this event date and can't be made in production — will show Out of stock")+(_fa?.why?"\n\n"+_fa.why:"")} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(239,68,68,0.15)",color:"#EF4444",fontWeight:700,flexShrink:0}}>{canMake?"0 free — not available":"0 free — out of stock"}</span>
                                   : (isFullyUsed
@@ -6566,10 +6565,11 @@ undefined
                 // 2026-11-13: cfgCur would almost always read false here anyway post-strip, but an
                 // older, pre-strip master could still read true and wrongly bake Fresh into the recipe).
                 const freshOv=ownsLive&&repeatCatFor(zcLive,"elements")?{repeatOverride:false}:{};
-                // Already-in-zone items/patterns/mandi no longer hidden here either — same relax as
-                // the main zone card's own add-search above (owner ask, 2026-11-16: a second row of
-                // the same item at a different size/config, not just a different zone).
-                const inv=smartFilter((imsInventory||[]).filter(it=>!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)),q,it=>[it.name,it.cat,it.subCat||it.subcategory]).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr(),...freshOv})}));
+                // Already-in-zone patterns/mandi no longer hidden here either — same relax as the main
+                // zone card's own add-search above (owner ask, 2026-11-16: a second row of the same
+                // recipe/mandi at a different size/config, not just a different zone). Plain inventory
+                // items stay gated to one row per zone, same as before.
+                const inv=smartFilter((imsInventory||[]).filter(it=>!els.find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)),q,it=>[it.name,it.cat,it.subCat||it.subcategory]).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr(),...freshOv})}));
                 const pat=smartFilter(recipeOnlyPatterns||[],q,pt=>[pt.name]).map(pt=>({key:"pat:"+pt.id,label:pt.name,sub:"🌺 Flower recipe",make:()=>({name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id,...freshOv})}));
                 const mandi=smartFilter(((dealCheckData||studioFloralData)?.mandiCatalogue||[]).filter(m=>isDirectMandiElement(m)),q,m=>[m.name]).map(m=>{const v=Array.isArray(m.colorVariants)?m.colorVariants:[];return {key:"mandi:"+m.id,label:m.name,sub:`🌸 Mandi · ${m.unit||"kg"}`,src:m.photoUrl,make:()=>({name:m.name,qty:1,unit:m.unit||"kg",size:"",mandiId:m.id,mandiVariantId:v.length===1?v[0].variantId:"",...freshOv})};});
                 return [...inv,...pat,...mandi];
