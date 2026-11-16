@@ -582,6 +582,103 @@ describe("real flower lines — the amount the Dept Ops PDF prints", () => {
   });
 });
 
+// Owner report, 2026-11-16: a "Flower Reet" (modeled on the real F03/F04 catalogue entries —
+// cat:"florals", sub:"Reet / Garland", inhouseMode:"flat", no invId, priced purely from its
+// recipe) with Size "B" picked via Build's own size-picker showed as "Medium" in IMS Dept Ops.
+// Root cause: sizeFromMode (the no-invItem size-resolution branch) only honored the element's
+// own el.size when the pattern/rate-card's inhouseMode was "smb" — any other mode (here "flat")
+// fell through to a hardcoded "medium" no matter what Build's UI actually recorded. Fixed to
+// always resolve from el.size, the same way the invItem branch's sizeClassToPatternKey already
+// does, regardless of inhouseMode.
+describe("computeFnFloralCost — a no-invId floral-recipe element's size always follows Build's own S/M/B pick, not inhouseMode (bug fix 2026-11-16)", () => {
+  const reet = { id: "reet", name: "Reet", unit: "piece", flowerType: "flower", currentPrice: 10 };
+  // mode: "flat" (not "smb") is the exact condition that used to be ignored.
+  const pReet = {
+    id: "p_reet", sub: "Reet / Garland", mode: "flat",
+    sizes: {
+      small: { flowers: [{ flowerId: "reet", qty: 1 }], extraCost: 0 },
+      medium: { flowers: [{ flowerId: "reet", qty: 2 }], extraCost: 0 },
+      big: { flowers: [{ flowerId: "reet", qty: 3 }], extraCost: 0 },
+    },
+  };
+  const opts = { ...baseOpts([pReet]), mandiCatalogue: [...mandiCatalogue, reet] };
+  const run = (size) => {
+    const el = { name: "Reet", patternId: "p_reet", qty: 1, realPct: 100, ...(size === undefined ? {} : { size }) };
+    const f = fn({ zoneElements: { stage: [el] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f, [f], opts);
+    return result.elementBreakdown[0];
+  };
+
+  it('size "B" resolves to "big" (the recipe\'s big-size qty), not "medium"', () => {
+    const eb = run("B");
+    expect(eb.size).toBe("big");
+    expect(eb.realLines[0].qtyFull).toBe(3);
+  });
+
+  it('size "S" resolves to "small"', () => {
+    const eb = run("S");
+    expect(eb.size).toBe("small");
+    expect(eb.realLines[0].qtyFull).toBe(1);
+  });
+
+  it('no size at all still defaults to "medium"', () => {
+    const eb = run(undefined);
+    expect(eb.size).toBe("medium");
+    expect(eb.realLines[0].qtyFull).toBe(2);
+  });
+
+  // A real "flat" pattern in this codebase (per IMS Admin → Flower Patterns' own Flat/S-M-B
+  // toggle) only ever HAS a `sizes.medium` entry — switching to Flat drops any small/big
+  // recipe. So for a real flat item, this fix changes the DISPLAYED size label (Dept Ops now
+  // correctly shows "big") while the priced recipe composition still falls back to medium's
+  // (no sizes.big to pick) — same existing `sizes[sizeKey] || sizes.medium` fallback as before
+  // this fix, just reached via the right label now instead of a hardcoded one (Opus regression
+  // review, 2026-11-16).
+  it('a realistic flat pattern with ONLY a medium recipe: size "B" labels as "big" but still prices medium\'s composition (no sizes.big to fall back to)', () => {
+    const pReetFlatOnly = { id: "p_reet_flat", sub: "Reet / Garland", mode: "flat", sizes: { medium: { flowers: [{ flowerId: "reet", qty: 2 }], extraCost: 0 } } };
+    const flatOpts = { ...baseOpts([pReetFlatOnly]), mandiCatalogue: [...mandiCatalogue, reet] };
+    const el = { name: "Reet", patternId: "p_reet_flat", qty: 1, realPct: 100, size: "B" };
+    const f = fn({ zoneElements: { stage: [el] }, enabledEls: { stage: true } });
+    const eb = computeFnFloralCost(f, [f], flatOpts).elementBreakdown[0];
+    expect(eb.size).toBe("big");
+    expect(eb.realLines[0].qtyFull).toBe(2); // medium's own qty — the only recipe this pattern has
+  });
+});
+
+// Same bug, the OTHER call site: computeFnRawFlowerUsage (used to look up a PRECEDING function's
+// own usage for the cross-function flower-reuse credit) has its own, separately-reached
+// sizeFromMode call — confirm it resolves the element's size the same way, not just the
+// computeFnFloralCost call site above.
+describe("computeFnRawFlowerUsage — a no-invId floral-recipe element's size also follows Build's own S/M/B pick (bug fix 2026-11-16, other call site)", () => {
+  const reetU = { id: "reetU", name: "Reet", unit: "piece", flowerType: "flower", currentPrice: 10 };
+  const pReetU = {
+    id: "p_reetU", sub: "Reet / Garland", mode: "flat",
+    sizes: {
+      small: { flowers: [{ flowerId: "reetU", qty: 1 }], extraCost: 0 },
+      medium: { flowers: [{ flowerId: "reetU", qty: 2 }], extraCost: 0 },
+      big: { flowers: [{ flowerId: "reetU", qty: 5 }], extraCost: 0 },
+    },
+  };
+  const optsU = { ...baseOpts([pReetU]), mandiCatalogue: [...mandiCatalogue, reetU] };
+  const run = (size) => {
+    const el = { name: "Reet", patternId: "p_reetU", qty: 1, realPct: 100, ...(size === undefined ? {} : { size }) };
+    const f = fn({ zoneElements: { stage: [el] }, enabledEls: { stage: true } });
+    return computeFnRawFlowerUsage(f, optsU).get("reetU");
+  };
+
+  it('size "B" uses the big recipe\'s qty (5), not medium\'s (2)', () => {
+    expect(run("B").realQty).toBe(5);
+  });
+
+  it('size "S" uses the small recipe\'s qty (1)', () => {
+    expect(run("S").realQty).toBe(1);
+  });
+
+  it("no size at all still defaults to medium's qty (2)", () => {
+    expect(run(undefined).realQty).toBe(2);
+  });
+});
+
 // Deal Check's mandi swap into a flower the list already has (Morya Patti → dandela, dandela already on the list):
 // the swap shows as its own row at the swap's qty and rate, as the swap preview said; buying totals are unchanged.
 describe("a swap into a flower already on the list stays its own row", () => {
