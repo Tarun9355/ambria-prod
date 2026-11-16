@@ -12,7 +12,7 @@ import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDef
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { assemblePrintMaterialsFromRows, assembleCarpetMaterialsFromRows, assemblePlatformRatesFromRows, assembleMaskingRatesFromRows, assembleTrussRatesFromRows } from "../../lib/studio/taxonomy";
 import { createSettingsWriter } from "../../lib/ims/settingsWriter";
-import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, DEFAULT_ROLE_TABS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
+import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, DEFAULT_ROLE_TABS, CALENDAR_TAB_USER_ID, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
 import SiteSupervisorTab from "./SiteSupervisorTab.jsx";
 import { assembleAttendanceLocationsFromRows, assembleAttendanceTrainingByDeptFromRows } from "../../lib/ims/attendance";
 import { filterLiveBlocks } from "../../lib/ims/liveBlocks";
@@ -2761,6 +2761,20 @@ export default function IMS() {
   // force-include every non-admin would be unable to reach Attendance at all until an admin went
   // and edited every single role by hand.
   let allowedTabs = isAdmin ? TABS : TABS.filter((t) => t.id !== "dashboard" && (t.id === "attendance" || (roleConfig.tabs || []).includes(t.id)));
+  // Calendar restricted to one specific account only (owner ask, 2026-11-16, Pratik only, nobody
+  // else — confirmed to exclude Tarun too, despite Date Pricing Config/the Auto-Sync lock code
+  // living only inside this tab and being separately owner-gated to HIS id, DATE_PRICING_OWNER_ID;
+  // those become unreachable by anyone until given a new home). Matched on CALENDAR_TAB_USER_ID
+  // (the immutable row id), not the free-text `name` column — a display name can be changed by
+  // anyone with Manage Users, and isn't guaranteed unique ("Pratiksha" is a different real user).
+  // Stripped out here, after the role-based list above, so it's gone for every OTHER account
+  // regardless of role or Admin status (Admin would otherwise read the full, unfiltered TABS and
+  // keep it) — deliberately a hard override, not a per-role Tab Access entry (same pattern as
+  // Dashboard/Attendance above): an admin ticking "calendar" on in Role Access for some other role
+  // must not reinstate it here.
+  if (user?.id !== CALENDAR_TAB_USER_ID) {
+    allowedTabs = allowedTabs.filter((t) => t.id !== "calendar");
+  }
   // Department heads (+ Admin) get an Approvals tab for last-minute amendment requests.
   // Dept Ops offers a "pick an event from the Calendar" button, but only to roles that actually
   // have the Calendar tab — otherwise it would send someone to a tab their permissions exclude.

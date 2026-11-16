@@ -173,6 +173,12 @@ export const DATE_PRICING_LABELS = { heavy_saya: "👑 King's", competition: "�
 // change/clear the lock Tarun didn't put there himself.
 export const DATE_PRICING_OWNER_ID = "U84ED1E8439";
 
+// Pratik's own `users` row id (confirmed 2026-11-16: `select id,username,name from users where
+// name ilike '%pratik%'` returned U4D9FE99348/"pratik" and, separately, UB460880EB8/"Pratiksha" —
+// a different person, deliberately excluded). IMS.jsx's Calendar-tab gate matches on this exact id,
+// not the free-text `name` column (rename-able by anyone with Manage Users, and not unique).
+export const CALENDAR_TAB_USER_ID = "U4D9FE99348";
+
 export const SETTINGS_DEFAULTS = {
   bufferPct: 5,
   minProfitPct: 30,
