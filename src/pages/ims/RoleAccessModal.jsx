@@ -185,8 +185,11 @@ export default function RoleAccessModal({ role, settings, setSettings, onClose }
 
   const isAdminRole = role === "Admin";
 
+  // z-[60], not z-50 — reachable from INSIDE the Edit User modal (also z-50, components/ui's Modal,
+  // not a portal) via its own "Edit this role's defaults" link, same latent stacking bug
+  // UserAccessModal.jsx's own comment describes (regression review, 2026-11-16).
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-5 overflow-y-auto" style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)" }} onClick={onClose}>
+    <div className="fixed inset-0 z-[60] flex items-start justify-center p-5 overflow-y-auto" style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(2px)" }} onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-8 flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b">
           <div>

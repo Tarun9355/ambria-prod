@@ -14718,7 +14718,14 @@ export default function StudioApp() {
     // those args the moment it's done — so the freshest request always eventually runs, even though
     // it was refused in the moment.
     if (dcGenInFlightRef.current.has(activeClientId)) {
-      dcGenRerunPendingRef.current.set(activeClientId, { fnIdxFilter, opts: { skipAi, silent } });
+      // Merge with whatever's already queued, don't overwrite it — a queued non-silent request
+      // (the real "Deal Check just opened" gate) landing before an unrelated silent background
+      // request would otherwise have its OWN silent:false downgraded to the later request's
+      // silent:true, so the rerun it was waiting for would quietly skip popping the gate even
+      // though a real shortage was found (regression review, 2026-11-16, off the !silent fix
+      // above). skipAi gets the same OR-of-false treatment for the same reason.
+      const prevPending = dcGenRerunPendingRef.current.get(activeClientId);
+      dcGenRerunPendingRef.current.set(activeClientId, { fnIdxFilter, opts: { skipAi: skipAi && (prevPending?.opts?.skipAi ?? true), silent: silent && (prevPending?.opts?.silent ?? true) } });
       return { ok: false, blocked: true, reason: "already-running" };
     }
     dcGenInFlightRef.current.add(activeClientId);
@@ -15007,9 +15014,28 @@ export default function StudioApp() {
           // resumeSavedSession). Skipping the write below is unconditional regardless — only showing
           // the modal is conditioned on staying the active client; the headless auto-fill re-runs (and
           // re-gates) the moment that client becomes active again anyway.
+          // !silent too (owner report, 2026-11-16): this same "regenerate" is ALSO fired as a
+          // silent, fire-and-forget background sync on every booked-deal build edit (the ~1.5s
+          // debounced autosave above) and right after markSold/applyBookedChanges's OWN explicit
+          // gate already passed — neither call means "Deal Check was just opened", so popping this
+          // modal from them interrupted whatever the salesperson was doing with a SECOND dialog
+          // stacking over the one already open (e.g. the very picker they'd just opened from the
+          // first gate's own Fix button). The true "Deal Check just opened" auto-fill effect never
+          // passes silent, so it still gates exactly as before; only the background re-syncs stay
+          // silent the way their own name already promises (same rule the showMsg below follows).
+          // A silent run still owes the salesperson SOMETHING, though — a booked deal with no
+          // negotiated amount never shows an Apply Changes button at all, so this debounced autosave
+          // is the ONLY path that ever reconciles its edits; suppressing the modal there with no
+          // trace would leave a real shortage completely unmentioned until Deal Check is next opened
+          // by hand. A plain toast (not the hard modal) says the same thing without interrupting
+          // whatever picker/gate the salesperson is already in.
           if (activeClientIdRef.current === activeClientId) {
-            setOosGateReason("dealCheckAutoSync");
-            setOosGateModal(oosFlagged);
+            if (!silent) {
+              setOosGateReason("dealCheckAutoSync");
+              setOosGateModal(oosFlagged);
+            } else {
+              showMsg?.(`⚠ ${oosFlagged.length} item${oosFlagged.length === 1 ? "" : "s"} out of stock — stock not updated. Open Deal Check to fix.`, "red");
+            }
           }
         } else {
           try { await reconcileSoldInventoryBlocks(fnsToProcess, mergedForReconcile, inventory, cli); } catch (e) { console.warn("[reconcile] sold-deal block reconcile failed:", e?.message || e); }
