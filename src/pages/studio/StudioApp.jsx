@@ -5892,7 +5892,14 @@ export default function StudioApp() {
       realRate = rc.inhouseFlat || 0;
       artRate = rc.artificialFlat || 0;
     }
-    const factor = rcScalingFactor(rc);
+    // `_imsDriven` (IMS.jsx's "Recipe → Studio rate sync", Tier 1.5): this item's inhouse*/
+    // artificial* numbers above were just written BY that sync as mandi-cost × the recipe's own
+    // markup — already a fully-priced rate, not a hand-typed base rate awaiting the general
+    // Studio-wide sub-category factor. Applying rcScalingFactor on top double-marks-up the same
+    // rupee (owner report, 2026-11-16: "Flower Reet" showed ₹1,989 in its Recipe editor, the exact
+    // number the sync wrote, but ₹2,043 in Build — exactly ×rcScalingFactor). A non-driven item's
+    // numbers are still the admin's own hand-typed base rate, so the factor still applies there.
+    const factor = rc?._imsDriven ? 1 : rcScalingFactor(rc);
     return { realRate: realRate * factor, artRate: artRate * factor };
   }, [rcScalingFactor]);
 
