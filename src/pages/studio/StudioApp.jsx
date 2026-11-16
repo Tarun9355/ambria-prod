@@ -331,7 +331,10 @@ const FLORAL_HARDPROP_DEFAULT = {
 // a module-level constant only because this function sits outside the component and can't close
 // over that one; kept in lockstep by being the one other place this number is allowed to live.
 const GUEST_STRUCT_DISCOUNT_PCT = 25;
-function calcStructCost(zk, zc, rates, applyDiscount) {
+// Exported (only for this one function — everything else in this file stays private) purely so
+// structCostLooseFabric.test.js can call it directly instead of a source-text wiring test; it's a
+// pure function with no closure over component state, so exporting it changes nothing else.
+export function calcStructCost(zk, zc, rates, applyDiscount) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, print: 0, fabric: 0, fabricNew: false, total: 0 };
   // fd (Platform/Carpet's own floor size) no longer falls back to the truss's dims (d) — owner ask:
   // adding/sizing a truss must never silently size a Platform/Carpet at the same footprint. A zone
@@ -344,7 +347,14 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
   // differently, so each extra row carries its own (set via its own card in the zone editor).
   const trussRows = [
     { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkWallMat: zc.mkWallMat, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customCeilingQty: zc.customCeilingQty ?? null, customMaskingItemId: zc.customMaskingItemId,
-      useNewFabric: zc.useNewFabric, noFabric: zc.noFabric, fabLiza: zc.fabLiza, fabCurtain: zc.fabCurtain, fabLizaRep: zc.fabLizaRep, fabCurtainRep: zc.fabCurtainRep, mkRep: zc.mkRep },
+      // looseFabric (owner report, 2026-11-16): missing from this hand-picked field list, so the
+      // `row` object below — not zc itself — is what calcZoneFabricCost/looseFabricQty actually
+      // reads a few lines down, and it always saw undefined regardless of what the salesperson
+      // added on the Fabric card's "+ Add loose fabric" row. The Truss & Masking chip's own total
+      // (sectionCost, StudioBuild.jsx) silently never included it while the expanded Fabric card —
+      // which calls calcZoneFabricCost(zc, ...) directly, not through this truncated row — always
+      // showed the correct number right next to it.
+      useNewFabric: zc.useNewFabric, noFabric: zc.noFabric, fabLiza: zc.fabLiza, fabCurtain: zc.fabCurtain, fabLizaRep: zc.fabLizaRep, fabCurtainRep: zc.fabCurtainRep, mkRep: zc.mkRep, looseFabric: zc.looseFabric },
     ...(zc.extraTrussRows || []),
   ];
   const maskingByRow = []; // each truss row's masking before any discount — the Repeat discount below is per row
