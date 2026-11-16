@@ -77,7 +77,7 @@ describe("computeFnFloralCost — palette-based flower reuse", () => {
     expect(result.elementBreakdown[0].realLines[0].qty).toBe(20); // full price, no credit
   });
 
-  it("credits 70% of the preceding function's own quantity when palettes overlap AND both functions picked the same colour for this flower (the owner's own example: 10 -> 20 drops to 13)", () => {
+  it("credits FLOWER_REUSE_RATE of the preceding function's own quantity when palettes overlap AND both functions picked the same colour for this flower (10 -> 20 drops by 10 * FLOWER_REUSE_RATE)", () => {
     const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)] }, enabledEls: { stage: true } });
     const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "White", zoneElements: { stage: [elRose(20)] }, enabledEls: { stage: true } });
     const opts = {
@@ -88,8 +88,8 @@ describe("computeFnFloralCost — palette-based flower reuse", () => {
     const result = computeFnFloralCost(f2, [f1, f2], opts);
     const line = result.elementBreakdown[0].realLines[0];
     expect(line.qtyFull).toBe(20);
-    expect(line.reuseCredit).toBeCloseTo(10 * FLOWER_REUSE_RATE, 5); // 7
-    expect(line.qty).toBeCloseTo(13, 5);
+    expect(line.reuseCredit).toBeCloseTo(10 * FLOWER_REUSE_RATE, 5);
+    expect(line.qty).toBeCloseTo(20 - 10 * FLOWER_REUSE_RATE, 5);
   });
 
   it("no credit at all when the palette overlaps but neither function has ever picked an explicit colour for this flower", () => {
@@ -113,7 +113,7 @@ describe("computeFnFloralCost — palette-based flower reuse", () => {
     };
     const result = computeFnFloralCost(f2, [f1, f2], opts);
     const [roseLine, marigoldLine] = result.elementBreakdown.map((eb) => eb.realLines[0]);
-    expect(roseLine.qty).toBeCloseTo(3, 5); // 10 - 0.7*10
+    expect(roseLine.qty).toBeCloseTo(10 - 10 * FLOWER_REUSE_RATE, 5);
     expect(marigoldLine.qty).toBe(10); // no credit — f1 never had marigold at all
   });
 
@@ -148,7 +148,7 @@ describe("computeFnFloralCost — palette-based flower reuse", () => {
     const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)], entry: [elMarigold(5)] }, enabledEls: { stage: true, entry: true } });
     const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "Maroon", zoneElements: { stage: [elMarigold(10)] }, enabledEls: { stage: true }, zoneConfig: { stage: { repeat: true } } });
     const result = computeFnFloralCost(f2, [f1, f2], baseOpts([pRose, pMarigold]));
-    expect(result.elementBreakdown[0].realLines[0].qty).toBeCloseTo(10 - 0.7 * 5, 5); // 6.5
+    expect(result.elementBreakdown[0].realLines[0].qty).toBeCloseTo(10 - 5 * FLOWER_REUSE_RATE, 5);
   });
 
   it("no reuse at all with no identifiable preceding function, even with a matching palette", () => {
@@ -183,8 +183,8 @@ describe("computeFnFloralCost — colour defaults from a variant explicitly tagg
     const result = computeFnFloralCost(f2, [f1, f2], optsV([pRoseV])); // no colorPrefsForFn/colorPrefsByFnIdx at all
     const line = result.elementBreakdown[0].realLines[0];
     expect(line.qtyFull).toBe(20);
-    expect(line.reuseCredit).toBeCloseTo(10 * FLOWER_REUSE_RATE, 5); // same 10 -> 7 credit as an explicit pick
-    expect(line.qty).toBeCloseTo(13, 5);
+    expect(line.reuseCredit).toBeCloseTo(10 * FLOWER_REUSE_RATE, 5); // same credit as an explicit pick
+    expect(line.qty).toBeCloseTo(20 - 10 * FLOWER_REUSE_RATE, 5);
   });
 
   it("a variant tagged with MULTIPLE palette colours matches on any of them", () => {

@@ -34,8 +34,9 @@
 //     function at the same venue, within the existing day-adjacency window (same day, or
 //     exactly the day before) — not a merged pool of every eligible sibling.
 //   - For colours present in BOTH functions' own selected palettes, a flower that the EXACT
-//     SAME species+colour was also used for in the preceding function is credited 70% of that
-//     preceding function's own (raw, uncredited) quantity — real and artificial alike. A flower
+//     SAME species+colour was also used for in the preceding function is credited
+//     FLOWER_REUSE_RATE (80%) of that preceding function's own (raw, uncredited) quantity —
+//     real and artificial alike. A flower
 //     whose colour isn't in the overlap, or that the preceding function never actually had, is
 //     NOT credited even if the zone/function is otherwise eligible.
 //   - A zone's own manual ✨Fresh/♻️Repeat toggle (unchanged control) bypasses the PALETTE
@@ -65,7 +66,7 @@ import { venueKey } from "../venueKey.js";
 // The one reuse rate — credited the same way against both real (fresh) quantity and
 // artificial-bunch-equivalent quantity, per the owner's own call (no separate real/artificial
 // rates the way the old zone-key system had).
-export const FLOWER_REUSE_RATE = 0.7;
+export const FLOWER_REUSE_RATE = 0.8;
 
 const TIMING_ORDER = { brunch: 0, lunch: 1, sundowner: 2, dinner: 3 };
 // A sortable (date, time-of-day) key: whole days apart dominate (×10), same-day ordering
