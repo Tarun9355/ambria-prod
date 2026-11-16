@@ -4363,14 +4363,19 @@ export default function StudioApp() {
   // uploading on the next autosave tick. Returns the MERGED record directly — the caller needs it
   // synchronously right after awaiting, not via the `clientLedger` closure, which a setState call
   // inside here cannot update before this function returns.
-  const ensureClientHeavyFieldsLoaded = useCallback(async (clientId) => {
+  const ensureClientHeavyFieldsLoaded = useCallback(async (clientId, opts = {}) => {
     const cur = clientLedgerRef.current.find((c) => c.id === clientId);
     if (!cur || cur._heavyFetched) return cur || null;
     let heavy = null;
     try {
       heavy = await fetchClientHeavyFields(clientId);
     } catch (e) {
-      showMsg?.("Couldn't load this client's Deal Check draft: " + (e?.message || e), "red");
+      // opts.silent (owner ask, 2026-11-16): openDealCheck's own call passes it whenever this isn't a
+      // real, visible open (a headless wake) — same reasoning as runDealCheckGenerate's own silent
+      // flag elsewhere in this file, so a background sync's network hiccup doesn't surprise a
+      // salesperson who was never near Deal Check with a Deal Check error. Every OTHER caller (e.g.
+      // the function-removal reindex flow, a direct user action) keeps the toast by not passing it.
+      if (!opts.silent) showMsg?.("Couldn't load this client's Deal Check draft: " + (e?.message || e), "red");
       return cur;
     }
     const merged = { ...cur, ...(heavy || {}), _heavyFetched: true };
@@ -13754,7 +13759,13 @@ export default function StudioApp() {
     // The inventory + blocks download (the biggest of the open) starts now, alongside this client's own heavy fields, instead
     // of after them: fetchIMSData below picks up this same request (fetchRawIMS shares one for a few seconds).
     void fetchRawIMS();
-    const clientRec = activeClientId ? await ensureClientHeavyFieldsLoaded(activeClientId) : null;
+    // dcVisRef.current.full, not the bare dcFullPageOpen state var — openDealCheck's own useCallback
+    // deps don't include dcFullPageOpen (regression review, 2026-11-16: a real open's click sets
+    // dcFullPageOpen in the SAME render the dcRun-flip effect below calls this cached closure, which
+    // still held dcFullPageOpen=false from before the click — silencing the toast for a REAL open,
+    // the opposite of intended). dcVisRef is set during render (just above requestBookedSync's own
+    // declaration), so it's always current by the time this runs.
+    const clientRec = activeClientId ? await ensureClientHeavyFieldsLoaded(activeClientId, { silent: !dcVisRef.current.full }) : null;
     const rowDraft = (clientRec?.dcDraft && typeof clientRec.dcDraft === "object" && !Array.isArray(clientRec.dcDraft)) ? clientRec.dcDraft : null;
     const cachedForThisClient = rowDraft;
     const hasCache = !!cachedForThisClient;
@@ -14106,12 +14117,28 @@ export default function StudioApp() {
           }
         } else {
           const nowStamp = Date.now();
+          // Stamp the collision fields (dcDraftSavedAt/dcDraftSavedBy) only when THIS save is from a
+          // visibly-open Deal Check (dcVisRef.current.full) — not from a headless background wake
+          // (owner ask, 2026-11-16). A headless save is this salesperson's browser quietly catching
+          // Dept Ops up to a Build edit, not a human editing Deal Check; stamping it the same way a
+          // real edit would risked a FALSE "X saved changes while you were editing — yours weren't
+          // saved" warning for a DIFFERENT person who genuinely has this same client's Deal Check
+          // open elsewhere, even though the first person never touched Deal Check at all. Content
+          // (dcCards/dcZoneState/etc, dcDraft) still saves either way — only the stamp a later
+          // conflict-check reads is withheld, so "last saved by" (DealCheckOverlay.jsx's own header)
+          // keeps showing the last real human save too, not whoever's browser last synced quietly.
+          // dcVisRef.current.full, not the bare dcFullPageOpen state var — this effect's own deps
+          // (below) don't include dcFullPageOpen, so doSave's closure over it can be one tick stale
+          // across a headless→full transition (regression review, 2026-11-16: a pending 2.5s timer,
+          // the pagehide handler, or a swap handler's setTimeout(0) flush can all fire this exact
+          // closure before the dep-driven effect rebuilds it). dcVisRef is a live, render-synced ref.
+          const stampPatch = dcVisRef.current.full ? { dcDraftSavedAt: nowStamp, dcDraftSavedBy: me } : {};
           const result = saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c,
             dcCards: dcs.dcCards, dcZoneState: dcs.dcZoneState, dcKitEdits: dcs.dcKitEdits, dcCarpetPick: dcs.dcCarpetPick, dcCarpetSplit: dcs.dcCarpetSplit,
             dcMpOverrides: dcs.dcMpOverrides, dcMpWinCount: dcs.dcMpWinCount,
             dcMpIncludeMinusOne: dcs.dcMpIncludeMinusOne, dcMpIncludeDismantle: dcs.dcMpIncludeDismantle,
-            dcDraft: snapshot, dcDraftSavedAt: nowStamp, dcDraftSavedBy: me } : c), undefined, { keepalive: !!saveOpts.keepalive });
-          dcSaveBaselineRef.current = { savedAt: nowStamp, savedBy: me };
+            dcDraft: snapshot, ...stampPatch } : c), undefined, { keepalive: !!saveOpts.keepalive });
+          if (dcVisRef.current.full) dcSaveBaselineRef.current = { savedAt: nowStamp, savedBy: me };
           return result;
         }
       }
@@ -14192,6 +14219,20 @@ export default function StudioApp() {
     const dcsAtStart = dcStateRef.current || {};
     const manualReady = dcsAtStart.dcStateReadyClientId === cli.id;
     const manualItemsNow = manualReady && Array.isArray(dcsAtStart.dcManualItems) ? dcsAtStart.dcManualItems : [];
+    // Same reasoning, same snapshot, for dcKitEdits (which kit a part's swap-override applies to) —
+    // this closure used to read it directly below, with no readiness check at all, so the identical
+    // cold-client race could reserve the WRONG client's swapped-in kit component (owner ask,
+    // 2026-11-16: closing every remaining case of this hazard, not just the manual-items one). Not
+    // ready falls back to {} — no per-card override found, so walkKitUnits below uses the kit's own
+    // PLAIN default components instead of ever substituting another client's override. NOT the same
+    // guarantee manualItemsNow gets, though: an unready manual list is dropped from requirement math
+    // entirely (manualReady gates the planner call itself, further down), while a kit's OWN rental
+    // qty is still reserved here regardless of readiness — only WHICH of its components get walked
+    // depends on kitEditsNow. An unready cold open can still reserve the kit's plain parts a beat
+    // before the swap is known; the replayed rerun (same mechanism that already corrects every other
+    // cold-client case) reserves the right ones moments later. Narrower than the old bug (which could
+    // reserve ANOTHER client's swapped part under this one), not a zero-risk window.
+    const kitEditsNow = manualReady && dcsAtStart.dcKitEdits && typeof dcsAtStart.dcKitEdits === "object" ? dcsAtStart.dcKitEdits : {};
 
     // KNOWN SCOPE LIMIT: this only diffs functions still present in fnsToProcess. Deleting an
     // entire function from a sold deal (not just items within one) leaves that function's prior
@@ -14254,7 +14295,7 @@ export default function StudioApp() {
         if (qty <= 0) return;
         const topItem = (inventoryList || []).find((x) => x.id === c.imsId);
         if (topItem && Array.isArray(topItem.subItems) && topItem.subItems.length > 0) {
-          const edited = dcKitEdits?.[fnIdx]?.[cardKey];
+          const edited = kitEditsNow?.[fnIdx]?.[cardKey];
           const overrideSubItems = Array.isArray(edited) ? edited : undefined;
           walkKitUnits(topItem, qty, inventoryList, overrideSubItems, (node, nodeQty) => {
             if (!node?.id) return;
@@ -14745,7 +14786,7 @@ export default function StudioApp() {
       }), status: "logged" };
       submitAmendRequest(amendReq);
     }
-  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, dcKitEdits, showMsg]);
+  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, showMsg]);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   // `skipAi` runs the matcher deterministically — knowledge + name-match only, no vision calls.

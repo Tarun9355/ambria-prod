@@ -80,7 +80,7 @@ describe("runDealCheckGenerate's fixed-venue lookup reads the boot-loaded copy, 
 
 describe("reconcileSoldInventoryBlocks reads readiness + manual items together, once, before its first await", () => {
   const start = src.indexOf("const reconcileSoldInventoryBlocks = useCallback(async (fnsToProcess, newCards, inventoryList, cli) => {");
-  const end = src.indexOf("}, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, dcKitEdits, showMsg]);");
+  const end = src.indexOf("}, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, showMsg]);");
 
   it("is where we think it is", () => {
     expect(start).toBeGreaterThan(-1);
@@ -108,6 +108,20 @@ describe("reconcileSoldInventoryBlocks reads readiness + manual items together, 
 
   it("manualByFn is built from manualItemsNow", () => {
     expect(body).toMatch(/manualItemsNow\.filter\(\(mi\) => \(mi\.fnIdx \?\? 0\) === fnIdx\)/);
+  });
+
+  it("dcKitEdits gets the same readiness-gated snapshot treatment (owner ask, 2026-11-16: same cold-client hazard, different field)", () => {
+    expect(body).toMatch(/const kitEditsNow = manualReady && dcsAtStart\.dcKitEdits && typeof dcsAtStart\.dcKitEdits === "object" \? dcsAtStart\.dcKitEdits : \{\};/);
+    expect(body).toMatch(/const edited = kitEditsNow\?\.\[fnIdx\]\?\.\[cardKey\];/);
+    expect(body).not.toMatch(/const edited = dcKitEdits\?\.\[fnIdx\]\?\.\[cardKey\];/);
+  });
+
+  it("dcKitEdits is no longer in this useCallback's own dependency array", () => {
+    // The deps array IS the `end` anchor itself — inspect it directly rather than scanning a fixed
+    // slice of the ~45k-char function body (which never reached the deps line and made this vacuous).
+    const depsLine = src.slice(end, end + 110);
+    expect(depsLine).toMatch(/^\}, \[eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, showMsg\]\);/);
+    expect(depsLine).not.toMatch(/dcKitEdits/);
   });
 });
 
@@ -184,6 +198,52 @@ describe("runDealCheckGenerate defers a cold silent run instead of matching/reco
 
   it("wakes the unseen run only if nothing is already running (dcRunRef)", () => {
     expect(body).toMatch(/if \(!dcRunRef\.current\) setDcHeadless\(true\);/);
+  });
+});
+
+describe("the Deal Check draft autosave only stamps the collision fields (dcDraftSavedAt/By) from a visibly-open Deal Check", () => {
+  const start = src.indexOf("const doSave = (saveOpts = {}) => {");
+  const end = src.indexOf("flushDcAutosaveRef.current = doSave;");
+
+  it("is where we think it is", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+  });
+
+  const body = src.slice(start, end);
+
+  it("stampPatch is empty unless dcVisRef.current.full, and dcSaveBaselineRef only advances for a full-page save", () => {
+    // dcVisRef.current.full, not the bare dcFullPageOpen state var — this effect's own deps (below)
+    // don't include dcFullPageOpen, so a closure read of it can go stale across a headless->full
+    // transition (regression review, 2026-11-16, round 2).
+    expect(body).toMatch(/const stampPatch = dcVisRef\.current\.full \? \{ dcDraftSavedAt: nowStamp, dcDraftSavedBy: me \} : \{\};/);
+    expect(body).toMatch(/if \(dcVisRef\.current\.full\) dcSaveBaselineRef\.current = \{ savedAt: nowStamp, savedBy: me \};/);
+    expect(body).not.toMatch(/dcFullPageOpen \? \{ dcDraftSavedAt/);
+    expect(body).not.toMatch(/if \(dcFullPageOpen\) dcSaveBaselineRef/);
+    // the write itself still always includes dcDraft/dcCards/etc — only the stamp is conditional
+    expect(body).toMatch(/\.\.\.stampPatch \} : c\), undefined, \{ keepalive: !!saveOpts\.keepalive \}\);/);
+  });
+});
+
+describe("a headless wake's own heavy-field-fetch failure stays silent; a real open still shows it", () => {
+  it("ensureClientHeavyFieldsLoaded's toast is gated on !opts.silent", () => {
+    const idx = src.indexOf("const ensureClientHeavyFieldsLoaded = useCallback(");
+    expect(idx).toBeGreaterThan(-1);
+    const slice = src.slice(idx, idx + 1200);
+    expect(slice).toMatch(/if \(!opts\.silent\) showMsg\?\.\("Couldn't load this client's Deal Check draft/);
+  });
+
+  it("openDealCheck passes silent: !dcVisRef.current.full, not the bare (deps-stale) dcFullPageOpen state var", () => {
+    // Regression review, 2026-11-16, round 2: openDealCheck's own useCallback deps don't include
+    // dcFullPageOpen, so a real open's click could still read a stale false here and silence the
+    // toast it was meant to keep — caught before this shipped.
+    expect(src).toMatch(/ensureClientHeavyFieldsLoaded\(activeClientId, \{ silent: !dcVisRef\.current\.full \}\)/);
+    expect(src).not.toMatch(/ensureClientHeavyFieldsLoaded\(activeClientId, \{ silent: !dcFullPageOpen \}\)/);
+  });
+
+  it("the function-removal reindex flow's own call is unaffected (no silent passed, toast stays unconditional there)", () => {
+    const idx = src.indexOf("const c = await ensureClientHeavyFieldsLoaded(id);");
+    expect(idx).toBeGreaterThan(-1);
   });
 });
 
