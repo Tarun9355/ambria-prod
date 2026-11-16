@@ -52,6 +52,7 @@ import { pairSwaps, fnLabelOf } from "../../lib/studio/changeLog";
 import { printSqftOf, smallPrintFlat, printFlatForZone, PRINT_TRUCK_SUB } from "../../lib/studio/truckPrint";
 import { zoneDimLabel } from "../../lib/studio/zoneDims";
 import { withKitEdit } from "../../lib/studio/dealCheckSync";
+import { autoFillDecision } from "../../lib/studio/dealCheckAutoFill";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows, effectiveColorPrefRows, floralPlanByFn } from "../../lib/studio/floralCost";
@@ -1869,6 +1870,18 @@ export default function StudioApp() {
   //     an unrelated client's Deal Check session (dcZoneState is spread onto in runDealCheckGenerate,
   //     `{...dcZoneState}`, not rebuilt fresh, so a stale merge, not just a stale read, was possible).
   const dcStateReadyForClientRef = useRef(null);
+  // State twin of dcStateReadyForClientRef. openDealCheck sets both in the SAME batch as the
+  // restored dc* values, so this commits atomically with them; mirrored into dcStateRef (its own
+  // layout effect, near the Deal Check cache writer) so an ASYNC reader (reconcileSoldInventoryBlocks,
+  // which awaits network calls) sees "ready for client X" and X's own manual items together — never
+  // the live ref's "ready" read after those awaits next to a closure that still holds the PREVIOUS
+  // client's (or an unrestored, empty) manual list. Without this twin, a background sync for client B
+  // starting while B's Deal Check state had never loaded this session could read "ready" (because
+  // openDealCheck's restore for B lands mid-flight, moving the ref) alongside A's still-closed-over
+  // manual items, and briefly reserve A's manual holds / release B's real ones under B's event
+  // (cold-client hazard, found investigating owner report 2026-11-16 — see reconcileSoldInventoryBlocks'
+  // own comment at its manualReady read).
+  const [dcStateReadyClientId, setDcStateReadyClientId] = useState(null);
   const [dcManualSearch, setDcManualSearch] = useState({});
   const [dcDedupOverrides, setDcDedupOverrides] = useState({});
   const [dcBlockedFnOpen, setDcBlockedFnOpen] = useState({});
@@ -13761,6 +13774,9 @@ export default function StudioApp() {
     // when there was nothing to restore) — see dcStateReadyForClientRef's own declaration for why the
     // Build-sync effect needs to know this before it may prune manual items no longer listed.
     dcStateReadyForClientRef.current = activeClientId;
+    // Same value, as state — see dcStateReadyClientId's own declaration. No await between this and
+    // the restore/reset setters above, so React batches all of it into one commit.
+    setDcStateReadyClientId(activeClientId);
     setDcResolving({});
     const allFns = collectAllFunctionData();
     const uniqueDates = [...new Set(allFns.map(f => f.fnDate).filter(Boolean))];
@@ -13975,6 +13991,11 @@ export default function StudioApp() {
       dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems,
       dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcArtFlowerAllocSrc, dcFloralColorPrefs, dcCustomItems,
       dcKitEdits, dcCarpetPick, dcCarpetSplit, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
+      // dcStateReadyClientId alongside dcManualItems (and everything else above) — an async reader
+      // can now read "ready for client X" and X's own restored state from this SAME snapshot, instead
+      // of the ready-ness ref (which moves the instant openDealCheck's restore lands) next to a
+      // separately-read, possibly stale closure. See dcStateReadyClientId's own declaration.
+      dcStateReadyClientId,
     };
   });
 
@@ -14125,6 +14146,21 @@ export default function StudioApp() {
     // "sold" but whose own order was cancelled has nothing to reconcile.
     if (eo.status === "cancelled") { console.warn("[reconcile] this client's event_orders row is cancelled — skipping, not writing blocks under a dead eventId", cli.id); return; }
 
+    // Readiness + manual items read ONCE, together, from the committed mirror — before this
+    // function's first await. Previously the list came from this closure (possibly the PREVIOUS
+    // client's dcManualItems, or a not-yet-restored []) while readiness came from the live ref AFTER
+    // the awaits below — so an openDealCheck restore landing mid-flight (for this same client) could
+    // make a stale/wrong list look "ready" exactly when it shouldn't: a background sync for client B
+    // starting while B's Deal Check state had never loaded this session, racing B's own
+    // openDealCheck, could briefly treat A's leftover manual items (or an empty list) as B's real
+    // ones — releasing B's genuine studio-manual holds or reserving A's under B's event (cold-client
+    // hazard, found investigating owner report 2026-11-16). dcStateRef's own layout effect commits
+    // dcManualItems and dcStateReadyClientId from the SAME render, so reading them together here can
+    // never see one without the other.
+    const dcsAtStart = dcStateRef.current || {};
+    const manualReady = dcsAtStart.dcStateReadyClientId === cli.id;
+    const manualItemsNow = manualReady && Array.isArray(dcsAtStart.dcManualItems) ? dcsAtStart.dcManualItems : [];
+
     // KNOWN SCOPE LIMIT: this only diffs functions still present in fnsToProcess. Deleting an
     // entire function from a sold deal (not just items within one) leaves that function's prior
     // reservations un-released here — its fnDate is gone along with it, and this path doesn't
@@ -14220,7 +14256,7 @@ export default function StudioApp() {
     fnsToProcess.forEach((fn, i) => {
       const fnIdx = fn.fnIdx ?? i;
       const byItem = {};
-      (dcManualItems || []).filter((mi) => (mi.fnIdx ?? 0) === fnIdx).forEach((mi) => {
+      manualItemsNow.filter((mi) => (mi.fnIdx ?? 0) === fnIdx).forEach((mi) => {
         if (!mi.imsId) return;
         const qty = Number(mi.qty) || 0;
         if (qty <= 0) return;
@@ -14314,11 +14350,8 @@ export default function StudioApp() {
     const cardReq = reqByDateFrom(fnsToProcess, requiredByFn);
     const focReq = reqByDateFrom(fnsToProcess, focByFn);
     const manualReq = reqByDateFrom(fnsToProcess, manualByFn);
-    // dcStateReadyForClientRef.current === cli.id: Deal Check's own dc* state (including
-    // dcManualItems) has actually finished restoring for THIS client — never dcManualItems.length > 0,
-    // which is indistinguishable from "genuinely has no manual items" and would let an UNLOADED empty
-    // list release real manual holds the moment this ran before the restore effect caught up.
-    const manualReady = dcStateReadyForClientRef.current === cli.id;
+    // manualReady: computed once at the top of this function together with the manual list itself —
+    // see dcsAtStart/manualItemsNow there for why reading it again here, separately, was the bug.
     const processedDates = new Set(fnsToProcess.map((fn) => fn?.fnDate).filter(Boolean));
     const liveRaw = collectAllFunctionDataRef.current?.();
     const liveList = (Array.isArray(liveRaw) && liveRaw.length) ? liveRaw : fnsToProcess;
@@ -14680,7 +14713,7 @@ export default function StudioApp() {
       }), status: "logged" };
       submitAmendRequest(amendReq);
     }
-  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, dcKitEdits, dcManualItems, showMsg]);
+  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, dcKitEdits, showMsg]);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   // `skipAi` runs the matcher deterministically — knowledge + name-match only, no vision calls.
@@ -14822,7 +14855,14 @@ export default function StudioApp() {
         zonesProcessed += 1;
         setDcGenStatus(`Matching zone "${zoneKey}" (fn ${fnIdx + 1})…`);
         const venueName = fn.fnVenue || "";
-        const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: venueParents || dealCheckData?.venueParents || {} };
+        // sharedFloralSettings.fixedVenues, not dealCheckData?.fixedVenues — fixed venues are global
+        // config, not per-deal Deal Check data, and openDealCheck nulls dealCheckData for the WHOLE
+        // duration of every open's own fetch window (including a headless/background wake). Reading
+        // it here meant a card matched during that window saw no fixed-venue locks at all, so
+        // nameMatchUnique could pick an item standing at another fixed venue instead of the one
+        // genuinely free here. Every other fvCfg in this file already reads the boot-loaded
+        // sharedFloralSettings copy (6534/6544/7414/12974) — this was the one holdout.
+        const fvCfg = { fixedVenues: sharedFloralSettings.fixedVenues, venueParents: venueParents || dealCheckData?.venueParents || {} };
         // Match one element spec → its card. The AI vision call dominates wall-clock, so these run in
         // parallel below (bounded) instead of one-at-a-time — the main "Generate is slow" fix.
         let zoneAborted = false;
@@ -14963,8 +15003,9 @@ export default function StudioApp() {
     // Hard gate (production gap confirmed via direct DB inspection, 2026-11-15): this is the ONLY
     // place that writes a real reservation into `blocks` for an already-sold deal, and until now
     // nothing here ever checked scanOutOfStockElements — markSold/applyBookedChanges both run that
-    // scan before THEY get anywhere near here, but this auto-fill/regenerate path (the headless
-    // effect below fires it on every Deal Check open, sold or not) had no such check at all, so a
+    // scan before THEY get anywhere near here, but this auto-fill/regenerate path (the auto-fill
+    // effect below fires it every time Deal Check runs, visibly or headless, sold or not) had no such
+    // check at all, so a
     // build edit that introduced a real shortage could still push a worsened reservation into the
     // live table with nobody told. Re-scan the CURRENT build right here — if anything is flagged,
     // skip the write entirely (whatever `blocks` already holds is left exactly as-is, not released
@@ -15012,17 +15053,22 @@ export default function StudioApp() {
           // client B, is exactly the cross-client array-index identity risk this codebase has been
           // burned by before (see memory: Sangeeta function-corruption, Rakesh Taneja
           // resumeSavedSession). Skipping the write below is unconditional regardless — only showing
-          // the modal is conditioned on staying the active client; the headless auto-fill re-runs (and
-          // re-gates) the moment that client becomes active again anyway.
+          // the modal is conditioned on staying the active client; the next Deal Check run for that
+          // client (an edit's autosave wake, Apply, or opening it for real) re-reconciles anyway.
           // !silent too (owner report, 2026-11-16): this same "regenerate" is ALSO fired as a
           // silent, fire-and-forget background sync on every booked-deal build edit (the ~1.5s
           // debounced autosave above) and right after markSold/applyBookedChanges's OWN explicit
           // gate already passed — neither call means "Deal Check was just opened", so popping this
           // modal from them interrupted whatever the salesperson was doing with a SECOND dialog
           // stacking over the one already open (e.g. the very picker they'd just opened from the
-          // first gate's own Fix button). The true "Deal Check just opened" auto-fill effect never
-          // passes silent, so it still gates exactly as before; only the background re-syncs stay
-          // silent the way their own name already promises (same rule the showMsg below follows).
+          // first gate's own Fix button). ROUND 2 (2026-11-16, same owner report, confirmed live:
+          // plain Build edits popped the gate with nobody near Deal Check at all): the auto-fill
+          // effect's own call to this function ALSO used to pass no silent flag at all — autosave's
+          // edit wakes it via syncDeptOpsHeadless/dcHeadless, independent of the direct calls fixed in
+          // round 1 — so an invisible background run could still pop this modal. It now passes
+          // `silent: !dcFullPageOpen` (autoFillDecision, lib/studio/dealCheckAutoFill.js): only a run
+          // the salesperson can actually SEE (a real Deal Check open) gates; every unseen wake stays
+          // silent the way its own name already promises (same rule the showMsg below follows).
           // A silent run still owes the salesperson SOMETHING, though — a booked deal with no
           // negotiated amount never shows an Apply Changes button at all, so this debounced autosave
           // is the ONLY path that ever reconciles its edits; suppressing the modal there with no
@@ -15067,7 +15113,7 @@ export default function StudioApp() {
       // activeClientIdRef — the live ref, not this call's own frozen `activeClientId` — hasn't moved
       // on to a different client in the meantime; a replay for a client the user has since left would
       // reconcile the wrong deal's state under the wrong one. Dropping it in that case is fine: the
-      // headless auto-fill already re-reconciles whenever that client becomes active again.
+      // next Deal Check run for that client (an edit's autosave wake, or opening it again) re-reconciles.
       const pending = dcGenRerunPendingRef.current.get(activeClientId);
       if (pending) {
         dcGenRerunPendingRef.current.delete(activeClientId);
@@ -15076,21 +15122,40 @@ export default function StudioApp() {
         }
       }
     }
-  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, dcKitEdits, floralHardPropMap, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, reconcileSoldInventoryBlocks, scanOutOfStockElements, eventOrders]);
+  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, dcKitEdits, floralHardPropMap, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, reconcileSoldInventoryBlocks, scanOutOfStockElements, eventOrders, sharedFloralSettings]);
   useEffect(() => { runDealCheckGenerateRef.current = runDealCheckGenerate; });
 
-  // Fill Deal Check from the build as soon as it opens, deterministically. The Generate button that
+  // Fill Deal Check from the build as soon as it runs, deterministically. The Generate button that
   // used to do this is gone, and matching is free in this mode (knowledge + name-match, no vision
   // calls), so there is nothing to gate it behind — it just mirrors whatever the build currently
-  // says. Runs after openDealCheck has loaded IMS, and only once per open.
-  const dcAutoFilledRef = useRef(false);
+  // says. Fires once per dcRun session PER MODE (see autoFillDecision) — NOT "after openDealCheck has
+  // loaded IMS" as this comment used to (wrongly) claim: it fires in the same commit dcRun flips true,
+  // well before openDealCheck's own fetch settles (that race is pre-existing and unrelated to this
+  // fix — see the "dcCards closure can still be {}" note near this function's own cold-client
+  // handling above).
+  //
+  // silent: !dcFullPageOpen — only a run the salesperson can actually SEE (a real Deal Check open)
+  // may pop the hard out-of-stock gate modal or this run's own "Deal Check ready"/match-failure
+  // toasts; every unseen wake (an edit's autosave, markSold/Apply's pushEventOrderPlan, the IMS-
+  // settings auto-sync, the planning sweep) stays silent, same as the direct background calls
+  // (markSold/applyBookedChanges/autoSaveBuild) already do. Commit 50836787 fixed THOSE direct calls
+  // but missed this one: autoSaveBuild's edit also calls syncDeptOpsHeadless, which wakes this exact
+  // effect WITHOUT a silent flag — so a plain Build edit could still pop the gate over whatever the
+  // salesperson was doing, independent of and not covered by that earlier fix (owner report,
+  // 2026-11-16 — confirmed live: adding/editing an ordinary element popped "Items out of stock" with
+  // nobody near Deal Check at all).
+  const dcAutoFilledRef = useRef(null); // null | "headless" | "full" — see autoFillDecision
   useEffect(() => {
-    if (!dcRun) { dcAutoFilledRef.current = false; return; }
-    if (dcAutoFilledRef.current || dealCheckLoading || !activeClientId) return;
-    dcAutoFilledRef.current = true;
-    runDealCheckGenerate(null, { skipAi: true }).catch(() => {});
+    const d = autoFillDecision({ dcRun, full: dcFullPageOpen, loading: dealCheckLoading, hasClient: !!activeClientId, fired: dcAutoFilledRef.current });
+    dcAutoFilledRef.current = d.nextFired;
+    if (d.fire) runDealCheckGenerate(null, { skipAi: true, silent: d.silent }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dcRun, dealCheckLoading, activeClientId]);
+  }, [dcRun, dcFullPageOpen, dealCheckLoading, activeClientId]);
+  // A real open landing while an unseen run is still mounted takes over from it (the effect above
+  // re-fires as "full" even though the headless one-shot was already spent — see autoFillDecision) —
+  // clear dcHeadless here so the hidden instance doesn't linger and re-mount once the user closes
+  // Deal Check again.
+  useEffect(() => { if (dcFullPageOpen) setDcHeadless(false); }, [dcFullPageOpen]);
   // An unseen run belongs to the deal it was started for — never let it carry on into another one.
   useEffect(() => { setDcHeadless(false); }, [activeClientId]);
 

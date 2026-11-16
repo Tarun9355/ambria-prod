@@ -561,9 +561,12 @@ export default function StudioModals({ ctx }) {
           lib/rateCard.js). Four call sites, same array/modal, different wording via oosGateReason:
           markSold and applyBookedChanges open it in place of their usual confirm dialog (deliberately
           no "Sold anyway" — closing it just cancels the confirm, same as a missing name/date/venue
-          does above it); runDealCheckGenerate's own sold-deal reconcile (its headless auto-fill fires
-          on every Deal Check open) opens it with no confirm dialog pending at all — it just refuses
-          that one write into the real `blocks` table and leaves whatever was already reserved as-is;
+          does above it); runDealCheckGenerate's own sold-deal reconcile (its auto-fill fires every
+          time Deal Check runs, but only POPS THIS MODAL when it's visibly open — an unseen background
+          run, e.g. woken by a plain Build edit, toasts instead; see autoFillDecision,
+          lib/studio/dealCheckAutoFill.js) opens it with no confirm dialog pending at all — it just
+          refuses that one write into the real `blocks` table and leaves whatever was already reserved
+          as-is;
           DealCheckOverlay.jsx's explicit "📤 push to IMS" button (syncToOps) opens it the same way,
           defense-in-depth on a push that is display-only to begin with (no `blocks` write of its own).
           The 📦 button opens the availability picker right here (openOosFix, StudioApp.jsx) —
