@@ -7103,7 +7103,11 @@ export default function StudioApp() {
       if (e.isInvOnlyNoPattern) return;
       if (!byName[e.name]) { byName[e.name] = { name: e.name, zones: [], qty: 0, realPct: e.realPct, real: 0, art: 0, total: 0, invCost: 0 }; elements.push(byName[e.name]); }
       const g = byName[e.name];
-      g.zones.push(e.zoneKey); g.qty += e.qty || 0; g.real += e.realCost || 0; g.art += e.artCost || 0; g.total += e.total || 0;
+      // Two rows of the same name in the SAME zone (owner ask, 2026-11-16: a second size/config of
+      // one recipe added to one zone) used to print that zone twice in this list ("Stage, Stage") —
+      // dedupe keeps the merged qty/cost correct while showing each zone once.
+      if (!g.zones.includes(e.zoneKey)) g.zones.push(e.zoneKey);
+      g.qty += e.qty || 0; g.real += e.realCost || 0; g.art += e.artCost || 0; g.total += e.total || 0;
       g.invCost += (e.artLines || []).reduce((s, rl) => s + (rl.invItem ? (rl.lineCost || 0) : 0), 0);
     });
     return {
