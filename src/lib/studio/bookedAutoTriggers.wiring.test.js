@@ -41,7 +41,12 @@ describe("the auto-fill effect derives silence from visibility, not from how it 
   });
 
   it("the decision effect re-runs on a dcFullPageOpen flip (without this dep, a headless-then-full transition would never fire its own non-silent run)", () => {
-    expect(body).toMatch(/\}, \[dcRun, dcFullPageOpen, dealCheckLoading, activeClientId\]\);/);
+    expect(body).toMatch(/\}, \[dcRun, dcFullPageOpen, dealCheckLoading, activeClientId, dcStateReadyClientId\]\);/);
+  });
+
+  it("Phase 2: a silent run is only considered ready once this client's own Deal Check state has restored; a real open is exempt", () => {
+    expect(body).toMatch(/const ready = dcFullPageOpen \|\| dcStateReadyClientId === activeClientId;/);
+    expect(body).toMatch(/ready,\s*fired:\s*dcAutoFilledRef\.current/);
   });
 
   it("no bare runDealCheckGenerate(null, { skipAi: true }) is left anywhere in the file (every call site states its own silent)", () => {
@@ -122,3 +127,76 @@ describe("openDealCheck commits the state twin in the same batch as the ready-ne
     expect(slice).toMatch(/dcStateReadyClientId,/);
   });
 });
+
+// ═══ Phase 2 — one sync request per edit, a cold guard, and a keep-alive for the hidden run ═══
+
+describe("autoSaveBuild makes ONE sync request per edit (requestBookedSync), not a direct call plus a separate headless wake", () => {
+  const start = src.indexOf("if (opts.edited) {");
+  const end = src.indexOf("}, []);", start);
+
+  it("is where we think it is", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+  });
+
+  const body = src.slice(start, end);
+
+  it("calls requestBookedSyncRef.current, not runDealCheckGenerateRef.current or syncDeptOpsHeadlessRef.current directly", () => {
+    expect(body).toMatch(/requestBookedSyncRef\.current\?\.\(\);/);
+    expect(body).not.toMatch(/runDealCheckGenerateRef\.current/);
+    expect(body).not.toMatch(/syncDeptOpsHeadlessRef\.current/);
+  });
+});
+
+describe("requestBookedSync picks exactly one action via bookedSyncAction", () => {
+  const start = src.indexOf("const dcVisRef = useRef({ full: false, headless: false });");
+  const end = src.indexOf("const buildHasDataRef = useRef(false);");
+
+  it("is where we think it is", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+  });
+
+  const body = src.slice(start, end);
+
+  it("wakes dcHeadless on \"wake\", calls runDealCheckGenerateRef directly (silent) on \"direct\"", () => {
+    expect(body).toMatch(/bookedSyncAction\(dcVisRef\.current\) === "wake"/);
+    expect(body).toMatch(/setDcHeadless\(true\); return;/);
+    expect(body).toMatch(/runDealCheckGenerateRef\.current\?\.\(null, \{ skipAi: true, silent: true \}\)/);
+  });
+});
+
+describe("runDealCheckGenerate defers a cold silent run instead of matching/reconciling from stale dc* state", () => {
+  const start = src.indexOf("const runDealCheckGenerate = useCallback(");
+  const inFlightIdx = src.indexOf("if (dcGenInFlightRef.current.has(activeClientId)) {", start);
+
+  it("is where we think it is, and sits BEFORE the in-flight guard", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(inFlightIdx).toBeGreaterThan(start);
+  });
+
+  const body = src.slice(start, inFlightIdx);
+
+  it("defers when silent and this client's dc* state isn't the ready one", () => {
+    expect(body).toMatch(/if \(silent && dcStateRef\.current\?\.dcStateReadyClientId !== activeClientId\) \{/);
+    expect(body).toMatch(/reason:\s*"cold-deferred"/);
+  });
+
+  it("wakes the unseen run only if nothing is already running (dcRunRef)", () => {
+    expect(body).toMatch(/if \(!dcRunRef\.current\) setDcHeadless\(true\);/);
+  });
+});
+
+describe("DealCheckOverlay's hidden-run lifetime restarts its 2.5s finish timer while a generate is in flight, with a 60s hard cap regardless", () => {
+  const src2 = readFileSync(new URL("../../pages/studio/dealcheck/DealCheckOverlay.jsx", import.meta.url), "utf8");
+
+  it("the 2.5s finish effect is gated on !dcGenerating and lists it in its deps", () => {
+    expect(src2).toMatch(/if \(!dcHeadless \|\| !dcPriceSettled \|\| dcGenerating\) return;/);
+    expect(src2).toMatch(/setTimeout\(\(\) => finishDcHeadless\?\.\(\), 2500\);[\s\S]{0,120}\}, \[dcHeadless, dcPriceSettled, dcGenerating\]\);/);
+  });
+
+  it("a separate, unconditional 60s hard cap still exists (not re-armed by dcGenerating)", () => {
+    expect(src2).toMatch(/if \(!dcHeadless\) return;[\s\S]{0,40}setTimeout\(\(\) => finishDcHeadless\?\.\(\), 60000\);[\s\S]{0,80}\}, \[dcHeadless\]\);/);
+  });
+});
+

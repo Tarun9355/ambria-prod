@@ -25,3 +25,14 @@ export function autoFillDecision({ dcRun, full, loading, hasClient, ready = true
   if (fired === "full" || fired === mode) return { fire: false, nextFired: fired };
   return { fire: true, nextFired: mode, silent: !full };
 }
+
+// Phase 2 — one sync request per booked-deal edit, instead of the two independent calls
+// autoSaveBuild used to make (a direct silent generate, AND a headless wake whose own auto-fill was
+// a second, redundant generate of the same edit). "wake" when nothing is running: the newly-silent
+// auto-fill (autoFillDecision, since the owner report fix above) IS the one generate, and the
+// overlay it mounts pushes Dept Ops itself. "direct" when Deal Check is already open (its own visible
+// reconcile covers it) OR a headless instance is already mounted — its own auto-fill either already
+// ran this session or is still loading, so only a direct call actually reconciles THIS edit now.
+export function bookedSyncAction({ full, headless }) {
+  return (!full && !headless) ? "wake" : "direct";
+}

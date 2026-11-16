@@ -614,11 +614,28 @@ export default function DealCheckOverlay({ ctx }) {
   // Once prices have settled the department push below has gone out with the final figures (it fires
   // 200ms after any change in the totals); the extra wait covers that push and its write. A run that
   // never settles still ends after a minute rather than staying mounted.
+  //
+  // !dcGenerating (Phase 2, 2026-11-16): a direct background call (requestBookedSync's "direct"
+  // branch, used once a headless instance is already mounted — its own one-shot auto-fill already
+  // spent) can land AFTER prices first settled, while this instance is already counting down to
+  // unmount. Without re-checking dcGenerating, that run's own result could finish reconciling after
+  // the instance unmounted, with nothing left mounted to push it to Dept Ops until the next wake. This
+  // timer now restarts on every dcGenerating flip, so a generate in flight always gets to finish (and
+  // push) before the 2.5s countdown toward unmount starts again. The 60s hard cap below is unchanged
+  // and NOT re-armed by dcGenerating — a generate that never clears it (a thrown body skips
+  // runDealCheckGenerate's own `finally`-reset in some paths) must not keep this instance alive
+  // indefinitely; it stays the one unconditional backstop, same budget the planning sweep's own
+  // per-deal timing already assumes.
+  useEffect(() => {
+    if (!dcHeadless || !dcPriceSettled || dcGenerating) return;
+    const t = setTimeout(() => finishDcHeadless?.(), 2500);
+    return () => clearTimeout(t);
+  }, [dcHeadless, dcPriceSettled, dcGenerating]);
   useEffect(() => {
     if (!dcHeadless) return;
-    const t = setTimeout(() => finishDcHeadless?.(), dcPriceSettled ? 2500 : 60000);
+    const t = setTimeout(() => finishDcHeadless?.(), 60000);
     return () => clearTimeout(t);
-  }, [dcHeadless, dcPriceSettled]);
+  }, [dcHeadless]);
 
   if (!(authUser && true)) return null;
 

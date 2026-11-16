@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { autoFillDecision } from "./dealCheckAutoFill";
+import { autoFillDecision, bookedSyncAction } from "./dealCheckAutoFill";
 
 describe("autoFillDecision", () => {
   it("resets to null the instant dcRun goes false", () => {
@@ -44,5 +44,20 @@ describe("autoFillDecision", () => {
     expect(fired).toEqual({ fire: true, nextFired: "headless", silent: true });
     const again = autoFillDecision({ dcRun: true, full: false, loading: false, hasClient: true, ready: true, fired: fired.nextFired });
     expect(again.fire).toBe(false);
+  });
+});
+
+describe("bookedSyncAction", () => {
+  it("wakes the unseen run when nothing is mounted — its silent auto-fill becomes the one generate", () => {
+    expect(bookedSyncAction({ full: false, headless: false })).toBe("wake");
+  });
+  it("calls directly when Deal Check is open — the visible overlay's own reconcile covers it", () => {
+    expect(bookedSyncAction({ full: true, headless: false })).toBe("direct");
+  });
+  it("calls directly when a headless instance is already mounted — its one-shot auto-fill is already spent", () => {
+    expect(bookedSyncAction({ full: false, headless: true })).toBe("direct");
+  });
+  it("calls directly when both are somehow true (open always wins over a stale headless flag)", () => {
+    expect(bookedSyncAction({ full: true, headless: true })).toBe("direct");
   });
 });

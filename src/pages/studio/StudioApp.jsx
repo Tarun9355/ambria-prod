@@ -52,7 +52,7 @@ import { pairSwaps, fnLabelOf } from "../../lib/studio/changeLog";
 import { printSqftOf, smallPrintFlat, printFlatForZone, PRINT_TRUCK_SUB } from "../../lib/studio/truckPrint";
 import { zoneDimLabel } from "../../lib/studio/zoneDims";
 import { withKitEdit } from "../../lib/studio/dealCheckSync";
-import { autoFillDecision } from "../../lib/studio/dealCheckAutoFill";
+import { autoFillDecision, bookedSyncAction } from "../../lib/studio/dealCheckAutoFill";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows, effectiveColorPrefRows, floralPlanByFn } from "../../lib/studio/floralCost";
@@ -1904,6 +1904,9 @@ export default function StudioApp() {
   // working", seen or not; the effects that only concern the visible overlay stay on dcFullPageOpen.
   const [dcHeadless, setDcHeadless] = useState(false);
   const dcRun = dcFullPageOpen || dcHeadless;
+  // Live read for the cold guard inside runDealCheckGenerate (a useCallback whose own deps don't
+  // include dcRun) — Phase 2 of the booked-deal auto-trigger consolidation, 2026-11-16.
+  const dcRunRef = useRef(false); dcRunRef.current = dcRun;
   // Warm the lazily-split Deal Check chunk once the browser is idle after sign-in, so the first
   // open doesn't wait on a download. A failed prefetch is just ignored; opening Deal Check imports it again.
   const hasAuthUser = !!authUser;
@@ -9532,9 +9535,13 @@ export default function StudioApp() {
   // own declaration) — autoSaveBuild needs to call it, but is declared long before it exists.
   const runDealCheckGenerateRef = useRef(null);
   // Client ids a runDealCheckGenerate call is CURRENTLY in flight for — see runDealCheckGenerate's own
-  // in-flight guard comment. This reconcile now has four independent triggers for the same sold deal
-  // (markSold, Apply Changes, the headless auto-fill, and the post-edit autosave) that can all fire
-  // within seconds of each other; without this, two overlapping runs for the SAME client could race on
+  // in-flight guard comment. This reconcile has several independent triggers for the same sold deal —
+  // markSold, Apply Changes, the auto-fill (itself woken by requestBookedSync's post-edit sync, the
+  // settings auto-sync, or a real Deal Check open) — that can all fire within seconds of each other
+  // (Phase 2, 2026-11-16, collapsed the old "post-edit autosave" direct call and its separate headless
+  // wake into the one requestBookedSync path, but did not remove any OTHER trigger here — markSold/
+  // Apply Changes still fire their own direct calls alongside their own headless wake, same as before);
+  // without this, two overlapping runs for the SAME client could race on
   // that one event's `blocks` upsert, each built from a different intermediate snapshot of dcCards.
   // A Set, not a single clientId-or-null scalar (regression-caught on review of the first version):
   // two DIFFERENT clients legitimately running at once is fine and must not block each other, but a
@@ -9547,6 +9554,33 @@ export default function StudioApp() {
   // runDealCheckGenerate's own `finally`) — a refused call used to just vanish with nothing queued,
   // reopening the exact "this edit never got reconciled" gap the in-flight guard exists alongside.
   const dcGenRerunPendingRef = useRef(new Map());
+  // ── ONE SYNC REQUEST PER BOOKED-DEAL EDIT (Phase 2, 2026-11-16 owner ask: fewer, non-conflicting
+  // auto triggers) ── autoSaveBuild used to make TWO independent calls per edit: a direct silent
+  // generate, AND setDcHeadless(true) to wake the background instance — whose own auto-fill then ran
+  // a SECOND, largely redundant generate of the same edit a render later (Phase 1's silent fix made
+  // that second run safe to pop nothing, but didn't stop it from running twice). requestBookedSync
+  // picks exactly one action: wake the (now-silent) headless instance if nothing is running — its
+  // auto-fill IS the one generate, and the mounted overlay pushes Dept Ops itself — or call directly
+  // if Deal Check is already open (its own visible reconcile already covers edits) or a headless
+  // instance is already mounted (its own auto-fill either already ran this session or is still
+  // loading, so a direct call is what actually reconciles THIS edit right now either way).
+  // bookedSyncAction is the pure decision (lib/studio/dealCheckAutoFill.js); dcVisRef gives it a live
+  // read of dcFullPageOpen/dcHeadless without putting them in any effect's deps.
+  const dcVisRef = useRef({ full: false, headless: false });
+  dcVisRef.current = { full: dcFullPageOpen, headless: dcHeadless };
+  const requestBookedSync = useCallback(() => {
+    if (bookedSyncAction(dcVisRef.current) === "wake") { setDcHeadless(true); return; }
+    // Re-assert dcHeadless=true when not full (a no-op if it's already true) — regression review,
+    // 2026-11-16: dcVisRef.current can be a sub-millisecond-stale read of a headless instance that's
+    // mid-unmount (finishDcHeadless's own setDcHeadless(false) pending but not yet committed), which
+    // would otherwise leave this direct call's result with no overlay mounted to push it to Dept Ops.
+    if (!dcVisRef.current.full) setDcHeadless(true);
+    runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true })?.catch((e) => console.warn("[requestBookedSync] reconcile failed:", e?.message || e));
+  }, []);
+  // For autoSaveBuild (a []-deps callback), which needs the current one — same pattern as
+  // runDealCheckGenerateRef/syncDeptOpsHeadlessRef just above/below.
+  const requestBookedSyncRef = useRef(null);
+  requestBookedSyncRef.current = requestBookedSync;
   const buildHasDataRef = useRef(false);
   useEffect(() => {
     // Auto-save as soon as there's a named deal with any build data — even a BRAND-NEW deal with no
@@ -9638,14 +9672,12 @@ export default function StudioApp() {
     if (opts.edited) {
       try {
         const cli = (clientLedgerRef.current || []).find((c) => c.id === activeClientIdRef.current);
-        if (cli?.status === "booked") {
-          runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true }).catch(() => {});
-          // IMS Dept Ops follows the edit too, straight away on this same save. Apply alone was not
-          // enough: it only exists on a deal with a negotiated amount, and nobody presses it after
-          // every change. A run already going keeps pushing as the totals move, so a burst of edits
-          // does not start a run each.
-          syncDeptOpsHeadlessRef.current?.();
-        }
+        // One request, not two (Phase 2 — see requestBookedSync's own comment for why the old direct
+        // generate + separate headless wake were largely running the same reconcile twice per edit).
+        // IMS Dept Ops follows the edit too, on this same save, whichever action requestBookedSync
+        // picks: a direct call's reconcile needs nothing further; a wake's own auto-fill mounts the
+        // overlay, which pushes Dept Ops itself once its pricing settles.
+        if (cli?.status === "booked") requestBookedSyncRef.current?.();
       } catch { /* ignore */ }
     }
   }, []);
@@ -14734,6 +14766,24 @@ export default function StudioApp() {
       showMsg(msg, "red");
       return { ok: false, blocked: true };
     }
+    // Cold guard (Phase 2, 2026-11-16): a SILENT background run must never match/reconcile from a
+    // closure over the PREVIOUS client's (or not-yet-restored, empty) dcCards/dcManualItems/dcKitEdits
+    // — exactly the cold-client hazard reconcileSoldInventoryBlocks' own dcStateReadyClientId read
+    // above was built to close for ITS OWN read, but a call that gets all the way into this function
+    // still runs everything ABOVE that read (card matching, pricing) from the stale closure too. Defer
+    // instead: the auto-fill effect's own `ready` gate (autoFillDecision) won't fire again until this
+    // client's state genuinely restores, so nothing is lost, only delayed to the moment it's safe. A
+    // real, visible open is NEVER deferred — the salesperson watching it load is the whole reason
+    // dcFullPageOpen exempts the auto-fill's own ready gate above, and deferring a non-silent call here
+    // would silently swallow a real "Deal Check just opened" request with nothing left to retry it.
+    if (silent && dcStateRef.current?.dcStateReadyClientId !== activeClientId) {
+      // Wake the unseen run if nothing is already — its auto-fill is what will actually run this once
+      // ready; if Deal Check is already running (open or headless), its own pending auto-fill already
+      // covers this client becoming ready, so there's nothing further to kick off here.
+      if (!dcRunRef.current) setDcHeadless(true);
+      console.info("[dealcheck] background run deferred — Deal Check state not loaded for this client yet", activeClientId);
+      return { ok: false, blocked: true, reason: "cold-deferred" };
+    }
     // Regression-caught (2026-11-10, reviewing the booked-deal reconcile fix below): a run that is
     // already in flight for this client must not start a second one. reconcileSoldInventoryBlocks
     // re-derives this event's ENTIRE blocks entry from this run's own matched cards each time it
@@ -15064,8 +15114,9 @@ export default function StudioApp() {
           // first gate's own Fix button). ROUND 2 (2026-11-16, same owner report, confirmed live:
           // plain Build edits popped the gate with nobody near Deal Check at all): the auto-fill
           // effect's own call to this function ALSO used to pass no silent flag at all — autosave's
-          // edit wakes it via syncDeptOpsHeadless/dcHeadless, independent of the direct calls fixed in
-          // round 1 — so an invisible background run could still pop this modal. It now passes
+          // edit woke it via dcHeadless (requestBookedSync, Phase 2, routes through the same wake),
+          // independent of the direct calls fixed in round 1 — so an invisible background run could
+          // still pop this modal. It now passes
           // `silent: !dcFullPageOpen` (autoFillDecision, lib/studio/dealCheckAutoFill.js): only a run
           // the salesperson can actually SEE (a real Deal Check open) gates; every unseen wake stays
           // silent the way its own name already promises (same rule the showMsg below follows).
@@ -15138,19 +15189,28 @@ export default function StudioApp() {
   // may pop the hard out-of-stock gate modal or this run's own "Deal Check ready"/match-failure
   // toasts; every unseen wake (an edit's autosave, markSold/Apply's pushEventOrderPlan, the IMS-
   // settings auto-sync, the planning sweep) stays silent, same as the direct background calls
-  // (markSold/applyBookedChanges/autoSaveBuild) already do. Commit 50836787 fixed THOSE direct calls
-  // but missed this one: autoSaveBuild's edit also calls syncDeptOpsHeadless, which wakes this exact
-  // effect WITHOUT a silent flag — so a plain Build edit could still pop the gate over whatever the
-  // salesperson was doing, independent of and not covered by that earlier fix (owner report,
+  // (markSold/applyBookedChanges) already do. Commit 50836787 fixed THOSE direct calls but missed
+  // this one: autoSaveBuild's edit used to also call syncDeptOpsHeadless directly, which woke this
+  // exact effect WITHOUT a silent flag — so a plain Build edit could still pop the gate over whatever
+  // the salesperson was doing, independent of and not covered by that earlier fix (owner report,
   // 2026-11-16 — confirmed live: adding/editing an ordinary element popped "Items out of stock" with
-  // nobody near Deal Check at all).
+  // nobody near Deal Check at all). autoSaveBuild now goes through requestBookedSync instead (Phase
+  // 2), which still wakes this same effect when nothing is already running — the silence guarantee
+  // here is what makes that safe.
+  // ready (Phase 2): a background (silent) run must not fire its match/reconcile from a closure
+  // that still holds the PREVIOUS client's (or a not-yet-restored, empty) dc* state — same
+  // cold-client reasoning as reconcileSoldInventoryBlocks' own dcStateReadyClientId read above, just
+  // gating WHEN this effect fires instead of what one already-running call reads. A real open
+  // (dcFullPageOpen) is exempt: openDealCheck's own restore effect runs first either way, and a
+  // visible open genuinely needing data sooner is the whole point of watching it load on screen.
   const dcAutoFilledRef = useRef(null); // null | "headless" | "full" — see autoFillDecision
   useEffect(() => {
-    const d = autoFillDecision({ dcRun, full: dcFullPageOpen, loading: dealCheckLoading, hasClient: !!activeClientId, fired: dcAutoFilledRef.current });
+    const ready = dcFullPageOpen || dcStateReadyClientId === activeClientId;
+    const d = autoFillDecision({ dcRun, full: dcFullPageOpen, loading: dealCheckLoading, hasClient: !!activeClientId, ready, fired: dcAutoFilledRef.current });
     dcAutoFilledRef.current = d.nextFired;
     if (d.fire) runDealCheckGenerate(null, { skipAi: true, silent: d.silent }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dcRun, dcFullPageOpen, dealCheckLoading, activeClientId]);
+  }, [dcRun, dcFullPageOpen, dealCheckLoading, activeClientId, dcStateReadyClientId]);
   // A real open landing while an unseen run is still mounted takes over from it (the effect above
   // re-fires as "full" even though the headless one-shot was already spent — see autoFillDecision) —
   // clear dcHeadless here so the hidden instance doesn't linger and re-mount once the user closes
