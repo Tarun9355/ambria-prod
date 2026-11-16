@@ -14014,11 +14014,22 @@ export default function StudioApp() {
   }, [collectAllFunctionData, dcPhotoOverrides, photoImsMap, dcCache, activeClientId, clientLedger, ensureClientHeavyFieldsLoaded, customProperties, customOutdoor, cancelledEoIds]);
 
   // ═══ DEAL CHECK — fire openDealCheck on full-page open — VERBATIM ═══
+  // activeClientId, not just dcRun (owner ask, 2026-11-16 — the last open item from the auto-trigger
+  // audit): this effect used to fire ONLY when dcRun itself toggled, so if activeClientId ever
+  // changed while dcRun stayed continuously true — e.g. a real open (dcFullPageOpen) surviving a
+  // client switch, or a headless wake (dcHeadless) still mounted when a NEW client's edit wakes it
+  // again before the previous one's instance finished unmounting — openDealCheck never re-ran for
+  // the new client at all. Deal Check (or the hidden background run) kept working with the PREVIOUS
+  // client's restored dc* state and heavy fields, the exact "wrong deal's data leaking into the
+  // current screen" failure class this codebase has incident history with (Sangeeta function-
+  // corruption, Rakesh Taneja resumeSavedSession). openDealCheck is itself a useCallback keyed on
+  // activeClientId (among other things), so it's already a fresh, correct-for-the-new-client closure
+  // the moment this fires — this effect just needed to actually call it again.
   useEffect(() => {
     if (!dcRun) return;
     openDealCheck();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dcRun]);
+  }, [dcRun, activeClientId]);
 
   // Layout-effect mirror of Deal Check's own draft state, read by doSave below instead of its
   // closure. flushDcAutosaveRef.current can be called from a setTimeout(0) fired the instant a swap

@@ -125,6 +125,16 @@ describe("reconcileSoldInventoryBlocks reads readiness + manual items together, 
   });
 });
 
+describe("openDealCheck re-fires on an activeClientId change, not just a dcRun toggle", () => {
+  it("the 'fire openDealCheck on full-page open' effect lists activeClientId in its deps", () => {
+    const idx = src.indexOf("═══ DEAL CHECK — fire openDealCheck on full-page open");
+    expect(idx).toBeGreaterThan(-1);
+    const slice = src.slice(idx, idx + 1500);
+    expect(slice).toMatch(/if \(!dcRun\) return;\s*\n\s*openDealCheck\(\);/);
+    expect(slice).toMatch(/\}, \[dcRun, activeClientId\]\);/);
+  });
+});
+
 describe("openDealCheck commits the state twin in the same batch as the ready-ness ref", () => {
   it("setDcStateReadyClientId is called immediately after dcStateReadyForClientRef.current is set", () => {
     const refIdx = src.indexOf("dcStateReadyForClientRef.current = activeClientId;");
