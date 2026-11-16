@@ -14080,10 +14080,27 @@ export default function StudioApp() {
       // (same reasoning as persistDcKitEditsNow above) rather than canStudio(...) directly, since
       // this closure is rebuilt by an effect whose own dependency list isn't guaranteed to include it.
       if (!canDesignEditRef.current) return;
-      dcAutosavePendingRef.current = false;
       // Read through the layout-effect-mirrored ref, NOT this closure's own dcCards/etc — see
       // dcStateRef above for why a stale closure here would otherwise re-flush pre-swap state.
-      const dcs = dcStateRef.current;
+      const dcs = dcStateRef.current || {};
+      // Cold-client guard (same pattern as reconcileSoldInventoryBlocks' dcsAtStart read): on a
+      // client switch while a headless run is still mounted for the PREVIOUS client, dcRun stays
+      // true for one render with activeClientId already the NEW client (B) — no client-switch path
+      // clears dcHeadless in the same batch as setActiveClientId, only a separate [activeClientId]
+      // effect does, one render later. In that one render, this closure gets built for B while
+      // dc* (dcCards/dcResolved/dcManualItems/dcKitEdits/etc) still holds A's leftovers, because
+      // openDealCheck(B) is still awaiting B's heavy fields. The companion flush effect then fires
+      // THIS closure the instant dcRun drops (dcHeadless clears), writing A's deal straight into B's
+      // client_ledger row — worse on a cold B (never opened this session), whose row has no
+      // dcCards/dcZoneState/dcKitEdits/dcDraft of its own to partially overwrite the mix with, so
+      // almost the whole snapshot stays A's. Same failure class as the Sangeeta function-corruption
+      // and Rakesh Taneja resumeSavedSession incidents (owner report, 2026-11-16, found investigating
+      // an unrelated fix). Only write once openDealCheck's reset/restore for THIS closure's own
+      // client has actually committed — readiness and the data it gates come from the SAME
+      // dcStateRef snapshot, so they can never disagree with each other the way the live
+      // dcStateReadyForClientRef ref and this closure's activeClientId could.
+      if (dcs.dcStateReadyClientId !== activeClientId) return;
+      dcAutosavePendingRef.current = false;
       const snapshot = {
         resolved: dcs.dcResolved,
         cards: dcs.dcCards,

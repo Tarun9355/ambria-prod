@@ -211,7 +211,7 @@ describe("runDealCheckGenerate defers a cold silent run instead of matching/reco
   });
 });
 
-describe("the Deal Check draft autosave only stamps the collision fields (dcDraftSavedAt/By) from a visibly-open Deal Check", () => {
+describe("the Deal Check draft autosave: cold-client guard, and stamping only from a visibly-open Deal Check", () => {
   const start = src.indexOf("const doSave = (saveOpts = {}) => {");
   const end = src.indexOf("flushDcAutosaveRef.current = doSave;");
 
@@ -221,6 +221,13 @@ describe("the Deal Check draft autosave only stamps the collision fields (dcDraf
   });
 
   const body = src.slice(start, end);
+
+  it("bails before writing anything if this closure's client isn't the one dc* state has actually restored for (same mixed-client-state hazard class as Sangeeta/Rakesh Taneja — owner report, 2026-11-16)", () => {
+    const guardIdx = body.indexOf("if (dcs.dcStateReadyClientId !== activeClientId) return;");
+    const saveIdx = body.indexOf("saveClientLedger(");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(saveIdx).toBeGreaterThan(guardIdx);
+  });
 
   it("stampPatch is empty unless dcVisRef.current.full, and dcSaveBaselineRef only advances for a full-page save", () => {
     // dcVisRef.current.full, not the bare dcFullPageOpen state var — this effect's own deps (below)
