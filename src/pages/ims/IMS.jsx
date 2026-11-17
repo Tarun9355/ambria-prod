@@ -12,7 +12,7 @@ import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDef
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { assemblePrintMaterialsFromRows, assembleCarpetMaterialsFromRows, assemblePlatformRatesFromRows, assembleMaskingRatesFromRows, assembleTrussRatesFromRows } from "../../lib/studio/taxonomy";
 import { createSettingsWriter } from "../../lib/ims/settingsWriter";
-import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, DEFAULT_ROLE_TABS, CALENDAR_TAB_USER_IDS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
+import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, DEFAULT_ROLE_TABS, CALENDAR_TAB_USER_ID, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
 import SiteSupervisorTab from "./SiteSupervisorTab.jsx";
 import { assembleAttendanceLocationsFromRows, assembleAttendanceTrainingByDeptFromRows } from "../../lib/ims/attendance";
 import { filterLiveBlocks } from "../../lib/ims/liveBlocks";
@@ -2772,12 +2772,7 @@ export default function IMS() {
   // keep it) — deliberately a hard override, not a per-role Tab Access entry (same pattern as
   // Dashboard/Attendance above): an admin ticking "calendar" on in Role Access for some other role
   // must not reinstate it here.
-  // The listed accounts (CALENDAR_TAB_USER_IDS: Pratik, and salim since 2026-11-17) always get it, whatever their role's
-  // Tab Access says - salim is Sales, whose role has no IMS tabs; everyone else never does.
-  if (CALENDAR_TAB_USER_IDS.includes(user?.id)) {
-    // in its own place in the rail (TABS order), not tacked on at the end
-    if (!allowedTabs.some((t) => t.id === "calendar")) allowedTabs = TABS.filter((t) => t.id === "calendar" || allowedTabs.some((a) => a.id === t.id));
-  } else {
+  if (user?.id !== CALENDAR_TAB_USER_ID) {
     allowedTabs = allowedTabs.filter((t) => t.id !== "calendar");
   }
   // Department heads (+ Admin) get an Approvals tab for last-minute amendment requests.
