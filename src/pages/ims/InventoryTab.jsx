@@ -7,6 +7,7 @@ import { fmt } from "../../lib/format";
 import { INV_CATS, INV_LOCATIONS, DEPTS, INV_TYPES, PRICING_CAT_STYLES, SUBCAT_OTHER } from "../../lib/inventory/constants";
 import { findAlternatives, getEffectivePricing, resolveDateCategory } from "../../lib/inventory/helpers";
 import { DATE_PRICING_LABELS, hasIMSPerm } from "../../lib/ims/constants";
+import { useInventoryReviews, needsCheck, lastChangeAt, changeKind, canCheckInventory } from "../../lib/ims/inventoryReviews";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { callClaudeStreaming } from "../../lib/ai";
 import { locationBreakdown, assembleFixedVenuesFromRows } from "../../lib/ims/fixedVenues";
@@ -168,6 +169,10 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const [filterSubCat, setFilterSubCat] = useState("All");
   const [subChipSearch, setSubChipSearch] = useState(""); // live-filters the sub-category pill row below
   const [filterType, setFilterType] = useState("All");
+  // "New / edited" (owner ask 2026-11-17): every item added or edited since it went live, until an Admin marks it checked
+  const { reviews: invReviews, ready: invReviewsReady, markChecked } = useInventoryReviews();
+  const [filterToCheck, setFilterToCheck] = useState(false);
+  const canCheck = canCheckInventory(authUser);
   const [filterNeedsReview, setFilterNeedsReview] = useState(false); // Tier 1.2 — show only items flagged for cat-migration review
   const [availDate, setAvailDate] = useState(""); // check availability AS OF a specific date (YYYY-MM-DD)
   // item popup: with a date picked, its "Blocked for Functions" lists that day only unless this is on (back off for each item opened)
@@ -471,6 +476,7 @@ Rules:
     const matchSubCat = filterSubCat === "All" || !filterSubCat || normSub(i.subCat) === normSub(filterSubCat);
     const matchType = filterType === "All" || i.type === filterType;
     const matchReview = !filterNeedsReview || i?._needsCatMigration;
+    const matchToCheck = !filterToCheck || (invReviewsReady && needsCheck(i, invReviews));
     const matchAvail = !availDate || availOnly === "all"
       || (availOnly === "blocked" && blockedOf(i) > 0)
       || (availOnly === "free" && blockedOf(i) === 0);
@@ -481,8 +487,16 @@ Rules:
     // Admin -> Settings -> Master Data -> Sub-Categories -> Departments) is the fix path for a
     // miscategorised item, same override this already leans on for reporting elsewhere.
     const matchDept = canSeeDept(authUser, catToDept(i.cat, settings?.categoryDepartments));
-    return matchSearch && matchCat && matchType && matchSubCat && matchReview && matchAvail && matchDept;
+    return matchSearch && matchCat && matchType && matchSubCat && matchReview && matchToCheck && matchAvail && matchDept;
   });
+  // the check list reads newest change first
+  if (filterToCheck) filtered.sort((a, b) => lastChangeAt(b) - lastChangeAt(a));
+  const toCheckCount = invReviewsReady ? inventory.filter((i) => canSeeDept(authUser, catToDept(i.cat, settings?.categoryDepartments)) && needsCheck(i, invReviews)).length : 0;
+  const fmtWhen = (ms) => new Date(ms).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+  const checkItem = async (i) => {
+    const err = await markChecked(i, authUser?.name || "");
+    if (err) alert("Could not mark it checked: " + err);
+  };
   // Rank matches so a name that actually says what was typed surfaces first, instead of filtered
   // results sitting in whatever order `inventory` happened to already be in — an item literally
   // named "Artificial White" used to show BELOW items that only matched via their category/sub-cat/
@@ -1042,9 +1056,16 @@ Rules:
             )}
           </div>
           <span className="text-xs text-gray-500 font-medium">{filtered.length} of {visibleInventory.length}</span>
-          {(search || filterCat !== "All" || filterSubCat !== "All" || filterType !== "All" || filterNeedsReview) && (
-            <button onClick={() => { setSearch(""); setFilterCat("All"); setFilterSubCat("All"); setFilterType("All"); setFilterNeedsReview(false); setSubChipSearch(""); setInvPage(0); }}
+          {(search || filterCat !== "All" || filterSubCat !== "All" || filterType !== "All" || filterNeedsReview || filterToCheck) && (
+            <button onClick={() => { setSearch(""); setFilterCat("All"); setFilterSubCat("All"); setFilterType("All"); setFilterNeedsReview(false); setFilterToCheck(false); setSubChipSearch(""); setInvPage(0); }}
               className="text-xs text-indigo-600 hover:underline">Clear all filters</button>
+          )}
+          {invReviewsReady && (
+            <button onClick={() => { setFilterToCheck(!filterToCheck); setInvPage(0); }}
+              title="Items added or edited, newest first - they leave this list once an Admin marks them checked"
+              className={"px-3 py-1.5 rounded-full text-sm font-medium transition-all border-2 " + (filterToCheck ? "bg-emerald-600 text-white border-emerald-700" : toCheckCount ? "bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50")}>
+              🆕 New / edited ({toCheckCount})
+            </button>
           )}
           {needsReviewCount > 0 && (
             <button onClick={() => { setFilterNeedsReview(!filterNeedsReview); setInvPage(0); }}
@@ -1194,6 +1215,10 @@ Rules:
                       {/* 🎨 Paint: the item's Paintable toggle is on (Edit → "This item can be painted") - Build can order it painted */}
                       <p className="font-medium text-gray-900">{i.name}{i.paintable === true && <span title={`Paintable${i.baseColour ? ` - base colour ${i.baseColour}` : ""}`} className="ml-2 inline-flex items-center gap-0.5 align-middle px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-pink-50 text-pink-700 border border-pink-200 whitespace-nowrap">🎨 Paint</span>}</p>
                       <p className="text-xs text-gray-400">{i.code || i.id} · {i.unit}{i.size ? ` · ${i.size}` : ""}</p>
+                      {/* who added / edited it and when - on the check list, or on any row still waiting for its check */}
+                      {invReviewsReady && needsCheck(i, invReviews) && (
+                        <p className="text-xs mt-0.5 text-emerald-700 font-medium">🆕 {changeKind(i)}{i.updatedBy ? ` by ${i.updatedBy}` : ""} · {fmtWhen(lastChangeAt(i))}</p>
+                      )}
                     </td>
                     <td className="px-2.5 py-2"><TypeBadge type={i.type} /></td>
                     <td className="px-2.5 py-2"><Badge color="gray">{i.cat}</Badge></td>
@@ -1230,6 +1255,10 @@ Rules:
                     </td>
                     <td className="px-2.5 py-2">
                       <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
+                        {canCheck && invReviewsReady && needsCheck(i, invReviews) && (
+                          <button onClick={() => checkItem(i)} title="Cross-checked - take it off the New / edited list (it comes back if edited again)"
+                            className="text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-md px-2 py-0.5 whitespace-nowrap">✓ Checked</button>
+                        )}
                         {canBlock && <button onClick={() => { setBlockModal(i.id); setBlockForm({ fnId: "", qty: 1, dept: "Flower", remark: "", sizeClass: "M" }); }}
                           className={"text-xs hover:underline whitespace-nowrap " + (zero ? "text-gray-400" : "text-indigo-600")}>🔒 Block</button>}
                         {canAdd && <button onClick={() => openEdit(i.id)} className="text-xs text-violet-600 hover:underline whitespace-nowrap">✏️ Edit</button>}

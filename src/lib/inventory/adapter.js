@@ -48,6 +48,11 @@ export function rowToItem(row) {
     paintCost: row.paint_cost || 0,
     subItems: Array.isArray(row.sub_items) ? row.sub_items : [],
     notes: row.notes || "",
+    // When / by whom the row was created and last saved (read only - itemToRow never writes these back; updated_at moves
+    // by trigger on every save). IMS Inventory's "New / edited" check list reads them (lib/ims/inventoryReviews.js).
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null,
+    updatedBy: row.updated_by || "",
   };
   // Restore extras + `_`-prefixed migration flags from the flags JSONB.
   for (const [k, v] of Object.entries(flags)) {
