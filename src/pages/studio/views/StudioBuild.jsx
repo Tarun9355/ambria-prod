@@ -5169,18 +5169,29 @@ undefined
                         const it=(imsInventory||[]).find(i=>i.id===el.invId);
                         if(it) kitDescendantIds(it,imsInventory,el.kitOverrides).forEach(id=>{ if(!kitOfPart.has(id)) kitOfPart.set(id,el.name||it.name); });
                       });
+                      // A flower-recipe pattern or mandi commodity already sitting in this zone used to
+                      // be filtered out of its own search results entirely, so there was no way to add a
+                      // SECOND row of the same thing at a different size/config (owner report,
+                      // 2026-11-16: a Floral Reet recipe added as Big couldn't be added again as Small —
+                      // the search box just never showed it). Relaxed for patterns/mandi only (owner ask,
+                      // same day): each row prices and blocks on its own qty/size, so a second row is a
+                      // legitimate extra, not a slip — countInZone below drives an "ALREADY ADDED ×N"
+                      // badge instead of hiding the result. Plain inventory items stay gated to one row
+                      // per zone, same as before — the owner wants that duplicate-add guard kept for
+                      // direct inventory, just not for recipes/mandi.
+                      const countInZone=(key,val)=>(zoneElements[k]||[]).filter(el=>el[key]===val).length;
                       // Searches IMS inventory + pure flower-recipe patterns with no inventory backing
                       // (Rate Card is not consulted here — see getElPriceFromInventory /
                       // getElPriceFromPattern in StudioApp.jsx).
                       const invMatches=smartFilter((imsInventory||[]).filter(it=>!(zoneElements[k]||[]).find(el=>el.invId===it.id)&&!isHiddenSubcat(it,rcSubcatFactors)),q,it=>[it.name,it.cat,it.subCat||it.subcategory]);
-                      const patMatches=smartFilter((recipeOnlyPatterns||[]).filter(pt=>!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)),q,pt=>[pt.name]);
+                      const patMatches=smartFilter(recipeOnlyPatterns||[],q,pt=>[pt.name]);
                       // A raw mandi commodity is directly addable as its own element (by the kg,
                       // variant picked afterward on the element card), unlike every other mandi
                       // flower which only ever prices through a recipe — Loose Petals (the original
                       // named exception) or any item the Mandi Prices admin has given a markup
                       // (isDirectMandiElement, lib/studio/pricing.js).
                       const mandiCatalogue=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
-                      const mandiMatches=smartFilter(mandiCatalogue.filter(m=>isDirectMandiElement(m)&&!(zoneElements[k]||[]).find(el=>el.mandiId===m.id)),q,m=>[m.name]);
+                      const mandiMatches=smartFilter(mandiCatalogue.filter(m=>isDirectMandiElement(m)),q,m=>[m.name]);
                       const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt})),...mandiMatches.map(m=>({kind:"mandi",m}))];
                       if(!addElPos||addElPos.key!==k) return null;
                       return matches.length>0?createPortal(<div className="ael-widget" style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
@@ -5193,9 +5204,9 @@ undefined
                           // to a Repeat zone was defaulting to Repeat pricing with no override at all). Leaving
                           // the field out entirely when the zone ISN'T Repeat keeps every non-Repeat zone
                           // exactly as before (inherited vs explicit-false price identically there anyway).
-                          if(m.kind==="pat"){ const pt=m.pt; return <div key={"pat:"+pt.id}
+                          if(m.kind==="pat"){ const pt=m.pt; const nInZone=countInZone("patternId",pt.id); return <div key={"pat:"+pt.id}
                             onClick={()=>{
-                              if(!(zoneElements[k]||[]).find(el=>el.patternId===pt.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id,...(isRepeatCat(k,"elements")?{repeatOverride:false}:{})}]}));}
+                              setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id,...(isRepeatCat(k,"elements")?{repeatOverride:false}:{})}]}));
                               setZoneElSearch(prev=>({...prev,[k]:""}));
                             }}
                             style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
@@ -5206,13 +5217,14 @@ undefined
                               <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pt.name}</span>
                                 <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(236,72,153,0.15)",color:"#EC4899",fontWeight:700,flexShrink:0}}>🌺 RECIPE</span>
+                                {nInZone>0&&<span title={`Already added ${nInZone} time(s) to this zone — this adds another row (a different size/config), not a duplicate of the same one`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(5,150,105,0.15)",color:"#059669",fontWeight:700,flexShrink:0}}>✓ ADDED ×{nInZone}</span>}
                               </div>
                               <div style={{fontSize:11,color:textS,marginTop:2}}>{pt.sub?pt.sub+" › ":""}Flower recipe — no inventory item</div>
                             </div>
                           </div>; }
-                          if(m.kind==="mandi"){ const mi=m.m; const variants=Array.isArray(mi.colorVariants)?mi.colorVariants:[]; return <div key={"mandi:"+mi.id}
+                          if(m.kind==="mandi"){ const mi=m.m; const variants=Array.isArray(mi.colorVariants)?mi.colorVariants:[]; const nInZone=countInZone("mandiId",mi.id); return <div key={"mandi:"+mi.id}
                             onClick={()=>{
-                              if(!(zoneElements[k]||[]).find(el=>el.mandiId===mi.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:mi.name,qty:1,unit:mi.unit||"kg",size:"",mandiId:mi.id,mandiVariantId:variants.length===1?variants[0].variantId:"",...(isRepeatCat(k,"elements")?{repeatOverride:false}:{})}]}));}
+                              setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:mi.name,qty:1,unit:mi.unit||"kg",size:"",mandiId:mi.id,mandiVariantId:variants.length===1?variants[0].variantId:"",...(isRepeatCat(k,"elements")?{repeatOverride:false}:{})}]}));
                               setZoneElSearch(prev=>({...prev,[k]:""}));
                             }}
                             style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
@@ -5223,6 +5235,7 @@ undefined
                               <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
                                 <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{mi.name}</span>
                                 <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(245,158,11,0.15)",color:"#F59E0B",fontWeight:700,flexShrink:0}}>🌸 MANDI · {mi.unit||"kg"}</span>
+                                {nInZone>0&&<span title={`Already added ${nInZone} time(s) to this zone`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(5,150,105,0.15)",color:"#059669",fontWeight:700,flexShrink:0}}>✓ ADDED ×{nInZone}</span>}
                               </div>
                               <div style={{fontSize:11,color:textS,marginTop:2}}>{variants.length?`Choose a variant after adding (${variants.length} available)`:"Raw flower — no recipe/inventory item"}</div>
                             </div>
@@ -5261,6 +5274,10 @@ undefined
                               // made, not just today's live date — markSold bulk-freezes every
                               // element present at sale time to the sold date, so this stamp only
                               // ever matters for an item added to a deal that's already Sold.
+                              // invId stays gated to one row per zone (owner ask, 2026-11-16: only
+                              // patterns/mandi get the duplicate-add relax below) — invMatches above
+                              // already excludes it from these results once added, this guard is just
+                              // the same defensive belt-and-suspenders the pattern/mandi adds dropped.
                               if(!(zoneElements[k]||[]).find(el=>el.invId===it.id)){setZoneElements(prev=>({...prev,[k]:[...(prev[k]||[]),{name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr(),...(isRepeatCat(k,"elements")?{repeatOverride:false}:{})}]}));}
                               setZoneElSearch(prev=>({...prev,[k]:""}));
                             }}
@@ -6548,9 +6565,13 @@ undefined
                 // 2026-11-13: cfgCur would almost always read false here anyway post-strip, but an
                 // older, pre-strip master could still read true and wrongly bake Fresh into the recipe).
                 const freshOv=ownsLive&&repeatCatFor(zcLive,"elements")?{repeatOverride:false}:{};
+                // Already-in-zone patterns/mandi no longer hidden here either — same relax as the main
+                // zone card's own add-search above (owner ask, 2026-11-16: a second row of the same
+                // recipe/mandi at a different size/config, not just a different zone). Plain inventory
+                // items stay gated to one row per zone, same as before.
                 const inv=smartFilter((imsInventory||[]).filter(it=>!els.find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)),q,it=>[it.name,it.cat,it.subCat||it.subcategory]).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr(),...freshOv})}));
-                const pat=smartFilter((recipeOnlyPatterns||[]).filter(pt=>!els.find(el=>el.patternId===pt.id)),q,pt=>[pt.name]).map(pt=>({key:"pat:"+pt.id,label:pt.name,sub:"🌺 Flower recipe",make:()=>({name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id,...freshOv})}));
-                const mandi=smartFilter(((dealCheckData||studioFloralData)?.mandiCatalogue||[]).filter(m=>isDirectMandiElement(m)&&!els.find(el=>el.mandiId===m.id)),q,m=>[m.name]).map(m=>{const v=Array.isArray(m.colorVariants)?m.colorVariants:[];return {key:"mandi:"+m.id,label:m.name,sub:`🌸 Mandi · ${m.unit||"kg"}`,src:m.photoUrl,make:()=>({name:m.name,qty:1,unit:m.unit||"kg",size:"",mandiId:m.id,mandiVariantId:v.length===1?v[0].variantId:"",...freshOv})};});
+                const pat=smartFilter(recipeOnlyPatterns||[],q,pt=>[pt.name]).map(pt=>({key:"pat:"+pt.id,label:pt.name,sub:"🌺 Flower recipe",make:()=>({name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id,...freshOv})}));
+                const mandi=smartFilter(((dealCheckData||studioFloralData)?.mandiCatalogue||[]).filter(m=>isDirectMandiElement(m)),q,m=>[m.name]).map(m=>{const v=Array.isArray(m.colorVariants)?m.colorVariants:[];return {key:"mandi:"+m.id,label:m.name,sub:`🌸 Mandi · ${m.unit||"kg"}`,src:m.photoUrl,make:()=>({name:m.name,qty:1,unit:m.unit||"kg",size:"",mandiId:m.id,mandiVariantId:v.length===1?v[0].variantId:"",...freshOv})};});
                 return [...inv,...pat,...mandi];
               })():[];
               const prints=cfgCur.prints||[];

@@ -513,7 +513,7 @@ export default function DCFloralsTab({ ctx }) {
                                                   <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>×</td>
                                                   <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{Math.round(c.realFrac*100)}%</td>
                                                   <td style={{textAlign:"right",padding:"4px 4px",color:"#1A1A2E"}}>−</td>
-                                                  {/* Reused credit — a flat quantity subtracted (70% of the EXACT same flower's own
+                                                  {/* Reused credit — a flat quantity subtracted (80% of the EXACT same flower's own
                                                       quantity in the function it's reused from), not a multiplier any more: the
                                                       amount depends on what that other function actually had, so it varies per row
                                                       even within the same zone, unlike the old flat ×0.2/×0.7 cut. */}
@@ -829,7 +829,7 @@ export default function DCFloralsTab({ ctx }) {
                                     <div style={{padding:"10px 12px",background:"rgba(124,58,237,0.06)",border:"1px dashed rgba(167,139,250,0.35)",borderRadius:7}}>
                                       <div style={{fontSize:11,color:"#7C3AED",fontWeight:600,letterSpacing:0.4,textTransform:"uppercase",marginBottom:8}}>How ₹{Math.round(eb.total).toLocaleString("en-IN")} for {eb.name} · {eb.zoneKey} × {eb.qty} derived</div>
                                       {/* Stated once here since it applies to every flower in this element, but
-                                          the actual amount reused varies per flower (70% of THAT exact flower's
+                                          the actual amount reused varies per flower (80% of THAT exact flower's
                                           own quantity in the function it's carried over from) — see each flower's
                                           own "reused" column below for the real figure, not a flat percentage. */}
                                       {eb.repeatZone && (

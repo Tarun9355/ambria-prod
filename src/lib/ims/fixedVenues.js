@@ -18,7 +18,13 @@ import { isCancelledEO } from "./liveBlocks.js";
 // something an admin free-types into a venue-name field. Stripping trailing .,;: closes the specific
 // case found; it does not make the match fuzzy in general (a genuinely different venue name still
 // won't match), just tolerant of stray end-of-string punctuation.
-function normVenue(s) { return String(s || "").toLowerCase().replace(/^ambria\s+/, "").trim().replace(/[.,;:]+$/, "").trim(); }
+// Exported (was module-private) so the plain ledger-level venue-bucketing (soldBlocksPlan.js's
+// reqByDateFrom) can collapse the same property typed two ways (e.g. "Pushpanjali" vs "Ambria
+// Pushpanjali.") into one demand bucket too, instead of reimplementing this same prefix/punctuation
+// stripping a second time (bug 6, 2026-11-15 adversarial matrix) — deliberately still NOT merged into
+// venueKey.js's own `venueKey`/`fnVenueKey` (see that file's header comment for why: those answer a
+// different, intentionally raw-string question for the bug-8-hardened per-venue allocation code).
+export function normVenue(s) { return String(s || "").toLowerCase().replace(/^ambria\s+/, "").trim().replace(/[.,;:]+$/, "").trim(); }
 
 // Truss materials a Fixed Venue's standing pillars/beams can be tracked against — the same set
 // Build's own truss material picker offers (TRUSS_MATERIALS, lib/studio/taxonomy.js).

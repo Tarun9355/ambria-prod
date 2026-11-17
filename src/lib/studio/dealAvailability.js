@@ -216,6 +216,13 @@ function competingRows(invId, fns, imsInventory, target, targetDate, targetVenue
 // reuse for the same-day case specifically (`findCrossFnReuseSource` can blend same-day and
 // previous-day sources with no way to tell them apart, so the two credits can't be cleanly merged
 // without that being untangled first). Left for a dedicated future pass.
+// Same 6dp tolerance helpers.js's own walkKitUnits already rounds every kit-component qty to
+// (round6) — a fractional per-kit qty (e.g. 20/7) summed back up here in plain unrounded JS float
+// subtraction can leave `remaining`/the shortfall a hair off true zero (~1e-15), which a 2dp display
+// rounds away on screen but which still fails a `short > 0` presence check upstream (kitPartShortfalls
+// pushes the part into its output list even though the DISPLAYED short reads 0 — bug 4, 2026-11-15
+// adversarial matrix). Rounding here keeps a true-zero shortfall exactly 0, never phantom-positive.
+const round6 = (n) => Math.round((Number(n) || 0) * 1e6) / 1e6;
 export function allocateRowAvailability(invId, fns, imsInventory, target, targetDate, otherEventsAvail, targetVenue) {
   if (!invId) return { ownedQty: 0, shortQty: 0 };
   const rows = competingRows(invId, fns, imsInventory, target, targetDate, targetVenue, false);
@@ -226,9 +233,9 @@ export function allocateRowAvailability(invId, fns, imsInventory, target, target
   let result = { ownedQty: 0, shortQty: 0 };
   for (const r of rows) {
     const owned = Math.min(r.qty, remaining);
-    remaining -= owned;
+    remaining = round6(remaining - owned);
     if (r.fnIdx === target.fnIdx && r.zk === target.zoneKey && r.elIdx === target.elIdx) {
-      result = { ownedQty: owned, shortQty: r.qty - owned };
+      result = { ownedQty: owned, shortQty: round6(r.qty - owned) };
     }
   }
   return result;

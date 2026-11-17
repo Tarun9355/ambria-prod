@@ -738,6 +738,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // Which date the phone layout has open. Desktop shows every day's events in the grid at once
   // and never needs this; on a phone the grid is dates only, so one has to be chosen to list.
   const [pickDay, setPickDay] = useState(null);
+  // Legend dot clicked (its code, e.g. "AP"/"MKT"/"ADD") to show only that venue's events on the
+  // picker grid; null shows every venue, same as before this existed. Click the active dot again
+  // to clear it (toggle, not a separate "clear" control).
+  const [venueFilter, setVenueFilter] = useState(null);
   const [selId, setSelId] = useState(null);
   // True only while the PDF started from Deal Check is being built: that book shows all three carpets sales picked for a
   // floor; the PDF made here in Planning shows just the one Planning decided (the three only until it is decided).
@@ -1040,11 +1044,18 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       dates.forEach(d => {
         const [y, m] = d.split("-").map(Number);
         if (y !== pickMonth.y || m !== pickMonth.m + 1) return;
+        // Legend filter: same per-date venue resolution the grid itself renders with
+        // (fnForDate/venueCalendarColor) — a multi-venue deal can match the filter on one of its
+        // dates and not another, so this has to run per-date, not once per event.
+        if (venueFilter) {
+          const code = venueCalendarColor(settings, fnForDate(eo, d)?.venue || eo.venue || "").code;
+          if (code !== venueFilter) return;
+        }
         (out[d] = out[d] || []).push(eo);
       });
     });
     return out;
-  }, [events, pickMonth]);
+  }, [events, pickMonth, venueFilter, settings]);
 
   // Arriving from the Calendar tab: it hands over the event_order id that was clicked and this
   // selects it. Cleared straight after via onFocusHandled, so the hand-off is a one-shot — left
@@ -4033,7 +4044,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                     <div className="min-w-0">
                       <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Pick an event to plan</div>
                       <h3 className="mt-0.5 text-base font-bold text-gray-900 tracking-tight">{first.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</h3>
-                      <div className="text-[11px] text-gray-500 mt-0.5">{monthTotal} sold event{monthTotal === 1 ? "" : "s"} this month · {DEPT_ICON[dept]} {dept}</div>
+                      <div className="text-[11px] text-gray-500 mt-0.5">{monthTotal} sold event{monthTotal === 1 ? "" : "s"} this month{venueFilter ? ` at ${VENUE_CALENDAR_LEGEND.find(v => v.code === venueFilter)?.label || venueFilter}` : ""} · {DEPT_ICON[dept]} {dept}</div>
                     </div>
                     {/* Today as a pill, the arrows as circles — the arrows are a pair doing one
                         job and the pill is a separate one, so they should not look alike. Drawn
@@ -4053,14 +4064,23 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                   </div>
                   {/* Same venue color legend as the separate Ambria Calendar app (owner ask,
                       2026-11-12) — a static list (lib/ims/fixedVenues.js), not derived from which
-                      venues actually have events this month, so it reads the same every month. */}
+                      venues actually have events this month, so it reads the same every month.
+                      Clickable (owner ask, 2026-11-16): picks venueFilter, which pickByDate applies
+                      to every date on the grid. Click the active one again to clear it. */}
                   <div className="px-4 pb-2 flex items-center gap-x-3 gap-y-1 flex-wrap">
-                    {VENUE_CALENDAR_LEGEND.map((vc) => (
-                      <span key={vc.code} className="inline-flex items-center gap-1 text-[10.5px] text-gray-500">
-                        <span aria-hidden="true" className={`w-2 h-2 rounded-full ${vc.dot}`} />
-                        {vc.code} <span className="text-gray-400">({vc.label})</span>
-                      </span>
-                    ))}
+                    {VENUE_CALENDAR_LEGEND.map((vc) => {
+                      const on = venueFilter === vc.code;
+                      return (
+                        <button key={vc.code} type="button" onClick={() => { setVenueFilter(f => f === vc.code ? null : vc.code); setPickDay(null); }}
+                          title={on ? `Showing ${vc.label} only — click to show every venue` : `Show only ${vc.label} events`}
+                          className={"inline-flex items-center gap-1 text-[10.5px] rounded-full px-1.5 py-0.5 -mx-1.5 -my-0.5 transition-colors "
+                            + (on ? "bg-gray-900 text-white" : "text-gray-500 hover:bg-gray-100")}>
+                          <span aria-hidden="true" className={`w-2 h-2 rounded-full ${vc.dot}`} />
+                          {vc.code} <span className={on ? "text-gray-300" : "text-gray-400"}>({vc.label})</span>
+                        </button>
+                      );
+                    })}
+                    {venueFilter && <button type="button" onClick={() => setVenueFilter(null)} className="text-[10.5px] font-semibold text-blue-600 hover:text-blue-800">Clear filter</button>}
                   </div>
                   {/* ── PHONE LAYOUT ──
                       Seven columns of 84px cells with a name chip inside each is a desktop shape;
@@ -4196,8 +4216,15 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                   </div>
                   {monthTotal === 0 && (
                     <div className="px-4 py-3 text-center text-[11px] text-gray-400">
-                      No sold events this month — page to another month{onGoToCalendar ? ", or open the Calendar to see every LMS lead" : ""}.
-                      {onGoToCalendar && <button onClick={onGoToCalendar} className="ml-1 font-semibold text-blue-600 hover:text-blue-800">Open Calendar →</button>}
+                      {venueFilter ? (
+                        <>No {VENUE_CALENDAR_LEGEND.find(v => v.code === venueFilter)?.label || venueFilter} events this month — other venues may still have some.{" "}
+                          <button onClick={() => setVenueFilter(null)} className="font-semibold text-blue-600 hover:text-blue-800">Clear filter</button>
+                        </>
+                      ) : (
+                        <>No sold events this month — page to another month{onGoToCalendar ? ", or open the Calendar to see every LMS lead" : ""}.
+                          {onGoToCalendar && <button onClick={onGoToCalendar} className="ml-1 font-semibold text-blue-600 hover:text-blue-800">Open Calendar →</button>}
+                        </>
+                      )}
                     </div>
                   )}
                 </div>

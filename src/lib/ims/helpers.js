@@ -240,10 +240,21 @@ export function priceForInvItem(item, factorByKey, allInventory, overrideSubItem
 const round6 = (n) => Math.round((Number(n) || 0) * 1e6) / 1e6;
 export function walkKitUnits(item, qty, allInventory, overrideSubItems, visit, _seen) {
   if (!item || !(Number(qty) > 0)) return;
+  // Cycle guard checked BEFORE this node's own visit fires — not just before recursing into ITS
+  // children, which is where this used to live. A genuine kit-inside-kit cycle (A contains B, B
+  // contains A) used to visit A once normally, then a SECOND time when the cycle brought it back
+  // around (the old check only gated recursion, so it only caught the cycle on A's THIRD encounter,
+  // one loop too late — a naive summing caller reserved 3x A's real qty instead of 1x). Checking
+  // membership here stops a node already on the current recursion path from being visited again at
+  // all, the same posture priceForInvItem's own cycle guard already takes (a cyclic child contributes
+  // nothing further once its id is already an ancestor). _seen is undefined on the very first,
+  // top-level call — this item's own id can never already be in an empty set, so the documented
+  // "always visits the top-level kit itself once" behavior is unchanged.
+  if (_seen && item.id && _seen.has(item.id)) return;
   visit(item, round6(qty));
   if (!(Array.isArray(item.subItems) && item.subItems.length > 0)) return;
   const seen = _seen ? new Set(_seen) : new Set();
-  if (item.id) { if (seen.has(item.id)) return; seen.add(item.id); } // cycle guard, same as priceForInvItem
+  if (item.id) seen.add(item.id);
   const subItems = Array.isArray(overrideSubItems) ? overrideSubItems : (Array.isArray(item.subItems) ? item.subItems : []);
   subItems.forEach((si) => {
     if (si.patternId) return; // flower-recipe add-on — not a physical, truckable item

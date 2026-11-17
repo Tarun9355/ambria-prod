@@ -77,7 +77,7 @@ describe("computeFnFloralCost — palette-based flower reuse", () => {
     expect(result.elementBreakdown[0].realLines[0].qty).toBe(20); // full price, no credit
   });
 
-  it("credits 70% of the preceding function's own quantity when palettes overlap AND both functions picked the same colour for this flower (the owner's own example: 10 -> 20 drops to 13)", () => {
+  it("credits FLOWER_REUSE_RATE of the preceding function's own quantity when palettes overlap AND both functions picked the same colour for this flower (10 -> 20 drops by 10 * FLOWER_REUSE_RATE)", () => {
     const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)] }, enabledEls: { stage: true } });
     const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "White", zoneElements: { stage: [elRose(20)] }, enabledEls: { stage: true } });
     const opts = {
@@ -88,8 +88,8 @@ describe("computeFnFloralCost — palette-based flower reuse", () => {
     const result = computeFnFloralCost(f2, [f1, f2], opts);
     const line = result.elementBreakdown[0].realLines[0];
     expect(line.qtyFull).toBe(20);
-    expect(line.reuseCredit).toBeCloseTo(10 * FLOWER_REUSE_RATE, 5); // 7
-    expect(line.qty).toBeCloseTo(13, 5);
+    expect(line.reuseCredit).toBeCloseTo(10 * FLOWER_REUSE_RATE, 5);
+    expect(line.qty).toBeCloseTo(20 - 10 * FLOWER_REUSE_RATE, 5);
   });
 
   it("no credit at all when the palette overlaps but neither function has ever picked an explicit colour for this flower", () => {
@@ -113,7 +113,7 @@ describe("computeFnFloralCost — palette-based flower reuse", () => {
     };
     const result = computeFnFloralCost(f2, [f1, f2], opts);
     const [roseLine, marigoldLine] = result.elementBreakdown.map((eb) => eb.realLines[0]);
-    expect(roseLine.qty).toBeCloseTo(3, 5); // 10 - 0.7*10
+    expect(roseLine.qty).toBeCloseTo(10 - 10 * FLOWER_REUSE_RATE, 5);
     expect(marigoldLine.qty).toBe(10); // no credit — f1 never had marigold at all
   });
 
@@ -148,7 +148,7 @@ describe("computeFnFloralCost — palette-based flower reuse", () => {
     const f1 = fn({ fnIdx: 0, fnShift: "lunch", fnFlowerPalette: "White", zoneElements: { stage: [elRose(10)], entry: [elMarigold(5)] }, enabledEls: { stage: true, entry: true } });
     const f2 = fn({ fnIdx: 1, fnShift: "dinner", fnFlowerPalette: "Maroon", zoneElements: { stage: [elMarigold(10)] }, enabledEls: { stage: true }, zoneConfig: { stage: { repeat: true } } });
     const result = computeFnFloralCost(f2, [f1, f2], baseOpts([pRose, pMarigold]));
-    expect(result.elementBreakdown[0].realLines[0].qty).toBeCloseTo(10 - 0.7 * 5, 5); // 6.5
+    expect(result.elementBreakdown[0].realLines[0].qty).toBeCloseTo(10 - 5 * FLOWER_REUSE_RATE, 5);
   });
 
   it("no reuse at all with no identifiable preceding function, even with a matching palette", () => {
@@ -183,8 +183,8 @@ describe("computeFnFloralCost — colour defaults from a variant explicitly tagg
     const result = computeFnFloralCost(f2, [f1, f2], optsV([pRoseV])); // no colorPrefsForFn/colorPrefsByFnIdx at all
     const line = result.elementBreakdown[0].realLines[0];
     expect(line.qtyFull).toBe(20);
-    expect(line.reuseCredit).toBeCloseTo(10 * FLOWER_REUSE_RATE, 5); // same 10 -> 7 credit as an explicit pick
-    expect(line.qty).toBeCloseTo(13, 5);
+    expect(line.reuseCredit).toBeCloseTo(10 * FLOWER_REUSE_RATE, 5); // same credit as an explicit pick
+    expect(line.qty).toBeCloseTo(20 - 10 * FLOWER_REUSE_RATE, 5);
   });
 
   it("a variant tagged with MULTIPLE palette colours matches on any of them", () => {
@@ -579,6 +579,103 @@ describe("real flower lines — the amount the Dept Ops PDF prints", () => {
   });
   it("the size is the element's own for an S/M/B recipe", () => {
     expect(run({ name: "Pot", patternId: "p_pot", qty: 2, size: "M", realPct: 100 })["carnation himachal"]).toBe(1.2);
+  });
+});
+
+// Owner report, 2026-11-16: a "Flower Reet" (modeled on the real F03/F04 catalogue entries —
+// cat:"florals", sub:"Reet / Garland", inhouseMode:"flat", no invId, priced purely from its
+// recipe) with Size "B" picked via Build's own size-picker showed as "Medium" in IMS Dept Ops.
+// Root cause: sizeFromMode (the no-invItem size-resolution branch) only honored the element's
+// own el.size when the pattern/rate-card's inhouseMode was "smb" — any other mode (here "flat")
+// fell through to a hardcoded "medium" no matter what Build's UI actually recorded. Fixed to
+// always resolve from el.size, the same way the invItem branch's sizeClassToPatternKey already
+// does, regardless of inhouseMode.
+describe("computeFnFloralCost — a no-invId floral-recipe element's size always follows Build's own S/M/B pick, not inhouseMode (bug fix 2026-11-16)", () => {
+  const reet = { id: "reet", name: "Reet", unit: "piece", flowerType: "flower", currentPrice: 10 };
+  // mode: "flat" (not "smb") is the exact condition that used to be ignored.
+  const pReet = {
+    id: "p_reet", sub: "Reet / Garland", mode: "flat",
+    sizes: {
+      small: { flowers: [{ flowerId: "reet", qty: 1 }], extraCost: 0 },
+      medium: { flowers: [{ flowerId: "reet", qty: 2 }], extraCost: 0 },
+      big: { flowers: [{ flowerId: "reet", qty: 3 }], extraCost: 0 },
+    },
+  };
+  const opts = { ...baseOpts([pReet]), mandiCatalogue: [...mandiCatalogue, reet] };
+  const run = (size) => {
+    const el = { name: "Reet", patternId: "p_reet", qty: 1, realPct: 100, ...(size === undefined ? {} : { size }) };
+    const f = fn({ zoneElements: { stage: [el] }, enabledEls: { stage: true } });
+    const result = computeFnFloralCost(f, [f], opts);
+    return result.elementBreakdown[0];
+  };
+
+  it('size "B" resolves to "big" (the recipe\'s big-size qty), not "medium"', () => {
+    const eb = run("B");
+    expect(eb.size).toBe("big");
+    expect(eb.realLines[0].qtyFull).toBe(3);
+  });
+
+  it('size "S" resolves to "small"', () => {
+    const eb = run("S");
+    expect(eb.size).toBe("small");
+    expect(eb.realLines[0].qtyFull).toBe(1);
+  });
+
+  it('no size at all still defaults to "medium"', () => {
+    const eb = run(undefined);
+    expect(eb.size).toBe("medium");
+    expect(eb.realLines[0].qtyFull).toBe(2);
+  });
+
+  // A real "flat" pattern in this codebase (per IMS Admin → Flower Patterns' own Flat/S-M-B
+  // toggle) only ever HAS a `sizes.medium` entry — switching to Flat drops any small/big
+  // recipe. So for a real flat item, this fix changes the DISPLAYED size label (Dept Ops now
+  // correctly shows "big") while the priced recipe composition still falls back to medium's
+  // (no sizes.big to pick) — same existing `sizes[sizeKey] || sizes.medium` fallback as before
+  // this fix, just reached via the right label now instead of a hardcoded one (Opus regression
+  // review, 2026-11-16).
+  it('a realistic flat pattern with ONLY a medium recipe: size "B" labels as "big" but still prices medium\'s composition (no sizes.big to fall back to)', () => {
+    const pReetFlatOnly = { id: "p_reet_flat", sub: "Reet / Garland", mode: "flat", sizes: { medium: { flowers: [{ flowerId: "reet", qty: 2 }], extraCost: 0 } } };
+    const flatOpts = { ...baseOpts([pReetFlatOnly]), mandiCatalogue: [...mandiCatalogue, reet] };
+    const el = { name: "Reet", patternId: "p_reet_flat", qty: 1, realPct: 100, size: "B" };
+    const f = fn({ zoneElements: { stage: [el] }, enabledEls: { stage: true } });
+    const eb = computeFnFloralCost(f, [f], flatOpts).elementBreakdown[0];
+    expect(eb.size).toBe("big");
+    expect(eb.realLines[0].qtyFull).toBe(2); // medium's own qty — the only recipe this pattern has
+  });
+});
+
+// Same bug, the OTHER call site: computeFnRawFlowerUsage (used to look up a PRECEDING function's
+// own usage for the cross-function flower-reuse credit) has its own, separately-reached
+// sizeFromMode call — confirm it resolves the element's size the same way, not just the
+// computeFnFloralCost call site above.
+describe("computeFnRawFlowerUsage — a no-invId floral-recipe element's size also follows Build's own S/M/B pick (bug fix 2026-11-16, other call site)", () => {
+  const reetU = { id: "reetU", name: "Reet", unit: "piece", flowerType: "flower", currentPrice: 10 };
+  const pReetU = {
+    id: "p_reetU", sub: "Reet / Garland", mode: "flat",
+    sizes: {
+      small: { flowers: [{ flowerId: "reetU", qty: 1 }], extraCost: 0 },
+      medium: { flowers: [{ flowerId: "reetU", qty: 2 }], extraCost: 0 },
+      big: { flowers: [{ flowerId: "reetU", qty: 5 }], extraCost: 0 },
+    },
+  };
+  const optsU = { ...baseOpts([pReetU]), mandiCatalogue: [...mandiCatalogue, reetU] };
+  const run = (size) => {
+    const el = { name: "Reet", patternId: "p_reetU", qty: 1, realPct: 100, ...(size === undefined ? {} : { size }) };
+    const f = fn({ zoneElements: { stage: [el] }, enabledEls: { stage: true } });
+    return computeFnRawFlowerUsage(f, optsU).get("reetU");
+  };
+
+  it('size "B" uses the big recipe\'s qty (5), not medium\'s (2)', () => {
+    expect(run("B").realQty).toBe(5);
+  });
+
+  it('size "S" uses the small recipe\'s qty (1)', () => {
+    expect(run("S").realQty).toBe(1);
+  });
+
+  it("no size at all still defaults to medium's qty (2)", () => {
+    expect(run(undefined).realQty).toBe(2);
   });
 });
 

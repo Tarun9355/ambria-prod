@@ -253,6 +253,57 @@ describe("allocateForDate — demand/stock scoped per truss material (2026-11-14
   });
 });
 
+// New (2026-11-15) — StructurePlanningTab's Stock Availability panel used to only ever show Iron
+// (computePoolFeasibility's public return value was stripped to iron-only, documented as deliberate
+// scoping at the time). It now ALSO exposes the full, non-stripped, material-tagged maps so a Pole/
+// Aluminium shortage is visible too — these tests lock in that the iron-only fields stay byte-for-byte
+// identical (back-compat) while the new *ByMaterial fields correctly distinguish every material.
+describe("allocateForDate — material-tagged demand/stock/soft/hard fields (2026-11-15, StructurePlanningTab per-material bars)", () => {
+  const ev = (eoId, state, trusses, createdAt = 1) => ({ eoId, clientId: eoId, clientName: eoId, state, createdAt, trusses });
+  const truss = (trussMaterial, pillarsUsed, beamsUsed) => ({ trussMaterial, allocation: { totals: { pillarsUsed, beamsUsed } } });
+
+  it("exposes demandByMaterial/stockByMaterial/softByMaterial/hardByMaterial, each keyed \"<mat>|<size>\", for iron AND pole distinctly — while every pre-existing iron-only field stays exactly as it was", () => {
+    const trussInv = {
+      pillars: { 12: { stock: 5 } }, beams: { 10: { stock: 5 } },
+      materials: { pole: { pillars: { 8: { stock: 20 } }, beams: { 6: { stock: 20 } } } },
+    };
+    const hardIron = ev("eo_iron", "hard", [truss("iron", { 12: 2 }, { 10: 1 })], 1);
+    const softPole = ev("eo_pole", "soft", [truss("pole", { 8: 3 }, { 6: 2 })], 2);
+    const result = allocateForDate({}, "2026-12-01", [hardIron, softPole], trussInv, "test");
+    const sm = result["2026-12-01"].stockSummary;
+
+    // Pre-existing iron-only fields — unchanged shape and values.
+    expect(sm.demandPillars).toEqual({ 12: 2 });
+    expect(sm.demandBeams).toEqual({ 10: 1 });
+    expect(sm.stockPillars).toEqual({ 12: 5 });
+    expect(sm.stockBeams).toEqual({ 10: 5 });
+    expect(sm.hardPillars).toEqual({ 12: 2 });
+    expect(sm.hardBeams).toEqual({ 10: 1 });
+    expect(sm.softPillars).toEqual({}); // pole's soft demand never bleeds into the iron-only field
+
+    // New material-tagged fields — pole's own demand/stock is now distinguishable from iron's.
+    expect(sm.demandByMaterial.pillars).toEqual({ "iron|12": 2, "pole|8": 3 });
+    expect(sm.demandByMaterial.beams).toEqual({ "iron|10": 1, "pole|6": 2 });
+    expect(sm.stockByMaterial.pillars).toEqual({ "iron|12": 5, "pole|8": 20 });
+    expect(sm.stockByMaterial.beams).toEqual({ "iron|10": 5, "pole|6": 20 });
+    expect(sm.hardByMaterial.pillars).toEqual({ "iron|12": 2 });
+    expect(sm.softByMaterial.pillars).toEqual({ "pole|8": 3 });
+    expect(sm.softByMaterial.beams).toEqual({ "pole|6": 2 });
+  });
+
+  it("a material with zero demand on the date still reports its full stock under stockByMaterial (available, 0 used) — not absent", () => {
+    const trussInv = {
+      pillars: { 12: { stock: 5 } }, beams: {},
+      materials: { pole: { pillars: { 8: { stock: 20 } }, beams: {} } },
+    };
+    const hardIron = ev("eo_iron", "hard", [truss("iron", { 12: 1 }, {})], 1);
+    const result = allocateForDate({}, "2026-12-02", [hardIron], trussInv, "test");
+    const sm = result["2026-12-02"].stockSummary;
+    expect(sm.stockByMaterial.pillars["pole|8"]).toBe(20);
+    expect(sm.demandByMaterial.pillars["pole|8"]).toBeUndefined(); // no pole demand this date at all
+  });
+});
+
 describe("resolveBeamSegment — material-dependent gap tolerance (owner decision, 2026-11-13: a single beam a full 1ft short of budget used to be silently called \"clean\" for every material; now only Pole keeps that full 1ft, since it has no span-padding cushion of its own — Iron/Aluminium get 0.5ft instead)", () => {
   it("Pole keeps the original 1ft tolerance as its only cushion — a 1ft-short single beam is still clean", () => {
     const poleInv = { beams: { 12: { stock: 10 } }, material: "pole" };

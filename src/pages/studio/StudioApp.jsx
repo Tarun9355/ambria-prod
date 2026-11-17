@@ -52,6 +52,7 @@ import { pairSwaps, fnLabelOf } from "../../lib/studio/changeLog";
 import { printSqftOf, smallPrintFlat, printFlatForZone, PRINT_TRUCK_SUB } from "../../lib/studio/truckPrint";
 import { zoneDimLabel } from "../../lib/studio/zoneDims";
 import { withKitEdit } from "../../lib/studio/dealCheckSync";
+import { autoFillDecision, bookedSyncAction } from "../../lib/studio/dealCheckAutoFill";
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows, effectiveColorPrefRows, floralPlanByFn } from "../../lib/studio/floralCost";
@@ -330,7 +331,10 @@ const FLORAL_HARDPROP_DEFAULT = {
 // a module-level constant only because this function sits outside the component and can't close
 // over that one; kept in lockstep by being the one other place this number is allowed to live.
 const GUEST_STRUCT_DISCOUNT_PCT = 25;
-function calcStructCost(zk, zc, rates, applyDiscount) {
+// Exported (only for this one function — everything else in this file stays private) purely so
+// structCostLooseFabric.test.js can call it directly instead of a source-text wiring test; it's a
+// pure function with no closure over component state, so exporting it changes nothing else.
+export function calcStructCost(zk, zc, rates, applyDiscount) {
   if (!zc) return { truss: 0, masking: 0, platform: 0, carpet: 0, arches: 0, pillars: 0, glass: 0, print: 0, fabric: 0, fabricNew: false, total: 0 };
   // fd (Platform/Carpet's own floor size) no longer falls back to the truss's dims (d) — owner ask:
   // adding/sizing a truss must never silently size a Platform/Carpet at the same footprint. A zone
@@ -343,7 +347,14 @@ function calcStructCost(zk, zc, rates, applyDiscount) {
   // differently, so each extra row carries its own (set via its own card in the zone editor).
   const trussRows = [
     { dims: d, trT: zc.trT, trussType: zc.trussType, trussQty: zc.trussQty, trussFrontExt: zc.trussFrontExt, trussFrontExtH: zc.trussFrontExtH, trussBackDepth: zc.trussBackDepth, mkOn: zc.mkOn, mkT: zc.mkT, mkWalls: zc.mkWalls, mkWallMat: zc.mkWallMat, mkS: zc.mkS, trussMaterial: zc.trussMaterial, drapeDensity: zc.drapeDensity, customCeilingItemId: zc.customCeilingItemId, customCeilingQty: zc.customCeilingQty ?? null, customMaskingItemId: zc.customMaskingItemId,
-      useNewFabric: zc.useNewFabric, noFabric: zc.noFabric, fabLiza: zc.fabLiza, fabCurtain: zc.fabCurtain, fabLizaRep: zc.fabLizaRep, fabCurtainRep: zc.fabCurtainRep, mkRep: zc.mkRep },
+      // looseFabric (owner report, 2026-11-16): missing from this hand-picked field list, so the
+      // `row` object below — not zc itself — is what calcZoneFabricCost/looseFabricQty actually
+      // reads a few lines down, and it always saw undefined regardless of what the salesperson
+      // added on the Fabric card's "+ Add loose fabric" row. The Truss & Masking chip's own total
+      // (sectionCost, StudioBuild.jsx) silently never included it while the expanded Fabric card —
+      // which calls calcZoneFabricCost(zc, ...) directly, not through this truncated row — always
+      // showed the correct number right next to it.
+      useNewFabric: zc.useNewFabric, noFabric: zc.noFabric, fabLiza: zc.fabLiza, fabCurtain: zc.fabCurtain, fabLizaRep: zc.fabLizaRep, fabCurtainRep: zc.fabCurtainRep, mkRep: zc.mkRep, looseFabric: zc.looseFabric },
     ...(zc.extraTrussRows || []),
   ];
   const maskingByRow = []; // each truss row's masking before any discount — the Repeat discount below is per row
@@ -1869,6 +1880,18 @@ export default function StudioApp() {
   //     an unrelated client's Deal Check session (dcZoneState is spread onto in runDealCheckGenerate,
   //     `{...dcZoneState}`, not rebuilt fresh, so a stale merge, not just a stale read, was possible).
   const dcStateReadyForClientRef = useRef(null);
+  // State twin of dcStateReadyForClientRef. openDealCheck sets both in the SAME batch as the
+  // restored dc* values, so this commits atomically with them; mirrored into dcStateRef (its own
+  // layout effect, near the Deal Check cache writer) so an ASYNC reader (reconcileSoldInventoryBlocks,
+  // which awaits network calls) sees "ready for client X" and X's own manual items together — never
+  // the live ref's "ready" read after those awaits next to a closure that still holds the PREVIOUS
+  // client's (or an unrestored, empty) manual list. Without this twin, a background sync for client B
+  // starting while B's Deal Check state had never loaded this session could read "ready" (because
+  // openDealCheck's restore for B lands mid-flight, moving the ref) alongside A's still-closed-over
+  // manual items, and briefly reserve A's manual holds / release B's real ones under B's event
+  // (cold-client hazard, found investigating owner report 2026-11-16 — see reconcileSoldInventoryBlocks'
+  // own comment at its manualReady read).
+  const [dcStateReadyClientId, setDcStateReadyClientId] = useState(null);
   const [dcManualSearch, setDcManualSearch] = useState({});
   const [dcDedupOverrides, setDcDedupOverrides] = useState({});
   const [dcBlockedFnOpen, setDcBlockedFnOpen] = useState({});
@@ -1891,6 +1914,9 @@ export default function StudioApp() {
   // working", seen or not; the effects that only concern the visible overlay stay on dcFullPageOpen.
   const [dcHeadless, setDcHeadless] = useState(false);
   const dcRun = dcFullPageOpen || dcHeadless;
+  // Live read for the cold guard inside runDealCheckGenerate (a useCallback whose own deps don't
+  // include dcRun) — Phase 2 of the booked-deal auto-trigger consolidation, 2026-11-16.
+  const dcRunRef = useRef(false); dcRunRef.current = dcRun;
   // Warm the lazily-split Deal Check chunk once the browser is idle after sign-in, so the first
   // open doesn't wait on a download. A failed prefetch is just ignored; opening Deal Check imports it again.
   const hasAuthUser = !!authUser;
@@ -2060,6 +2086,11 @@ export default function StudioApp() {
   // returned. Blocking, not a warning: closing it just cancels markSold, same as a failed
   // name/date/venue check above it. See scanOutOfStockElements's own comment for why.
   const [oosGateModal, setOosGateModal] = useState(null);
+  // Which hard-block trigger opened oosGateModal — "markSold" | "applyBookedChanges" |
+  // "dealCheckAutoSync" | "syncToOps". oosGateModal itself stays a bare array (read in several
+  // places via .length/.flatMap) — this rides alongside it so StudioModals.jsx's gate can show
+  // accurate wording per trigger instead of reshaping that array.
+  const [oosGateReason, setOosGateReason] = useState(null);
   // Pre-Sold gate #2 (truss/platform/batta stock) — see scanTrussStockShortage's own comment. Same
   // blocking treatment as oosGateModal, just a plain list (no per-item swap picker — fixing a
   // truss/platform/batta shortage means picking a different size/material or sourcing more stock,
@@ -4342,14 +4373,19 @@ export default function StudioApp() {
   // uploading on the next autosave tick. Returns the MERGED record directly — the caller needs it
   // synchronously right after awaiting, not via the `clientLedger` closure, which a setState call
   // inside here cannot update before this function returns.
-  const ensureClientHeavyFieldsLoaded = useCallback(async (clientId) => {
+  const ensureClientHeavyFieldsLoaded = useCallback(async (clientId, opts = {}) => {
     const cur = clientLedgerRef.current.find((c) => c.id === clientId);
     if (!cur || cur._heavyFetched) return cur || null;
     let heavy = null;
     try {
       heavy = await fetchClientHeavyFields(clientId);
     } catch (e) {
-      showMsg?.("Couldn't load this client's Deal Check draft: " + (e?.message || e), "red");
+      // opts.silent (owner ask, 2026-11-16): openDealCheck's own call passes it whenever this isn't a
+      // real, visible open (a headless wake) — same reasoning as runDealCheckGenerate's own silent
+      // flag elsewhere in this file, so a background sync's network hiccup doesn't surprise a
+      // salesperson who was never near Deal Check with a Deal Check error. Every OTHER caller (e.g.
+      // the function-removal reindex flow, a direct user action) keeps the toast by not passing it.
+      if (!opts.silent) showMsg?.("Couldn't load this client's Deal Check draft: " + (e?.message || e), "red");
       return cur;
     }
     const merged = { ...cur, ...(heavy || {}), _heavyFetched: true };
@@ -5856,7 +5892,14 @@ export default function StudioApp() {
       realRate = rc.inhouseFlat || 0;
       artRate = rc.artificialFlat || 0;
     }
-    const factor = rcScalingFactor(rc);
+    // `_imsDriven` (IMS.jsx's "Recipe → Studio rate sync", Tier 1.5): this item's inhouse*/
+    // artificial* numbers above were just written BY that sync as mandi-cost × the recipe's own
+    // markup — already a fully-priced rate, not a hand-typed base rate awaiting the general
+    // Studio-wide sub-category factor. Applying rcScalingFactor on top double-marks-up the same
+    // rupee (owner report, 2026-11-16: "Flower Reet" showed ₹1,989 in its Recipe editor, the exact
+    // number the sync wrote, but ₹2,043 in Build — exactly ×rcScalingFactor). A non-driven item's
+    // numbers are still the admin's own hand-typed base rate, so the factor still applies there.
+    const factor = rc?._imsDriven ? 1 : rcScalingFactor(rc);
     return { realRate: realRate * factor, artRate: artRate * factor };
   }, [rcScalingFactor]);
 
@@ -6482,7 +6525,7 @@ export default function StudioApp() {
     const allFnsNow = collectAllFunctionDataRef.current?.() || [];
     const activeFnData = { ...(allFnsNow.find(f => f.fnIdx === activeFnIdx) || {}), fnIdx: activeFnIdx, fnDate: aDate, fnVenue: aVenue, zoneElements, zoneConfig, enabledEls };
     const crossFnPrev = (!isFillerDateFor(aDate) && allFnsNow.length > 1) ? findCrossFnReuseSource(activeFnData, allFnsNow) : null;
-    const reusePool = crossFnPrev ? new Map(Object.entries(computeFnInvQty(crossFnPrev))) : null;
+    const reusePool = crossFnPrev ? new Map(Object.entries(computeFnInvQty(crossFnPrev, imsInventory))) : null;
     const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, sharedFloralSettings.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, aVenue, !hideDiscountFromClient, reusePool, structRates.printMaterials);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
@@ -6670,7 +6713,7 @@ export default function StudioApp() {
       // function count, whatever the guest-discount toggle or a Filler date say (those only decide the price). The discount gate cut
       // this credit too, so a sofa used in Haldi and again in Sangeet the same day read out of stock at Sold (RC-11).
       const crossFnPrevFn = findCrossFnReuseSource(fnData, allFns);
-      const reusePool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+      const reusePool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn, imsInventory))) : null;
       // the same function's pieces, kit parts included, for the kit-part check
       const partReusePool = crossFnPrevFn ? fnUnitQty(crossFnPrevFn, imsInventory) : null;
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
@@ -6687,13 +6730,22 @@ export default function StudioApp() {
             // exact element (openAvailModal(zoneKey, idx, el, rc)) instead of only pointing the
             // salesperson at the right function/zone and making them find it by hand.
             flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, fnDate: fnData.fnDate || "", zoneKey: zk, idx: i, invId: el.invId, name: item?.name || el.name || "Item",
+              // The BUILD element's own raw .name — NOT the same as `name` above (which prefers the
+              // IMS catalog name for display). buildElCardKey/getCardSpecsForZone key every Deal
+              // Check card off el.name specifically, so a cardKey rebuilt from this row (round 4
+              // regression review, 2026-11-15 — the "already fixed via a Deal Check swap" gap) has to
+              // use this field, not the display name, or the lookup silently misses.
+              elName: el.name || "",
               parts: partsOut.map((p) => `${p.name} (${p.short} short)`),
               // the gate lists each short part as its own row, and its Fix opens the picker on that part, not the kit
               // need: p.need (not dropped) — the oosGate picker's own currentPartId/slotDraw add-back
               // (StudioModals.jsx's partNeed, openOosPicker) reads this; without it, slotDraw was
               // always undefined so the gate's own swap picker never added the slot back for its
               // current item at all (round 3 regression review verification, 2026-11-15).
-              itemOut: !!r.outOfStock, shortParts: partsOut.map((p) => ({ id: p.id, name: p.name, need: p.need })),
+              // el.qty — the item-level counterpart of a kit part's own `need` above — so the gate
+              // modal can show how much is needed for a plain short item too, not just a kit's short
+              // parts (owner ask, 2026-11-15: "they see availability but not their need qty").
+              itemOut: !!r.outOfStock, need: Number(el.qty) || 0, shortParts: partsOut.map((p) => ({ id: p.id, name: p.name, need: p.need })),
               // what is short, by name only - the gate modal shows just this: the item itself when it is out, and/or the kit part(s) that are
               shortNames: [...new Set([...(r.outOfStock ? [item?.name || el.name || "Item"] : []), ...partsOut.map((p) => p.name)])] });
           }
@@ -6811,8 +6863,8 @@ export default function StudioApp() {
     const fnData = all[activeFnIdx];
     if (!fnData || isFillerDateFor(fnData.fnDate)) return null;
     const prevFn = findCrossFnReuseSource(fnData, all);
-    return prevFn ? computeFnInvQty(prevFn) : null;
-  }, [collectAllFunctionData, activeFnIdx, dealCheckData, studioFloralData]);
+    return prevFn ? computeFnInvQty(prevFn, imsInventory) : null;
+  }, [collectAllFunctionData, activeFnIdx, dealCheckData, studioFloralData, imsInventory]);
   // Layout, same TDZ reasoning as collectAllFunctionDataRef — totalCost (declared above this) reads
   // the ref instead of the memo directly.
   useLayoutEffect(() => { activeCrossFnReuseQtyRef.current = activeCrossFnReuseQty; });
@@ -6821,8 +6873,8 @@ export default function StudioApp() {
   // date rule: it is a heads-up for the salesperson, not a price change.
   const activeSiblingFnInvUse = useMemo(() => {
     const all = collectAllFunctionData();
-    return all[activeFnIdx] ? findSiblingFnInvUse(all[activeFnIdx], all) : {};
-  }, [collectAllFunctionData, activeFnIdx]);
+    return all[activeFnIdx] ? findSiblingFnInvUse(all[activeFnIdx], all, imsInventory) : {};
+  }, [collectAllFunctionData, activeFnIdx, imsInventory]);
   // sub-category → sibling-function items NOT yet matched exactly — drives the orange 📦 stock icon
   // (as opposed to activeSiblingFnInvUse's orange RATE, shown only once an exact match is picked).
   // Heads-up only, same as activeSiblingFnInvUse — not gated by hideDiscountFromClient/Filler date.
@@ -6858,7 +6910,7 @@ export default function StudioApp() {
     // share mutable state across the two unrelated loops. Never fires when THIS function (the one
     // being priced/billed) is on a Filler date — see isFillerDateFor above.
     const crossFnPrevFn = !isFillerDateFor(fnData.fnDate) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
-    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn, imsInventory))) : null;
     let decor = 0;
     // Always derive zones fresh from the live zoneConfig/enabledEls — see totalCost's matching
     // comment. `activeZones` no longer takes priority here. Also dropped the legacy itemQty
@@ -6902,7 +6954,7 @@ export default function StudioApp() {
       // track IMS's live Sub-Categories master.
       const fcFlowerPatterns = sharedFloralSettings.flowerPatterns;
       // Own pool, separate from pricingPool above — see the comment where crossFnPrevFn is computed.
-      const transportPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+      const transportPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn, imsInventory))) : null;
       const standPool = new Map(); // standing stock pooled across this function's elements (kitBuiltQty)
       Object.entries(fZoneElements).forEach(([zk, elems]) => {
         if (!fEnabledEls[zk] || !elems) return;
@@ -7089,7 +7141,11 @@ export default function StudioApp() {
       if (e.isInvOnlyNoPattern) return;
       if (!byName[e.name]) { byName[e.name] = { name: e.name, zones: [], qty: 0, realPct: e.realPct, real: 0, art: 0, total: 0, invCost: 0 }; elements.push(byName[e.name]); }
       const g = byName[e.name];
-      g.zones.push(e.zoneKey); g.qty += e.qty || 0; g.real += e.realCost || 0; g.art += e.artCost || 0; g.total += e.total || 0;
+      // Two rows of the same name in the SAME zone (owner ask, 2026-11-16: a second size/config of
+      // one recipe added to one zone) used to print that zone twice in this list ("Stage, Stage") —
+      // dedupe keeps the merged qty/cost correct while showing each zone once.
+      if (!g.zones.includes(e.zoneKey)) g.zones.push(e.zoneKey);
+      g.qty += e.qty || 0; g.real += e.realCost || 0; g.art += e.artCost || 0; g.total += e.total || 0;
       g.invCost += (e.artLines || []).reduce((s, rl) => s + (rl.invItem ? (rl.lineCost || 0) : 0), 0);
     });
     return {
@@ -7475,7 +7531,7 @@ export default function StudioApp() {
     // accordion/Build's Live Estimate agree with the revenue total on which units are discounted.
     // Never fires when THIS function is on a Filler date — see isFillerDateFor above.
     const crossFnPrevFn = !isFillerDateFor(fnData.fnDate) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
-    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn, imsInventory))) : null;
     // Sorted by IMS/Studio Admin → Settings → Zone Types' configured order (zoneKeys), same as
     // buildZonesForFn below — enabledEls' own key order is whenever each zone was first toggled on
     // for THIS deal, not the admin's current order, and an old deal's order can predate a later
@@ -7618,7 +7674,7 @@ export default function StudioApp() {
       // were left out and why, rather than a truck count just quietly coming out lower.
       // The guest's own reuse pool for trucks — same source and same per-element draw-down order as
       // calcFunctionCost's transportPool, so the two count the guest's trucks identically.
-      const clientTruckPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+      const clientTruckPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn, imsInventory))) : null;
       // Standing stock pooled across this function's elements: one pool for Ambria's own cost
       // count, one for the guest's (they draw different quantities from the same standing stock).
       const standPoolCost = new Map(), standPoolGuest = new Map();
@@ -9501,9 +9557,13 @@ export default function StudioApp() {
   // own declaration) — autoSaveBuild needs to call it, but is declared long before it exists.
   const runDealCheckGenerateRef = useRef(null);
   // Client ids a runDealCheckGenerate call is CURRENTLY in flight for — see runDealCheckGenerate's own
-  // in-flight guard comment. This reconcile now has four independent triggers for the same sold deal
-  // (markSold, Apply Changes, the headless auto-fill, and the post-edit autosave) that can all fire
-  // within seconds of each other; without this, two overlapping runs for the SAME client could race on
+  // in-flight guard comment. This reconcile has several independent triggers for the same sold deal —
+  // markSold, Apply Changes, the auto-fill (itself woken by requestBookedSync's post-edit sync, the
+  // settings auto-sync, or a real Deal Check open) — that can all fire within seconds of each other
+  // (Phase 2, 2026-11-16, collapsed the old "post-edit autosave" direct call and its separate headless
+  // wake into the one requestBookedSync path, but did not remove any OTHER trigger here — markSold/
+  // Apply Changes still fire their own direct calls alongside their own headless wake, same as before);
+  // without this, two overlapping runs for the SAME client could race on
   // that one event's `blocks` upsert, each built from a different intermediate snapshot of dcCards.
   // A Set, not a single clientId-or-null scalar (regression-caught on review of the first version):
   // two DIFFERENT clients legitimately running at once is fine and must not block each other, but a
@@ -9516,6 +9576,33 @@ export default function StudioApp() {
   // runDealCheckGenerate's own `finally`) — a refused call used to just vanish with nothing queued,
   // reopening the exact "this edit never got reconciled" gap the in-flight guard exists alongside.
   const dcGenRerunPendingRef = useRef(new Map());
+  // ── ONE SYNC REQUEST PER BOOKED-DEAL EDIT (Phase 2, 2026-11-16 owner ask: fewer, non-conflicting
+  // auto triggers) ── autoSaveBuild used to make TWO independent calls per edit: a direct silent
+  // generate, AND setDcHeadless(true) to wake the background instance — whose own auto-fill then ran
+  // a SECOND, largely redundant generate of the same edit a render later (Phase 1's silent fix made
+  // that second run safe to pop nothing, but didn't stop it from running twice). requestBookedSync
+  // picks exactly one action: wake the (now-silent) headless instance if nothing is running — its
+  // auto-fill IS the one generate, and the mounted overlay pushes Dept Ops itself — or call directly
+  // if Deal Check is already open (its own visible reconcile already covers edits) or a headless
+  // instance is already mounted (its own auto-fill either already ran this session or is still
+  // loading, so a direct call is what actually reconciles THIS edit right now either way).
+  // bookedSyncAction is the pure decision (lib/studio/dealCheckAutoFill.js); dcVisRef gives it a live
+  // read of dcFullPageOpen/dcHeadless without putting them in any effect's deps.
+  const dcVisRef = useRef({ full: false, headless: false });
+  dcVisRef.current = { full: dcFullPageOpen, headless: dcHeadless };
+  const requestBookedSync = useCallback(() => {
+    if (bookedSyncAction(dcVisRef.current) === "wake") { setDcHeadless(true); return; }
+    // Re-assert dcHeadless=true when not full (a no-op if it's already true) — regression review,
+    // 2026-11-16: dcVisRef.current can be a sub-millisecond-stale read of a headless instance that's
+    // mid-unmount (finishDcHeadless's own setDcHeadless(false) pending but not yet committed), which
+    // would otherwise leave this direct call's result with no overlay mounted to push it to Dept Ops.
+    if (!dcVisRef.current.full) setDcHeadless(true);
+    runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true })?.catch((e) => console.warn("[requestBookedSync] reconcile failed:", e?.message || e));
+  }, []);
+  // For autoSaveBuild (a []-deps callback), which needs the current one — same pattern as
+  // runDealCheckGenerateRef/syncDeptOpsHeadlessRef just above/below.
+  const requestBookedSyncRef = useRef(null);
+  requestBookedSyncRef.current = requestBookedSync;
   const buildHasDataRef = useRef(false);
   useEffect(() => {
     // Auto-save as soon as there's a named deal with any build data — even a BRAND-NEW deal with no
@@ -9607,14 +9694,12 @@ export default function StudioApp() {
     if (opts.edited) {
       try {
         const cli = (clientLedgerRef.current || []).find((c) => c.id === activeClientIdRef.current);
-        if (cli?.status === "booked") {
-          runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true }).catch(() => {});
-          // IMS Dept Ops follows the edit too, straight away on this same save. Apply alone was not
-          // enough: it only exists on a deal with a negotiated amount, and nobody presses it after
-          // every change. A run already going keeps pushing as the totals move, so a burst of edits
-          // does not start a run each.
-          syncDeptOpsHeadlessRef.current?.();
-        }
+        // One request, not two (Phase 2 — see requestBookedSync's own comment for why the old direct
+        // generate + separate headless wake were largely running the same reconcile twice per edit).
+        // IMS Dept Ops follows the edit too, on this same save, whichever action requestBookedSync
+        // picks: a direct call's reconcile needs nothing further; a wake's own auto-fill mounts the
+        // overlay, which pushes Dept Ops itself once its pricing settles.
+        if (cli?.status === "booked") requestBookedSyncRef.current?.();
       } catch { /* ignore */ }
     }
   }, []);
@@ -10322,7 +10407,7 @@ export default function StudioApp() {
       // proceed past, this isn't — a deal physically can't be delivered with an item that's both out
       // of stock and can't be produced, so it never reaches the confirm dialog at all.
       const oosFlagged = scanOutOfStockElements();
-      if (oosFlagged.length > 0) { setOosGateModal(oosFlagged); return; }
+      if (oosFlagged.length > 0) { setOosGateReason("markSold"); setOosGateModal(oosFlagged); return; }
       // Pre-Sold gate #2 — see scanTrussStockShortage's own comment. Same hard block, now for
       // truss/platform/batta stock instead of a tagged inventory item.
       const trussFlagged = scanTrussStockShortage();
@@ -10440,7 +10525,7 @@ export default function StudioApp() {
       const client = activeClient;
       if (!client || client.status !== "booked") return false;
       const oosFlagged = scanOutOfStockElements();
-      if (oosFlagged.length > 0) { setOosGateModal(oosFlagged); return false; }
+      if (oosFlagged.length > 0) { setOosGateReason("applyBookedChanges"); setOosGateModal(oosFlagged); return false; }
       const trussFlagged = scanTrussStockShortage();
       if (trussFlagged.length > 0) { setTrussStockGateModal(trussFlagged); return false; }
       // Checked here, BEFORE the bookedSystemTotal rebase below — not just inside
@@ -10536,6 +10621,13 @@ export default function StudioApp() {
     pendingFnTotalsRemapRef.current = null;
     setClientDate(client.eventDate || "");
     setVenue(client.venue || "");
+    // Function 1's own custom-venue display text is never persisted (unlike extraFunctions'
+    // venueOther — see sessionData.js) — only `venue` itself is. Without this, a text left over
+    // from whatever deal/LMS lead was open before this load (StudioEventInfo.jsx's Others-venue
+    // panel/gate both read it) could silently survive the switch and apply to THIS client instead:
+    // the gate would check the WRONG name's pricing, and typing into the still-stale field would
+    // overwrite this client's real venue (owner report, 2026-11-16, regression review).
+    setClientVenueOther("");
     setFn(client.fn || "");
     setClientShift(client.shift || "");
     setClientPax(client.pax || "");
@@ -12579,7 +12671,7 @@ export default function StudioApp() {
     // earlier function.
     const fBlocksForDate = blocksByDate[fnData.fnDate];
     const crossFnPrevFn = !isFillerDateFor(fnData.fnDate) ? findCrossFnReuseSource(fnData, collectAllFunctionData()) : null;
-    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn))) : null;
+    const pricingPool = crossFnPrevFn ? new Map(Object.entries(computeFnInvQty(crossFnPrevFn, imsInventory))) : null;
     // Sorted by IMS/Studio Admin → Settings → Zone Types' configured order (zoneKeys, same order
     // Build's own zone list renders in — see StudioBuild.jsx's `[...zoneKeys, ...customZones]`),
     // not by Object.entries' insertion order. enabledEls is a per-deal record that gained its keys
@@ -13281,6 +13373,13 @@ export default function StudioApp() {
       // reuse from at all).
       const usedElsewhere = {};
       const usedQty = {};
+      // Whether the kit-component-swap's own matching row (opts.currentPartId's slot) actually got
+      // counted into usedQty below — a row that matches (fnIdx/zoneKey/idx) can still fall out
+      // before reaching usedQty (an FOC row, the whole zone switched off, or a different/no date),
+      // and _addBack further down must not invent stock back for a draw that was never subtracted
+      // in the first place (regression review, 2026-11-15, round 4 — confirmed: could push `free`
+      // above the item's owned qty).
+      let currentPartRowCounted = false;
       (collectAllFunctionData() || []).forEach((f) => {
         Object.entries(f.zoneElements || {}).forEach(([zk, elems]) => {
           // zoneIsOff (not a bare `!f.enabledEls?.[zk]` check): a function with no enabledEls
@@ -13308,6 +13407,7 @@ export default function StudioApp() {
             // short the instant it was picked — worse than the old null/null self-exclusion, which
             // at least counted every part's real demand even though it then wrongly colored the
             // self-replaced part's own candidates too).
+            const isCurrentPartRow = !!opts?.currentPartId && f.fnIdx === activeFnIdx && zk === zoneKey && ei === idx;
             if (f.fnIdx === activeFnIdx && zk === zoneKey && ei === idx && !opts?.currentPartId) return;
             // Stock only competes on the SAME date — a row on another function's date does not hold units
             // today (it still gets the "used elsewhere" note below, which is about reusing the same piece).
@@ -13321,13 +13421,19 @@ export default function StudioApp() {
             const elQty = Number(e.qty) || 0;
             if (topItem && elQty > 0) {
               walkKitUnits(topItem, elQty, imsInventory, e.kitOverrides, (node, nodeQty) => {
-                if (sameDate) usedQty[node.id] = (usedQty[node.id] || 0) + nodeQty;
+                if (sameDate) {
+                  usedQty[node.id] = (usedQty[node.id] || 0) + nodeQty;
+                  if (isCurrentPartRow && node.id === opts.currentPartId) currentPartRowCounted = true;
+                }
                 if (f.fnIdx !== activeFnIdx) {
                   (usedElsewhere[node.id] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
                 }
               });
             } else {
-              if (sameDate) usedQty[e.invId] = (usedQty[e.invId] || 0) + elQty;
+              if (sameDate) {
+                usedQty[e.invId] = (usedQty[e.invId] || 0) + elQty;
+                if (isCurrentPartRow && e.invId === opts.currentPartId) currentPartRowCounted = true;
+              }
               if (f.fnIdx !== activeFnIdx) {
                 (usedElsewhere[e.invId] ||= []).push(`${f.fnType || `Function ${f.fnIdx + 1}`} · ${zk}`);
               }
@@ -13426,7 +13532,7 @@ export default function StudioApp() {
           // swapped. The one slot that IS being swapped stops drawing the moment the pick lands, so
           // its own current item's free count gets that slot's qty added back — but only for THAT
           // item, never for any other candidate (round 3 regression review, 2026-11-15, finding F1).
-          const _addBack = (opts?.currentPartId && it.id === opts.currentPartId) ? (Number(opts.slotDraw) || 0) : 0;
+          const _addBack = (opts?.currentPartId && it.id === opts.currentPartId && currentPartRowCounted) ? (Number(opts.slotDraw) || 0) : 0;
           const free = opts?.availFn
             ? Math.round(Math.max(0, Number(opts.availFn(it)) || 0) * 1e6) / 1e6
             : Math.round(Math.max(0, combineAvailability(Number(it?.qty ?? it?.qtyOwned) || 0, getSharingAwareAvailable(it, blocksDetailForDate, eventOrders, fvCfgForRepeat, date, _dealShiftPicker.venueName, _dealShiftPicker.shift, _ownIdsPicker), availableAtVenue(fvCfgForRepeat, pickerVenue, it), _fvOverlap) - (usedQty[it.id] || 0) + _addBack) * 1e6) / 1e6;
@@ -13677,7 +13783,13 @@ export default function StudioApp() {
     // The inventory + blocks download (the biggest of the open) starts now, alongside this client's own heavy fields, instead
     // of after them: fetchIMSData below picks up this same request (fetchRawIMS shares one for a few seconds).
     void fetchRawIMS();
-    const clientRec = activeClientId ? await ensureClientHeavyFieldsLoaded(activeClientId) : null;
+    // dcVisRef.current.full, not the bare dcFullPageOpen state var — openDealCheck's own useCallback
+    // deps don't include dcFullPageOpen (regression review, 2026-11-16: a real open's click sets
+    // dcFullPageOpen in the SAME render the dcRun-flip effect below calls this cached closure, which
+    // still held dcFullPageOpen=false from before the click — silencing the toast for a REAL open,
+    // the opposite of intended). dcVisRef is set during render (just above requestBookedSync's own
+    // declaration), so it's always current by the time this runs.
+    const clientRec = activeClientId ? await ensureClientHeavyFieldsLoaded(activeClientId, { silent: !dcVisRef.current.full }) : null;
     const rowDraft = (clientRec?.dcDraft && typeof clientRec.dcDraft === "object" && !Array.isArray(clientRec.dcDraft)) ? clientRec.dcDraft : null;
     const cachedForThisClient = rowDraft;
     const hasCache = !!cachedForThisClient;
@@ -13729,6 +13841,9 @@ export default function StudioApp() {
     // when there was nothing to restore) — see dcStateReadyForClientRef's own declaration for why the
     // Build-sync effect needs to know this before it may prune manual items no longer listed.
     dcStateReadyForClientRef.current = activeClientId;
+    // Same value, as state — see dcStateReadyClientId's own declaration. No await between this and
+    // the restore/reset setters above, so React batches all of it into one commit.
+    setDcStateReadyClientId(activeClientId);
     setDcResolving({});
     const allFns = collectAllFunctionData();
     const uniqueDates = [...new Set(allFns.map(f => f.fnDate).filter(Boolean))];
@@ -13923,11 +14038,22 @@ export default function StudioApp() {
   }, [collectAllFunctionData, dcPhotoOverrides, photoImsMap, dcCache, activeClientId, clientLedger, ensureClientHeavyFieldsLoaded, customProperties, customOutdoor, cancelledEoIds]);
 
   // ═══ DEAL CHECK — fire openDealCheck on full-page open — VERBATIM ═══
+  // activeClientId, not just dcRun (owner ask, 2026-11-16 — the last open item from the auto-trigger
+  // audit): this effect used to fire ONLY when dcRun itself toggled, so if activeClientId ever
+  // changed while dcRun stayed continuously true — e.g. a real open (dcFullPageOpen) surviving a
+  // client switch, or a headless wake (dcHeadless) still mounted when a NEW client's edit wakes it
+  // again before the previous one's instance finished unmounting — openDealCheck never re-ran for
+  // the new client at all. Deal Check (or the hidden background run) kept working with the PREVIOUS
+  // client's restored dc* state and heavy fields, the exact "wrong deal's data leaking into the
+  // current screen" failure class this codebase has incident history with (Sangeeta function-
+  // corruption, Rakesh Taneja resumeSavedSession). openDealCheck is itself a useCallback keyed on
+  // activeClientId (among other things), so it's already a fresh, correct-for-the-new-client closure
+  // the moment this fires — this effect just needed to actually call it again.
   useEffect(() => {
     if (!dcRun) return;
     openDealCheck();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dcRun]);
+  }, [dcRun, activeClientId]);
 
   // Layout-effect mirror of Deal Check's own draft state, read by doSave below instead of its
   // closure. flushDcAutosaveRef.current can be called from a setTimeout(0) fired the instant a swap
@@ -13943,6 +14069,11 @@ export default function StudioApp() {
       dcResolved, dcCards, dcZoneState, dcPhotoOverrides, dcSkipped, dcManualItems,
       dcDedupOverrides, dcProductionAccepted, dcArtFlowerAlloc, dcArtFlowerAllocSrc, dcFloralColorPrefs, dcCustomItems,
       dcKitEdits, dcCarpetPick, dcCarpetSplit, dcMpOverrides, dcMpWinCount, dcMpIncludeMinusOne, dcMpIncludeDismantle,
+      // dcStateReadyClientId alongside dcManualItems (and everything else above) — an async reader
+      // can now read "ready for client X" and X's own restored state from this SAME snapshot, instead
+      // of the ready-ness ref (which moves the instant openDealCheck's restore lands) next to a
+      // separately-read, possibly stale closure. See dcStateReadyClientId's own declaration.
+      dcStateReadyClientId,
     };
   });
 
@@ -13973,10 +14104,27 @@ export default function StudioApp() {
       // (same reasoning as persistDcKitEditsNow above) rather than canStudio(...) directly, since
       // this closure is rebuilt by an effect whose own dependency list isn't guaranteed to include it.
       if (!canDesignEditRef.current) return;
-      dcAutosavePendingRef.current = false;
       // Read through the layout-effect-mirrored ref, NOT this closure's own dcCards/etc — see
       // dcStateRef above for why a stale closure here would otherwise re-flush pre-swap state.
-      const dcs = dcStateRef.current;
+      const dcs = dcStateRef.current || {};
+      // Cold-client guard (same pattern as reconcileSoldInventoryBlocks' dcsAtStart read): on a
+      // client switch while a headless run is still mounted for the PREVIOUS client, dcRun stays
+      // true for one render with activeClientId already the NEW client (B) — no client-switch path
+      // clears dcHeadless in the same batch as setActiveClientId, only a separate [activeClientId]
+      // effect does, one render later. In that one render, this closure gets built for B while
+      // dc* (dcCards/dcResolved/dcManualItems/dcKitEdits/etc) still holds A's leftovers, because
+      // openDealCheck(B) is still awaiting B's heavy fields. The companion flush effect then fires
+      // THIS closure the instant dcRun drops (dcHeadless clears), writing A's deal straight into B's
+      // client_ledger row — worse on a cold B (never opened this session), whose row has no
+      // dcCards/dcZoneState/dcKitEdits/dcDraft of its own to partially overwrite the mix with, so
+      // almost the whole snapshot stays A's. Same failure class as the Sangeeta function-corruption
+      // and Rakesh Taneja resumeSavedSession incidents (owner report, 2026-11-16, found investigating
+      // an unrelated fix). Only write once openDealCheck's reset/restore for THIS closure's own
+      // client has actually committed — readiness and the data it gates come from the SAME
+      // dcStateRef snapshot, so they can never disagree with each other the way the live
+      // dcStateReadyForClientRef ref and this closure's activeClientId could.
+      if (dcs.dcStateReadyClientId !== activeClientId) return;
+      dcAutosavePendingRef.current = false;
       const snapshot = {
         resolved: dcs.dcResolved,
         cards: dcs.dcCards,
@@ -14021,12 +14169,28 @@ export default function StudioApp() {
           }
         } else {
           const nowStamp = Date.now();
+          // Stamp the collision fields (dcDraftSavedAt/dcDraftSavedBy) only when THIS save is from a
+          // visibly-open Deal Check (dcVisRef.current.full) — not from a headless background wake
+          // (owner ask, 2026-11-16). A headless save is this salesperson's browser quietly catching
+          // Dept Ops up to a Build edit, not a human editing Deal Check; stamping it the same way a
+          // real edit would risked a FALSE "X saved changes while you were editing — yours weren't
+          // saved" warning for a DIFFERENT person who genuinely has this same client's Deal Check
+          // open elsewhere, even though the first person never touched Deal Check at all. Content
+          // (dcCards/dcZoneState/etc, dcDraft) still saves either way — only the stamp a later
+          // conflict-check reads is withheld, so "last saved by" (DealCheckOverlay.jsx's own header)
+          // keeps showing the last real human save too, not whoever's browser last synced quietly.
+          // dcVisRef.current.full, not the bare dcFullPageOpen state var — this effect's own deps
+          // (below) don't include dcFullPageOpen, so doSave's closure over it can be one tick stale
+          // across a headless→full transition (regression review, 2026-11-16: a pending 2.5s timer,
+          // the pagehide handler, or a swap handler's setTimeout(0) flush can all fire this exact
+          // closure before the dep-driven effect rebuilds it). dcVisRef is a live, render-synced ref.
+          const stampPatch = dcVisRef.current.full ? { dcDraftSavedAt: nowStamp, dcDraftSavedBy: me } : {};
           const result = saveClientLedger(cur.map(c => c.id === activeClientId ? { ...c,
             dcCards: dcs.dcCards, dcZoneState: dcs.dcZoneState, dcKitEdits: dcs.dcKitEdits, dcCarpetPick: dcs.dcCarpetPick, dcCarpetSplit: dcs.dcCarpetSplit,
             dcMpOverrides: dcs.dcMpOverrides, dcMpWinCount: dcs.dcMpWinCount,
             dcMpIncludeMinusOne: dcs.dcMpIncludeMinusOne, dcMpIncludeDismantle: dcs.dcMpIncludeDismantle,
-            dcDraft: snapshot, dcDraftSavedAt: nowStamp, dcDraftSavedBy: me } : c), undefined, { keepalive: !!saveOpts.keepalive });
-          dcSaveBaselineRef.current = { savedAt: nowStamp, savedBy: me };
+            dcDraft: snapshot, ...stampPatch } : c), undefined, { keepalive: !!saveOpts.keepalive });
+          if (dcVisRef.current.full) dcSaveBaselineRef.current = { savedAt: nowStamp, savedBy: me };
           return result;
         }
       }
@@ -14093,6 +14257,35 @@ export default function StudioApp() {
     // "sold" but whose own order was cancelled has nothing to reconcile.
     if (eo.status === "cancelled") { console.warn("[reconcile] this client's event_orders row is cancelled — skipping, not writing blocks under a dead eventId", cli.id); return; }
 
+    // Readiness + manual items read ONCE, together, from the committed mirror — before this
+    // function's first await. Previously the list came from this closure (possibly the PREVIOUS
+    // client's dcManualItems, or a not-yet-restored []) while readiness came from the live ref AFTER
+    // the awaits below — so an openDealCheck restore landing mid-flight (for this same client) could
+    // make a stale/wrong list look "ready" exactly when it shouldn't: a background sync for client B
+    // starting while B's Deal Check state had never loaded this session, racing B's own
+    // openDealCheck, could briefly treat A's leftover manual items (or an empty list) as B's real
+    // ones — releasing B's genuine studio-manual holds or reserving A's under B's event (cold-client
+    // hazard, found investigating owner report 2026-11-16). dcStateRef's own layout effect commits
+    // dcManualItems and dcStateReadyClientId from the SAME render, so reading them together here can
+    // never see one without the other.
+    const dcsAtStart = dcStateRef.current || {};
+    const manualReady = dcsAtStart.dcStateReadyClientId === cli.id;
+    const manualItemsNow = manualReady && Array.isArray(dcsAtStart.dcManualItems) ? dcsAtStart.dcManualItems : [];
+    // Same reasoning, same snapshot, for dcKitEdits (which kit a part's swap-override applies to) —
+    // this closure used to read it directly below, with no readiness check at all, so the identical
+    // cold-client race could reserve the WRONG client's swapped-in kit component (owner ask,
+    // 2026-11-16: closing every remaining case of this hazard, not just the manual-items one). Not
+    // ready falls back to {} — no per-card override found, so walkKitUnits below uses the kit's own
+    // PLAIN default components instead of ever substituting another client's override. NOT the same
+    // guarantee manualItemsNow gets, though: an unready manual list is dropped from requirement math
+    // entirely (manualReady gates the planner call itself, further down), while a kit's OWN rental
+    // qty is still reserved here regardless of readiness — only WHICH of its components get walked
+    // depends on kitEditsNow. An unready cold open can still reserve the kit's plain parts a beat
+    // before the swap is known; the replayed rerun (same mechanism that already corrects every other
+    // cold-client case) reserves the right ones moments later. Narrower than the old bug (which could
+    // reserve ANOTHER client's swapped part under this one), not a zero-risk window.
+    const kitEditsNow = manualReady && dcsAtStart.dcKitEdits && typeof dcsAtStart.dcKitEdits === "object" ? dcsAtStart.dcKitEdits : {};
+
     // KNOWN SCOPE LIMIT: this only diffs functions still present in fnsToProcess. Deleting an
     // entire function from a sold deal (not just items within one) leaves that function's prior
     // reservations un-released here — its fnDate is gone along with it, and this path doesn't
@@ -14121,9 +14314,17 @@ export default function StudioApp() {
       const byItem = {};
       const focByItem = {};
       Object.entries(newCards[fnIdx] || {}).forEach(([cardKey, c]) => {
-        if (!c.imsId) return;
-        const qty = Number(c.qty) || 0;
-        if (qty <= 0) return;
+        // Split fulfilment (Deal Check's own Split picker, writes card.split = [{imsId, qty}, …]) —
+        // checked BEFORE the plain c.imsId/qty guard below, same order dcCostRollup's own split
+        // branch already uses (a split card's own c.imsId/qty go stale the moment it's split — the
+        // split array is the only live allocation from then on). Each split entry reserves its OWN
+        // imsId/qty directly, never the card's single imsId/qty — before this fix, reconcile read
+        // only the card's own imsId/qty here, so a split card's actual client-facing allocation (e.g.
+        // 4 of Arch-A + 6 of Arch-B) reserved wrong (10 of Arch-A, 0 of Arch-B). No kit walk for split
+        // entries — Split is documented/used everywhere else (dcCostRollup, qtyUsedElsewhereInDealCheck)
+        // as spreading qty across several SIMPLE items, never kits, so matching that same assumption
+        // here, not inventing new kit-walking behavior for a shape nothing else in the app expects.
+        const splitArr = Array.isArray(c.split) ? c.split.filter((s) => s && s.imsId && (Number(s.qty) || 0) > 0) : [];
         // A card backed by a Deal Check manual item (_dcManualId — syncManualItemToBuild mirrors it
         // into Build's zoneElements while the deal is still ongoing) is NOT counted here — manualByFn
         // below is now the single source of truth for every Deal Check manual item, mirrored into
@@ -14137,9 +14338,16 @@ export default function StudioApp() {
         const isFoc_ = cardIsFoc(fn, cardKey);
         if (manualEl?._dcManualId && !isFoc_) return;
         const tgt = isFoc_ ? focByItem : byItem;
+        if (splitArr.length) {
+          splitArr.forEach((s) => { tgt[s.imsId] = (tgt[s.imsId] || 0) + (Number(s.qty) || 0); });
+          return;
+        }
+        if (!c.imsId) return;
+        const qty = Number(c.qty) || 0;
+        if (qty <= 0) return;
         const topItem = (inventoryList || []).find((x) => x.id === c.imsId);
         if (topItem && Array.isArray(topItem.subItems) && topItem.subItems.length > 0) {
-          const edited = dcKitEdits?.[fnIdx]?.[cardKey];
+          const edited = kitEditsNow?.[fnIdx]?.[cardKey];
           const overrideSubItems = Array.isArray(edited) ? edited : undefined;
           walkKitUnits(topItem, qty, inventoryList, overrideSubItems, (node, nodeQty) => {
             if (!node?.id) return;
@@ -14173,7 +14381,7 @@ export default function StudioApp() {
     fnsToProcess.forEach((fn, i) => {
       const fnIdx = fn.fnIdx ?? i;
       const byItem = {};
-      (dcManualItems || []).filter((mi) => (mi.fnIdx ?? 0) === fnIdx).forEach((mi) => {
+      manualItemsNow.filter((mi) => (mi.fnIdx ?? 0) === fnIdx).forEach((mi) => {
         if (!mi.imsId) return;
         const qty = Number(mi.qty) || 0;
         if (qty <= 0) return;
@@ -14267,11 +14475,8 @@ export default function StudioApp() {
     const cardReq = reqByDateFrom(fnsToProcess, requiredByFn);
     const focReq = reqByDateFrom(fnsToProcess, focByFn);
     const manualReq = reqByDateFrom(fnsToProcess, manualByFn);
-    // dcStateReadyForClientRef.current === cli.id: Deal Check's own dc* state (including
-    // dcManualItems) has actually finished restoring for THIS client — never dcManualItems.length > 0,
-    // which is indistinguishable from "genuinely has no manual items" and would let an UNLOADED empty
-    // list release real manual holds the moment this ran before the restore effect caught up.
-    const manualReady = dcStateReadyForClientRef.current === cli.id;
+    // manualReady: computed once at the top of this function together with the manual list itself —
+    // see dcsAtStart/manualItemsNow there for why reading it again here, separately, was the bug.
     const processedDates = new Set(fnsToProcess.map((fn) => fn?.fnDate).filter(Boolean));
     const liveRaw = collectAllFunctionDataRef.current?.();
     const liveList = (Array.isArray(liveRaw) && liveRaw.length) ? liveRaw : fnsToProcess;
@@ -14633,7 +14838,7 @@ export default function StudioApp() {
       }), status: "logged" };
       submitAmendRequest(amendReq);
     }
-  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, dcKitEdits, dcManualItems, showMsg]);
+  }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, showMsg]);
 
   // ═══ DEAL CHECK REBUILD — Generate orchestrator (§7.9 · Deploy 1) — VERBATIM ═══
   // `skipAi` runs the matcher deterministically — knowledge + name-match only, no vision calls.
@@ -14654,6 +14859,24 @@ export default function StudioApp() {
       showMsg(msg, "red");
       return { ok: false, blocked: true };
     }
+    // Cold guard (Phase 2, 2026-11-16): a SILENT background run must never match/reconcile from a
+    // closure over the PREVIOUS client's (or not-yet-restored, empty) dcCards/dcManualItems/dcKitEdits
+    // — exactly the cold-client hazard reconcileSoldInventoryBlocks' own dcStateReadyClientId read
+    // above was built to close for ITS OWN read, but a call that gets all the way into this function
+    // still runs everything ABOVE that read (card matching, pricing) from the stale closure too. Defer
+    // instead: the auto-fill effect's own `ready` gate (autoFillDecision) won't fire again until this
+    // client's state genuinely restores, so nothing is lost, only delayed to the moment it's safe. A
+    // real, visible open is NEVER deferred — the salesperson watching it load is the whole reason
+    // dcFullPageOpen exempts the auto-fill's own ready gate above, and deferring a non-silent call here
+    // would silently swallow a real "Deal Check just opened" request with nothing left to retry it.
+    if (silent && dcStateRef.current?.dcStateReadyClientId !== activeClientId) {
+      // Wake the unseen run if nothing is already — its auto-fill is what will actually run this once
+      // ready; if Deal Check is already running (open or headless), its own pending auto-fill already
+      // covers this client becoming ready, so there's nothing further to kick off here.
+      if (!dcRunRef.current) setDcHeadless(true);
+      console.info("[dealcheck] background run deferred — Deal Check state not loaded for this client yet", activeClientId);
+      return { ok: false, blocked: true, reason: "cold-deferred" };
+    }
     // Regression-caught (2026-11-10, reviewing the booked-deal reconcile fix below): a run that is
     // already in flight for this client must not start a second one. reconcileSoldInventoryBlocks
     // re-derives this event's ENTIRE blocks entry from this run's own matched cards each time it
@@ -14671,7 +14894,14 @@ export default function StudioApp() {
     // those args the moment it's done — so the freshest request always eventually runs, even though
     // it was refused in the moment.
     if (dcGenInFlightRef.current.has(activeClientId)) {
-      dcGenRerunPendingRef.current.set(activeClientId, { fnIdxFilter, opts: { skipAi, silent } });
+      // Merge with whatever's already queued, don't overwrite it — a queued non-silent request
+      // (the real "Deal Check just opened" gate) landing before an unrelated silent background
+      // request would otherwise have its OWN silent:false downgraded to the later request's
+      // silent:true, so the rerun it was waiting for would quietly skip popping the gate even
+      // though a real shortage was found (regression review, 2026-11-16, off the !silent fix
+      // above). skipAi gets the same OR-of-false treatment for the same reason.
+      const prevPending = dcGenRerunPendingRef.current.get(activeClientId);
+      dcGenRerunPendingRef.current.set(activeClientId, { fnIdxFilter, opts: { skipAi: skipAi && (prevPending?.opts?.skipAi ?? true), silent: silent && (prevPending?.opts?.silent ?? true) } });
       return { ok: false, blocked: true, reason: "already-running" };
     }
     dcGenInFlightRef.current.add(activeClientId);
@@ -14768,7 +14998,14 @@ export default function StudioApp() {
         zonesProcessed += 1;
         setDcGenStatus(`Matching zone "${zoneKey}" (fn ${fnIdx + 1})…`);
         const venueName = fn.fnVenue || "";
-        const fvCfg = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: venueParents || dealCheckData?.venueParents || {} };
+        // sharedFloralSettings.fixedVenues, not dealCheckData?.fixedVenues — fixed venues are global
+        // config, not per-deal Deal Check data, and openDealCheck nulls dealCheckData for the WHOLE
+        // duration of every open's own fetch window (including a headless/background wake). Reading
+        // it here meant a card matched during that window saw no fixed-venue locks at all, so
+        // nameMatchUnique could pick an item standing at another fixed venue instead of the one
+        // genuinely free here. Every other fvCfg in this file already reads the boot-loaded
+        // sharedFloralSettings copy (6534/6544/7414/12974) — this was the one holdout.
+        const fvCfg = { fixedVenues: sharedFloralSettings.fixedVenues, venueParents: venueParents || dealCheckData?.venueParents || {} };
         // Match one element spec → its card. The AI vision call dominates wall-clock, so these run in
         // parallel below (bounded) instead of one-at-a-time — the main "Generate is slow" fix.
         let zoneAborted = false;
@@ -14906,7 +15143,95 @@ export default function StudioApp() {
     if (kitEditsSeeded) setDcKitEdits(newKitEdits);
     // Owner decision: a SOLD deal's inventory changes reserve immediately (no approval gate) —
     // see reconcileSoldInventoryBlocks above.
-    if (isSold) { try { await reconcileSoldInventoryBlocks(fnsToProcess, mergedForReconcile, inventory, cli); } catch (e) { console.warn("[reconcile] sold-deal block reconcile failed:", e?.message || e); } }
+    // Hard gate (production gap confirmed via direct DB inspection, 2026-11-15): this is the ONLY
+    // place that writes a real reservation into `blocks` for an already-sold deal, and until now
+    // nothing here ever checked scanOutOfStockElements — markSold/applyBookedChanges both run that
+    // scan before THEY get anywhere near here, but this auto-fill/regenerate path (the auto-fill
+    // effect below fires it every time Deal Check runs, visibly or headless, sold or not) had no such
+    // check at all, so a
+    // build edit that introduced a real shortage could still push a worsened reservation into the
+    // live table with nobody told. Re-scan the CURRENT build right here — if anything is flagged,
+    // skip the write entirely (whatever `blocks` already holds is left exactly as-is, not released
+    // or re-written) and surface the same hard-block modal markSold/applyBookedChanges use, instead
+    // of handing reconcileSoldInventoryBlocks a build it can't actually fulfill. Everything above
+    // this (card matching, pricing, dcCards/dcZoneState) already ran and still applies normally —
+    // only this final write is gated.
+    if (isSold) {
+      // Mirrors reconcileSoldInventoryBlocks' OWN early-exit precondition (eventOrderFor above,
+      // cancelled check) before even running the scan (round 4 regression review, 2026-11-15,
+      // finding b/5): without this, a client whose event_orders row hasn't finished loading yet, or
+      // whose only order is cancelled, read as "its own holds count as someone else's" inside
+      // scanOutOfStockElements' cross-reuse netting — popping the hard-block modal over a reconcile
+      // that was always going to be a safe no-op anyway (reconcileSoldInventoryBlocks's own guard
+      // just below warns and returns for exactly this case). Skip straight to it in that case, same
+      // as before this gate existed.
+      const eoForGate = eventOrderFor(eventOrders, cli.id, cli.name);
+      if (!eoForGate || eoForGate.status === "cancelled") {
+        try { await reconcileSoldInventoryBlocks(fnsToProcess, mergedForReconcile, inventory, cli); } catch (e) { console.warn("[reconcile] sold-deal block reconcile failed:", e?.message || e); }
+      } else {
+        const rawOosFlagged = scanOutOfStockElements();
+        // A shortage already fixed by swapping the CARD inside Deal Check itself (the documented way
+        // to fix a sold deal's inventory — Build freezes once sold, DealCheckOverlay.jsx's own
+        // dealCheckSync comment) must not keep blocking forever just because Build's own zoneElements
+        // still show the old, short invId — scanOutOfStockElements only ever reads Build (round 4
+        // regression review finding #2). Drop a flagged row whose own card (same cardKey
+        // buildElCardKey/getCardSpecsForZone would derive) now points at a split fulfilment or a
+        // different imsId than the one flagged — that's not what reconcileSoldInventoryBlocks is
+        // about to reserve for this slot, so Build's stale copy of it is no longer the right question
+        // to ask. apply_block_ops' own server-side cap (onShort: "cap") still protects against an
+        // oversell even if the swapped-to item turns out to ALSO be short — this only decides whether
+        // the gate keeps nagging about a shortage that's already moot.
+        const oosFlagged = rawOosFlagged.filter((f) => {
+          const card = mergedForReconcile?.[f.fnIdx]?.[buildElCardKey(f.zoneKey, f.elName ?? "", f.idx)];
+          if (!card) return true;
+          if (Array.isArray(card.split) && card.split.some((s) => s?.imsId && (Number(s.qty) || 0) > 0)) return false;
+          return !(card.imsId && card.imsId !== f.invId);
+        });
+        if (oosFlagged.length > 0) {
+          // Only surface the modal if this is STILL the active client on screen (round 4 regression
+          // review, finding #1): this call's own `cli`/`activeClientId` are frozen as of whenever it
+          // started, but the IMS fetch above can take 1-4s — long enough for the salesperson to
+          // switch to a different client before this point runs. Popping client A's shortage list,
+          // with its Fix button writing into whatever function/zone/idx is CURRENTLY on screen for
+          // client B, is exactly the cross-client array-index identity risk this codebase has been
+          // burned by before (see memory: Sangeeta function-corruption, Rakesh Taneja
+          // resumeSavedSession). Skipping the write below is unconditional regardless — only showing
+          // the modal is conditioned on staying the active client; the next Deal Check run for that
+          // client (an edit's autosave wake, Apply, or opening it for real) re-reconciles anyway.
+          // !silent too (owner report, 2026-11-16): this same "regenerate" is ALSO fired as a
+          // silent, fire-and-forget background sync on every booked-deal build edit (the ~1.5s
+          // debounced autosave above) and right after markSold/applyBookedChanges's OWN explicit
+          // gate already passed — neither call means "Deal Check was just opened", so popping this
+          // modal from them interrupted whatever the salesperson was doing with a SECOND dialog
+          // stacking over the one already open (e.g. the very picker they'd just opened from the
+          // first gate's own Fix button). ROUND 2 (2026-11-16, same owner report, confirmed live:
+          // plain Build edits popped the gate with nobody near Deal Check at all): the auto-fill
+          // effect's own call to this function ALSO used to pass no silent flag at all — autosave's
+          // edit woke it via dcHeadless (requestBookedSync, Phase 2, routes through the same wake),
+          // independent of the direct calls fixed in round 1 — so an invisible background run could
+          // still pop this modal. It now passes
+          // `silent: !dcFullPageOpen` (autoFillDecision, lib/studio/dealCheckAutoFill.js): only a run
+          // the salesperson can actually SEE (a real Deal Check open) gates; every unseen wake stays
+          // silent the way its own name already promises (same rule the showMsg below follows).
+          // A silent run still owes the salesperson SOMETHING, though — a booked deal with no
+          // negotiated amount never shows an Apply Changes button at all, so this debounced autosave
+          // is the ONLY path that ever reconciles its edits; suppressing the modal there with no
+          // trace would leave a real shortage completely unmentioned until Deal Check is next opened
+          // by hand. A plain toast (not the hard modal) says the same thing without interrupting
+          // whatever picker/gate the salesperson is already in.
+          if (activeClientIdRef.current === activeClientId) {
+            if (!silent) {
+              setOosGateReason("dealCheckAutoSync");
+              setOosGateModal(oosFlagged);
+            } else {
+              showMsg?.(`⚠ ${oosFlagged.length} item${oosFlagged.length === 1 ? "" : "s"} out of stock — stock not updated. Open Deal Check to fix.`, "red");
+            }
+          }
+        } else {
+          try { await reconcileSoldInventoryBlocks(fnsToProcess, mergedForReconcile, inventory, cli); } catch (e) { console.warn("[reconcile] sold-deal block reconcile failed:", e?.message || e); }
+        }
+      }
+    }
     setDcGenerating(false);
     setDcGenStatus("");
     setDcAbortRef(null);
@@ -14932,7 +15257,7 @@ export default function StudioApp() {
       // activeClientIdRef — the live ref, not this call's own frozen `activeClientId` — hasn't moved
       // on to a different client in the meantime; a replay for a client the user has since left would
       // reconcile the wrong deal's state under the wrong one. Dropping it in that case is fine: the
-      // headless auto-fill already re-reconciles whenever that client becomes active again.
+      // next Deal Check run for that client (an edit's autosave wake, or opening it again) re-reconciles.
       const pending = dcGenRerunPendingRef.current.get(activeClientId);
       if (pending) {
         dcGenRerunPendingRef.current.delete(activeClientId);
@@ -14941,21 +15266,49 @@ export default function StudioApp() {
         }
       }
     }
-  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, dcKitEdits, floralHardPropMap, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, reconcileSoldInventoryBlocks]);
+  }, [activeClientId, clientLedger, dcRunCounter, dcCards, dcZoneState, dcKitEdits, floralHardPropMap, collectAllFunctionData, clientDate, authUser, showMsg, rcItems, trussAlloc, dealCheckData, reconcileSoldInventoryBlocks, scanOutOfStockElements, eventOrders, sharedFloralSettings]);
   useEffect(() => { runDealCheckGenerateRef.current = runDealCheckGenerate; });
 
-  // Fill Deal Check from the build as soon as it opens, deterministically. The Generate button that
+  // Fill Deal Check from the build as soon as it runs, deterministically. The Generate button that
   // used to do this is gone, and matching is free in this mode (knowledge + name-match, no vision
   // calls), so there is nothing to gate it behind — it just mirrors whatever the build currently
-  // says. Runs after openDealCheck has loaded IMS, and only once per open.
-  const dcAutoFilledRef = useRef(false);
+  // says. Fires once per dcRun session PER MODE (see autoFillDecision) — NOT "after openDealCheck has
+  // loaded IMS" as this comment used to (wrongly) claim: it fires in the same commit dcRun flips true,
+  // well before openDealCheck's own fetch settles (that race is pre-existing and unrelated to this
+  // fix — see the "dcCards closure can still be {}" note near this function's own cold-client
+  // handling above).
+  //
+  // silent: !dcFullPageOpen — only a run the salesperson can actually SEE (a real Deal Check open)
+  // may pop the hard out-of-stock gate modal or this run's own "Deal Check ready"/match-failure
+  // toasts; every unseen wake (an edit's autosave, markSold/Apply's pushEventOrderPlan, the IMS-
+  // settings auto-sync, the planning sweep) stays silent, same as the direct background calls
+  // (markSold/applyBookedChanges) already do. Commit 50836787 fixed THOSE direct calls but missed
+  // this one: autoSaveBuild's edit used to also call syncDeptOpsHeadless directly, which woke this
+  // exact effect WITHOUT a silent flag — so a plain Build edit could still pop the gate over whatever
+  // the salesperson was doing, independent of and not covered by that earlier fix (owner report,
+  // 2026-11-16 — confirmed live: adding/editing an ordinary element popped "Items out of stock" with
+  // nobody near Deal Check at all). autoSaveBuild now goes through requestBookedSync instead (Phase
+  // 2), which still wakes this same effect when nothing is already running — the silence guarantee
+  // here is what makes that safe.
+  // ready (Phase 2): a background (silent) run must not fire its match/reconcile from a closure
+  // that still holds the PREVIOUS client's (or a not-yet-restored, empty) dc* state — same
+  // cold-client reasoning as reconcileSoldInventoryBlocks' own dcStateReadyClientId read above, just
+  // gating WHEN this effect fires instead of what one already-running call reads. A real open
+  // (dcFullPageOpen) is exempt: openDealCheck's own restore effect runs first either way, and a
+  // visible open genuinely needing data sooner is the whole point of watching it load on screen.
+  const dcAutoFilledRef = useRef(null); // null | "headless" | "full" — see autoFillDecision
   useEffect(() => {
-    if (!dcRun) { dcAutoFilledRef.current = false; return; }
-    if (dcAutoFilledRef.current || dealCheckLoading || !activeClientId) return;
-    dcAutoFilledRef.current = true;
-    runDealCheckGenerate(null, { skipAi: true }).catch(() => {});
+    const ready = dcFullPageOpen || dcStateReadyClientId === activeClientId;
+    const d = autoFillDecision({ dcRun, full: dcFullPageOpen, loading: dealCheckLoading, hasClient: !!activeClientId, ready, fired: dcAutoFilledRef.current });
+    dcAutoFilledRef.current = d.nextFired;
+    if (d.fire) runDealCheckGenerate(null, { skipAi: true, silent: d.silent }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dcRun, dealCheckLoading, activeClientId]);
+  }, [dcRun, dcFullPageOpen, dealCheckLoading, activeClientId, dcStateReadyClientId]);
+  // A real open landing while an unseen run is still mounted takes over from it (the effect above
+  // re-fires as "full" even though the headless one-shot was already spent — see autoFillDecision) —
+  // clear dcHeadless here so the hidden instance doesn't linger and re-mount once the user closes
+  // Deal Check again.
+  useEffect(() => { if (dcFullPageOpen) setDcHeadless(false); }, [dcFullPageOpen]);
   // An unseen run belongs to the deal it was started for — never let it carry on into another one.
   useEffect(() => { setDcHeadless(false); }, [activeClientId]);
 
@@ -15315,7 +15668,7 @@ export default function StudioApp() {
     // deal check
     dealCheckData, setDealCheckData, dealCheckLoading, setDealCheckLoading, dealCheckError, setDealCheckError, catDeptMap, saveCatDeptMap,
     // mount-loaded fallbacks so Build works before Deal Check opens (fixed-venue Repeat chip, floral auto-derive)
-    studioFloralData, sharedFloralSettings, venueParents,
+    studioFloralData, sharedFloralSettings, venueParents, resolveTrVenue,
     imsColourCatalogue, setImsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, paletteCatalogueLoaded, imsPaintableCategories, setImsPaintableCategories,
     imsDefaultPaintCost, setImsDefaultPaintCost, savePaletteData, paintPickerTarget, setPaintPickerTarget, fabricPickerTarget, setFabricPickerTarget,
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,
@@ -15333,7 +15686,7 @@ export default function StudioApp() {
     dcArtFlowerAlloc, setDcArtFlowerAlloc, dcArtFlowerAllocSrc, setDcArtFlowerAllocSrc, dcArtFlowerModal, setDcArtFlowerModal, dcFloralColorPrefs, setDcFloralColorPrefs, dcPrefModal, setDcPrefModal,
     dcCustomItems, setDcCustomItems: setDcCustomItemsAndFlush, dcCustomModal, setDcCustomModal,
     availModal, setAvailModal, openAvailModal, saveAvailPick, saveAvailSplit,
-    oosGateModal, setOosGateModal, openOosFix, kitPartShorts,
+    oosGateModal, setOosGateModal, oosGateReason, setOosGateReason, openOosFix, kitPartShorts, scanOutOfStockElements,
     trussStockGateModal, setTrussStockGateModal,
     ledgerStockGateModal, setLedgerStockGateModal,
     dcSwapSearch, setDcSwapSearch, dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,

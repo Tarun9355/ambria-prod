@@ -357,9 +357,18 @@ describe("planToOps — turning a plan into apply_block_ops' write ops (bug 4)",
 
   it("an entry with qtyToProduce is re-sent as qty + qtyToProduce", () => {
     const rowsById = new Map([["T", [{ date: D, eventId: EO, qty: 5, qtyToProduce: 3, status: "confirmed", source: SRC_STUDIO_CARD }]]]);
-    // unchanged — same group, same total (5+3=8) — must produce NO op
+    // FIXED (bug 3, 2026-11-15 adversarial matrix B12): a group whose CURRENT entry carries any
+    // qtyToProduce portion is now ALWAYS re-sent, even when the composite qty+qtyToProduce total
+    // (5+3=8) matches the next plan's own total — a hold stuck at {qty:5, qtyToProduce:3} must keep
+    // getting a chance to re-check current real availability and convert into a real reservation once
+    // stock frees up, which comparing only the summed total used to permanently prevent.
     const sameNext = new Map([["T", [{ date: D, eventId: EO, qty: 5, qtyToProduce: 3, status: "confirmed", source: SRC_STUDIO_CARD }]]]);
-    expect(planToOps({ eventId: EO, rowsById, plan: { changedIds: ["T"], nextById: sameNext }, allowOver: allowOverNone })).toEqual([]);
+    const sameOps = planToOps({ eventId: EO, rowsById, plan: { changedIds: ["T"], nextById: sameNext }, allowOver: allowOverNone });
+    expect(sameOps).toEqual([{
+      item_id: "T", event_id: EO,
+      remove: [{ source: SRC_STUDIO_CARD, date: D }],
+      add: [{ date: D, qty: 8, status: "confirmed", source: SRC_STUDIO_CARD, allowOver: false }],
+    }]);
     // a real change (qty rises from 8 total to 10) — remove the old group, add the new, un-split (qtyToProduce rolled in)
     const changedNext = new Map([["T", [{ date: D, eventId: EO, qty: 10, status: "confirmed", createdAt: 1, source: SRC_STUDIO_CARD }]]]);
     const ops = planToOps({ eventId: EO, rowsById, plan: { changedIds: ["T"], nextById: changedNext }, allowOver: allowOverNone });

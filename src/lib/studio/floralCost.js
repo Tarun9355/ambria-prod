@@ -34,8 +34,9 @@
 //     function at the same venue, within the existing day-adjacency window (same day, or
 //     exactly the day before) — not a merged pool of every eligible sibling.
 //   - For colours present in BOTH functions' own selected palettes, a flower that the EXACT
-//     SAME species+colour was also used for in the preceding function is credited 70% of that
-//     preceding function's own (raw, uncredited) quantity — real and artificial alike. A flower
+//     SAME species+colour was also used for in the preceding function is credited
+//     FLOWER_REUSE_RATE (80%) of that preceding function's own (raw, uncredited) quantity —
+//     real and artificial alike. A flower
 //     whose colour isn't in the overlap, or that the preceding function never actually had, is
 //     NOT credited even if the zone/function is otherwise eligible.
 //   - A zone's own manual ✨Fresh/♻️Repeat toggle (unchanged control) bypasses the PALETTE
@@ -65,7 +66,7 @@ import { venueKey } from "../venueKey.js";
 // The one reuse rate — credited the same way against both real (fresh) quantity and
 // artificial-bunch-equivalent quantity, per the owner's own call (no separate real/artificial
 // rates the way the old zone-key system had).
-export const FLOWER_REUSE_RATE = 0.7;
+export const FLOWER_REUSE_RATE = 0.8;
 
 const TIMING_ORDER = { brunch: 0, lunch: 1, sundowner: 2, dinner: 3 };
 // A sortable (date, time-of-day) key: whole days apart dominate (×10), same-day ordering
@@ -178,6 +179,25 @@ function resolvedFlowerColour(parentId, colorPrefsForFn, overrideByParentId, fn,
 }
 
 /**
+ * The size key ("small"/"medium"/"big") for a floral-recipe element with NO backing inventory
+ * item (no el.invId — e.g. a pure flower-recipe item like "Flower Reet"). Always driven by the
+ * element's OWN size pick (Build's S/M/B size-picker), exactly like the invItem branch's own
+ * sizeClassToPatternKey/normalizeSizeClass resolution does — never gated on the rate-card/
+ * pattern's inhouseMode, which has nothing to do with whether Build's size-picker was used.
+ *
+ * Bug fixed 2026-11-16 (owner report): a "flat"-inhouseMode "Floral Reet" element with size "B"
+ * picked in Build showed as "Medium" in IMS Dept Ops, because this used to only honor elSize
+ * when inhouseMode === "smb" and fell through to a hardcoded "medium" otherwise — silently
+ * discarding the salesperson's size choice for every non-"smb" item. Was defined twice,
+ * identically, once inside computeFnRawFlowerUsage and once inside computeFnFloralCost; both
+ * call sites now share this one copy.
+ */
+function sizeFromMode(elSize) {
+  const s = (elSize || "M").toUpperCase();
+  return s === "S" ? "small" : s === "B" ? "big" : "medium";
+}
+
+/**
  * The raw (uncredited — no repeat cut of any kind applied) per-flower need for one function,
  * keyed by the EXACT recipe ingredient id (`fl.flowerId`, a bare mandi-catalogue parent id or a
  * specific colour-variant id — "same species AND colour" per the owner's own call) rather than
@@ -200,10 +220,6 @@ export function computeFnRawFlowerUsage(fn, opts) {
   const overrideByParentId = new Map();
   (fnOverrides.rows || []).forEach((r) => { if (r?.flowerId) overrideByParentId.set(r.flowerId, r); });
   const findInv = (id) => (!id ? null : (imsInventory.find((i) => i.id === id) || (dcInventoryCache || []).find((i) => i.id === id)));
-  const sizeFromMode = (inhouseMode, elSize) => {
-    if (inhouseMode === "smb") { const s = (elSize || "M").toUpperCase(); return s === "S" ? "small" : s === "B" ? "big" : "medium"; }
-    return "medium";
-  };
   const fnFloralRatio = typeof fn?.floralRatio === "number" ? fn.floralRatio : (typeof floralRatio === "number" ? floralRatio : 70);
   const resolveRealPct = (el, rc, invItem, elPattern) => {
     if (typeof el.realPct === "number" && el.realPct >= 0 && el.realPct <= 100) return el.realPct;
@@ -286,7 +302,7 @@ export function computeFnRawFlowerUsage(fn, opts) {
       if (!pattern) return;
       const realPct = resolveRealPct(el, rc, invItem, elPattern);
       const realFrac = realPct / 100, artFrac = 1 - realFrac;
-      const sizeKey = invItem ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : sizeFromMode(pattern?.mode || rc?.inhouseMode, el.size);
+      const sizeKey = invItem ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : sizeFromMode(el.size);
       const sizes = pattern.sizes || {};
       let comp = sizes[sizeKey] || sizes.medium;
       if (!comp && sizeKey === "big" && sizes.large) comp = sizes.large;
@@ -355,10 +371,6 @@ export function computeFnFloralCost(fn, allFns, opts) {
   const flowerPerBunchRate = artFlowerRatePerKg / artFlowerBPK;
   const greenPerBunchRate = artGreenRatePerKg / artGreenBPK;
   const fnFloralRatio = typeof fn?.floralRatio === "number" ? fn.floralRatio : (typeof floralRatio === "number" ? floralRatio : 70);
-  const sizeFromMode = (inhouseMode, elSize) => {
-    if (inhouseMode === "smb") { const s = (elSize || "M").toUpperCase(); return s === "S" ? "small" : s === "B" ? "big" : "medium"; }
-    return "medium";
-  };
   // Build's own precedence: an element's OWN identity (invItem's sub-category, then its
   // recipe pattern's sub-category) decides the default real/artificial split; a Rate Card
   // row is only consulted when NEITHER identity exists, since a coincidental name-match
@@ -559,7 +571,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
       const realPct = resolveRealPct(el, rc, invItem, elPattern);
       const realFrac = realPct / 100;
       const artFrac = 1 - realFrac;
-      const sizeKey = invItem ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : sizeFromMode(pattern?.mode || rc?.inhouseMode, el.size);
+      const sizeKey = invItem ? sizeClassToPatternKey(normalizeSizeClass(el.size || "B")) : sizeFromMode(el.size);
 
       // Billed income split (real portion at the inhouse rate, artificial at the artificial
       // rate) — only computed when the caller supplies resolveRcRate (the sourcing-cost

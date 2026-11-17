@@ -36,7 +36,16 @@
 // a different function still adopts/resizes it as before, since two functions can share one date's
 // physical reservation.
 
-import { fnVenueKey } from "../venueKey.js";
+import { venueKey } from "../venueKey.js";
+import { normVenue } from "../ims/fixedVenues.js";
+// normVenue alone does not collapse internal whitespace the way venueKey does (regression review,
+// 2026-11-15, round 4): "Exotica  Lawn" (stray double space) and "Exotica Lawn" were the SAME bucket
+// via the old fnVenueKey/venueKey path, but normVenue on its own would read them as different strings
+// — a previously-merged pair silently splitting apart instead of staying merged. Composing the two
+// (venueKey's whitespace-collapse first, normVenue's prefix/punctuation strip on top) keeps both
+// normalizations at once, so nothing that used to merge stops merging, while the new "Ambria "/
+// trailing-punctuation collapsing (bug 6) still applies.
+const normalizedVenueKeyFor = (v) => normVenue(venueKey(v));
 
 export const SRC_STUDIO_CARD = "studio-incremental";
 export const SRC_STUDIO_MANUAL = "studio-manual";
@@ -73,11 +82,18 @@ export function reqByDateFrom(fns, reqByFnIdx) {
     const fnIdx = fn?.fnIdx ?? i;
     const date = fn?.fnDate || "";
     if (!date) return;
-    // fnVenueKey, not plain venueKey (regression review, 2026-11-14): an extra function with no venue
-    // of its own explicitly set defaults to "" (StudioApp.jsx's allFunctionData memo), which must
-    // share the MAIN function's venue bucket, not become its own separate "blank" venue competing
-    // against (or summed with) it.
-    const vk = fnVenueKey(fn, fns);
+    // fnVenueKey-shaped fallback (not plain venueKey, regression review, 2026-11-14): an extra
+    // function with no venue of its own explicitly set defaults to "" (StudioApp.jsx's
+    // allFunctionData memo), which must share the MAIN function's venue bucket, not become its own
+    // separate "blank" venue competing against (or summed with) it. Built from normVenue, not
+    // venueKey, so one venue typed two ways on the same deal's functions (e.g. "Pushpanjali" vs
+    // "Ambria Pushpanjali.") collapses to the SAME bucket here too — lib/ims/fixedVenues.js's own
+    // fixedVenueFor already resolves both to one property; this ledger used to disagree, double-
+    // counting one property's same-day demand under two separate venue keys (bug 6, 2026-11-15
+    // adversarial matrix). Deliberately local to this one bucketing key, not a change to the shared
+    // venueKey()/fnVenueKey() every OTHER venue comparison in the app still uses unchanged (those
+    // answer a different question — see venueKey.js's own header comment).
+    const vk = normalizedVenueKeyFor(fn?.fnVenue) || normalizedVenueKeyFor(fns?.[0]?.fnVenue);
     const byVenue = byDateVenue[date] || (byDateVenue[date] = {});
     const slot = byVenue[vk] || (byVenue[vk] = {});
     Object.entries(reqByFnIdx?.[fnIdx] || {}).forEach(([id, q]) => {
@@ -152,8 +168,14 @@ export function planStudioBlocks({ eventId, rowsById, cardReq, manualReq, focReq
         return;
       }
       // Already exactly right — keep the existing entry (and its original createdAt) rather than
-      // rewriting it on every run for no reason.
-      if (existing.length === 1 && Number(existing[0].qty) === want && existing[0].status !== "released") {
+      // rewriting it on every run for no reason. NEVER for an entry carrying a qtyToProduce portion
+      // (regression review, 2026-11-15, round 4): `existing[0].qty` alone can match `want` while the
+      // entry is still really a capped-over hold (e.g. {qty:5, qtyToProduce:3} with want now back down
+      // to 5) — keeping that stale object as-is would let planToOps' own bug-3 fix re-send its OLD
+      // composite total (8, not the true want of 5) once it forces a re-send for any held group,
+      // locking 3 phantom "to produce" units against a real need of 5. Falling through here instead
+      // always emits a FRESH, qtyToProduce-free entry at the true current want whenever a hold exists.
+      if (existing.length === 1 && Number(existing[0].qty) === want && !(Number(existing[0].qtyToProduce) > 0) && existing[0].status !== "released") {
         next.push(existing[0]);
         return;
       }
@@ -239,10 +261,11 @@ function groupBlocksByKey(entries, eventId) {
   (entries || []).forEach((b) => {
     if (!b || b.eventId !== eventId) return;
     const key = (b.source ?? "") + "|" + (b.date ?? "");
-    const qty = (Number(b.qty) || 0) + (Number(b.qtyToProduce) || 0);
+    const qtyToProduce = Number(b.qtyToProduce) || 0;
+    const qty = (Number(b.qty) || 0) + qtyToProduce;
     const existing = m.get(key);
-    if (existing) { existing.qty += qty; return; }
-    m.set(key, { source: b.source, date: b.date, qty, status: b.status });
+    if (existing) { existing.qty += qty; existing.qtyToProduce += qtyToProduce; return; }
+    m.set(key, { source: b.source, date: b.date, qty, qtyToProduce, status: b.status });
   });
   return m;
 }
@@ -258,7 +281,23 @@ export function planToOps({ eventId, rowsById, plan, allowOver = () => false }) 
     allKeys.forEach((key) => {
       const c = curByKey.get(key);
       const n = nextByKey.get(key);
-      if (c && n && c.qty === n.qty && (c.status || "confirmed") === (n.status || "confirmed")) return; // unchanged
+      // A capped-over hold (cur carries a positive qtyToProduce portion) must always be re-sent even
+      // when the composite qty+qtyToProduce total hasn't changed: planStudioBlocks' own `manage()`
+      // never re-emits a qtyToProduce split of its own (a freshly planned entry is always 100% real,
+      // qty = the full want) — comparing only the summed total let a hold stuck at e.g. {qty:5,
+      // qtyToProduce:3} never get re-evaluated once real stock could now cover the full 8, since 5+3
+      // already read as "equal" to the new want of 8 (bug 12, 2026-11-15 adversarial matrix).
+      // Scoped to the two Studio-written sources that can ever actually carry a qtyToProduce split
+      // (regression review, 2026-11-15, round 5) — planStudioBlocks/manage() only ever sets
+      // qtyToProduce on a fresh studio-incremental/studio-manual entry (see allowOver's own header
+      // comment above: every other caller omits allowOver and never over-commits), so a manual/
+      // adopted/protected group passed through unchanged by a DIFFERENT writer can never legitimately
+      // carry one. Restricting the forced re-send to these two sources keeps this fix targeted at the
+      // exact hold it was meant to unstick, rather than forcing an extra remove+add RPC round-trip for
+      // every other group in the event on each reconcile, should a future writer ever reuse this same
+      // field name for something else.
+      const curHasHold = !!(c && c.qtyToProduce > 0 && (c.source === SRC_STUDIO_CARD || c.source === SRC_STUDIO_MANUAL));
+      if (c && n && !curHasHold && c.qty === n.qty && (c.status || "confirmed") === (n.status || "confirmed")) return; // unchanged
       const [source, date] = key.includes("|") ? [key.slice(0, key.indexOf("|")), key.slice(key.indexOf("|") + 1)] : ["", key];
       // Always remove this exact (source, date) group when we're about to add it back — not only
       // when `c` (this run's own, possibly-stale read) happened to have seen it (regression review,
