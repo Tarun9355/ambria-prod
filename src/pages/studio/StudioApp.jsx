@@ -7629,6 +7629,31 @@ export default function StudioApp() {
     }, 800);
   }, [grandTotal, buildSig, activeClientId, pricingReady, restoring, extraFunctions, zoneElements, floatOn]);
 
+  // ── APPLY CHANGES ONLY WHEN SOMETHING CHANGED ── (owner ask 2026-11-17)
+  // A booked deal's Summary showed "Apply Changes" always. Now a real build edit (buildSig moving after the deal / function
+  // has landed - not the open, not a function switch, not a rate change) marks the deal applyPending; Apply (and a fresh
+  // Sold) clear it, and the button shows only while it is set. Kept on the client row so another tab / person sees it;
+  // applyPendingLocal shows it in this tab at once, before that write lands.
+  const applySeenRef = useRef({ id: null, fi: null, sig: null, at: 0 });
+  const [applyPendingLocal, setApplyPendingLocal] = useState({});
+  useEffect(() => {
+    const seen = applySeenRef.current;
+    const moved = seen.id !== activeClientId || seen.fi !== activeFnIdx;
+    if (moved || restoring || !pricingReady || (seen.id === activeClientId && Date.now() - seen.at < 3000)) {
+      // the 3s settle is for a deal being opened only - a function switch just re-bases, so a pick made right after one
+      // (the out-of-stock gate's Fix switches function and opens the picker) still counts as an edit
+      applySeenRef.current = { id: activeClientId, fi: activeFnIdx, sig: buildSig, at: seen.id !== activeClientId ? Date.now() : seen.at };
+      return;
+    }
+    if (seen.sig === buildSig) return;
+    applySeenRef.current = { ...seen, sig: buildSig };
+    const ac = (clientLedgerRef.current || []).find((x) => x.id === activeClientId);
+    if (!ac || ac.status !== "booked" || !canDesignEditRef.current) return;
+    setApplyPendingLocal((m) => (m[ac.id] ? m : { ...m, [ac.id]: true }));
+    if (ac.applyPending === true) return;
+    saveClientLedger((clientLedgerRef.current || []).map((x) => (x.id === ac.id ? { ...x, applyPending: true } : x)));
+  }, [buildSig, activeClientId, activeFnIdx, restoring, pricingReady, saveClientLedger]);
+
   const calcFunctionBreakdown = useCallback((fnData) => {
     if (!fnData) return { zones: [], transport: null, decorTotal: 0, transportTotal: 0, transportTotalClient: 0, grand: 0, grandClient: 0 };
     const fZoneElements = fnData.zoneElements || {};
@@ -10579,7 +10604,7 @@ export default function StudioApp() {
       // pendingDelta banner). Only set once — a re-confirm of an already-booked deal must not
       // silently rebase it, or a real pending change made between two re-confirms would vanish
       // unnoticed.
-      const updated = ledger.map(c => c.id === client.id ? { ...c, status: "booked", bookedAt: Date.now(), bookedBy: authUser?.name || "—", finalSession: c.sessions?.[0] || null, bookedSystemTotal: (c.bookedSystemTotal != null ? c.bookedSystemTotal : eventGrandTotal) } : c);
+      const updated = ledger.map(c => c.id === client.id ? { ...c, status: "booked", bookedAt: Date.now(), bookedBy: authUser?.name || "—", finalSession: c.sessions?.[0] || null, bookedSystemTotal: (c.bookedSystemTotal != null ? c.bookedSystemTotal : eventGrandTotal), applyPending: false } : c);
       // AWAITED and checked (Ajay Pandey/Pragya Arya incident, 2026-11-13): this used to fire-and-forget
       // saveClientLedger, then push straight into pushEventOrderPlan regardless. setClientLedger inside
       // saveClientLedger runs synchronously, so the Studio screen looked booked immediately either way —
@@ -10697,6 +10722,9 @@ export default function StudioApp() {
       // inside runDealCheckGenerate itself is what protects this from racing the deal's other
       // existing reconcile triggers, not the await.
       runDealCheckGenerateRef.current?.(null, { skipAi: true, silent: true })?.catch((e) => console.warn("[applyBookedChanges] inventory reconcile failed:", e?.message || e));
+      // applied - nothing pending any more (the Apply button hides until the next real edit)
+      setApplyPendingLocal((m) => { if (!m[freshClient.id]) return m; const n = { ...m }; delete n[freshClient.id]; return n; });
+      saveClientLedger((clientLedgerRef.current || []).map((x) => (x.id === freshClient.id ? { ...x, applyPending: false } : x)));
       showMsg(`Changes applied for ${freshClient.name}`, "green");
       return true;
     } catch (e) { showMsg("Error: " + (e.message || "unknown"), "red"); return false; }
@@ -15632,7 +15660,7 @@ export default function StudioApp() {
   const settingsSaveClientLedger = (nl, del, o) => { if (!canSettingsEdit) return Promise.resolve(false); return saveClientLedger(nl, del, o); };
 
   const ctx = {
-    trussStockShort, trussShortAlternatives,
+    trussStockShort, trussShortAlternatives, applyPendingLocal,
     // theme / chrome
     S, isDark, accent, border, textS, fmt, cat,
     textP, accentBg, accentText, cardBg,

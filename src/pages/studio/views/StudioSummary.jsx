@@ -224,7 +224,7 @@ export default function StudioSummary({ ctx }) {
     // video itself — see sendToCanva's success branch below)
     sourceVideo, saveYtTags, ytVideoTags,
     // sold flow
-    showSoldConfetti, markSold, applyBookedChanges,
+    showSoldConfetti, markSold, applyBookedChanges, applyPendingLocal,
     // step + reset. The 48 individual setters that used to be listed here existed only to feed the
     // inline startNew(); that reset is now startNewDeal on ctx, so they came off with it.
     setStep, setActiveClientId, startNewDeal, isFnSwitching,
@@ -2943,14 +2943,16 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                 </div>
               );
             })()}
-            {/* Always available while booked, not just when pendingDelta is non-zero — a swap made to
-                clear an out-of-stock item can net to the same price while still needing IMS's own
-                copy of the build refreshed. Runs the same out-of-stock hard block Sold does; a
-                shortfall opens the same gate modal instead of applying anything. */}
+            {/* Only when something changed since the booking / the last Apply (owner ask 2026-11-17): a real build
+                edit marks the deal applyPending (StudioApp.jsx), Apply clears it. A deal booked before this was tracked
+                (applyPending never set) shows it while its total has moved off the booked one. Runs the same
+                out-of-stock hard block Sold does; a shortfall opens the same gate modal instead of applying anything. */}
+            {(applyPendingLocal?.[activeClient.id] || activeClient.applyPending === true
+              || (activeClient.applyPending === undefined && Math.round(Number(eventGrandTotal) || 0) !== Math.round(Number(activeClient.bookedSystemTotal ?? eventGrandTotal) || 0))) &&
             <button type="button" onClick={applyChanges} title="Push the current build to IMS and fold any price change into the deal value"
               style={{display:"block",margin:"8px auto 0",padding:"6px 14px",borderRadius:999,background:"rgba(99,102,241,0.14)",border:"1px solid rgba(129,140,248,0.4)",color:"#A5B4FC",fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",cursor:"pointer",font:"inherit"}}>
               ↻ Apply Changes
-            </button>
+            </button>}
             </>
           : (()=>{const canSold=clientName.trim()&&clientDate&&venue;const missing=[];if(!clientName.trim())missing.push("name");if(!clientDate)missing.push("date");if(!venue)missing.push("venue");return <>
           {/* Enabled state gets its green + shadow from .sh-sold so the :hover rule can override
