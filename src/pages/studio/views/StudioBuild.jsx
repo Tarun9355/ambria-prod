@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { makeFilterUI, useRailMaxHeight } from "../../../components/studio/filterUI.jsx";
 import NumField from "../../../components/ui/NumField.jsx";
 import FabricColourPick from "../../../components/studio/FabricColourPick.jsx";
+import LayoutUpload from "../../../components/studio/LayoutUpload.jsx";
 import { applyQtyCeiling } from "../../../lib/studio/qtyCeiling";
 import { smartFilter } from "../../../lib/studio/itemSearch";
 import { unitAllowsDecimal, quantityForUnit } from "../../../lib/studio/qtyUnits";
@@ -1281,7 +1282,7 @@ export default function StudioBuild({ ctx }) {
     getFullCost, findTemplate, templates,
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions, copyBuildsFromClient,
-    clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette,
+    clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette, clientLayoutUrl, setClientLayoutUrl,
     studioFloralData, sharedFloralSettings, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, freeOnActiveDate, openAvailModal, kitPartShorts,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // Build's kit edits also land in Deal Check's own per-card copy (see the kit editor below).
@@ -4225,6 +4226,16 @@ undefined
             </div>
           </>;
         })()}
+        {/* ── LAYOUT ── this function's venue layout image (owner ask 2026-11-17), stored per function like the Flower Palette:
+            function 1 in clientLayoutUrl, every other one as extraFunctions[i].layoutUrl. Deal Check shows it; the Dept Book prints
+            it on a full page right after the cover. */}
+        <LayoutUpload
+          value={isPrimaryFn ? (clientLayoutUrl || "") : (extraFunctions[activeFnIdx - 1]?.layoutUrl || "")}
+          onChange={(url) => {
+            if (isPrimaryFn) setClientLayoutUrl(url || "");
+            else setExtraFunctions(p => p.map((f, i) => i === activeFnIdx - 1 ? { ...f, layoutUrl: url || "" } : f));
+          }}
+          accent={accent} border={border} cardBg={cardBg} textP={textP} textS={textS} />
       </div>;
     })()}
 

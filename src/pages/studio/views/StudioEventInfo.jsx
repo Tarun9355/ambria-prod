@@ -184,7 +184,7 @@ export default function StudioEventInfo({ ctx }) {
     venue, setVenue, fn, setFn,
     clientName, setClientName, clientDate, setClientDate, clientPhone, setClientPhone,
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax,
-    clientVenueOther, setClientVenueOther, clientPalette, setClientPalette, setClientFlowerPalette, fnBuilds, setFnBuilds, restoreBuildState,
+    clientVenueOther, setClientVenueOther, clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette, clientLayoutUrl, setClientLayoutUrl, fnBuilds, setFnBuilds, restoreBuildState,
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, switchActiveFn, pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval, reindexEventOrderForRemoval,
     setLastFnRemoval, autoSaveBuild,
@@ -370,7 +370,8 @@ export default function StudioEventInfo({ ctx }) {
       // then read `f0?.palette || "Custom"` and Function 1 came back on Custom having been set to
       // something else. Functions 2+ never had the problem: their palette rides inside extraFunctions.
       functions: [
-        { type: fn, date: clientDate, venue: venue, shift: clientShift, pax: clientPax, palette: clientPalette || "Custom" },
+        // flowerPalette and layoutUrl too, for the reason above: left out, Continue dropped them from Function 1
+        { type: fn, date: clientDate, venue: venue, shift: clientShift, pax: clientPax, palette: clientPalette || "Custom", flowerPalette: clientFlowerPalette || "", layoutUrl: clientLayoutUrl || "" },
         ...extraFunctions
       ],
       createdBy: base.createdBy || authUser?.name || "—",
@@ -524,6 +525,7 @@ export default function StudioEventInfo({ ctx }) {
       setClientPax(next.pax || "");
       setClientPalette(next.palette || "Custom");
       setClientFlowerPalette(next.flowerPalette || "");
+      setClientLayoutUrl(next.layoutUrl || "");
       setExtraFunctions(prev => prev.slice(1));
     } else {
       setExtraFunctions(prev => prev.filter((_, i) => i !== idx - 1));

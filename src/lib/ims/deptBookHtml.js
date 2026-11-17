@@ -1578,6 +1578,15 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // ── POWER / GENSET ── (owner ask 2026-11-03) the Lighting book opens with the gensets: every function's 125 kVA and
     // 62.5 kVA units and the total, right after the cover. Each function's own plan from Studio (functionsDetail[].gensets),
     // else its venue's standard count. Lighting's book and the all-departments book.
+    // ── LAYOUT ── (owner ask 2026-11-17) the venue layout uploaded in Studio's Build beside the Flower Palette, on a page of its
+    // own right after the cover - in every department's book, since every crew sets up by it. One page per function that has
+    // one (functionsDetail[].layoutUrl), titled with the function on a multi-function event. contain: the whole plan shows,
+    // never cropped.
+    const layoutPages = (fns || []).map((fn, fi) => ({ fn, fi })).filter(r => r.fn && typeof r.fn.layoutUrl === "string" && r.fn.layoutUrl.trim())
+      .map(({ fn, fi }) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
+        <div class="lay-h"><b>${t("Layout")}</b>${(fns || []).length > 1 ? `<span> · ${esc(hn(fn.type) || t("Function {n}", { n: fi + 1 }))}${fn.date ? ` · ${esc(fn.date)}` : ""}</span>` : ""}</div>
+        <div class="lay" style="${bgCss(fn.layoutUrl.trim(), 1100)}" ${bgData(fn.layoutUrl.trim(), 1100)}></div>
+      </section>`).join("");
     const gensetPage = (() => {
       if (!(combined || inBook("Lighting"))) return "";
       const list = (fns.length ? fns : [{ type: sel?.eventType || "", date: selDateStr, venue: sel?.venue }]).map((fn, fi) => ({ fn, fi, g: gensetsForFn(fn, trVenues) })).filter(r => r.g);
@@ -1943,6 +1952,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
      page by a soft shadow. */
   /* contain, not cover (owner ask): the whole zone photo is shown, scaled down to fit, never cropped — a
      landscape stage shot was losing its sides and a portrait one its top and bottom. */
+  .lay-h{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#6B6455;margin:2px 0 12px}
+  .lay-h b{color:#1A1A1A;letter-spacing:.12em}
+  .lay{width:100%;height:930px;border-radius:12px;background:#fff center/contain no-repeat;border:1px solid #E2DBCB}
   .zphoto{position:absolute;left:0;width:700px;border-radius:16px;background:#EDE8DC center/contain no-repeat;border:1.5px solid #1A1A1A;box-shadow:5px 6px 0 #1A1A1A;display:flex;align-items:center;justify-content:center}
   .zphoto span,.zc-ph span{font-size:13px;line-height:1.7;color:#A39A89;font-family:"Inter",Arial,sans-serif}
   .zc{position:absolute;width:224px;height:300px;border:1.5px solid #1A1A1A;border-radius:16px;background:#FFFDF8;box-shadow:4px 4px 0 #1A1A1A}
@@ -2081,6 +2093,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
 ${/* Money, the priced inventory table, the crew plan and logged spend are left out: this sheet
      goes to the people setting up the event, who need what goes where, not what it costs. The
      zone layout pages below carry every item, with photo, qty and size. */ ""}
+${layoutPages}
 ${gensetPage}
 ${fixedVenuePages}
 ${zoneHtml.replace(/\u0001FNCARDS:(\d+)\u0001/g, (_, fi) => fnCards(Number(fi)))}

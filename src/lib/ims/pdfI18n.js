@@ -149,6 +149,7 @@ export const PDF_HI = {
   "+{n} more": "+{n} और",
   "{n} truss|{n} trusses": "{n} ट्रस",
   "FOC — already at the venue": "FOC — पहले से वेन्यू पर लगा है",
+  "Layout": "लेआउट",
   "Box": "बॉक्स",
   "Single U": "सिंगल U",
   "Raised {n}ft": "{n}ft ऊँचा",

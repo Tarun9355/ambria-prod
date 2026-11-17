@@ -1549,6 +1549,10 @@ export default function StudioApp() {
   // Palette in Build. Every OTHER function keeps its own as extraFunctions[i].flowerPalette — same
   // split as clientPalette / extraFunctions[i].palette. "" = not chosen.
   const [clientFlowerPalette, setClientFlowerPalette] = useState("");
+  // The function's venue layout image (owner ask 2026-11-17), uploaded in Build beside the Flower Palette: function 1's here,
+  // every other function's as extraFunctions[i].layoutUrl - same as the Flower Palette. Shown in Deal Check, and printed on a
+  // full page right after the cover of the Dept Book (functionsDetail[].layoutUrl).
+  const [clientLayoutUrl, setClientLayoutUrl] = useState("");
   const [extraFunctions, setExtraFunctions] = useState([]);
   const [expandedFnIdx, setExpandedFnIdx] = useState(0);
   const [activeFnIdx, setActiveFnIdx] = useState(0);
@@ -2527,7 +2531,7 @@ export default function StudioApp() {
   // Haldi's (fn_idx 0) own studio_sessions row got stamped fn_label "Wedding"/event_date 2026-11-24
   // while its zoneElements kept evolving as ordinary, distinct Haldi edits — the metadata went stale
   // the exact way the content used to before activeFnIdxRef/fnBuildsRef existed.
-  const fnMetaRef = useRef({ fn: "", clientDate: "", venue: "", extraFunctions: [], clientShift: "", clientPax: "", clientPalette: "Custom", clientFlowerPalette: "", clientBrideGroom: "" });
+  const fnMetaRef = useRef({ fn: "", clientDate: "", venue: "", extraFunctions: [], clientShift: "", clientPax: "", clientPalette: "Custom", clientFlowerPalette: "", clientLayoutUrl: "", clientBrideGroom: "" });
   const snapshotFnRef = useRef(null);
   const switchingRef = useRef(false);
   // Switching functions replaces zoneElements/zoneConfig/etc with the target function's own
@@ -2596,7 +2600,7 @@ export default function StudioApp() {
   // than the commit, leaving a window where a timer could fire between this commit and that effect —
   // confirmed real by the stricter regression pass on this fix: a Deal Check/client-switch edit inside
   // that window could file a NEWLY-active client's own metadata under the PREVIOUS client's state).
-  useLayoutEffect(() => { fnMetaRef.current = { fn, clientDate, venue, extraFunctions, clientShift, clientPax, clientPalette, clientFlowerPalette, clientBrideGroom }; });
+  useLayoutEffect(() => { fnMetaRef.current = { fn, clientDate, venue, extraFunctions, clientShift, clientPax, clientPalette, clientFlowerPalette, clientLayoutUrl, clientBrideGroom }; });
   // Layout for the same reason as saveSessionRef below — switchActiveFn calls this one
   // SYNCHRONOUSLY on the click and files the result as the function's build, so it should be
   // reading the latest commit rather than whatever was current before the last paint.
@@ -4584,6 +4588,8 @@ export default function StudioApp() {
           // The Flower Palette too — set at booking and never refreshed, so a palette changed after the deal was
           // booked never reached the Floral book. Written as it stands (an emptied palette clears it).
           flowerPalette: fd.fnFlowerPalette || "",
+          // the function's layout image (Dept Book page after the cover) - as it stands, so a removed layout clears it
+          layoutUrl: fd.fnLayoutUrl || "",
           // and the real/artificial floral slider (floralRatio = the artificial share), likewise set at booking only until now.
           ...(typeof fd.floralRatio === "number" ? { floralRatio: fd.floralRatio } : {}),
         });
@@ -6632,8 +6638,8 @@ export default function StudioApp() {
     const totalFns = 1 + (extraFunctions || []).length;
     for (let idx = 0; idx < totalFns; idx++) {
       const meta = idx === 0
-        ? { type: fn || "", date: clientDate || "", venue: venue || "", shift: clientShift || "", pax: clientPax || "", palette: clientPalette || "Custom", flowerPalette: clientFlowerPalette || "" }
-        : (() => { const ef = extraFunctions[idx - 1] || {}; return { type: ef.type || "", date: ef.date || "", venue: ef.venue || "", shift: ef.shift || "", pax: ef.pax || "", palette: ef.palette || "Custom", flowerPalette: ef.flowerPalette || "" }; })();
+        ? { type: fn || "", date: clientDate || "", venue: venue || "", shift: clientShift || "", pax: clientPax || "", palette: clientPalette || "Custom", flowerPalette: clientFlowerPalette || "", layoutUrl: clientLayoutUrl || "" }
+        : (() => { const ef = extraFunctions[idx - 1] || {}; return { type: ef.type || "", date: ef.date || "", venue: ef.venue || "", shift: ef.shift || "", pax: ef.pax || "", palette: ef.palette || "Custom", flowerPalette: ef.flowerPalette || "", layoutUrl: ef.layoutUrl || "" }; })();
       const isActive = idx === activeFnIdx;
       const snap = isActive
         ? { zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, genset62, customGensets, customTripRate, elNotes, floralOverrides, sourceVideo }
@@ -6647,6 +6653,7 @@ export default function StudioApp() {
         fnPax: meta.pax,
         fnPalette: meta.palette,
         fnFlowerPalette: meta.flowerPalette,
+        fnLayoutUrl: meta.layoutUrl,
         zoneElements: snap.zoneElements || {},
         zoneConfig: snap.zoneConfig || {},
         enabledEls: snap.enabledEls || {},
@@ -6672,7 +6679,7 @@ export default function StudioApp() {
       });
     }
     return all;
-  }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, clientFlowerPalette, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx, sourceVideo]);
+  }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, clientFlowerPalette, clientLayoutUrl, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx, sourceVideo]);
   const collectAllFunctionData = useCallback(() => allFunctionData, [allFunctionData]);
   // Layout, same reasoning as snapshotFnRef / saveSessionRef — read from synchronous paths.
   useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; committedRemovalEpochRef.current = fnRemovalEpochRef.current; });
@@ -9334,7 +9341,7 @@ export default function StudioApp() {
     client.pax = liveMeta.clientPax || client.pax || "";
     client.brideGroom = liveMeta.clientBrideGroom || client.brideGroom || "";
     client.functions = [
-      { type: liveMeta.fn, date: liveMeta.clientDate, venue: liveMeta.venue, shift: liveMeta.clientShift, pax: liveMeta.clientPax, palette: liveMeta.clientPalette || "Custom", flowerPalette: liveMeta.clientFlowerPalette || "" },
+      { type: liveMeta.fn, date: liveMeta.clientDate, venue: liveMeta.venue, shift: liveMeta.clientShift, pax: liveMeta.clientPax, palette: liveMeta.clientPalette || "Custom", flowerPalette: liveMeta.clientFlowerPalette || "", layoutUrl: liveMeta.clientLayoutUrl || "" },
       ...liveMeta.extraFunctions
     ];
     if (!client.createdBy) client.createdBy = authUser?.name || "—";
@@ -9529,7 +9536,7 @@ export default function StudioApp() {
     const savePromise = saveClientLedger(finalLedger, undefined, { keepalive: !!opts.keepalive });
     if (!opts.auto) showMsg("✓ Session saved to " + client.name, "green");
     return { client, ledger: finalLedger, savePromise };
-  }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientFlowerPalette, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, zoneOrder, customZones, customGensets, customTripRate, dcCustomItems,
+  }, [clientName, clientPhone, clientDate, clientShift, clientPax, clientPalette, clientFlowerPalette, clientLayoutUrl, clientBrideGroom, venue, fn, extraFunctions, grandTotal, totalCost, transportCalc, enabledEls, elTiers, zoneConfig, zoneElements, elNotes, elSelectedPhoto, sourceEvent, sourceVideo, selectedMoods, selectedPalettes, floralRatio, clientLedger, activeClientId, authUser, saveClientLedger, activeFnIdx, fnBuilds, itemQty, itemGrades, customMode, activeZones, zoneOrder, customZones, customGensets, customTripRate, dcCustomItems,
     // Explicitly listed, not left to be picked up by accident. grandTotal is in this list and does
     // usually change when the real rates land, which would rebuild this callback and pick up the new
     // pricingReady for free — but "usually" is not a guarantee: a deal whose seed-default total
@@ -10004,7 +10011,7 @@ export default function StudioApp() {
     // unsavedEditRef never flipped true — no beforeunload warning either. The item only survived a
     // refresh if the 15s periodic fallback happened to land first or some unrelated edit rode along;
     // add-then-immediately-refresh lost it every time, in Build and in Deal Check (same session field).
-  }, [activeClientId, clientName, clientDate, venue, fn, clientShift, clientPax, clientBrideGroom, extraFunctions, clientPalette, clientFlowerPalette,
+  }, [activeClientId, clientName, clientDate, venue, fn, clientShift, clientPax, clientBrideGroom, extraFunctions, clientPalette, clientFlowerPalette, clientLayoutUrl,
       zoneElements, elSelectedPhoto, elTiers, zoneConfig, enabledEls, elNotes, floralRatio, itemQty, itemGrades,
       customZones, customMode, activeFnIdx, fnBuilds, dcCustomItems, customGensets, genset62, customTripRate, autoSaveBuild]);
   // 2) Periodic fallback + 3) save on tab hide / refresh.
@@ -10161,6 +10168,7 @@ export default function StudioApp() {
         shift: fnData.fnShift || "",
         pax: fnData.fnPax || "",
         flowerPalette: fnData.fnFlowerPalette || "",
+        layoutUrl: fnData.fnLayoutUrl || "",
         fabricPalette: fnData.fnPalette || "",
         zones: JSON.parse(JSON.stringify(stripPhotoStash(fnData.zoneConfig))),
         elements: JSON.parse(JSON.stringify(fnData.zoneElements || {})),
@@ -10638,6 +10646,7 @@ export default function StudioApp() {
     const f0 = Array.isArray(client.functions) && client.functions[0] ? client.functions[0] : null;
     setClientPalette(f0?.palette || "Custom");
     setClientFlowerPalette(f0?.flowerPalette || "");
+    setClientLayoutUrl(f0?.layoutUrl || "");
     // Hoisted out of the setExtraFunctions call so the LMS merge below (opts.lmsFunctions) can
     // build its own "what did we just restore" picture from the SAME array, instead of a second,
     // possibly-drifting re-derivation of this mapping.
@@ -10650,6 +10659,7 @@ export default function StudioApp() {
           pax: f?.pax || "",
           palette: f?.palette || "Custom",
           flowerPalette: f?.flowerPalette || "",
+          layoutUrl: f?.layoutUrl || "",
         }))
       : [];
     setExtraFunctions(restoredExtras);
@@ -11051,7 +11061,7 @@ export default function StudioApp() {
   // showing as selected and the grid quietly narrowed for a client nobody had set them on. The other
   // four filters here (cat/fn/space/venue) were always cleared, which is what made it look handled.
   const startNewDeal = useCallback(() => {
-    setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setFilterMood([]);setFilterPalette([]);setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");setClientFlowerPalette("");
+    setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setFilterMood([]);setFilterPalette([]);setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");setClientFlowerPalette("");setClientLayoutUrl("");
     loadedClientIdentityRef.current = { name: "", phone: "" };
     // A pending removal remap belongs to whichever client was just open — carrying it into a brand
     // new, functionless deal has nothing to apply to anyway, but leaving it set is still a latent
@@ -11235,7 +11245,7 @@ export default function StudioApp() {
     setClientName(lead.guestName || "");
     setClientPhone(lead.phone || "");
     setClientPalette("Custom");
-    setClientFlowerPalette("");
+    setClientFlowerPalette("");setClientLayoutUrl("");
     setExpandedFnIdx(0);
     setActiveFnIdx(0);
     const allKnownVenues = [
@@ -15569,7 +15579,7 @@ export default function StudioApp() {
     selectedMoods, setSelectedMoods, selectedPalettes, setSelectedPalettes,
     venue, setVenue, fn, setFn, clientName, setClientName, clientDate, setClientDate, clientPhone, setClientPhone,
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax, clientVenueOther, setClientVenueOther,
-    clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette, extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
+    clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette, clientLayoutUrl, setClientLayoutUrl, extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching, allFnsLoaded, ledgerReady,
     copyBuildsFromClient,
     // The optimistic index — which function was CLICKED, before the switch commits. Build's own

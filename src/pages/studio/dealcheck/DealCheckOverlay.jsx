@@ -12,6 +12,7 @@ import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, flo
 import { validDecision } from "../../../lib/ims/carpetPlan";
 import { elementChoices, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
 import DeptPdfButton from "../../../components/studio/DeptPdfButton.jsx";
+import { LayoutButton } from "../../../components/studio/LayoutViewer.jsx";
 import { createPortal } from "react-dom";
 import DCFloralsTab from "./tabs/DCFloralsTab.jsx";
 import DCManpowerTab from "./tabs/DCManpowerTab.jsx";
@@ -2862,6 +2863,10 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                     needs no label to be understood.
                     A ring, not a filled box, and red only on HOVER: a permanently red control in the
                     corner of a screen that is fine reads as an error rather than as an exit. */}
+                {/* the venue layout(s) uploaded in Build beside the Flower Palette, one per function (owner ask 2026-11-17) */}
+                {!dcHeadless && <LayoutButton border={border} layouts={(collectAllFunctionData ? collectAllFunctionData() : [])
+                  .filter(f => f && f.fnLayoutUrl)
+                  .map(f => ({ key: f.fnIdx, label: [f.fnType || `Function ${(f.fnIdx || 0) + 1}`, f.fnDate].filter(Boolean).join(" · "), url: f.fnLayoutUrl }))} />}
                 {!dcHeadless && isSold && <DeptPdfButton eventOrderId={eoForAvail?.id} clientKey={activeClientId} border={border} />}
                 <button onClick={()=>closeDealCheck()} className="dc-x" title="Close Deal Check"
                   style={{width:36,height:36,padding:0,borderRadius:999,border:`1px solid ${border}`,background:"transparent",color:"#1A1A2E",fontSize:16,cursor:"pointer",lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✕</button>
