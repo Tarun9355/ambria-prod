@@ -13,6 +13,7 @@ import { priceForInvItem } from "../ims/helpers.js";
 // below for how it's used.
 import { builtBeamTotal, PILLAR_BUDGET_FT, resolvePillarHeight, resolveBeamSegment, pillarCountForSpanRaw, materialHasSpanPadding } from "../ims/trussEngine.js";
 import { platformAvgRatePerSqft } from "../ims/platformEngine.js";
+import { isTrussFoc } from "./foc.js";
 import { normalizedTrussCounts, TRUSS_MATERIAL_KEYS } from "../ims/fixedVenues.js";
 export { resolveMandiFlower, pillarCountForSpanRaw };
 
@@ -108,6 +109,8 @@ export const defaultZoneFromArea = (label) => ({
 // Reference: SPEC_MASTER §23.4 + §23.7 Layer 0 pseudo-code.
 export const resolveTrussConfig = (zc) => {
   if (!zc) return { config: null, source: "none" };
+  // a FOC truss is already standing at the venue: nothing to build, price, crew, truck or reserve (lib/studio/foc.js)
+  if (isTrussFoc(zc)) return { config: null, source: "none" };
   const dims = zc.dims || {};
   // Treat 0 / null / undefined / "" as "blank"
   const isFilled = (v) => (typeof v === "number" ? v > 0 : (v != null && String(v).trim() !== "" && parseFloat(v) > 0));
@@ -1376,6 +1379,7 @@ export const looseFabricQty = (zCfg) => {
 // guest price (calcStructCost, Build) never does, so it is always 1x there.
 export const calcZoneFabricCost = (zCfg, trussInv, paletteAnchors, density, mults) => {
   if (!zCfg || !trussInv) return 0;
+  if (isTrussFoc(zCfg)) return 0; // FOC truss - its drape, masking and loose fabric are already up at the venue
   const fab = calcZoneFabric(zCfg, trussInv, density || "moderate");
   const loose = looseFabricQty(zCfg);
   const rates = trussInv.rates || {};
@@ -1547,6 +1551,7 @@ function customCeilingCharge(row, rates) {
 // one entry of zc.extraTrussRows (same shape).
 // `rates` bundles the live IMS Admin → Settings rates: { printMaterials, trussRates, maskingRates }.
 export function trussRowCost(row, rates) {
+  if (isTrussFoc(row)) return { truss: 0, masking: 0, ceiling: 0 }; // FOC - left at the venue, billed nothing (lib/studio/foc.js)
   // Explicit 0 (not just unset/falsy, which still means the normal single-truss default via the
   // Math.max(1, …) floors below) — a placeholder row: dims kept only to drive the Liza/Masking/
   // Curtain FABRIC demand (calcZoneFabric/calcZoneFabricCost, a separate calc untouched by this —

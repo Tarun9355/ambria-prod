@@ -41,7 +41,7 @@ const DC_BG = Object.values(
 )[0] || null;
 // The zone-row action marks, taken from Build so one action does not have two pictures.
 import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron, IconBox, IconRepeat, IconSparkle, IconGift } from "../../../components/icons.jsx";
-import { cardIsFoc } from "../../../lib/studio/foc.js";
+import { cardIsFoc, isTrussFoc } from "../../../lib/studio/foc.js";
 import { todayStr } from "../../../lib/ims/attendance";
 
 // ═══ SURFACES ═══
@@ -1243,6 +1243,7 @@ export default function DealCheckOverlay({ ctx }) {
                   // subtracted from a completely different formula).
                   const _venueTrussHere = fixedVenueFor({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "")?.truss;
                   [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach(row => {
+                    if (isTrussFoc(row)) return; // FOC - left at the venue: no cost, no Tenting pull-list, no custom ceiling block
                     // Scaled by this row's own Truss Qty — calcZoneTrussPreview describes ONE truss
                     // unit; without this, raising Truss Qty above 1 in Build never reached this
                     // rollup's truss cost, the Tenting pull-list pillar/beam/batta quantities below, or
@@ -2370,6 +2371,7 @@ export default function DealCheckOverlay({ ctx }) {
                   if (photoUrl) { const li = (libItems || []).find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
                   // A zone can carry more than one truss row — each row's own allocation (or auto-fill).
                   [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach((row, ri) => {
+                    if (isTrussFoc(row)) return; // FOC - its fabric is already up at the venue; nothing for the Fabric dept to send
                     const fab = calcZoneFabric(row, tInv, row.drapeDensity || density);
                     // Owner ask (2026-10-15): the Fabric dept needs to know WHICH tier a requirement is
                     // for, not just a colour+qty total — row.useNewFabric (the salesperson's own Build

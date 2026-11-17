@@ -20,7 +20,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { normalizeSizeClass, sizeClassToPatternKey } from "./flowerHelpers";
 import { lookupBySubcat } from "./helpers";
 import { supabase } from "../supabase";
-import { isFoc } from "../studio/foc.js";
+import { isFoc, isTrussFoc } from "../studio/foc.js";
 import { filterLiveBlocks, heldOnDate, isLiveBlockStatus } from "./liveBlocks.js";
 import { venueKey } from "../venueKey.js";
 
@@ -382,6 +382,7 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
           // A zone can carry more than one truss row (row 0 = the zone itself, plus any
           // zc.extraTrussRows) — each row's own fabric allocation counts toward the total.
           [zc, ...(zc.extraTrussRows || [])].forEach(row => {
+            if (isTrussFoc(row)) return; // FOC truss - its fabric is already up at the venue
             (row.maskingAllocation || []).forEach(a => {
               if (!a || !a.colour || !a.qty) return;
               required.masking[a.colour] = (required.masking[a.colour] || 0) + Number(a.qty);

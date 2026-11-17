@@ -82,8 +82,9 @@ export function planningUpcoming(eo, now = Date.now()) {
 // v21 (2026-11-14): Liza and velvet curtains likewise go in the colour picked on the Fabric card (zc.lizaColour / zc.curtainColour).
 // v22 (2026-11-14): Liza / curtains split over several colours by the ratio picked on the Fabric card ("Ivory:60, Gold:40").
 // v23 (2026-11-15): a part of another department's kit no longer merges with the same item placed loose (Pillar Candle ×180 → 90 + 90).
-export const PLANNING_SNAPSHOT_VERSION = 23;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-15T08:08:52Z");
+// v24 (2026-11-17): a truss marked FOC (already at the venue) carries no truss / fabric / masking need, crew or truck.
+export const PLANNING_SNAPSHOT_VERSION = 24;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-17T09:00:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // Synced before, and a planning input changed after that sync (a minute of slack: the sync's own write

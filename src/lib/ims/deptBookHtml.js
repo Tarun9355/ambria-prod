@@ -13,6 +13,7 @@
 import { fmt } from "../format";
 import { walkKitUnits, flowerPaletteHexFor } from "./helpers";
 import { DEPTS } from "./deptClassify";
+import { isTrussFoc } from "../studio/foc.js";
 import { venueWithParent, standingQty, fixedVenueFor } from "./fixedVenues";
 import { ZONE_META, trussBaseArea, CARPET_OFF, carpetPricingFor, carpetTakesStockPick } from "../studio/taxonomy";
 import { venueKey } from "../venueKey.js";
@@ -582,11 +583,14 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // bills ₹0). A zone keeps its truss TYPE (and a Truss Qty) after the dims are cleared, which
       // printed "Truss Single U" / "Truss x4" on zones that have no truss in Build. Extra rows count
       // only when they have a size too.
-      const sizedExtra = extraTr.filter(r => (trussBaseArea(r || {}).area || 0) > 0 && r?.trussQty !== 0);
-      const hasTruss = (trussBaseArea(z).area || 0) > 0 && z.trussQty !== 0;
+      const sizedExtra = extraTr.filter(r => (trussBaseArea(r || {}).area || 0) > 0 && r?.trussQty !== 0 && !isTrussFoc(r));
+      const hasTruss = (trussBaseArea(z).area || 0) > 0 && z.trussQty !== 0 && !isTrussFoc(z);
+      // FOC truss (lib/studio/foc.js): nothing to carry or build - the crew is told it is already standing there
+      const focN = [z, ...extraTr].filter(r => r && isTrussFoc(r)).length;
       const truss = hasTruss ? [trussTypeLbl(z.trT), Number(z.trussQty) > 1 ? `x${z.trussQty}` : "", z.trussMaterial ? hn(String(z.trussMaterial)) : ""].filter(Boolean).join(" ") : "";
       if (truss) out.push({ k: t("Truss"), v: truss + (sizedExtra.length ? " " + t("+{n} more", { n: sizedExtra.length }) : "") });
       else if (sizedExtra.length) out.push({ k: t("Truss"), v: t("{n} truss|{n} trusses", { n: sizedExtra.length }) });
+      if (focN) out.push({ k: t("Truss"), v: t("FOC — already at the venue") + (focN > 1 ? ` ×${focN}` : "") });
       const plats = [
         z.plH ? [platLbl(z.plH, z.plHft), floor].filter(Boolean).join(" · ") : "",
         ...extraPl.map(r => [platLbl(r?.plH, r?.plHft), ftArea(r?.floorDims)].filter(Boolean).join(" · ")),
@@ -621,7 +625,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     const DRAPE_LBL = { minimum: "Minimum", moderate: "Moderate", dense: "Dense" };
     const withDrape = (fabric, z) => {
       if (!fabric.length || !z) return fabric;
-      const rows = [z, ...(Array.isArray(z.extraTrussRows) ? z.extraTrussRows : [])].filter(r => r && (trussBaseArea(r).area || 0) > 0 && r.trussQty !== 0 && !r.noFabric);
+      const rows = [z, ...(Array.isArray(z.extraTrussRows) ? z.extraTrussRows : [])].filter(r => r && (trussBaseArea(r).area || 0) > 0 && r.trussQty !== 0 && !r.noFabric && !isTrussFoc(r));
       const dens = [...new Set(rows.map(r => String(r.drapeDensity || "moderate").toLowerCase()))].filter(d => DRAPE_LBL[d]);
       return dens.length ? [{ k: t("Drape"), html: esc(dens.map(d => t(DRAPE_LBL[d])).join(" / ")) }, ...fabric] : fabric;
     };
@@ -638,7 +642,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       if (!zc) return out;
       const addOther = (label, w) => { const list = out.other.get(label) || []; if (w && !list.includes(w)) list.push(w); out.other.set(label, list); };
       [zc, ...(Array.isArray(zc.extraTrussRows) ? zc.extraTrussRows : [])].forEach(row => {
-        if (!row) return;
+        if (!row || isTrussFoc(row)) return; // FOC truss - its masking is already up
         const wallMatAll = row.mkWallMat || {};
         const hasWallOverride = ["back", "left", "right"].some(w => wallMatAll[w] && (wallMatAll[w].matKey || wallMatAll[w].customItemId));
         // A custom panel for the whole truss (no per-wall picks) is priced as one panel whether or not masking is switched on or walls
@@ -997,7 +1001,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         // the zone's page, in the book of the department that pulls it (owner ask 2026-10-31) - it used to appear nowhere.
         const zoneRows = [fn?.zones?.[zk], ...((fn?.zones?.[zk]?.extraTrussRows) || [])].filter(Boolean);
         zoneRows.forEach((row, ri) => {
-          if (!row.customCeilingItemId) return;
+          if (!row.customCeilingItemId || isTrussFoc(row)) return; // a FOC truss's ceiling is already up
           const ci = invById.get(String(row.customCeilingItemId));
           if (!ci) return;
           const held = heldByInv.get(String(ci.id)) || null;

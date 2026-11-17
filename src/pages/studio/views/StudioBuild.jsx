@@ -12,7 +12,7 @@ import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
   IconPlay, IconBox, IconSave, IconSliders, IconStar, IconCrown, IconFiller, IconGift } from "../../../components/icons.jsx";
-import { isFoc } from "../../../lib/studio/foc.js";
+import { isFoc, isTrussFoc } from "../../../lib/studio/foc.js";
 import { getEffectivePricing, resolveDateCategory } from "../../../lib/inventory/helpers";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, CATEGORIES, venueTypeLabel,
@@ -279,12 +279,26 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                     in. It now only seeds which truss type is preselected. */}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconBolt size={12}/>{title||"Truss"}</span>
+                    {/* FOC (owner ask 2026-11-17): this whole truss setup - structure, drape / fabric, masking, loose fabric, custom
+                        ceiling - is already standing at the venue from an earlier event. Billed nothing, no crew, no truck, nothing
+                        blocked in IMS (lib/studio/foc.js isTrussFoc). Same gift mark as an element's FOC. Writes trussFoc: true, or
+                        removes it (undefined drops out of the saved JSON), so isTrussFoc stays the only test. */}
+                    <button type="button" aria-pressed={isTrussFoc(zc)}
+                      onClick={()=>sZ({trussFoc: isTrussFoc(zc) ? undefined : true})}
+                      title={isTrussFoc(zc)
+                        ? "FOC — this truss is already at the venue: free, not blocked. Click to bill it normally again."
+                        : "Mark FOC (free of cost) — this truss, with its fabric, masking and ceiling, is already standing at the venue from an earlier event: the guest isn't billed, no crew or truck is counted, and nothing is blocked in IMS."}
+                      style={{display:"inline-flex",alignItems:"center",gap:4,height:20,padding:isTrussFoc(zc)?"0 7px":"0 4px",borderRadius:6,cursor:"pointer",fontSize:10.5,fontWeight:700,
+                        color:isTrussFoc(zc)?"#7C3AED":textS,background:isTrussFoc(zc)?"#7C3AED18":"transparent",border:isTrussFoc(zc)?"1px solid #7C3AED66":"1px solid transparent",opacity:isTrussFoc(zc)?1:0.6}}>
+                      <IconGift size={11}/>{isTrussFoc(zc)&&"FOC"}
+                    </button>
                     {/* How the rupees happen. Area and mode come from trussBaseArea — the same helper
                         trussRowCost charges on — and the rate from the live IMS truss rates for this
                         material + drape, so the caption cannot claim a different sum from the price.
                         Shows this ROW's base structure; front extension and a custom ceiling item are
                         priced on top and are visible in their own fields. */}
-                    {showCosts&&(()=>{
+                    {isTrussFoc(zc)&&<span style={{fontSize:10.5,color:"#7C3AED",fontWeight:600}}>Already at the venue — ₹0, no crew, no truck, nothing blocked (fabric &amp; masking included)</span>}
+                    {showCosts&&!isTrussFoc(zc)&&(()=>{
                       // snapRowDimsForProduction is a no-op as of 2026-11-04 (owner decision: bill/
                       // display the raw typed dims, no auto-shrink-to-minimum-joints) — kept as a
                       // passthrough so this caption's sqft/rate still describe the SAME structure the

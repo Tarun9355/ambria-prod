@@ -157,7 +157,7 @@ import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestro
 import { reqByDateFrom, ownedIds, planStudioBlocks, planToOps, SRC_STUDIO_CARD } from "../../lib/studio/soldBlocksPlan.js";
 import { applyBlockOps, shortfallsOf } from "../../lib/ims/blocksRpc.js";
 import { mergeManualSwaps } from "../../lib/studio/dealCheckCardMerge.js";
-import { isFoc, cardIsFoc as sharedCardIsFoc, parseCardKeyLite } from "../../lib/studio/foc.js";
+import { isFoc, isTrussFoc, cardIsFoc as sharedCardIsFoc, parseCardKeyLite } from "../../lib/studio/foc.js";
 import { reindexFnIdxObject, reindexFnIdxArray, reindexCompositeKeyObject, ZONE_PIPE_KEY, TRUSS_ZONE_PIPE_KEY, TRANSPORT_COLLAPSE_KEY, FLORAL_CALC_OPEN_KEY } from "../../lib/studio/dealCheckReindex.js";
 import { removeFnFromEventOrderData } from "../../lib/studio/eventOrderFnRemoval.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
@@ -354,7 +354,8 @@ export function calcStructCost(zk, zc, rates, applyDiscount) {
       // (sectionCost, StudioBuild.jsx) silently never included it while the expanded Fabric card —
       // which calls calcZoneFabricCost(zc, ...) directly, not through this truncated row — always
       // showed the correct number right next to it.
-      useNewFabric: zc.useNewFabric, noFabric: zc.noFabric, fabLiza: zc.fabLiza, fabCurtain: zc.fabCurtain, fabLizaRep: zc.fabLizaRep, fabCurtainRep: zc.fabCurtainRep, mkRep: zc.mkRep, looseFabric: zc.looseFabric },
+      useNewFabric: zc.useNewFabric, noFabric: zc.noFabric, fabLiza: zc.fabLiza, fabCurtain: zc.fabCurtain, fabLizaRep: zc.fabLizaRep, fabCurtainRep: zc.fabCurtainRep, mkRep: zc.mkRep, looseFabric: zc.looseFabric,
+      trussFoc: zc.trussFoc }, // FOC - the whole truss setup left at the venue (lib/studio/foc.js)
     ...(zc.extraTrussRows || []),
   ];
   const maskingByRow = []; // each truss row's masking before any discount — the Repeat discount below is per row
@@ -512,7 +513,7 @@ function computeFnSubQty(fnData, capBySub, imsInventory, flowerPatterns, trussIn
     if (!cfg || !fEnabledElsFresh[zk]) return;
     const trussRep = repeatCatFor(cfg, "truss"), platRep = repeatCatFor(cfg, "platform");
     const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-    if (!trussRep && cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) add("Truss", tSqft); }
+    if (!trussRep && cfg.trT === "box" && !isTrussFoc(cfg)) { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) add("Truss", tSqft); }
     const sqft = (fd.L || 0) * (fd.W || 0) * Math.max(1, cfg.plQty || 1);
     if (!platRep && sqft > 0) { if (cfg.plH) add("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) add("Carpet", sqft); }
     // Fabric Allocation (masking/liza/curtains) is a physical rental setup that can plausibly still
@@ -1026,7 +1027,7 @@ export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems,
     // dims.d, which never exist, so sqft was always 0 and every truss/platform/carpet truck-load
     // silently dropped out of Build's transport total (only element-based items ever counted).
     const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-    if (!skipTruss && cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
+    if (!skipTruss && cfg.trT === "box" && !isTrussFoc(cfg)) { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
     const sqft = (fd.L || 0) * (fd.W || 0);
     // cpT truthy AND not the explicit OFF sentinel — an untouched floor (cpT unset) gets no carpet
     // truck-load either, same as it gets no carpet cost (see CARPET_OFF in taxonomy.js).
@@ -7008,7 +7009,7 @@ export default function StudioApp() {
         const skipPrint = fvStruct || (!hideDiscountFromClient && repeatCatFor(cfg, "print"));
         const d = cfg.dims || {};
         const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-        if (!skipTruss && cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
+        if (!skipTruss && cfg.trT === "box" && !isTrussFoc(cfg)) { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (!skipPlat && sqft > 0) { if (cfg.plH) addSub("Platform", sqft); if (cfg.cpT && cfg.cpT !== CARPET_OFF) addSub("Carpet", sqft); }
         // Waived under Repeat/Fixed Venue same as truss/platform now (owner correction, 2026-11-13) —
@@ -7760,7 +7761,7 @@ export default function StudioApp() {
         const platClientWaived = fvStruct || (!hideDiscountFromClient && platRepeat);
         const printClientWaived = fvStruct || (!hideDiscountFromClient && printRepeat);
         const d = cfg.dims || {}; const fd = cfg.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment
-        if (cfg.trT === "box") { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", (trussRepeat || fvStruct) ? 0 : tSqft, tSqft, zk, "Truss structure", "", trussClientWaived ? 0 : tSqft); }
+        if (cfg.trT === "box" && !isTrussFoc(cfg)) { const tSqft = (d.L || 0) * (d.W || 0) * (cfg.trussQty === 0 ? 0 : Math.max(1, cfg.trussQty || 1)); if (tSqft > 0) addSub("Truss", (trussRepeat || fvStruct) ? 0 : tSqft, tSqft, zk, "Truss structure", "", trussClientWaived ? 0 : tSqft); }
         const sqft = (fd.L || 0) * (fd.W || 0);
         if (sqft > 0) {
           if (cfg.plH) addSub("Platform", (platRepeat || fvStruct) ? 0 : sqft, sqft, zk, "Platform", "", platClientWaived ? 0 : sqft);
@@ -12771,7 +12772,7 @@ export default function StudioApp() {
       const zm = zoneMeta[k];
       const dims = zc.dims || {};
       const dimLabel = zm ? zoneDimLabel(zc) : "";
-      if (zl.truss > 0) {
+      if (zl.truss > 0 || [zc, ...(zc.extraTrussRows || [])].some(isTrussFoc)) {
         // Multiple truss structures in one zone (zc + zc.extraTrussRows — the exact rows
         // calcStructCost's own trussRows loop sums into zl.truss) used to collapse into ONE
         // structItems row built only from the zone's PRIMARY fields: Qty/Size/Rate showed only the
@@ -12786,6 +12787,12 @@ export default function StudioApp() {
         const _trussRaw = _trussRows.map((row) => trussRowCost(row, structRates).truss);
         const _trussRawSum = _trussRaw.reduce((a, b) => a + b, 0);
         _trussRows.forEach((row, ri) => {
+          // FOC truss: its own ₹0 "FOC" line, like a FOC element - the guest still sees it was included, just not billed
+          if (isTrussFoc(row)) {
+            const _fb = trussBaseArea({ dims: row.dims || {}, trT: row.trT });
+            structItems.push({ name: "Truss (" + (row.trT === "box" ? "Box" : "Single U") + ") — FOC, already at the venue", size: _fb.area ? `${_fb.a || 0}×${_fb.b || 0}ft` : "", qty: Math.round((_fb.area || 0) * Math.max(1, row.trussQty || 1) * 100) / 100, rate: 0, unit: "sqft", total: 0, foc: true });
+            return;
+          }
           if (row.trussQty === 0) return; // dims-only placeholder — no structure billed (trussRowCost agrees)
           const _tShape = row.trT === "box" ? "box" : "singleU";
           // snapRowDimsForProduction is a no-op as of 2026-11-04 (owner decision: bill/display the

@@ -6,6 +6,15 @@
 // same way.
 export const isFoc = (el) => el?.foc === true;
 
+// FOC on a TRUSS (owner ask 2026-11-17, from sales): the whole truss setup - the structure, its drape / Liza / curtains, its
+// masking, its loose fabric and its custom ceiling - is already standing at the venue from a previous event. Billed nothing,
+// no truss / fabric crew, no truck, nothing reserved in IMS (pillars, beams, batta, fabric stock). `row` is one truss of a
+// zone: the zone config itself (its own truss, "Truss 1") or one entry of zc.extraTrussRows. The flag is trussFoc, not foc,
+// because row 0 IS the zone config, which also carries the zone's platform, carpet and prints - none of which this frees.
+// Checked at the source - resolveTrussConfig (so every truss preview / engine / crew count sees no truss), trussRowCost and
+// calcZoneFabricCost - so every reader of a truss row follows without a check of its own.
+export const isTrussFoc = (row) => row?.trussFoc === true;
+
 // A Deal Check cardKey encodes "el::zoneKey::rcName::idx" or "fl::zoneKey::rcName::idx::propType"
 // (StudioApp.jsx's buildElCardKey/buildFlCardKey) — idx is always index 3. Lightweight re-parse so
 // any module can resolve a card's own FOC status without importing StudioApp.jsx's parseCardKey.
