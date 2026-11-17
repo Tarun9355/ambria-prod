@@ -1034,7 +1034,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         // truss's material (see z.trussMaterial a little above) — reusing it here keeps every
         // Hindi-translated material word in exactly one place instead of a second copy to keep in sync.
         const zTrussMat = zCfg.trussMaterial ? hn(String(zCfg.trussMaterial)) : "";
-        const zDimsOf = (zCfg.trT || Number(zCfg.trussQty) > 0) ? (zTrussMat ? `${zTrussMat} ${t("Truss")}` : t("Truss"))
+        const zDimsOf = (zCfg.trT || Number(zCfg.trussQty) > 0) ? (zTrussMat ? `${zTrussMat} ${t("Truss")}` : t("Truss")) + (isTrussFoc(zCfg) ? " · FOC" : "")
           : Number(zCfg.plH) > 0 ? t("Platform")
           : t("Zone");
         // The only zone still worth skipping is one with nothing to put on the page at all: none

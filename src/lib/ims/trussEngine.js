@@ -1,5 +1,6 @@
 import { kvGet, reliableSave } from "./kv";
 import { supabase } from "../supabase";
+import { isTrussFoc } from "../studio/foc.js";
 
 // Tier 2.3 Phase 3 (26 May 2026) — audit log of every allocation/cascade/promotion/amend event.
 // Append-only ring buffer, last 500 entries retained. See §23 Phase 3 SHIP LOG.
@@ -258,6 +259,9 @@ export const isDeptHead = (authUser) => {
 // ─── Layer 0 — Truss config resolver (mirror of Studio's resolveTrussConfig) ──
 export const resolveTrussConfig = (zc) => {
   if (!zc) return { config: null, source: "none" };
+  // a FOC truss is already standing at the venue: no pillars, beams or batta to reserve (lib/studio/foc.js) - the same gate
+  // Studio's own resolveTrussConfig (pricing.js) has, so the two mirrors never disagree on it
+  if (isTrussFoc(zc)) return { config: null, source: "none" };
   const dims = zc.dims || {};
   const isFilled = (v) => (typeof v === "number" ? v > 0 : (v != null && String(v).trim() !== "" && parseFloat(v) > 0));
   const L = parseFloat(dims.L) || 0;

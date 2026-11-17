@@ -157,7 +157,7 @@ import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestro
 import { reqByDateFrom, ownedIds, planStudioBlocks, planToOps, SRC_STUDIO_CARD } from "../../lib/studio/soldBlocksPlan.js";
 import { applyBlockOps, shortfallsOf } from "../../lib/ims/blocksRpc.js";
 import { mergeManualSwaps } from "../../lib/studio/dealCheckCardMerge.js";
-import { isFoc, isTrussFoc, cardIsFoc as sharedCardIsFoc, parseCardKeyLite } from "../../lib/studio/foc.js";
+import { isFoc, isTrussFoc, withoutTrussFoc, buildWithoutTrussFoc, cardIsFoc as sharedCardIsFoc, parseCardKeyLite } from "../../lib/studio/foc.js";
 import { reindexFnIdxObject, reindexFnIdxArray, reindexCompositeKeyObject, ZONE_PIPE_KEY, TRUSS_ZONE_PIPE_KEY, TRANSPORT_COLLAPSE_KEY, FLORAL_CALC_OPEN_KEY } from "../../lib/studio/dealCheckReindex.js";
 import { removeFnFromEventOrderData } from "../../lib/studio/eventOrderFnRemoval.js";
 import { LOGO_ASSET, logoCrop } from "../../lib/studio/brand.js";
@@ -2765,8 +2765,10 @@ export default function StudioApp() {
   // the SAME function, just with a different deal's decor dropped in. `newItems` (a different
   // type, or any extra same-type pick beyond the one slot): unchanged, appended as brand-new
   // functions exactly like before.
-  const copyBuildsFromClient = useCallback(({ intoCurrent, newItems } = {}) => {
-    if (intoCurrent?.build) restoreBuildState(intoCurrent.build);
+  const copyBuildsFromClient = useCallback(({ intoCurrent, newItems: rawNewItems } = {}) => {
+    // a truss FOC ("already at THAT venue") never travels to another client's event (lib/studio/foc.js)
+    if (intoCurrent?.build) restoreBuildState(buildWithoutTrussFoc(intoCurrent.build));
+    const newItems = Array.isArray(rawNewItems) ? rawNewItems.map((it) => (it && it.build ? { ...it, build: buildWithoutTrussFoc(it.build) } : it)) : rawNewItems;
     const items = Array.isArray(newItems) ? newItems : [];
     if (items.length) {
       const startIdx = 1 + extraFunctions.length;
@@ -12528,7 +12530,8 @@ export default function StudioApp() {
     const savedFull = libImg?.zoneConfigByType?.[elKey] || photo.zoneConfigByType?.[elKey] || null;
     if (savedFull) {
       const { photoStash: _ps, ...fullCfg } = savedFull; // eslint-disable-line no-unused-vars
-      cfg = { ...(cfg || {}), ...JSON.parse(JSON.stringify(fullCfg)) };
+      // a truss FOC saved by an older master is the deal it came from, never this one (lib/studio/foc.js withoutTrussFoc)
+      cfg = { ...(cfg || {}), ...JSON.parse(JSON.stringify(withoutTrussFoc(fullCfg))) };
     } else if (cfg) {
       const evZone = (photo.zones || []).find(z => z.type === elKey);
       if (evZone?.config) {
@@ -12644,7 +12647,7 @@ export default function StudioApp() {
       const photoDims = photo.dims || libImg?.dims || {};
       let cfg = buildZoneConfig(elKey, photoDims);
       const savedFull = libImg?.zoneConfigByType?.[elKey] || photo.zoneConfigByType?.[elKey] || null;
-      if (savedFull) cfg = { ...(cfg || {}), ...JSON.parse(JSON.stringify(savedFull)) };
+      if (savedFull) cfg = { ...(cfg || {}), ...JSON.parse(JSON.stringify(withoutTrussFoc(savedFull))) };
       if (cfg) setZoneConfig(p => ({ ...p, [elKey]: cfg }));
     }
     setActiveZones([]);
@@ -12790,7 +12793,9 @@ export default function StudioApp() {
           // FOC truss: its own ₹0 "FOC" line, like a FOC element - the guest still sees it was included, just not billed
           if (isTrussFoc(row)) {
             const _fb = trussBaseArea({ dims: row.dims || {}, trT: row.trT });
-            structItems.push({ name: "Truss (" + (row.trT === "box" ? "Box" : "Single U") + ") — FOC, already at the venue", size: _fb.area ? `${_fb.a || 0}×${_fb.b || 0}ft` : "", qty: Math.round((_fb.area || 0) * Math.max(1, row.trussQty || 1) * 100) / 100, rate: 0, unit: "sqft", total: 0, foc: true });
+            if (!_fb.area) return; // no size - no truss to list
+            const _fq = row.trussQty === 0 ? 0 : Math.max(1, row.trussQty || 1);
+            structItems.push({ name: "Truss (" + (row.trT === "box" ? "Box" : "Single U") + ") — FOC, already at the venue", size: `${_fb.a || 0}×${_fb.b || 0}ft`, qty: Math.round(_fb.area * _fq * 100) / 100, rate: 0, unit: "sqft", total: 0, foc: true });
             return;
           }
           if (row.trussQty === 0) return; // dims-only placeholder — no structure billed (trussRowCost agrees)

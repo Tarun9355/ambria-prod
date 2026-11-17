@@ -15,6 +15,29 @@ export const isFoc = (el) => el?.foc === true;
 // calcZoneFabricCost - so every reader of a truss row follows without a check of its own.
 export const isTrussFoc = (row) => row?.trussFoc === true;
 
+// A zone config without any truss FOC - for every path that carries a build into ANOTHER deal or context (a library master's
+// saved build, picking that photo, copying a build from another client). "Already at the venue" is true of this event only:
+// carried along, it would silently bill a truss, its fabric and masking at Rs 0 on a deal where nobody chose that.
+export function withoutTrussFoc(cfg) {
+  if (!cfg || typeof cfg !== "object") return cfg;
+  const { trussFoc: _f, ...rest } = cfg; // eslint-disable-line no-unused-vars
+  if (Array.isArray(rest.extraTrussRows)) {
+    rest.extraTrussRows = rest.extraTrussRows.map((r) => {
+      if (!r || typeof r !== "object") return r;
+      const { trussFoc: _x, ...o } = r; // eslint-disable-line no-unused-vars
+      return o;
+    });
+  }
+  return rest;
+}
+// the same over a whole build snapshot ({ zoneConfig: { [zk]: cfg } })
+export function buildWithoutTrussFoc(build) {
+  if (!build || typeof build !== "object" || !build.zoneConfig || typeof build.zoneConfig !== "object") return build;
+  const zoneConfig = {};
+  Object.entries(build.zoneConfig).forEach(([zk, cfg]) => { zoneConfig[zk] = withoutTrussFoc(cfg); });
+  return { ...build, zoneConfig };
+}
+
 // A Deal Check cardKey encodes "el::zoneKey::rcName::idx" or "fl::zoneKey::rcName::idx::propType"
 // (StudioApp.jsx's buildElCardKey/buildFlCardKey) — idx is always index 3. Lightweight re-parse so
 // any module can resolve a card's own FOC status without importing StudioApp.jsx's parseCardKey.

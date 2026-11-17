@@ -12,7 +12,7 @@ import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
   IconPlay, IconBox, IconSave, IconSliders, IconStar, IconCrown, IconFiller, IconGift } from "../../../components/icons.jsx";
-import { isFoc, isTrussFoc } from "../../../lib/studio/foc.js";
+import { isFoc, isTrussFoc, withoutTrussFoc } from "../../../lib/studio/foc.js";
 import { getEffectivePricing, resolveDateCategory } from "../../../lib/inventory/helpers";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, CATEGORIES, venueTypeLabel,
@@ -153,6 +153,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   // own rowCost straight from trussRowCost and never got the multiplier — the card showed the raw
   // pre-markup figure while the tile total summing these same cards was already marked up.
   const rowCostRaw = trussRowCost(zc, structRates || { trussRates });
+  // The truss's shape as drawn, FOC or not. resolveTrussConfig reads a FOC truss as "no truss" (nothing to price or reserve),
+  // which on this card hid the type picker and - for a U truss with masking - read as a type change that rewrote its masking
+  // walls. The card's own controls read the shape from this; prices and stock still see the FOC.
+  const zcShape = isTrussFoc(zc) ? { ...zc, trussFoc: undefined } : zc;
   const rowCost = guestPriceMultiplier === 1 ? rowCostRaw : {
     truss: rowCostRaw.truss * guestPriceMultiplier,
     masking: rowCostRaw.masking * guestPriceMultiplier,
@@ -386,7 +390,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   — owner decision, 2026-11-11 — a working ground-spacer build (joints: 1, e.g. 17ft =
                   15ft pillar + 2ft beam) is a normal, accepted build and is never nudged away from;
                   only a genuine stock shortfall or a height that can't be assembled at all surfaces. */}
-              {fabricInv && (() => {
+              {fabricInv && !isTrussFoc(zc) && (() => { /* a FOC truss takes nothing from stock - no stock tips */
                 const matInv = trussInvForMaterial(fabricInv, zc.trussMaterial);
                 const eng = matInv.settings || {};
                 const H = Number(zc.dims?.H) || 0;
@@ -446,7 +450,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
               })()}
               {/* ── §23 Truss Type selector + Height-anchor validation ── */}
               {(()=>{
-                const tr = resolveTrussConfig(zc);
+                const tr = resolveTrussConfig(zcShape);
                 // Don't render anything when no truss intended (all blank)
                 if (tr.source === "none") return null;
                 // Validation error → inline red message (soft-block via Summary nav warning)
@@ -679,7 +683,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                                 style={{...S.input,width:46,flex:"0 0 46px",padding:"5px 4px",fontSize:11.5,fontWeight:600,textAlign:"center"}} />
                               <div style={{display:"flex",alignItems:"center",gap:7,marginLeft:"auto"}}>
                                 <span style={{fontSize:9.5,color:textS}}>{meta.unit}</span>
-                                {showCosts && <span style={{fontSize:10.5,fontWeight:600,color:textP,minWidth:38,textAlign:"right"}}>{fmt(rowCost)}</span>}
+                                {showCosts && <span style={{fontSize:10.5,fontWeight:600,color:textP,minWidth:38,textAlign:"right"}}>{fmt(isTrussFoc(zc) ? 0 : rowCost)}</span>}
                                 <span onClick={()=>delLooseRow(i)} title="Remove" style={{cursor:"pointer",color:"#E11D48",fontSize:13,fontWeight:700,lineHeight:1}}>✕</span>
                               </div>
                             </div>;
@@ -731,7 +735,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   //   Full Box  → back/left/right toggleable (front always open)
                   //   Half Box  → back (L-span) + left/right (backDepth) all toggleable
                   //   U Truss   → back only (L-span). No left/right options.
-                  const _trCfg = resolveTrussConfig(zc);
+                  const _trCfg = resolveTrussConfig(zcShape);
                   const _cfg = _trCfg?.config || (zc.trT==="box" ? "full_box" : "half_box");
                   const _spanL = _trCfg?.spanFt || dL || dW;
                   const _backDepth = zc.trussBackDepth || 4;
@@ -4313,7 +4317,7 @@ undefined
           // "L1"; foc added alongside it — equally "this item happens to already be at THIS venue
           // for THIS event", meaningless carried into a different deal's draft).
           elements: JSON.parse(JSON.stringify(m.elements || [])).map(({ baseQty: _b, repeatOverride: _ro, foc: _fo, focAt: _fa, focBy: _fb, ...e }) => e),
-          cfg: { ...(ctx.buildZoneConfig?.(k, m.dims || {}) || {}), ...JSON.parse(JSON.stringify(m.zoneConfigByType?.[k] || {})) },
+          cfg: { ...(ctx.buildZoneConfig?.(k, m.dims || {}) || {}), ...JSON.parse(JSON.stringify(withoutTrussFoc(m.zoneConfigByType?.[k] || {}))) },
         };
         setCorrectPhoto({ libId: selP.eventId, zoneKey: k, name: m.name || "", tags: mt, draft });
       };
@@ -6327,7 +6331,7 @@ undefined
           if(rest.prints)rest.prints=rest.prints.map(({qtyBase:_qb,...pr})=>pr);
           delete rest.trussQtyBase;
           delete rest.plQtyBase;
-          zoneCfgMap[zk]=JSON.parse(JSON.stringify(rest));
+          zoneCfgMap[zk]=JSON.parse(JSON.stringify(withoutTrussFoc(rest))); // a truss FOC is this deal's, never the master's
           // Mirror the primary dims into the master's Library-shape dims too, so browse thumbnails,
           // the Library editor and buildZoneConfig's fallback all reflect the corrected measurements.
           const d=liveCfg.dims||{},fd=liveCfg.floorDims||{};

@@ -1,7 +1,28 @@
 import { describe, it, expect } from "vitest";
 import { calcStructCost } from "../../pages/studio/StudioApp.jsx";
 import { trussRowCost, calcZoneFabricCost, resolveTrussConfig, calcZoneTrussPreview } from "./pricing.js";
-import { isTrussFoc } from "./foc.js";
+import { isTrussFoc, withoutTrussFoc, buildWithoutTrussFoc } from "./foc.js";
+
+// "Already at the venue" is one event's fact: a master's saved build, picking that photo, or copying a build from another
+// client must never carry it into a different deal.
+describe("FOC truss never travels to another deal", () => {
+  it("withoutTrussFoc drops the flag from the zone's own truss and every extra truss, nothing else", () => {
+    const cfg = { trussFoc: true, dims: { L: 10 }, plH: "1ft", extraTrussRows: [{ id: "a", trussFoc: true, dims: { L: 5 } }, { id: "b" }] };
+    const out = withoutTrussFoc(cfg);
+    expect(out).toEqual({ dims: { L: 10 }, plH: "1ft", extraTrussRows: [{ id: "a", dims: { L: 5 } }, { id: "b" }] });
+    expect(cfg.trussFoc).toBe(true); // the source deal is not touched
+    expect(cfg.extraTrussRows[0].trussFoc).toBe(true);
+    expect(withoutTrussFoc(null)).toBe(null);
+  });
+  it("buildWithoutTrussFoc cleans every zone of a build snapshot", () => {
+    const b = { zoneElements: { s: [{ foc: true }] }, zoneConfig: { s: { trussFoc: true }, e: { extraTrussRows: [{ trussFoc: true }] } } };
+    const out = buildWithoutTrussFoc(b);
+    expect(isTrussFoc(out.zoneConfig.s)).toBe(false);
+    expect(isTrussFoc(out.zoneConfig.e.extraTrussRows[0])).toBe(false);
+    expect(out.zoneElements).toBe(b.zoneElements);
+    expect(buildWithoutTrussFoc({})).toEqual({});
+  });
+});
 
 // FOC on a truss (owner ask 2026-11-17): the whole truss setup - structure, drape / fabric, masking, loose fabric - is
 // already at the venue. Billed nothing, and no truss for any engine (crew, truck, IMS reservation) to see.
@@ -46,6 +67,29 @@ describe("FOC truss", () => {
     const alone = calcStructCost("stage", truss, rates, false);
     const withFoc = calcStructCost("stage", { ...truss, extraTrussRows: [{ ...truss, id: "TR2", trussFoc: true }] }, rates, false);
     expect(withFoc.total).toBe(alone.total);
+  });
+
+  it("with the Repeat discount on, a FOC truss still adds nothing and the normal truss keeps its discount", () => {
+    const second = { ...truss, id: "TR2", looseFabric: [] };
+    const disc = { truss: true, platform: false, print: false };
+    const normalOnly = calcStructCost("stage", { ...second, extraTrussRows: [] }, rates, disc);
+    const withFoc = calcStructCost("stage", { ...truss, trussFoc: true, extraTrussRows: [second] }, rates, disc);
+    expect(withFoc.truss).toBe(normalOnly.truss);
+    expect(withFoc.masking).toBe(normalOnly.masking);
+    expect(withFoc.fabric).toBe(normalOnly.fabric);
+    expect(Number.isFinite(withFoc.total)).toBe(true);
+  });
+
+  it("FOC on a 'Truss Qty 0' (dims-only) row also frees its fabric, which Qty 0 alone still bills", () => {
+    const dimsOnly = { ...truss, trussQty: 0 };
+    expect(calcStructCost("stage", dimsOnly, rates, false).fabric).toBeGreaterThan(0);
+    expect(calcStructCost("stage", { ...dimsOnly, trussFoc: true }, rates, false).fabric).toBe(0);
+  });
+
+  it("every truss FOC: the zone's truss, masking and fabric are all 0 (no NaN)", () => {
+    const r = calcStructCost("stage", { ...truss, trussFoc: true, extraTrussRows: [{ ...truss, id: "TR2", trussFoc: true }] }, rates, { truss: true });
+    expect([r.truss, r.masking, r.fabric]).toEqual([0, 0, 0]);
+    expect(r.total).toBe(0);
   });
 
   it("a FOC truss does not free the zone's platform", () => {
