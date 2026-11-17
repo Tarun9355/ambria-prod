@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase, subscribeTable } from "../supabase";
 
 // IMS Inventory "New / edited" list (owner ask 2026-11-17): an item someone added or edited stays listed until an admin has
@@ -45,6 +45,8 @@ const rowToReview = (row) => ({ reviewedVersion: row.reviewed_version, reviewedB
 export function useInventoryReviews() {
   const [reviews, setReviews] = useState({});
   const [ready, setReady] = useState(false);
+  const reviewsRef = useRef(reviews);
+  reviewsRef.current = reviews;
   useEffect(() => {
     let alive = true;
     const load = () => loadAllReviews()
@@ -63,8 +65,8 @@ export function useInventoryReviews() {
   // Marks the item's CURRENT version checked. Optimistic; a failed write puts the item back and says so.
   const markChecked = useCallback(async (item, by) => {
     const version = new Date(lastChangeAt(item)).toISOString();
-    let before;
-    setReviews((m) => { before = m[item.id]; return { ...m, [item.id]: { reviewedVersion: version, reviewedBy: by || "", reviewedAt: new Date().toISOString() } }; });
+    const before = reviewsRef.current[item.id]; // read now - a setState updater may not have run yet when the write fails
+    setReviews((m) => ({ ...m, [item.id]: { reviewedVersion: version, reviewedBy: by || "", reviewedAt: new Date().toISOString() } }));
     const { error } = await supabase.from("inventory_reviews").upsert({ item_id: item.id, reviewed_version: version, reviewed_by: by || null, reviewed_at: new Date().toISOString() }, { onConflict: "item_id" });
     if (error) {
       setReviews((m) => { const n = { ...m }; if (before) n[item.id] = before; else delete n[item.id]; return n; });
