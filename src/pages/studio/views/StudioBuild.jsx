@@ -146,7 +146,7 @@ const LOOSE_FABRIC_KINDS = [
 // titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
 // rather than writing a cut-down row is what keeps an added truss genuinely equal to the first —
 // front extension, the auto Box/Single-U line, custom ceiling and its own masking all included.
-export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1, trussRepeat = false, fabricChipRepeat = false, fabricPaletteColours = null, trussReserved, stockDateLabel = "" }) {
+export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, customMaskingField, maskOpts = [], trussRates, structRates, nested = false, title, onRemove, rowIdx, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1, trussRepeat = false, fabricChipRepeat = false, fabricPaletteColours = null, trussReserved, stockDateLabel = "", stockShort = null }) {
   // What THIS truss structure costs. Same function the cost engine sums over every row, so the
   // figure on the card and the figure in the bill cannot drift.
   // guestPriceMultiplier — the 1.0/1.1/1.2…x dial (Build's own filter-rail dots) folds into the
@@ -216,7 +216,11 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
     const tips = [...spanTips, ...(hTip ? [{ kind: "height", label: "Height", val: H, ...hTip }] : [])];
     return tips;
   })() : [];
-  const dimHasTip = (d) => dimTips.some((t) => (t.kind === "span" ? t.d === d : d === "H"));
+  // The Sold gate's date-level shortage on THIS truss (other events + this deal's own trusses that day): a short beam is
+  // the span (Width / Depth), a short pillar the Height. A FOC truss reserves nothing, so it never shows.
+  const shortList = Array.isArray(stockShort) && stockShort.length && !isTrussFoc(zc) ? stockShort : [];
+  const dimShort = (d) => shortList.some((r) => (r.kind === "pillar" ? d === "H" : (d === "W" || d === "L") && (Number(zc.dims?.[d]) || 0) > 0));
+  const dimHasTip = (d) => dimShort(d) || dimTips.some((t) => (t.kind === "span" ? t.d === d : d === "H"));
   // Guest price — same multiplier calcStructCost folds into the Truss & Masking tile (IMS-set).
   const fabMult = guestFabricMultiplier(structRates);
   // The Fabric card shows Liza + velvet curtains only. The wall masking panels in the same fabric
@@ -422,6 +426,11 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   — owner decision, 2026-11-11 — a working ground-spacer build (joints: 1, e.g. 17ft =
                   15ft pillar + 2ft beam) is a normal, accepted build and is never nudged away from;
                   only a genuine stock shortfall or a height that can't be assembled at all surfaces. */}
+              {shortList.length > 0 && (
+                <div style={{marginBottom:6,padding:"6px 10px",borderRadius:8,background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.35)",fontSize:11.5,color:"#B91C1C",fontWeight:600,lineHeight:1.45}}>
+                  ⚠ Change this truss — stock short: {[...new Set(shortList.map((r) => `${r.text} on ${/^\d{4}-\d{2}-\d{2}$/.test(r.date || "") ? new Date(r.date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : r.date}`))].join(", ")}. Change the size in red or the material, or this deal can't be marked Sold.
+                </div>
+              )}
               {dimTips.length > 0 && (() => {
                 const tips = dimTips;
                 const stockLabel = stockDateLabel ? `on ${stockDateLabel}` : "in stock";
@@ -890,12 +899,12 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
 //
 // calcStructCost has always summed zc.extraTrussRows, and Deal Check, the truss engine and the
 // stock reservation all read them — Build was simply the one place with no way to create one.
-export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1, trussRepeat = false, fabricChipRepeat = false, fabricPaletteColours = null, trussReserved, stockDateLabel = "" }) {
+export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, zm, st, sZ, sD, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale = 1, guestDiscPct = 0, guestFabricDiscPct = 0, maskingColours = [], maskingColourOptions = [], guestPriceMultiplier = 1, trussRepeat = false, fabricChipRepeat = false, fabricPaletteColours = null, trussReserved, stockDateLabel = "", stockShortOf }) {
   const rows = zc.extraTrussRows || [];
   const write = (next) => sZ({ extraTrussRows: next });
   const shared = { S, customCeilingField, customMaskingField, k, zm, st, fmt, showCosts, isDark, border, textP, textS, accent, maskOpts, trussRates, structRates, trussInv, venueTruss, scale, guestDiscPct, guestFabricDiscPct, maskingColours, maskingColourOptions, guestPriceMultiplier, trussRepeat, fabricChipRepeat, fabricPaletteColours, trussReserved, stockDateLabel };
   return (<>
-    <TrussCard {...shared} zc={zc} sZ={sZ} sD={sD} title={rows.length ? "Truss 1" : "Truss"} />
+    <TrussCard {...shared} zc={zc} sZ={sZ} sD={sD} title={rows.length ? "Truss 1" : "Truss"} stockShort={stockShortOf?.(0)} />
     {rows.map((row, ri) => {
       const setRow = (patch) => write(rows.map((x, i) => (i === ri ? { ...x, ...patch } : x)));
       // Same "3 dims ⇒ Box, 2 ⇒ Single U" rule the zone's own row applies.
@@ -903,7 +912,7 @@ export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, z
         const n = [dims.W || dims.S, dims.L, dims.H].filter((x) => (Number(x) || 0) > 0).length;
         write(rows.map((x, i) => (i === ri ? { ...x, dims, trT: n >= 3 ? "box" : n === 2 ? "singleU" : x.trT } : x))); };
       return <TrussCard key={row.id || ri} {...shared} zc={row} sZ={setRow} sD={setDim}
-        nested title={`Truss ${ri + 2}`} rowIdx={ri} onRemove={() => write(rows.filter((_, i) => i !== ri))} />;
+        nested title={`Truss ${ri + 2}`} rowIdx={ri} stockShort={stockShortOf?.(ri + 1)} onRemove={() => write(rows.filter((_, i) => i !== ri))} />;
     })}
     {/* Adds a DUPLICATE, not a blank row: a zone with two trusses almost always has two of the same,
         so copying is the shorter path and clearing a field beats re-entering five. Copies the LAST
@@ -1370,6 +1379,7 @@ export default function StudioBuild({ ctx }) {
     // point-lookup safety net (lazy library cache — see StudioApp.jsx)
     ensureLibItems,
     favPhotos, saveFavPhotos,
+    trussStockShort,
   } = ctx;
   // Migration 059: the live rate lists ABOVE stay live-only wherever this file renders a picker's
   // CHOICES (a deleted material must never be newly pickable) — these merged "…Priced" versions are
@@ -6099,7 +6109,7 @@ undefined
                   DCTrussTab still shows that detailed breakdown for its own purposes, unaffected. */}
               {zoneSection[k]==="truss"&&<TrussStack S={S} customCeilingField={customCeilingField} k={k} zc={zc} zm={zm} st={st} sZ={sZ} sD={sD} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} textP={textP} textS={textS} accent={accent}
-                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} maskingColours={maskingColours} fabricPaletteColours={{liza:anchorsForPaletteByMaterial(imsPaletteCatalogue,activeFabricPaletteStr,"liza"),curtain:anchorsForPaletteByMaterial(imsPaletteCatalogue,activeFabricPaletteStr,"curtain")}} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} fabricChipRepeat={repeatCatFor(zc,"truss")} trussRepeat={repeatCatFor(zc,"truss")||!!structDiscountFor(zc,aVenue)?.truss} trussReserved={trussReserved} stockDateLabel={stockDateLabel} />}
+                customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} maskingColours={maskingColours} fabricPaletteColours={{liza:anchorsForPaletteByMaterial(imsPaletteCatalogue,activeFabricPaletteStr,"liza"),curtain:anchorsForPaletteByMaterial(imsPaletteCatalogue,activeFabricPaletteStr,"curtain")}} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} fabricChipRepeat={repeatCatFor(zc,"truss")} trussRepeat={repeatCatFor(zc,"truss")||!!structDiscountFor(zc,aVenue)?.truss} trussReserved={trussReserved} stockDateLabel={stockDateLabel} stockShortOf={(ri) => trussStockShort?.[`${activeFnIdx || 0}|${k}|${ri}`]} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
                 isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsCarpetMaterialsPriced={imsCarpetMaterialsPriced} imsPlatformRatesPriced={imsPlatformRatesPriced} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseNow()} guestPriceMultiplier={guestPriceMultiplier} guestDiscPct={structDiscountFor(zc,aVenue)?.platform?25:0} />}

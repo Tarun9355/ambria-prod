@@ -6824,7 +6824,16 @@ export default function StudioApp() {
             const [mat, sz] = k.split("|");
             return skeletonMaterialKey(trussInv, t.trussMaterial) === mat && Number(t.allocation?.totals?.[kind]?.[sz]) > 0;
           })).map((t) => `${fnName(t.fnIdx)} · ${zoneName(t.fnIdx, t.zoneKey)}${t.rowIdx > 0 ? ` (Truss ${t.rowIdx + 1})` : ""}`))];
-          flagged.push({ domain: "truss", emoji: "🏗️", date, detail: bits.join(", ") || "stock shortfall", where });
+          // the same, per truss row - Build marks that truss's card red with what is short (trussStockShort below)
+          const rows = [];
+          (trussEntry.trusses || []).forEach((t) => shortKeys.forEach(([kind, k]) => {
+            const [mat, sz] = k.split("|");
+            if (skeletonMaterialKey(trussInv, t.trussMaterial) !== mat || !(Number(t.allocation?.totals?.[kind]?.[sz]) > 0)) return;
+            const unit = kind === "beamsUsed" ? "beam" : "pillar";
+            const q = (kind === "beamsUsed" ? sm?.overflowBeams : sm?.overflowPillars)?.[k];
+            rows.push({ key: `${t.fnIdx}|${t.zoneKey}|${t.rowIdx || 0}`, date, kind: unit, text: `${q}× ${label(k, unit)}` });
+          }));
+          flagged.push({ domain: "truss", emoji: "🏗️", date, detail: bits.join(", ") || "stock shortfall", where, rows });
         }
       }
 
@@ -6851,6 +6860,14 @@ export default function StudioApp() {
     });
     return flagged;
   }, [studioFloralData, collectAllFunctionData, activeClientId, clientName, zoneLabelsD]);
+  // The Sold gate's truss shortage, live, per truss row ("fnIdx|zoneKey|rowIdx" -> [{ date, kind, text }]): Build marks
+  // that truss's card red with what is short, so the salesperson finds the truss to change before Sold refuses (owner
+  // ask 2026-11-17). Same scan, so the card and the gate never disagree.
+  const trussStockShort = useMemo(() => {
+    const m = {};
+    try { scanTrussStockShortage().forEach((f) => (f.rows || []).forEach((r) => { (m[r.key] ||= []).push(r); })); } catch { /* a scan error never breaks Build */ }
+    return m;
+  }, [scanTrussStockShortage]);
 
   // Pre-Sold gate #3 — see ledgerPreflightShortfalls' own comment (lib/studio/ledgerPreflight.js):
   // Build's own per-row availability check credits cross-function reuse for PRICING, but the real
@@ -15548,6 +15565,7 @@ export default function StudioApp() {
   const settingsSaveClientLedger = (nl, del, o) => { if (!canSettingsEdit) return Promise.resolve(false); return saveClientLedger(nl, del, o); };
 
   const ctx = {
+    trussStockShort,
     // theme / chrome
     S, isDark, accent, border, textS, fmt, cat,
     textP, accentBg, accentText, cardBg,
