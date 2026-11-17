@@ -18,7 +18,7 @@ import { getEffectivePricing, resolveDateCategory } from "../../../lib/inventory
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, CATEGORIES, venueTypeLabel,
   maskingOptions, platformOptions, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
-  platformRowCost, liveAreaElementOptions, carpetPricingFor, carpetTakesStockPick,
+  platformRowCost, liveAreaElementOptions, carpetPricingFor, carpetTakesStockPick, billedCarpetSqft,
 } from "../../../lib/studio/taxonomy";
 import { catalogueDeletedLabel, catalogueDeletedTitle } from "../../../lib/studio/deletedCatalogue";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
@@ -1021,6 +1021,15 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   const carpetBilled = { ...carpetBilledRaw, rate: Math.round((carpetBilledRaw.rate || 0) * guestPriceMultiplier * 100) / 100 };
   const isNewCarpet = /new/i.test(carpetBilled.label || "");
   const isStockCarpet = carpetTakesStockPick(carpetBilled.label);
+  // Why the Carpet amount is what it is - the card only showed "10x24 = 240 sqft", so a Carpet New floor billed for
+  // a whole 1500 sqft roll (taxonomy billedCarpetSqft), less the Fixed Venue / Repeat cut, read as a wrong sum.
+  const carpetNeedSqft = ((rowDims.L || rowDims.S || 0) * (rowDims.W || rowDims.S || 0)) * Math.max(1, Math.round(Number(zc.plQty) || 1));
+  const carpetBillSqft = billedCarpetSqft(carpetNeedSqft, carpetBilledRaw.label);
+  const carpetRolls = carpetBillSqft > carpetNeedSqft && carpetNeedSqft > 0 ? Math.round(carpetBillSqft / 1500) : 0;
+  const carpetWhy = zc.cpT === CARPET_OFF || !(carpetNeedSqft > 0) ? "" : [
+    carpetRolls ? `${carpetRolls} roll${carpetRolls > 1 ? "s" : ""} = ${carpetBillSqft.toLocaleString("en-IN")} sqft billed (${carpetNeedSqft.toLocaleString("en-IN")} needed)` : "",
+    guestDiscPct > 0 ? `−${guestDiscPct}% Fixed Venue / Repeat` : "",
+  ].filter(Boolean).join(" · ");
   const [cpUploading, setCpUploading] = useState(false);
   // Carpet New is bought fresh, so there is no stock photo to pick — the salesperson attaches one.
   const uploadCarpetPhoto = async (file) => {
@@ -1214,7 +1223,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     </div>
                   )}
                 </div>
-                {showCosts&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,whiteSpace:"nowrap"}}>Carpet <span title={guestDiscPct>0?"Discount applied":undefined} style={{fontWeight:600,color:guestDiscPct>0?"#10B981":textP}}>{fmt(carpetShown)}</span></div>}
+                {showCosts&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,textAlign:"right"}}><div style={{whiteSpace:"nowrap"}}>Carpet <span title={guestDiscPct>0?"Discount applied":undefined} style={{fontWeight:600,color:guestDiscPct>0?"#10B981":textP}}>{fmt(carpetShown)}</span></div>{carpetWhy&&<div style={{fontSize:10.5,color:textS,marginTop:2,maxWidth:220,lineHeight:1.3}}>{carpetWhy}</div>}</div>}
               </div>
               {cpLimit&&<div style={{fontSize:11.5,color:"#EF4444",fontWeight:700,lineHeight:1.3,marginBottom:4}}>⚠ {cpLimit}</div>}
               <div style={{fontSize:11.5,color:textS,lineHeight:1.3,marginBottom:4}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft${(zc.plQty||1)>1?` × ${zc.plQty}`:""}`:"No floor size set — priced at 0 sqft until you enter one below"}</div>
