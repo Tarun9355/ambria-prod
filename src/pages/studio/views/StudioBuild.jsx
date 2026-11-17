@@ -292,7 +292,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       title={isTrussFoc(zc)
                         ? "FOC — this truss is already at the venue: free, not blocked. Click to bill it normally again."
                         : "Mark FOC (free of cost) — this truss, with its fabric, masking and ceiling, is already standing at the venue from an earlier event: the guest isn't billed, no crew or truck is counted, and nothing is blocked in IMS."}
-                      style={{display:"inline-flex",alignItems:"center",gap:4,height:20,padding:isTrussFoc(zc)?"0 7px":"0 4px",borderRadius:6,cursor:"pointer",fontSize:10.5,fontWeight:700,
+                      style={{display:"inline-flex",alignItems:"center",gap:4,height:20,padding:isTrussFoc(zc)?"0 7px":"0 4px",borderRadius:6,cursor:"pointer",fontFamily:"inherit",lineHeight:1,fontSize:10.5,fontWeight:700,
                         color:isTrussFoc(zc)?"#7C3AED":textS,background:isTrussFoc(zc)?"#7C3AED18":"transparent",border:isTrussFoc(zc)?"1px solid #7C3AED66":"1px solid transparent",opacity:isTrussFoc(zc)?1:0.6}}>
                       <IconGift size={11}/>{isTrussFoc(zc)&&"FOC"}
                     </button>
