@@ -12,7 +12,7 @@ import { TRUSS_MATERIALS } from "../../lib/studio/taxonomy";
 import { MANPOWER_TYPES } from "../../lib/ims/constants";
 import { thumbUrl } from "../../lib/studio/thumb";
 import { useConfirm } from "../../components/ui";
-import { makeSubcatDept } from "../../lib/ims/deptClassify";
+import { catToDept } from "../../lib/ims/deptClassify";
 
 export default function FixedVenuesEditor({ settings, setSettings, inventory = [], trussInv = null }) {
   const [confirm, confirmDialog] = useConfirm();
@@ -238,12 +238,12 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   // pickQuery, so switching tabs doesn't carry one venue's filter onto another.
   const [standingSearch, setStandingSearch] = useState({});
   // Department tabs over a venue's standing inventory (owner ask 2026-11-17): click one to see only that department's items.
-  // Keyed by venue id like the search; "" = All. An item's department is its sub-category's, as Planning reads it.
+  // Keyed by venue id like the search; "" = All. An item's department is the one Deal Check files it under in Planning
+  // (catToDept on its category, with Admin's category -> department map) - so a tab here lists what that department sees there.
   const [standingDept, setStandingDept] = useState({});
-  const subcatDept = useMemo(() => makeSubcatDept(inventory, settings.categoryDepartments), [inventory, settings.categoryDepartments]);
   const standingDeptOf = (it) => {
     const inv = inventory.find((i) => i.id === it.invId);
-    return inv ? (subcatDept(inv.subCat || inv.subcategory, inv.cat || inv.category) || "Other") : "Other";
+    return inv ? catToDept(inv.category || inv.cat, settings.categoryDepartments) : "Other";
   };
   // Pieces of a truss size (ONE material) available to assign HERE = that material's own stock
   // (Planning) minus what other fixed venues already hold standing of it — a Pole pillar never
