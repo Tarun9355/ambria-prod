@@ -178,6 +178,10 @@ export const DATE_PRICING_OWNER_ID = "U84ED1E8439";
 // a different person, deliberately excluded). IMS.jsx's Calendar-tab gate matches on this exact id,
 // not the free-text `name` column (rename-able by anyone with Manage Users, and not unique).
 export const CALENDAR_TAB_USER_ID = "U4D9FE99348";
+// Everyone who gets IMS's Calendar tab, by `users` row id: Pratik, and salim (UDA361C19E8, username "salim", role Sales -
+// confirmed 2026-11-17 via `select id,username,name,role from users where name ilike '%salim%'`; added on request, 2026-11-17).
+// Add an id here to give someone the Calendar - nothing in Admin can grant it.
+export const CALENDAR_TAB_USER_IDS = [CALENDAR_TAB_USER_ID, "UDA361C19E8"];
 
 export const SETTINGS_DEFAULTS = {
   bufferPct: 5,
