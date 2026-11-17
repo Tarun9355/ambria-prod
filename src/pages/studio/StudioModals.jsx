@@ -647,8 +647,16 @@ export default function StudioModals({ ctx }) {
             <div style={{padding:"4px 20px",overflowY:"auto",flex:1}}>
               {trussStockGateModal.map((f, i) => (
                 <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 0",borderBottom:i<trussStockGateModal.length-1?`1px solid ${border}`:"none"}}>
-                  <div style={{minWidth:0,fontSize:13,fontWeight:600,color:textP,whiteSpace:"normal"}}>
-                    {f.emoji} {f.date} — short {f.detail}
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:textP,whiteSpace:"normal"}}>
+                      {f.emoji} {/^\d{4}-\d{2}-\d{2}$/.test(f.date || "") ? new Date(f.date + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : f.date} — <span style={{color:"#EF4444"}}>short {f.detail}</span>
+                    </div>
+                    {/* which function / zone / truss of this deal uses it (owner ask 2026-11-17) - the one to change */}
+                    {Array.isArray(f.where) && f.where.length > 0 && (
+                      <div style={{marginTop:4,display:"flex",flexDirection:"column",gap:2}}>
+                        {f.where.map((w) => <div key={w} style={{fontSize:11.5,fontWeight:600,color:accent||"#7C3AED"}}>→ {w}</div>)}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

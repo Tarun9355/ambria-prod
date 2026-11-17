@@ -36,7 +36,7 @@ import { catToDept } from "../../lib/ims/deptClassify";
 import { availableAtVenue, lockedAtFixedVenues, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows, fixedVenueOverlapOnDate } from "../../lib/ims/fixedVenues";
 import { getSharingAwareAvailable, collapsedDealShiftFor } from "../../lib/ims/fixedVenueSharing";
 import { searchLmsLeads, triggerLmsSync, fetchLmsLastSync, fetchLmsLeadByEntry } from "../../lib/ims/lms";
-import { allocateForDate, buildEventAllocation } from "../../lib/ims/trussEngine";
+import { allocateForDate, buildEventAllocation, skeletonMaterialKey } from "../../lib/ims/trussEngine";
 import { allocatePlatformForDate, buildEventPlatformAllocation } from "../../lib/ims/platformEngine";
 import { allocateBattaForDate, buildEventBattaAllocation } from "../../lib/ims/battaEngine";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS, listStorage, deleteStorageObjects, deleteStorageFolder } from "../../lib/storage";
@@ -6798,6 +6798,10 @@ export default function StudioApp() {
       (byDate[fnData.fnDate] ||= []).push({ fnIdx: fnData.fnIdx, date: fnData.fnDate, zones: fnData.zoneConfig || {}, enabledEls: fnData.enabledEls || {} });
     });
     const flagged = [];
+    // WHERE on this deal a shortage sits (owner ask 2026-11-17): the date alone left a 3-function deal guessing which build
+    // to change. "Function 2: Sangeet · Stage (Truss 2)" - the function's number only when there are several.
+    const fnName = (i) => { const f = allFns.find((x) => x.fnIdx === i); const n = `Function ${(i || 0) + 1}`; return allFns.length > 1 ? (f?.fnType ? `${n}: ${f.fnType}` : n) : (f?.fnType || n); };
+    const zoneName = (i, zk) => zoneLabelsD[zk]?.label || ((allFns.find((x) => x.fnIdx === i)?.customZones) || []).find((cz) => cz.id === zk)?.name || zk;
     Object.entries(byDate).forEach(([date, fnsForDate]) => {
       const meta = { eoId: SELF_CHECK_EOID, clientId: activeClientId || "self", clientName: clientName?.trim() || "This build", state: "hard", createdAt: Date.now() };
       const excludeMine = (ev) => ev.eoId !== SELF_CHECK_EOID && ev.clientId !== activeClientId;
@@ -6814,7 +6818,13 @@ export default function StudioApp() {
           // named so the salesperson knows which skeleton is actually short.
           const label = (k, unit) => { const [mat, sz] = k.split("|"); return `${sz}ft ${unit}${mat !== "iron" ? ` (${mat})` : ""}`; };
           const bits = [...Object.entries(sm?.overflowPillars || {}).map(([k, q]) => `${q}× ${label(k, "pillar")}`), ...Object.entries(sm?.overflowBeams || {}).map(([k, q]) => `${q}× ${label(k, "beam")}`)];
-          flagged.push({ domain: "truss", emoji: "🏗️", date, detail: bits.join(", ") || "stock shortfall" });
+          // every truss of THIS deal on this date that uses a short size (same material pool, same size)
+          const shortKeys = [...Object.keys(sm?.overflowPillars || {}).map((k) => ["pillarsUsed", k]), ...Object.keys(sm?.overflowBeams || {}).map((k) => ["beamsUsed", k])];
+          const where = [...new Set((trussEntry.trusses || []).filter((t) => shortKeys.some(([kind, k]) => {
+            const [mat, sz] = k.split("|");
+            return skeletonMaterialKey(trussInv, t.trussMaterial) === mat && Number(t.allocation?.totals?.[kind]?.[sz]) > 0;
+          })).map((t) => `${fnName(t.fnIdx)} · ${zoneName(t.fnIdx, t.zoneKey)}${t.rowIdx > 0 ? ` (Truss ${t.rowIdx + 1})` : ""}`))];
+          flagged.push({ domain: "truss", emoji: "🏗️", date, detail: bits.join(", ") || "stock shortfall", where });
         }
       }
 
@@ -6824,7 +6834,8 @@ export default function StudioApp() {
         const result = allocatePlatformForDate({}, date, list, trussInv, "studio-presale-check");
         if (list.find((ev) => ev.eoId === SELF_CHECK_EOID)?.shortageBorne) {
           const over = result[date]?.stockSummary?.overflow || {};
-          flagged.push({ domain: "platform", emoji: "🛏️", date, detail: Object.values(over).map((sqft) => `${sqft} sqft`).join(", ") || "stock shortfall" });
+          const where = fnsForDate.flatMap((f) => Object.entries(f.zones).filter(([zk, zc]) => (!Object.keys(f.enabledEls).length || f.enabledEls[zk]) && [zc, ...(zc?.extraPlatformRows || [])].some((r) => r?.plH)).map(([zk]) => `${fnName(f.fnIdx)} · ${zoneName(f.fnIdx, zk)}`));
+          flagged.push({ domain: "platform", emoji: "🛏️", date, detail: Object.values(over).map((sqft) => `${sqft} sqft`).join(", ") || "stock shortfall", where });
         }
       }
 
@@ -6834,12 +6845,12 @@ export default function StudioApp() {
         const result = allocateBattaForDate({}, date, list, trussInv, "studio-presale-check");
         if (list.find((ev) => ev.eoId === SELF_CHECK_EOID)?.shortageBorne) {
           const over = result[date]?.stockSummary?.overflow || {};
-          flagged.push({ domain: "batta", emoji: "🧵", date, detail: Object.entries(over).map(([m, rft]) => `${rft} RFT ${m}`).join(", ") || "stock shortfall" });
+          flagged.push({ domain: "batta", emoji: "🧵", date, detail: Object.entries(over).map(([m, rft]) => `${rft} RFT ${m}`).join(", ") || "stock shortfall", where: fnsForDate.map((f) => fnName(f.fnIdx)) });
         }
       }
     });
     return flagged;
-  }, [studioFloralData, collectAllFunctionData, activeClientId, clientName]);
+  }, [studioFloralData, collectAllFunctionData, activeClientId, clientName, zoneLabelsD]);
 
   // Pre-Sold gate #3 — see ledgerPreflightShortfalls' own comment (lib/studio/ledgerPreflight.js):
   // Build's own per-row availability check credits cross-function reuse for PRICING, but the real
