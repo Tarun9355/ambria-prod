@@ -83,8 +83,10 @@ export function planningUpcoming(eo, now = Date.now()) {
 // v22 (2026-11-14): Liza / curtains split over several colours by the ratio picked on the Fabric card ("Ivory:60, Gold:40").
 // v23 (2026-11-15): a part of another department's kit no longer merges with the same item placed loose (Pillar Candle ×180 → 90 + 90).
 // v24 (2026-11-17): a truss marked FOC (already at the venue) carries no truss / fabric / masking need, crew or truck.
-export const PLANNING_SNAPSHOT_VERSION = 24;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-17T09:00:00Z");
+// v25 (2026-11-17): the guest's 25% structure discount (truss / platform / carpet / print) is Repeat only - a Fixed
+// Venue with a Fresh chip no longer takes it, so those deals' income per department goes up.
+export const PLANNING_SNAPSHOT_VERSION = 25;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-17T12:00:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // Synced before, and a planning input changed after that sync (a minute of slack: the sync's own write

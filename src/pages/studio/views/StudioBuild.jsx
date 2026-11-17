@@ -2244,8 +2244,12 @@ export default function StudioBuild({ ctx }) {
   // the checkbox (owner ask, 2026-11-03).
   const structDiscountFor = (zc, venueName) => {
     const fv = !!fixedVenueFor({ fixedVenues: sharedFloralSettings?.fixedVenues || [], venueParents: venueParents || {} }, venueName);
-    if (hideDiscountFromClient) return { truss: fv, platform: fv, print: fv };
-    return { truss: fv || repeatCatFor(zc, "truss"), platform: fv || repeatCatFor(zc, "platform"), print: fv || repeatCatFor(zc, "print") };
+    // Repeat only (owner ask 2026-11-17): the 25% is for a structure being REUSED - a Fresh truss / platform / print
+    // is built new and bills full, Fixed Venue or not. A Fixed Venue still needs no client-discount checkbox for it
+    // (Pratik, 2026-11-03); anywhere else the Repeat chip discounts only with the checkbox on.
+    const rep = (cat) => repeatCatFor(zc, cat);
+    if (hideDiscountFromClient) return { truss: fv && rep("truss"), platform: fv && rep("platform"), print: fv && rep("print") };
+    return { truss: rep("truss"), platform: rep("platform"), print: rep("print") };
   };
   // Same scaleStruct StudioApp.jsx uses for its own guest-facing calcStructCost calls (getElPrice/
   // getElPriceForFn already fold guestPriceMultiplier in there) — Build's own local truss/masking/

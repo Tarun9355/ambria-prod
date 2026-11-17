@@ -5230,8 +5230,12 @@ export default function StudioApp() {
   // 2026-11-03). The Repeat chips' own discount still follows the checkbox — off by default, same as before.
   const structDiscountFor = (zc, venueName) => {
     const fv = !!fixedVenueFor(fvCfgForRepeat, venueName);
-    if (hideDiscountFromClient) return { truss: fv, platform: fv, print: fv };
-    return { truss: fv || repeatCatFor(zc, "truss"), platform: fv || repeatCatFor(zc, "platform"), print: fv || repeatCatFor(zc, "print") };
+    // Repeat only (owner ask 2026-11-17): the 25% is for a structure being REUSED - a Fresh truss / platform / print
+    // is built new and bills full, Fixed Venue or not. A Fixed Venue still needs no client-discount checkbox for it
+    // (Pratik, 2026-11-03); anywhere else the Repeat chip discounts only with the checkbox on.
+    const rep = (cat) => repeatCatFor(zc, cat);
+    if (hideDiscountFromClient) return { truss: fv && rep("truss"), platform: fv && rep("platform"), print: fv && rep("print") };
+    return { truss: rep("truss"), platform: rep("platform"), print: rep("print") };
   };
   // Owner ask: a second discrete per-deal lever, alongside hideDiscountFromClient — the small dot on
   // each Photo Filters section (Build's left rail) doubles as a markup tier picker when clicked
