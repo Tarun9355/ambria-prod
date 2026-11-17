@@ -301,7 +301,6 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         material + drape, so the caption cannot claim a different sum from the price.
                         Shows this ROW's base structure; front extension and a custom ceiling item are
                         priced on top and are visible in their own fields. */}
-                    {isTrussFoc(zc)&&<span style={{fontSize:10.5,color:"#7C3AED",fontWeight:600}}>Already at the venue — ₹0, no crew, no truck, nothing blocked (fabric &amp; masking included)</span>}
                     {showCosts&&!isTrussFoc(zc)&&(()=>{
                       // snapRowDimsForProduction is a no-op as of 2026-11-04 (owner decision: bill/
                       // display the raw typed dims, no auto-shrink-to-minimum-joints) — kept as a
