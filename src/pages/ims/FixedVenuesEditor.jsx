@@ -433,11 +433,16 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                         const photo = invPhoto(i);
                         const dims = invDims(i);
                         const sub = i.subCat || i.sub_cat || "";
+                        // Only "+ Add" adds (owner ask 2026-11-17). A click anywhere else on the row searches for that item - its
+                        // name goes into the box, so the list shows whether it is already here and the dropdown narrows to it.
+                        // No redirect: leaving would lose the venue, the chip and the search mid-task.
                         return (
-                          <button key={i.id} type="button"
+                          <div key={i.id} className="flex items-center border-b last:border-b-0 hover:bg-indigo-50">
+                          <button type="button"
                             onMouseDown={(e) => e.preventDefault()}   // keep focus so onBlur does not fire first
-                            onClick={() => { addItem(v.id, i); clear(); }}
-                            className="w-full flex items-center gap-3 px-3 py-2 hover:bg-indigo-50 text-left border-b last:border-b-0">
+                            onClick={() => { setPickQuery((s) => ({ ...s, [v.id]: i.name || "" })); setPickOpen(v.id); }}
+                            title={`Search for ${i.name}`}
+                            className="flex-1 min-w-0 flex items-center gap-3 pl-3 pr-2 py-2 text-left">
                             {photo
                               ? <img src={thumbUrl(photo, 40)} alt="" loading="lazy" decoding="async" className="w-10 h-10 rounded object-cover border flex-shrink-0" onError={(e) => { e.target.style.visibility = "hidden"; }} />
                               : <div className="w-10 h-10 rounded border bg-gray-100 flex-shrink-0" />}
@@ -452,8 +457,13 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                             <span className={"text-[10px] px-2 py-0.5 rounded flex-shrink-0 " + (free > 0 ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")}>
                               {free > 0 ? `${free} free` : "none free"}
                             </span>
-                            <span className="text-[11px] font-semibold text-indigo-600 flex-shrink-0">+ Add</span>
                           </button>
+                          <button type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => { addItem(v.id, i); clear(); }}
+                            aria-label={`Add ${i.name} to ${v.name}`}
+                            className="flex-shrink-0 mr-2 px-2.5 py-1 rounded-md text-[11px] font-semibold text-indigo-700 bg-white ring-1 ring-indigo-200 hover:bg-indigo-600 hover:text-white hover:ring-indigo-600">+ Add</button>
+                          </div>
                         );
                       })}
                     </div>
