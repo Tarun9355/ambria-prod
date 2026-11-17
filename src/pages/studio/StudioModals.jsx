@@ -609,8 +609,13 @@ export default function StudioModals({ ctx }) {
                           (owner ask, 2026-11-15). */}
                       {(() => { const raw = Number(f.partId ? f.partNeed : f.need) || 0; const n = Math.round(raw * 100) / 100; return n > 0 ? <span style={{color:"#EF4444",fontWeight:700}}> — need {n}</span> : null; })()}
                     </div>
-                    <div style={{fontSize:11,color:textS,marginTop:2}}>
-                      {[f.partId ? `in ${f.name}` : "", f.fnLabel, f.fnDate ? new Date(f.fnDate + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : ""].filter(Boolean).join(" · ")}
+                    {f.partId && <div style={{fontSize:11,color:textS,marginTop:2}}>in {f.name}</div>}
+                    {/* WHERE it is short (owner ask 2026-11-17): on a multi-function deal the function (its number and name), its
+                        date and the zone - Fix opens it there, but the salesperson has to know which build this row is about */}
+                    <div style={{fontSize:11.5,color:textP,marginTop:3,display:"flex",flexWrap:"wrap",gap:"2px 6px",alignItems:"center"}}>
+                      <span style={{fontWeight:700,color:accent||"#7C3AED"}}>{(extraFunctions||[]).length > 0 && typeof f.fnIdx === "number" ? `Function ${f.fnIdx + 1}${f.fnLabel && f.fnLabel !== `Function ${f.fnIdx + 1}` ? `: ${f.fnLabel}` : ""}` : (f.fnLabel || "")}</span>
+                      {f.fnDate && <span style={{color:textS}}>· {new Date(f.fnDate + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>}
+                      {f.zoneLabel && <span style={{color:textS}}>· {f.zoneLabel}</span>}
                     </div>
                   </div>
                   <button onClick={() => openOosFix(f)} title={f.partId ? `Pick an alternative for ${f.partName} inside ${f.name}` : "Pick an alternative item"} style={{padding:"6px 12px",borderRadius:7,border:"none",background:"#EF4444",color:"#fff",fontSize:11.5,fontWeight:700,cursor:"pointer",flexShrink:0,display:"inline-flex",alignItems:"center",gap:5}}><IconBox size={12}/> Fix</button>

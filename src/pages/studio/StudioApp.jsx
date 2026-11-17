@@ -6745,7 +6745,10 @@ export default function StudioApp() {
             // idx/invId carried so the gate modal's own 📦 picker can open directly against this
             // exact element (openAvailModal(zoneKey, idx, el, rc)) instead of only pointing the
             // salesperson at the right function/zone and making them find it by hand.
-            flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, fnDate: fnData.fnDate || "", zoneKey: zk, idx: i, invId: el.invId, name: item?.name || el.name || "Item",
+            // zoneLabel: which zone of that function (owner ask 2026-11-17) - on a multi-function deal the gate has to say WHERE
+            // the short item sits, not only the date, or nobody knows which build to fix
+            flagged.push({ fnIdx: fnData.fnIdx, fnLabel: fnData.fnType || `Function ${fnData.fnIdx + 1}`, fnDate: fnData.fnDate || "", zoneKey: zk, idx: i,
+              zoneLabel: zoneLabelsD[zk]?.label || (fnData.customZones || []).find((cz) => cz.id === zk)?.name || zk, invId: el.invId, name: item?.name || el.name || "Item",
               // The BUILD element's own raw .name — NOT the same as `name` above (which prefers the
               // IMS catalog name for display). buildElCardKey/getCardSpecsForZone key every Deal
               // Check card off el.name specifically, so a cardKey rebuilt from this row (round 4
@@ -6769,7 +6772,7 @@ export default function StudioApp() {
       });
     });
     return flagged;
-  }, [collectAllFunctionData, blocksByDate, getElPriceForFn, imsInventory, kitPartShorts]);
+  }, [collectAllFunctionData, blocksByDate, getElPriceForFn, imsInventory, kitPartShorts, zoneLabelsD]);
 
   // Pre-Sold gate #2 — same "physically can't be delivered" reasoning as scanOutOfStockElements
   // above, for truss pillars/beams, platform sqft, and batta RFT instead of a tagged inventory item.
