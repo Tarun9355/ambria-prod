@@ -198,7 +198,10 @@ export const pillarCountForSpan = (spanLen, maxSpan = 30) => Math.max(2, Math.ce
 // need its own clean size, and pillar count itself could shift too, which this doesn't attempt), the
 // pillars for this height can't be assembled from stock at all (no beam choice fixes that), or the
 // typed value already builds clean (per the tolerant check above).
-export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piecesNeeded = 1, material, reserved } = {}) {
+// flagGap (owner ask 2026-11-17, Pole): a single beam that is SHORT of the typed span - within the resolver's own tolerance, so
+// it builds - still gets a tip ("uses a 15ft beam, 1ft short - try 15ft"). Pole's 1ft tolerance and its unpadded span made
+// most sizes that tip on Iron go quiet on Pole. Off (default), nothing changes for any other caller.
+export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piecesNeeded = 1, material, reserved, flagGap = false } = {}) {
   const span = Number(typedSpan) || 0;
   if (span <= 0 || !trussInv?.beams) return null;
   if (resolvePillarHeight(Number(H) || 0, trussInv).shortage) return null;
@@ -230,7 +233,9 @@ export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piec
   const cleanAlready = !r.shortage && r.joints === 0;
   const cleanSize = cleanAlready ? r.pieces[0]?.size : null;
   const cleanNeeded = cleanAlready ? piecesNeeded * (r.pieces[0]?.qty || 1) : 0;
-  if (cleanAlready && stockOf(cleanSize) >= cleanNeeded) return null; // clean, and genuinely enough free stock
+  const gap = cleanAlready ? Math.round((budget - (Number(cleanSize) || 0)) * 100) / 100 : 0;
+  const gapOnly = flagGap && cleanAlready && gap > 0 && stockOf(cleanSize) >= cleanNeeded; // builds, but on a shorter beam
+  if (cleanAlready && stockOf(cleanSize) >= cleanNeeded && !gapOnly) return null; // clean, and genuinely enough free stock
 
   // Suggestions DO require an EXACT (zero-gap) stock match, with real FREE stock for every copy this
   // axis needs — the point of nudging the typed value is landing flush on a stock size, not trading
@@ -258,6 +263,7 @@ export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piec
     // more to say than before (null, same as always) — but an already-clean SHAPE that's just short
     // on free stock still deserves a message (even with no fix to offer), so the UI can at least say
     // why, rather than going silent on a span that looks fine but genuinely isn't buildable today.
+    if (gapOnly) return { pillarCount, reason: "gap", size: cleanSize, gap, down: null, up: null };
     if (cleanAlready) return { pillarCount, reason: "stock", size: cleanSize, free: stockOf(cleanSize), needed: cleanNeeded, down: null, up: null };
     return null;
   }
@@ -265,6 +271,7 @@ export function nearestCleanSpans(typedSpan, H, { maxSpanFt = 30, trussInv, piec
   // "stock"; a "joint" span never had a clean size to begin with. Included here too (not just the
   // no-alternative branch above) so a "stock" tip that DOES have a nearby fix still explains why the
   // typed value itself fell short, instead of the UI silently interpolating "undefined".
+  if (gapOnly) return { pillarCount, reason: "gap", size: cleanSize, gap, down, up };
   return cleanAlready
     ? { pillarCount, reason: "stock", size: cleanSize, free: stockOf(cleanSize), needed: cleanNeeded, down, up }
     : { pillarCount, reason: "joint", down, up };

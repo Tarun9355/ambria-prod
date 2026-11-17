@@ -185,6 +185,38 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   // calcStructCost adds into the Truss & Masking total. It had no figure on the card, so the chip
   // above showed truss + fabric while the card showed the truss alone, and the two looked unrelated.
   const fabricInv = trussInv || structRates?.trussInv;
+  // The truss's smart dim tips (below the W/D/H row), worked out up here so the box each tip is about can turn red too
+  // (owner ask 2026-11-17: "jahan dikkat hai usme red") - the salesperson sees which field to change, not only the line.
+  // A FOC truss takes nothing from stock - no stock tips.
+  const dimTips = (fabricInv && !isTrussFoc(zc)) ? (() => {
+    const matInv = trussInvForMaterial(fabricInv, zc.trussMaterial);
+    const eng = matInv.settings || {};
+    const H = Number(zc.dims?.H) || 0;
+    const cfg = resolveTrussConfig(zc);
+    const copies = zc.trussQty === 0 ? 0 : Math.max(1, Number(zc.trussQty) || 1);
+    const reserved = trussReserved?.[skeletonMaterialKey(fabricInv, zc.trussMaterial)];
+    const spanPiecesNeeded = (cfg.config === "full_box" ? 2 : 1) * copies;
+    const spanTips = copies === 0 ? [] : [["W", "Width"], ["L", "Depth"]].map(([d, label]) => {
+      const val = Number(zc.dims?.[d]) || 0;
+      if (!val) return null;
+      // Pole: a beam short of the typed span is tipped too (flagGap) - its 1ft tolerance kept those sizes silent
+      const tip = nearestCleanSpans(val, H, { maxSpanFt: eng.maxSpanFt, trussInv: matInv, piecesNeeded: spanPiecesNeeded, material: zc.trussMaterial, reserved, flagGap: String(zc.trussMaterial || "").toLowerCase() === "pole" });
+      if (!tip) return null;
+      // A "needs a joint" tip with nothing nearby to suggest has nothing useful to say —
+      // stays silent, same as always. A "stock" tip is worth showing even with nothing
+      // nearby: it's real news (this typed value genuinely isn't buildable from what's
+      // free today), not just "no alternative found".
+      if (tip.reason === "joint" && !tip.down && !tip.up) return null;
+      return { kind: "span", d, label, val, ...tip };
+    }).filter(Boolean);
+    const heightPiecesNeeded = trussPillarCount(zc, matInv) * copies;
+    const hTip = (copies > 0 && H && heightPiecesNeeded)
+      ? nearestCleanHeights(H, { trussInv: matInv, piecesNeeded: heightPiecesNeeded, reserved })
+      : null;
+    const tips = [...spanTips, ...(hTip ? [{ kind: "height", label: "Height", val: H, ...hTip }] : [])];
+    return tips;
+  })() : [];
+  const dimHasTip = (d) => dimTips.some((t) => (t.kind === "span" ? t.d === d : d === "H"));
   // Guest price — same multiplier calcStructCost folds into the Truss & Masking tile (IMS-set).
   const fabMult = guestFabricMultiplier(structRates);
   // The Fabric card shows Liza + velvet curtains only. The wall masking panels in the same fabric
@@ -351,7 +383,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                 </div>
               <div style={{display:"flex",gap:8,marginBottom:6}}>
                 {[["W","Width"],["L","Depth"],["H","Height"]].map(([d,label])=><div key={d} style={{flex:1}}><div style={{fontSize:11.5,color:textS,marginBottom:3}}>Truss {label} (ft)</div>
-                  <NumField value={zc.dims?.[d]||""} onCommit={n=>sD(d,n)} blankCommit commitOn="blur" style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center"}}/></div>)}
+                  <NumField value={zc.dims?.[d]||""} onCommit={n=>sD(d,n)} blankCommit commitOn="blur" title={dimHasTip(d)?"See the tip below - this size needs a change":undefined} style={{...S.input,padding:"6px 8px",fontSize:14,fontWeight:600,textAlign:"center",...(dimHasTip(d)?{borderColor:"#EF4444",boxShadow:"0 0 0 1px #EF4444",color:"#B91C1C"}:null)}}/></div>)}
                 {/* Scale By (the zone header's "set of N" multiplier) rescales this the same way it
                     rescales a Platform row's own Qty and a print row's own qty, keeping a per-set
                     base across changes (see setZoneScale). */}
@@ -390,32 +422,8 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                   — owner decision, 2026-11-11 — a working ground-spacer build (joints: 1, e.g. 17ft =
                   15ft pillar + 2ft beam) is a normal, accepted build and is never nudged away from;
                   only a genuine stock shortfall or a height that can't be assembled at all surfaces. */}
-              {fabricInv && !isTrussFoc(zc) && (() => { /* a FOC truss takes nothing from stock - no stock tips */
-                const matInv = trussInvForMaterial(fabricInv, zc.trussMaterial);
-                const eng = matInv.settings || {};
-                const H = Number(zc.dims?.H) || 0;
-                const cfg = resolveTrussConfig(zc);
-                const copies = zc.trussQty === 0 ? 0 : Math.max(1, Number(zc.trussQty) || 1);
-                const reserved = trussReserved?.[skeletonMaterialKey(fabricInv, zc.trussMaterial)];
-                const spanPiecesNeeded = (cfg.config === "full_box" ? 2 : 1) * copies;
-                const spanTips = copies === 0 ? [] : [["W", "Width"], ["L", "Depth"]].map(([d, label]) => {
-                  const val = Number(zc.dims?.[d]) || 0;
-                  if (!val) return null;
-                  const tip = nearestCleanSpans(val, H, { maxSpanFt: eng.maxSpanFt, trussInv: matInv, piecesNeeded: spanPiecesNeeded, material: zc.trussMaterial, reserved });
-                  if (!tip) return null;
-                  // A "needs a joint" tip with nothing nearby to suggest has nothing useful to say —
-                  // stays silent, same as always. A "stock" tip is worth showing even with nothing
-                  // nearby: it's real news (this typed value genuinely isn't buildable from what's
-                  // free today), not just "no alternative found".
-                  if (tip.reason === "joint" && !tip.down && !tip.up) return null;
-                  return { kind: "span", d, label, val, ...tip };
-                }).filter(Boolean);
-                const heightPiecesNeeded = trussPillarCount(zc, matInv) * copies;
-                const hTip = (copies > 0 && H && heightPiecesNeeded)
-                  ? nearestCleanHeights(H, { trussInv: matInv, piecesNeeded: heightPiecesNeeded, reserved })
-                  : null;
-                const tips = [...spanTips, ...(hTip ? [{ kind: "height", label: "Height", val: H, ...hTip }] : [])];
-                if (!tips.length) return null;
+              {dimTips.length > 0 && (() => {
+                const tips = dimTips;
                 const stockLabel = stockDateLabel ? `on ${stockDateLabel}` : "in stock";
                 return (
                   <div style={{marginBottom:6,fontSize:11,color:"#EF4444",fontWeight:600,lineHeight:1.5}}>
@@ -424,6 +432,9 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         const opts = [];
                         if (t.down) opts.push(<span key="down">try <b>{t.down.span}ft</b> ({t.down.budget}ft beam)</span>);
                         if (t.up) opts.push(<span key="up">try <b>{t.up.span}ft</b> ({t.up.budget}ft beam)</span>);
+                        if (t.reason === "gap") {
+                          return <div key={t.d}>💡 {t.label} {t.val}ft uses a {t.size}ft beam — {t.gap}ft short{opts.length ? <> — {opts[0]}{opts[1] ? <> or {opts[1]}</> : null} for an exact fit.</> : "."}</div>;
+                        }
                         if (t.reason === "stock" && !opts.length) {
                           return <div key={t.d}>💡 {t.label} {t.val}ft uses a {t.size}ft beam — only {t.free} free {stockLabel} ({t.needed} needed), and nothing nearby is free either.</div>;
                         }

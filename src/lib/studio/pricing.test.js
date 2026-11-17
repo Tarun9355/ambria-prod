@@ -293,6 +293,14 @@ describe("nearestCleanSpans — the smart dim tip (owner ask, 2026-11-04, replac
     const tip = nearestCleanSpans(14, 10, { maxSpanFt: 15, trussInv: poleStock, material: "pole" });
     expect(tip).toEqual({ pillarCount: 2, reason: "joint", down: { span: 12, budget: 12 }, up: { span: 15, budget: 15 } });
   });
+  it("pole flagGap (owner ask 2026-11-17): a beam short of the span still builds, but is tipped red - off, it stays silent as before", () => {
+    const poleStock = { pillars: { 10: { stock: 5 } }, beams: { 15: { stock: 5 }, 12: { stock: 5 } } };
+    const o = { maxSpanFt: 30, trussInv: { ...poleStock, material: "pole" }, material: "pole" };
+    expect(nearestCleanSpans(16, 10, o)).toBeNull();
+    expect(nearestCleanSpans(16, 10, { ...o, flagGap: true })).toEqual({ pillarCount: 2, reason: "gap", size: 15, gap: 1, down: { span: 15, budget: 15 }, up: null });
+    expect(nearestCleanSpans(15, 10, { ...o, flagGap: true })).toBeNull(); // exact fit - nothing to say
+    expect(nearestCleanSpans(14, 10, { ...o, flagGap: true }).reason).toBe("joint"); // a joint tip is unchanged
+  });
   it("reserved (other events' stock on this date) tightens an already-clean size into a real stock shortage — only reports if no nearby alternative exists either", () => {
     // Isolated stock: ONLY a 12ft beam exists near this budget, so a shortage genuinely has nothing
     // to fall back to within the 6ft search window.
