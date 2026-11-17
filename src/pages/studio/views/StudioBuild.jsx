@@ -38,6 +38,7 @@ import { availableAtVenue, combineAvailability, fixedVenueFor } from "../../../l
 import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
 import { thumbUrl, fitUrl } from "../../../lib/studio/thumb.js";
+import LooseFabricEditor from "../../../components/studio/LooseFabricEditor.jsx";
 import { prefetchImages } from "../../../lib/studio/prefetchImages.js";
 import { makeS } from "../../../lib/studio/styles";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
@@ -136,11 +137,7 @@ const cloneTrussRow = (src = {}) => ({
 // colour dropdown offers; rateKey/rateKeyNew are the SAME rates calcZoneFabricCost already bills
 // the rest of this row's fabric at (pricing.js's looseFabricQty folds these rows into that same
 // formula, so there's exactly one rate lookup — this can't drift from what's shown above it).
-const LOOSE_FABRIC_KINDS = [
-  { key: "liza", label: "Liza", emoji: "🧣", unit: "kg", stockKey: "lizaStock", rateKey: "lizaKgRate", rateKeyNew: "lizaKgRateNew" },
-  { key: "masking", label: "Masking", emoji: "🧱", unit: "pcs", stockKey: "maskingStock", rateKey: "maskingPieceRate", rateKeyNew: "maskingPieceRateNew" },
-  { key: "curtain", label: "Curtain", emoji: "🎀", unit: "pcs", stockKey: "curtainStock", rateKey: "curtainPieceRate", rateKeyNew: "curtainPieceRateNew" },
-];
+// LOOSE_FABRIC_KINDS moved to components/studio/LooseFabricEditor.jsx with the editor itself.
 
 // `nested` renders this same card as one of a zone's EXTRA truss structures: identical body, but
 // titled "Truss N", carrying a remove control and no Add button of its own. Reusing the component
@@ -269,8 +266,6 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); window.removeEventListener("keydown", onKey); };
   }, [fabMenu]);
-  const [looseColourMenu, setLooseColourMenu] = useState(null); // which loose-fabric row's colour picker is open (its index)
-  const [loosePreview, setLoosePreview] = useState(null); // { src, name } of the loose-fabric colour swatch currently hovered — the enlarge-on-hover
   // Width, Depth and Height all filled = a Box (the rule sD applies when a dimension is typed). A truss
   // whose type was left at "Single U" by some other path (a copied build, a photo's own dims) hid the
   // Custom Ceiling and priced as a U; trT is brought back in line so every reader — price, Deal Check,
@@ -617,102 +612,10 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         ceiling/curtain count. Not gated by noFabric/fabLiza/fabCurtain: those only
                         govern the AUTOMATIC per-truss counts, an explicit hand-add here should stick
                         regardless. */}
-                    {(()=>{
-                      const looseRows = Array.isArray(zc.looseFabric) ? zc.looseFabric : [];
-                      const looseRates = fabricInv?.rates || {};
-                      const looseUseNew = !!zc.useNewFabric;
-                      const setLooseRows = (next) => sZ({ looseFabric: next });
-                      const addLooseRow = () => setLooseRows([...looseRows, { kind: "liza", colour: "", qty: 0 }]);
-                      const updLooseRow = (i, patch) => setLooseRows(looseRows.map((r, j) => j === i ? { ...r, ...patch } : r));
-                      const delLooseRow = (i) => setLooseRows(looseRows.filter((_, j) => j !== i));
-                      // Carries each colour's own reference photo (IMS Admin → Planning → Fabric
-                      // Stock, same upload the per-colour stock rows there show) so the picker below
-                      // can show what the fabric actually looks like instead of just its name.
-                      const looseColourOpts = (stockKey) => {
-                        const seen = new Map();
-                        (fabricInv?.[stockKey] || []).forEach(r => {
-                          const c = String(r?.colour || "").trim();
-                          if (!c) return;
-                          const k = c.toLowerCase();
-                          if (!seen.has(k)) seen.set(k, { name: c, photo: r.photo || "" });
-                          else if (!seen.get(k).photo && r.photo) seen.get(k).photo = r.photo;
-                        });
-                        return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
-                      };
-                      const selStyle = { fontSize:11, padding:"5px 6px", borderRadius:6, border:`1px solid ${border}`, background:isDark?"#1A1A2E":"#fff", color:textP, width:"100%" };
-                      return <div style={{marginTop:8,paddingTop:8,borderTop:`1px dashed ${border}`}}>
-                        <div style={{fontSize:9,fontWeight:700,color:textS,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Loose fabric <span style={{fontWeight:500,letterSpacing:0,textTransform:"none",opacity:0.8}}>· same {looseUseNew?"New":"Old"} rate as above</span></div>
-                        {looseRows.length>0 && <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:6}}>
-                          {looseRows.map((row, i) => {
-                            const meta = LOOSE_FABRIC_KINDS.find(x => x.key === row.kind) || LOOSE_FABRIC_KINDS[0];
-                            const colourOpts = looseColourOpts(meta.stockKey);
-                            const rawRate = looseUseNew ? looseRates[meta.rateKeyNew] : looseRates[meta.rateKey];
-                            const rate = Number((rawRate===undefined||rawRate===null||rawRate==="") ? looseRates[meta.rateKey] : rawRate) || 0;
-                            const rowCost = (Number(row.qty)||0) * rate;
-                            // flex + wrap, not a 4-col grid — a grid's fixed-width tracks (kind/qty/
-                            // unit+cost+delete) never give back space under pressure, so on a narrow
-                            // viewport (iPad width and below) every pixel of squeeze landed on the
-                            // colour button alone, crushing "Ivory" down to an unreadable "I…" while
-                            // the kind select's own "🎀 Curtain" still clipped to "Curtai" (no room for
-                            // even that). Wrapping lets the colour button keep a sane minimum width and
-                            // drop to its own line instead.
-                            return <div key={i} style={{display:"flex",flexWrap:"wrap",gap:5,alignItems:"center",padding:"5px 6px",borderRadius:6,background:isDark?"rgba(255,255,255,0.04)":"#fff",border:`1px solid ${border}`}}>
-                              {/* 96px, not 88 — iOS Safari's own select chrome (its arrow area) eats
-                                  more width than desktop's, and "🎀 Curtain" is the longest label. */}
-                              <select value={row.kind} onChange={e=>updLooseRow(i,{kind:e.target.value, colour:""})} style={{...selStyle,width:96,flex:"0 0 96px"}}>
-                                {LOOSE_FABRIC_KINDS.map(x=><option key={x.key} value={x.key}>{x.emoji} {x.label}</option>)}
-                              </select>
-                              <div style={{position:"relative",flex:"1 1 110px",minWidth:110}}>
-                                <button type="button" onClick={()=>setLooseColourMenu(m=>m===i?null:i)}
-                                  style={{...selStyle, display:"flex", alignItems:"center", gap:5, cursor:"pointer", color:row.colour?accent:textS, borderColor:row.colour?accent:border}}>
-                                  {(() => { const sel = colourOpts.find(c => c.name === row.colour); return sel?.photo
-                                    ? <img src={thumbUrl(sel.photo, 14)} loading="lazy" decoding="async" alt="" style={{width:14,height:14,borderRadius:3,objectFit:"cover",flexShrink:0,border:`1px solid ${border}`}}/> : null; })()}
-                                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,textAlign:"left"}}>{row.colour || "— Colour —"}</span>
-                                  <span style={{fontSize:9,opacity:0.6,flexShrink:0}}>▾</span>
-                                </button>
-                                {looseColourMenu === i && <>
-                                  <div className="fixed inset-0 z-40" onClick={()=>{setLooseColourMenu(null);setLoosePreview(null);}} />
-                                  <div style={{position:"absolute",top:"100%",left:0,marginTop:2,zIndex:50,width:180,maxHeight:230,overflowY:"auto",background:isDark?"#1A1A2E":"#fff",border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 8px 24px rgba(0,0,0,0.2)",padding:4}}>
-                                    <div onClick={()=>{updLooseRow(i,{colour:""});setLooseColourMenu(null);setLoosePreview(null);}}
-                                      style={{padding:"5px 7px",borderRadius:5,cursor:"pointer",fontSize:11,color:textS}}>— Colour —</div>
-                                    {colourOpts.map(c => (
-                                      <div key={c.name} onClick={()=>{updLooseRow(i,{colour:c.name});setLooseColourMenu(null);setLoosePreview(null);}}
-                                        onMouseEnter={()=>c.photo && setLoosePreview({src:c.photo, name:c.name})} onMouseLeave={()=>setLoosePreview(null)}
-                                        style={{display:"flex",alignItems:"center",gap:6,padding:"5px 7px",borderRadius:5,cursor:"pointer",fontSize:11,
-                                          background:row.colour===c.name?`${accent}18`:"transparent",color:row.colour===c.name?accent:textP,fontWeight:row.colour===c.name?700:400}}>
-                                        {c.photo ? <img src={thumbUrl(c.photo, 16)} loading="lazy" decoding="async" alt="" style={{width:16,height:16,borderRadius:3,objectFit:"cover",flexShrink:0,border:`1px solid ${border}`}}/>
-                                          : <span style={{width:16,height:16,borderRadius:3,flexShrink:0,border:`1px dashed ${border}`}}/>}
-                                        <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                  {/* Enlarge-on-hover (owner ask, 2026-11-02): the per-colour reference
-                                      photo IMS Admin uploads is a 16px swatch in the list above — too
-                                      small to actually tell colours apart by eye. Hovering a row floats
-                                      this bigger preview beside the panel. Must be a SIBLING of the
-                                      scrollable panel above, not nested inside it — a CSS quirk makes
-                                      `overflowY: auto` with no explicit overflowX compute overflowX to
-                                      auto too, so a preview positioned to poke out past the panel's own
-                                      right edge was getting clipped by that same scrollbar. */}
-                                  {loosePreview && <div style={{position:"absolute",top:"100%",left:186,marginTop:2,zIndex:50,width:120,height:120,borderRadius:8,overflow:"hidden",border:`1px solid ${border}`,boxShadow:"0 8px 24px rgba(0,0,0,0.25)",background:isDark?"#111":"#fff"}}>
-                                    <img src={fitUrl(loosePreview.src, 240)} alt={loosePreview.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                                  </div>}
-                                </>}
-                              </div>
-                              <NumField min={0} value={row.qty||""} onCommit={n=>updLooseRow(i,{qty:n})} blankCommit commitOn="blur" placeholder="0"
-                                style={{...S.input,width:46,flex:"0 0 46px",padding:"5px 4px",fontSize:11.5,fontWeight:600,textAlign:"center"}} />
-                              <div style={{display:"flex",alignItems:"center",gap:7,marginLeft:"auto"}}>
-                                <span style={{fontSize:9.5,color:textS}}>{meta.unit}</span>
-                                {showCosts && <span style={{fontSize:10.5,fontWeight:600,color:textP,minWidth:38,textAlign:"right"}}>{fmt(isTrussFoc(zc) ? 0 : rowCost)}</span>}
-                                <span onClick={()=>delLooseRow(i)} title="Remove" style={{cursor:"pointer",color:"#E11D48",fontSize:13,fontWeight:700,lineHeight:1}}>✕</span>
-                              </div>
-                            </div>;
-                          })}
-                        </div>}
-                        <button type="button" onClick={addLooseRow}
-                          style={{fontSize:10.5,fontWeight:600,color:accent,background:"transparent",border:`1px dashed ${accent}80`,borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>+ Add loose fabric</button>
-                      </div>;
-                    })()}
+                    <div style={{marginTop:8,paddingTop:8,borderTop:`1px dashed ${border}`}}>
+                      <LooseFabricEditor rows={zc.looseFabric} onChange={(next)=>sZ({looseFabric:next})} fabricInv={fabricInv} useNew={!!zc.useNewFabric} free={isTrussFoc(zc)}
+                        showCosts={showCosts} fmt={fmt} S={S} accent={accent} border={border} textP={textP} textS={textS} isDark={isDark} />
+                    </div>
                   </div>}
                   <div style={groupCard} title="Masking panels attach to this truss">
                     <div style={{...rowCap,marginBottom:6}}>Masking</div>
@@ -1397,6 +1300,9 @@ export default function StudioBuild({ ctx }) {
   // Setup Book, and nobody has to hunt for a gone option to un-pick it (owner ask 2026-11-10). Earlier saves keep it as history.
   // A colour that still has a row, even with no stock or switched off for Build, is kept.
   const fabricInvForClean = structRates?.trussInv;
+  // Elements panel's "🧵 Loose fabric" (owner ask 2026-11-17): which zones have the loose-fabric editor opened by hand - one
+  // that already has rows shows it anyway. It edits the zone's own looseFabric, the same list the truss Fabric card edits.
+  const [looseOpenZones, setLooseOpenZones] = useState({});
   useEffect(() => {
     const cleaned = (raw) => { const keep = dropRemovedFabricColours(fabricInvForClean, parseFabricPalette(raw)); return keep ? stringifyFabricPalette(keep) : null; };
     const p0 = cleaned(clientPalette);
@@ -5205,7 +5111,11 @@ undefined
                 })()}
                 {/* Adding an element belongs beside the element list, not up on the photo pager.
                     Gated on the panel: adding to a collapsed list would look like nothing happened. */}
-                {isElCardOpen(k)&&<div className="ael-widget" style={{position:"relative"}}>
+                {isElCardOpen(k)&&<div className="ael-widget" style={{position:"relative",display:"flex",alignItems:"center",gap:6}}>
+                    {/* loose Liza / masking / curtains for this zone, truss or not (billed with Truss & Masking) */}
+                    {!((zoneConfig[k]?.looseFabric||[]).length) && <button type="button" onClick={()=>setLooseOpenZones(p=>({...p,[k]:!p[k]}))}
+                      title="Add loose Liza, masking or curtains to this zone - billed with Truss & Masking"
+                      style={{fontSize:11,fontWeight:600,color:accent,background:looseOpenZones[k]?`${accent}14`:"transparent",border:`1px dashed ${accent}80`,borderRadius:7,padding:"3px 9px",cursor:"pointer",whiteSpace:"nowrap",fontFamily:"inherit"}}>🧵 Loose fabric</button>}
                     <input value={zoneElSearch[k]||""}
                       onChange={e=>{
                         setZoneElSearch(p=>({...p,[k]:e.target.value}));
@@ -5367,6 +5277,12 @@ undefined
                     })()}
                 </div>}
               </div>
+              {isElCardOpen(k)&&(looseOpenZones[k]||(zoneConfig[k]?.looseFabric||[]).length>0)&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
+                <LooseFabricEditor rows={zoneConfig[k]?.looseFabric} caption={`billed with Truss & Masking, ${zoneConfig[k]?.useNewFabric?"New":"Old"} fabric rate`}
+                  onChange={(next)=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...(p[k]||{}),looseFabric:next}}));if(!next.length)setLooseOpenZones(p=>({...p,[k]:false}));}}
+                  fabricInv={fabricInvForClean} useNew={!!zoneConfig[k]?.useNewFabric} free={isTrussFoc(zoneConfig[k])}
+                  showCosts={showCosts} fmt={fmt} S={S} accent={accent} border={border} textP={textP} textS={textS} isDark={isDark} />
+              </div>}
               {isElCardOpen(k)&&<div style={{background:isDark?"#12121F":"#FAFAFA",borderRadius:10,padding:"10px 14px",marginBottom:10}}>
                 {(zoneElements[k]||[]).length===0&&<div style={{fontSize:11,color:textS,lineHeight:1.5,padding:"2px 0"}}>No elements on this photo yet — use <strong style={{color:textP,fontWeight:600}}>+ Add element…</strong> above, or pick a photo that has an element card.</div>}
               <div className="el-grid" style={{"--el-cols":elCols}}>

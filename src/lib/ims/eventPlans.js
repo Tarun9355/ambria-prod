@@ -6,6 +6,7 @@
 import { ZONE_META, trussBaseArea } from "../studio/taxonomy";
 import { calcZoneTrussPreview, calcZoneFabric, repeatCatFor, scaleTrussPreview } from "../studio/pricing";
 import { carpetFloorsOf, planCarpets } from "./carpetPlan";
+import { isTrussFoc } from "../studio/foc.js";
 import { planElements } from "./elementPlan";
 
 export function makeEventPlans({ sel, inventory, blocks, eventOrders, settings, trussInv }) {
@@ -42,11 +43,29 @@ export function makeEventPlans({ sel, inventory, blocks, eventOrders, settings, 
     return out;
   };
   // The truss rows as the Fabric block reads them (one entry per truss row: function, zone, its photo, the fabric it needs).
-  const fabricEntriesOf = () => trussPlanOf().map((e) => ({
-    fi: e.fi, zk: e.zk, ri: e.ri, zLabel: e.zLabel, fnLabel: e.fn?.type || `Function ${e.fi + 1}`,
-    photo: e.fn?.elSelectedPhoto?.[e.zk]?.src || "", fab: e.fab, row: e.row,
-    repeat: !!repeatCatFor(e.fn?.zones?.[e.zk], "truss"), // a repeat zone reuses standing fabric: no new colour is worked out for it
-  }));
+  const fabricEntriesOf = () => {
+    const out = trussPlanOf().map((e) => ({
+      fi: e.fi, zk: e.zk, ri: e.ri, zLabel: e.zLabel, fnLabel: e.fn?.type || `Function ${e.fi + 1}`,
+      photo: e.fn?.elSelectedPhoto?.[e.zk]?.src || "", fab: e.fab, row: e.row,
+      repeat: !!repeatCatFor(e.fn?.zones?.[e.zk], "truss"), // a repeat zone reuses standing fabric: no new colour is worked out for it
+    }));
+    // A zone with loose fabric but no truss (Build's Elements "🧵 Loose fabric", owner ask 2026-11-17) is not a truss row, so
+    // the truss plan skips it - added here with no drape of its own, or its Liza / masking / curtains never reach the Fabric
+    // block or the Dept Book. Deal Check's fabric plan already counts it (it walks every zone's own row).
+    const have = new Set(out.map((e) => `${e.fi}|${e.zk}|${e.ri}`));
+    (Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).forEach((fn, fi) => {
+      const en = fn?.enabledEls || {}, zones = fn?.zones || {};
+      Object.keys(zones).forEach((zk) => {
+        const zc = zones[zk];
+        if (!en[zk] || !zc || have.has(`${fi}|${zk}|0`) || isTrussFoc(zc)) return;
+        if (!(Array.isArray(zc.looseFabric) && zc.looseFabric.some((lf) => (Number(lf?.qty) || 0) > 0))) return;
+        const zLabel = (fn?.zoneNames?.[zk]) || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\w/g, (c) => c.toUpperCase());
+        out.push({ fi, zk, ri: 0, zLabel, fnLabel: fn?.type || `Function ${fi + 1}`, photo: fn?.elSelectedPhoto?.[zk]?.src || "",
+          fab: { lizaKg: 0, curtainPieces: 0, maskingPieces: 0 }, row: zc, repeat: !!repeatCatFor(zc, "truss") });
+      });
+    });
+    return out;
+  };
   // Each function's Fabric Palette as Build last synced it (only functions where Build keeps it live): the Fabric block works the colours out from it, so a
   // palette change in Build shows here without a Deal Check sync.
   const fabricPalettesOf = () => {
