@@ -12,6 +12,7 @@ import { TRUSS_MATERIALS } from "../../lib/studio/taxonomy";
 import { MANPOWER_TYPES } from "../../lib/ims/constants";
 import { thumbUrl } from "../../lib/studio/thumb";
 import { useConfirm } from "../../components/ui";
+import { makeSubcatDept } from "../../lib/ims/deptClassify";
 
 export default function FixedVenuesEditor({ settings, setSettings, inventory = [], trussInv = null }) {
   const [confirm, confirmDialog] = useConfirm();
@@ -236,6 +237,14 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
   // (which searches the rest of IMS inventory to ADD something new). Keyed by venue id, same as
   // pickQuery, so switching tabs doesn't carry one venue's filter onto another.
   const [standingSearch, setStandingSearch] = useState({});
+  // Department tabs over a venue's standing inventory (owner ask 2026-11-17): click one to see only that department's items.
+  // Keyed by venue id like the search; "" = All. An item's department is its sub-category's, as Planning reads it.
+  const [standingDept, setStandingDept] = useState({});
+  const subcatDept = useMemo(() => makeSubcatDept(inventory, settings.categoryDepartments), [inventory, settings.categoryDepartments]);
+  const standingDeptOf = (it) => {
+    const inv = inventory.find((i) => i.id === it.invId);
+    return inv ? (subcatDept(inv.subCat || inv.subcategory, inv.cat || inv.category) || "Other") : "Other";
+  };
   // Pieces of a truss size (ONE material) available to assign HERE = that material's own stock
   // (Planning) minus what other fixed venues already hold standing of it — a Pole pillar never
   // competes with an Iron one for the same stock pool.
@@ -349,6 +358,26 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
             </div>
 
             <div className="text-xs font-semibold text-gray-500 uppercase mb-1.5">Standing inventory <span className="font-normal text-gray-400 normal-case">— specific items installed here (location = {v.name})</span></div>
+            {(() => {
+              const counts = {};
+              v.items.forEach((it) => { const d = standingDeptOf(it); counts[d] = (counts[d] || 0) + 1; });
+              const depts = Object.keys(counts).sort();
+              if (depts.length < 2) return null;
+              const cur = counts[standingDept[v.id]] ? standingDept[v.id] : "";
+              const chip = (key, label, n) => (
+                <button key={key || "all"} type="button" aria-pressed={cur === key}
+                  onClick={() => setStandingDept((m) => ({ ...m, [v.id]: key }))}
+                  className={"px-3 py-1 rounded-full text-xs font-semibold border transition-colors " + (cur === key ? "bg-gray-900 text-white border-gray-900" : "bg-white text-gray-600 border-gray-200 hover:border-gray-400")}>
+                  {label} <span className={"tabular-nums " + (cur === key ? "text-gray-300" : "text-gray-400")}>{n}</span>
+                </button>
+              );
+              return (
+                <div className="flex flex-wrap gap-1.5 mb-1.5" role="group" aria-label={`${v.name} standing inventory by department`}>
+                  {chip("", "All", v.items.length)}
+                  {depts.map((d) => chip(d, d, counts[d]))}
+                </div>
+              );
+            })()}
             {v.items.length > 4 && (
               <input value={standingSearch[v.id] || ""} onChange={(e) => setStandingSearch((s) => ({ ...s, [v.id]: e.target.value }))}
                 placeholder={`Search ${v.name}'s standing inventory…`}
@@ -356,6 +385,8 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
             )}
             <div className="space-y-1.5 mb-2">
               {v.items.filter((it) => {
+                const dSel = standingDept[v.id];
+                if (dSel && standingDeptOf(it) !== dSel && v.items.some((x) => standingDeptOf(x) === dSel)) return false;
                 const q = (standingSearch[v.id] || "").trim().toLowerCase();
                 if (!q) return true;
                 return q.split(/\s+/).every((t) => (it.name || "").toLowerCase().includes(t));
@@ -521,7 +552,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
               })}
               {/* Same plain wording as the placeholder — "designs" only means something to us. */}
               {v.items.length === 0 && <div className="text-xs text-gray-400 italic">Nothing added yet — search below for the items permanently installed at {v.name}.</div>}
-              {v.items.length > 0 && (standingSearch[v.id] || "").trim() && !v.items.some((it) => (standingSearch[v.id] || "").trim().toLowerCase().split(/\s+/).every((t) => (it.name || "").toLowerCase().includes(t))) && (
+              {v.items.length > 0 && (standingSearch[v.id] || "").trim() && !v.items.some((it) => (!standingDept[v.id] || standingDeptOf(it) === standingDept[v.id]) && (standingSearch[v.id] || "").trim().toLowerCase().split(/\s+/).every((t) => (it.name || "").toLowerCase().includes(t))) && (
                 <div className="text-xs text-gray-400 italic">No standing item matches “{standingSearch[v.id]}”.</div>
               )}
             </div>
