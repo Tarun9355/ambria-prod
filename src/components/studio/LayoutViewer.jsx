@@ -9,7 +9,10 @@ export default function LayoutViewer({ layouts = [], onClose, actions = null }) 
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // the page behind does not scroll while the layout is open
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prevOverflow; };
   }, [onClose]);
   // Drawn on document.body, not where it is used: inside Deal Check (a transformed, stacked overlay) a fixed layer is placed and
   // clipped by that overlay, and the layout showed cut off under its header. On the body it covers the whole screen.

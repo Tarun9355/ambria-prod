@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { uploadToStorage, STORAGE_FOLDERS } from "../../lib/storage";
 import { fitUrl } from "../../lib/studio/thumb.js";
 import LayoutViewer from "./LayoutViewer.jsx";
@@ -7,16 +7,29 @@ import LayoutViewer from "./LayoutViewer.jsx";
 // as an image. Empty: "+ Layout" opens the file picker. Set: a small thumbnail chip that opens the layout full screen, with
 // Replace and Remove there. The URL is the function's own (clientLayoutUrl for function 1, extraFunctions[i].layoutUrl for the
 // rest) and reaches Deal Check and IMS with the function - the Dept Book prints it on a full page right after the cover.
-export default function LayoutUpload({ value, onChange, accent, border, cardBg, textP, textS }) {
+// ownerKey: which deal and function this control is for right now. An upload takes seconds; if the salesperson opens another
+// deal or the function list shifts meanwhile, the finished upload is dropped rather than landing on whatever is open then.
+export default function LayoutUpload({ value, onChange, ownerKey = "", accent, border, cardBg, textP, textS }) {
   const fileRef = useRef(null);
+  const ownerRef = useRef(ownerKey);
+  ownerRef.current = ownerKey;
+  // gone from the screen (Build left mid-upload): nothing here knows any more which deal is open, so the upload is dropped
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const pick = () => fileRef.current && fileRef.current.click();
   const upload = async (file) => {
     if (!file) return;
-    if (!/^image\/(jpeg|png|webp)$/i.test(file.type || "")) { alert("Layout must be an image — JPG or PNG. A PDF layout: export or screenshot it as an image first."); return; }
+    if (!/^image\/(jpeg|png|webp)$/i.test(file.type || "")) { alert("Layout must be an image — JPG, PNG or WebP. A PDF layout: export or screenshot it as an image first."); return; }
+    if (file.size > 15 * 1024 * 1024) { alert("That image is over 15 MB — export the layout smaller (or as JPG) and upload again."); return; }
+    const owner = ownerRef.current;
     setBusy(true);
-    try { onChange(await uploadToStorage(file, STORAGE_FOLDERS.CLIENT)); setOpen(false); }
+    try {
+      const url = await uploadToStorage(file, STORAGE_FOLDERS.CLIENT);
+      if (!alive.current || ownerRef.current !== owner) { alert("The layout finished uploading after you moved to another deal or function — it was not attached. Upload it again where you want it."); return; }
+      onChange(url); setOpen(false);
+    }
     catch (e) { alert("Layout upload failed: " + (e?.message || e)); }
     finally { setBusy(false); if (fileRef.current) fileRef.current.value = ""; }
   };

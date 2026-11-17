@@ -4747,6 +4747,8 @@ export default function StudioApp() {
           // and the live fabric stock) instead of waiting for the next Deal Check sync. fabricPaletteLive marks the field as kept live (a constant, not a time, so it never changes the layout fingerprint).
           fabricPalette: fd.fnPalette || "",
           fabricPaletteLive: true,
+          // the function's layout image, so the Dept Book's layout page follows an upload / remove at once
+          layoutUrl: fd.fnLayoutUrl || "",
         });
       });
     } catch { return; }

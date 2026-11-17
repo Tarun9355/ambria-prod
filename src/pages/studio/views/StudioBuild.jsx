@@ -4230,6 +4230,7 @@ undefined
             function 1 in clientLayoutUrl, every other one as extraFunctions[i].layoutUrl. Deal Check shows it; the Dept Book prints
             it on a full page right after the cover. */}
         <LayoutUpload
+          ownerKey={`${activeClientId || ""}|${activeFnIdx}|${isPrimaryFn ? (clientDate || "") : (extraFunctions[activeFnIdx - 1]?.date || "")}|${isPrimaryFn ? (fn || "") : (extraFunctions[activeFnIdx - 1]?.type || "")}`}
           value={isPrimaryFn ? (clientLayoutUrl || "") : (extraFunctions[activeFnIdx - 1]?.layoutUrl || "")}
           onChange={(url) => {
             if (isPrimaryFn) setClientLayoutUrl(url || "");
