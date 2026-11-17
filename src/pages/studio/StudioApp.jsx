@@ -13721,9 +13721,9 @@ export default function StudioApp() {
       oosGateStashRef.current = null;
       const fresh = scanOutOfStockElements();
       if (fresh.length > 0) setOosGateModal(fresh);
-      else showMsg?.("✅ All out-of-stock items fixed — click Mark Sold again to confirm.", "green");
+      else showMsg?.(oosGateReason === "dealCheckAutoSync" ? "✅ All out-of-stock items fixed — the stock is reserved with this change." : oosGateReason === "syncToOps" ? "✅ All out-of-stock items fixed — push to IMS again." : "✅ All out-of-stock items fixed — click Mark Sold again to confirm.", "green");
     }
-  }, [availModal, oosFixPending, scanOutOfStockElements, showMsg]);
+  }, [availModal, oosFixPending, scanOutOfStockElements, showMsg, oosGateReason]);
   const saveAvailPick = useCallback(() => {
     if (!availModal) return;
     const { zoneKey, idx, selectedId, items, onPick } = availModal;

@@ -586,8 +586,12 @@ export default function StudioModals({ ctx }) {
           : oosGateReason === "syncToOps"
           ? "These items are out of stock for this date and can't be made in production. Pick an alternative below for each one before pushing this department breakdown to IMS Dept Ops."
           : "These items are out of stock for this date and can't be made in production. Pick an alternative below for each one before this deal can be marked Sold.";
+        // A booked deal's change that could not be reserved (owner ask 2026-11-17): no Close and no click-outside - it stays
+        // until every row is fixed (each Fix re-checks; the last one closes it). Sold / push-to-IMS keep their Close: closing
+        // those only cancels that one action.
+        const locked = oosGateReason === "dealCheckAutoSync";
         return (
-      <div onClick={() => { setOosGateModal(null); setOosGateReason(null); }} style={{position:"fixed",inset:0,zIndex:9400,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div onClick={locked ? undefined : () => { setOosGateModal(null); setOosGateReason(null); }} style={{position:"fixed",inset:0,zIndex:9400,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div onClick={e => e.stopPropagation()} style={{width:"min(520px, 100%)",maxHeight:"80vh",background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
             <div style={{padding:"18px 20px",borderBottom:`1px solid ${border}`}}>
               <div style={{fontSize:16,fontWeight:700,color:"#EF4444",display:"flex",alignItems:"center",gap:8}}><IconBox size={16}/> {headline}</div>
@@ -623,7 +627,9 @@ export default function StudioModals({ ctx }) {
               )); })()}
             </div>
             <div style={{padding:"12px 20px",borderTop:`1px solid ${border}`,textAlign:"right"}}>
-              <button onClick={() => { setOosGateModal(null); setOosGateReason(null); }} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Close</button>
+              {locked
+                ? <div style={{fontSize:11.5,fontWeight:600,color:"#EF4444",textAlign:"left"}}>Fix every item above to continue — this closes by itself once the last one is fixed.</div>
+                : <button onClick={() => { setOosGateModal(null); setOosGateReason(null); }} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textS,fontSize:12,fontWeight:600,cursor:"pointer"}}>Close</button>}
             </div>
           </div>
         </div>
