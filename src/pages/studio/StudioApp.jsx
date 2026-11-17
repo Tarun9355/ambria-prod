@@ -6831,7 +6831,7 @@ export default function StudioApp() {
             if (skeletonMaterialKey(trussInv, t.trussMaterial) !== mat || !(Number(t.allocation?.totals?.[kind]?.[sz]) > 0)) return;
             const unit = kind === "beamsUsed" ? "beam" : "pillar";
             const q = (kind === "beamsUsed" ? sm?.overflowBeams : sm?.overflowPillars)?.[k];
-            rows.push({ key: `${t.fnIdx}|${t.zoneKey}|${t.rowIdx || 0}`, date, kind: unit, text: `${q}× ${label(k, unit)}` });
+            rows.push({ key: `${t.fnIdx}|${t.zoneKey}|${t.rowIdx || 0}`, date, kind: unit, text: `${q}× ${label(k, unit)}`, sk: `${kind}|${k}` });
           }));
           flagged.push({ domain: "truss", emoji: "🏗️", date, detail: bits.join(", ") || "stock shortfall", where, rows });
         }
@@ -6868,6 +6868,73 @@ export default function StudioApp() {
     try { scanTrussStockShortage().forEach((f) => (f.rows || []).forEach((r) => { (m[r.key] ||= []).push(r); })); } catch { /* a scan error never breaks Build */ }
     return m;
   }, [scanTrussStockShortage]);
+  // What would get a short truss off the short stock (owner ask 2026-11-17: "alternative bhi dedo"): per short truss row, a
+  // nearby Width / Depth (a short beam) or Height (a short pillar), and the other materials - each one tried on the real
+  // date check, the same allocation the Sold gate runs. One is offered only when THIS truss then draws none of the short
+  // sizes and the date gets no NEW shortage from it. Other trusses on the same date may still need their own change.
+  const trussShortAlternatives = useMemo(() => {
+    const keys = Object.keys(trussStockShort || {});
+    const trussInv = studioFloralData?.trussInv;
+    if (!keys.length || !trussInv) return {};
+    const out = {};
+    try {
+      const allFns = collectAllFunctionData();
+      keys.forEach((key) => {
+        const [fiStr, zk, riStr] = key.split("|");
+        const fi = Number(fiStr), ri = Number(riStr) || 0;
+        const shorts = trussStockShort[key] || [];
+        const date = shorts[0]?.date;
+        const shortKeys = new Set(shorts.map((r) => r.sk).filter(Boolean));
+        const fn = allFns.find((f) => f.fnIdx === fi);
+        const zc = fn?.zoneConfig?.[zk];
+        const row = zc ? (ri === 0 ? zc : (zc.extraTrussRows || [])[ri - 1]) : null;
+        if (!date || !row || !shortKeys.size) return;
+        const others = (studioFloralData.trussAlloc?.[date]?.events || []).filter((ev) => ev.eoId !== SELF_CHECK_EOID && ev.clientId !== activeClientId);
+        // the date with this truss changed by `patch`: does it stay off every short size, and add no new shortage?
+        const works = (patch) => {
+          const fnsForDate = allFns.filter((f) => f.fnDate === date).map((f) => {
+            let zones = f.zoneConfig || {};
+            if (f.fnIdx === fi && zones[zk]) {
+              const z = zones[zk];
+              const nz = ri === 0 ? { ...z, ...patch(z) } : { ...z, extraTrussRows: (z.extraTrussRows || []).map((r, i) => (i === ri - 1 ? { ...r, ...patch(r) } : r)) };
+              zones = { ...zones, [zk]: nz };
+            }
+            return { fnIdx: f.fnIdx, date, zones, enabledEls: f.enabledEls || {} };
+          });
+          const meta = { eoId: SELF_CHECK_EOID, clientId: activeClientId || "self", clientName: "alt", state: "hard", createdAt: Date.now() };
+          const entry = buildEventAllocation(meta, fnsForDate, trussInv);
+          const mine = (entry.trusses || []).find((t) => t.fnIdx === fi && t.zoneKey === zk && (t.rowIdx || 0) === ri);
+          if (!mine) return false;
+          const usesShort = [...shortKeys].some((sk) => {
+            const [kind, mat, sz] = sk.split("|");
+            return skeletonMaterialKey(trussInv, mine.trussMaterial) === mat && Number(mine.allocation?.totals?.[kind]?.[sz]) > 0;
+          });
+          if (usesShort) return false;
+          const res = allocateForDate({}, date, [...others, entry], trussInv, "studio-alt-check");
+          const sm = res[date]?.stockSummary || {};
+          const now = [...Object.keys(sm.overflowPillars || {}).map((k) => `pillarsUsed|${k}`), ...Object.keys(sm.overflowBeams || {}).map((k) => `beamsUsed|${k}`)];
+          return now.every((k) => shortKeys.has(k));
+        };
+        const alts = [];
+        const d = row.dims || {};
+        const beamShort = shorts.some((r) => r.kind === "beam");
+        const pillarShort = shorts.some((r) => r.kind === "pillar");
+        const tryDim = (dim, label) => {
+          const v = Number(d[dim]) || 0;
+          if (!v) return;
+          const at = (nv) => works((r) => ({ dims: { ...(r.dims || {}), [dim]: nv } }));
+          for (let k = 1; k <= 6 && v - k > 0; k++) if (at(v - k)) { alts.push({ type: "dim", d: dim, v: v - k, label: `${label} ${v - k} ft` }); break; }
+          for (let k = 1; k <= 3; k++) if (at(v + k)) { alts.push({ type: "dim", d: dim, v: v + k, label: `${label} ${v + k} ft` }); break; }
+        };
+        if (beamShort) { tryDim("W", "Width"); tryDim("L", "Depth"); }
+        if (pillarShort) tryDim("H", "Height");
+        const curMat = String(row.trussMaterial || "iron").toLowerCase();
+        TRUSS_MATERIALS.forEach((m) => { if (m.key !== curMat && works(() => ({ trussMaterial: m.key }))) alts.push({ type: "mat", mat: m.key, label: m.label }); });
+        if (alts.length) out[key] = alts;
+      });
+    } catch { /* suggestions only - never break Build */ }
+    return out;
+  }, [trussStockShort, studioFloralData, collectAllFunctionData, activeClientId]);
 
   // Pre-Sold gate #3 — see ledgerPreflightShortfalls' own comment (lib/studio/ledgerPreflight.js):
   // Build's own per-row availability check credits cross-function reuse for PRICING, but the real
@@ -15565,7 +15632,7 @@ export default function StudioApp() {
   const settingsSaveClientLedger = (nl, del, o) => { if (!canSettingsEdit) return Promise.resolve(false); return saveClientLedger(nl, del, o); };
 
   const ctx = {
-    trussStockShort,
+    trussStockShort, trussShortAlternatives,
     // theme / chrome
     S, isDark, accent, border, textS, fmt, cat,
     textP, accentBg, accentText, cardBg,
