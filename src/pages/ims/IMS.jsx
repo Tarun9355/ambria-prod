@@ -198,6 +198,9 @@ const prodToRow = (p) => ({ id: p.id, item_id: p.inventoryId ?? null, fn_id: p.f
 // event_orders — read-mostly here (Truss uses it as a legacy fallback; Events tab is a
 // later phase). Full object carried so the eventual Events build is forward-compatible.
 const rowToEO = (row) => ({ ...(row.data || {}), id: row.id, status: row.status ?? row.data?.status });
+// An event order held with no deal in it - no client, no functions: what a dataless realtime change used to leave behind.
+// Never written whole over a real row (setEventOrders).
+const isStubEO = (eo) => !!eo && !eo.clientName && !eo.clientId && !(Array.isArray(eo.functionsDetail) && eo.functionsDetail.length);
 
 // truss_allocations — keyed by date. The reference treats trussAlloc as an object
 // { [date]: entry } where entry = { events, pool, stockSummary, ... }. The table has
@@ -1667,7 +1670,29 @@ export default function IMS() {
           next = prev.filter((r) => r.id !== payload.old.id);
         } else {
           const eo = rowToEO(payload.new);
-          next = prev.some((r) => r.id === eo.id) ? prev.map((r) => (r.id === eo.id ? eo : r)) : [...prev, eo];
+          // A change that carries no `data` - only another column changed (auto-confirm's status-only claim, "confirming"),
+          // and Postgres leaves a large unchanged column out of the change it streams - must NOT replace the held order with
+          // {id, status}. That stub used to be written straight back over the row by the next save (auto-confirm's "blocked"),
+          // wiping the deal: client, functions, everything (Sahil, 23 Nov 2026 - its stock stayed held under a nameless order).
+          // Keep what is held and take just the new status; an order not held yet is fetched whole. Studio's own listener
+          // already did this (StudioApp.jsx, "dataless").
+          const dataless = payload.new?.data == null;
+          const held = prev.find((r) => r.id === eo.id);
+          if (dataless && held) {
+            next = prev.map((r) => (r.id === eo.id ? { ...r, status: eo.status ?? r.status } : r));
+          } else if (dataless) {
+            supabase.from("event_orders").select("*").eq("id", eo.id).maybeSingle().then(({ data: row }) => {
+              if (!row) return;
+              const full = rowToEO(row);
+              const cur = eventOrdersRef.current;
+              const merged = cur.some((r) => r.id === full.id) ? cur.map((r) => (r.id === full.id ? full : r)) : [...cur, full];
+              eventOrdersRef.current = merged;
+              setEventOrdersState(merged);
+            }, () => {});
+            return;
+          } else {
+            next = held ? prev.map((r) => (r.id === eo.id ? eo : r)) : [...prev, eo];
+          }
         }
         eventOrdersRef.current = next;
         setEventOrdersState(next);
@@ -2441,6 +2466,17 @@ export default function IMS() {
       for (const eo of next) {
         const before = prevMap.get(eo.id);
         if (!before || JSON.stringify(before) !== JSON.stringify(eo)) {
+          // An order held without its deal (no client, no functions) is a stub - see the realtime handler. Written whole it
+          // would wipe the row; instead its few fields (status, blockedAt, ...) are laid over the row as it stands.
+          if (isStubEO(eo)) {
+            const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
+            if (row && row.data && !isStubEO(row.data)) {
+              const { error: e } = await writeWithRetry(() => supabase.from("event_orders").update({ status: eo.status ?? row.data.status ?? "pending", data: { ...row.data, ...eo } }).eq("id", eo.id),
+                { target: `event_orders:${eo.id}`, label: "event_orders row", retryable: false });
+              if (e) setError(`Save failed: ${e.message}`);
+              continue;
+            }
+          }
           const { error: e } = await retryingUpsert("event_orders", { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo });
           if (e) setError(`Save failed: ${e.message}`);
         }
