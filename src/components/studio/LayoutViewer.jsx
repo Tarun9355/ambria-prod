@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { fitUrl } from "../../lib/studio/thumb.js";
 
 // A function's venue layout (floor plan), full screen over everything: Build's Layout chip opens it to check the upload,
@@ -10,9 +11,11 @@ export default function LayoutViewer({ layouts = [], onClose, actions = null }) 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  return (
+  // Drawn on document.body, not where it is used: inside Deal Check (a transformed, stacked overlay) a fixed layer is placed and
+  // clipped by that overlay, and the layout showed cut off under its header. On the body it covers the whole screen.
+  return createPortal(
     <div role="dialog" aria-modal="true" aria-label="Layout" onClick={onClose}
-      style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(16,14,30,0.82)", display: "flex", flexDirection: "column", alignItems: "center", overflowY: "auto", padding: "56px 16px 24px" }}>
+      style={{ position: "fixed", inset: 0, zIndex: 2147483000, background: "rgba(16,14,30,0.82)", display: "flex", flexDirection: "column", alignItems: "center", overflowY: "auto", padding: "56px 16px 24px" }}>
       <button type="button" onClick={onClose} aria-label="Close layout"
         style={{ position: "fixed", top: 14, right: 16, width: 36, height: 36, borderRadius: 18, border: "1px solid rgba(255,255,255,0.35)", background: "rgba(0,0,0,0.35)", color: "#fff", fontSize: 18, lineHeight: 1, cursor: "pointer", fontFamily: "inherit" }}>×</button>
       {layouts.map((l) => (
@@ -26,7 +29,8 @@ export default function LayoutViewer({ layouts = [], onClose, actions = null }) 
           {actions && <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10 }}>{actions(l)}</div>}
         </div>
       ))}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
