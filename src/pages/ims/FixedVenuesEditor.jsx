@@ -409,7 +409,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                     className="border rounded-lg pl-3 pr-8 py-1.5 text-sm w-full"
                     onFocus={() => setPickOpen(v.id)}
                     onChange={(e) => { setPickQuery((s) => ({ ...s, [v.id]: e.target.value })); setPickOpen(v.id); }}
-                    onKeyDown={(e) => { if (e.key === "Escape") { if (pickOpen === v.id) setPickOpen(null); else clear(); } }}
+                    onKeyDown={(e) => { if (e.key === "Escape") { if (open) setPickOpen(null); else clear(); } }}
                     // A click on a result would otherwise be lost to the blur that closes the list.
                     onBlur={() => setTimeout(() => setPickOpen((o) => (o === v.id ? null : o)), 150)}
                   />
@@ -472,12 +472,12 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
               );
             })()}
             <div className="space-y-1.5 mb-2">
-              {v.items.filter((it) => {
-                const dSel = standingDept[v.id];
-                if (dSel && standingDeptOf(it) !== dSel && v.items.some((x) => standingDeptOf(x) === dSel)) return false;
+              {(() => {
+                // the chip picked, if this venue still has items in that department (else All); worked out once, not per item
+                const dSel = standingDept[v.id] && v.items.some((x) => standingDeptOf(x) === standingDept[v.id]) ? standingDept[v.id] : "";
                 const q = (pickQuery[v.id] || "").trim().toLowerCase();
-                return matchesQuery(inventory.find((i) => i.id === it.invId), it.name, q);
-              }).map((it) => {
+                return v.items.filter((it) => (!dSel || standingDeptOf(it) === dSel) && matchesQuery(inventory.find((i) => i.id === it.invId), it.name, q));
+              })().map((it) => {
                 const inv = inventory.find((i) => i.id === it.invId);
                 const img = inv?.img || inv?.photoUrls?.[0] || "";
                 const dimsRaw = inv?.dims_LxWxH ?? inv?.dims?.lxwxh;
