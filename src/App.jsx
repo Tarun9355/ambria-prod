@@ -104,7 +104,9 @@ function Protected({ app, children }) {
   const { user, roleTabs } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
   // Gate by app access (role-driven, per-user override) — a user without this app is bounced.
-  if (app && !userApps(user, roleTabs).includes(app)) return <Navigate to={landingPath(user, roleTabs)} replace />;
+  // Except Deal Check's hidden "All departments PDF" frame: any Studio user may build that book, IMS access or not.
+  const pdfRun = app === "ims" && typeof window !== "undefined" && window.__AMBRIA_PDF_FRAME__ && userApps(user, roleTabs).includes("studio");
+  if (app && !pdfRun && !userApps(user, roleTabs).includes(app)) return <Navigate to={landingPath(user, roleTabs)} replace />;
   return children;
 }
 

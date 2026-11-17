@@ -38,9 +38,9 @@ export default function DeptPdfButton({ eventOrderId, clientKey, border = "rgba(
       else if (d.phase === "error") finish(d.reason || "Could not build the PDF" + (d.notes?.length ? " — " + d.notes[0] : ""), 15000);
     };
     window.addEventListener("message", onMsg);
-    // Never hangs: nothing heard in 90 s (not signed in to IMS here, no access to Planning…) or a run
+    // Never hangs: nothing heard in 90 s (not signed in here, a slow load…) or a run
     // past 4 minutes ends the attempt.
-    const quiet = setTimeout(() => { if (!heard.current) finish("Could not start — open IMS once in this browser and try again", 15000); }, 90000);
+    const quiet = setTimeout(() => { if (!heard.current) finish("Could not start — refresh the page and try again", 15000); }, 90000);
     const cap = setTimeout(() => finish("The PDF took too long — stopped", 15000), 240000);
     return () => { window.removeEventListener("message", onMsg); clearTimeout(quiet); clearTimeout(cap); };
     // eslint-disable-next-line react-hooks/exhaustive-deps

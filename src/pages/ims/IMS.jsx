@@ -2765,6 +2765,9 @@ export default function IMS() {
   // Dept Ops offers a "pick an event from the Calendar" button, but only to roles that actually
   // have the Calendar tab — otherwise it would send someone to a tab their permissions exclude.
   const canSeeCalendar = allowedTabs.some((t) => t.id === "calendar");
+  // Deal Check's hidden PDF run needs Planning (its Dept Ops builds the book) even for someone whose role does not have it -
+  // everyone can download the PDF from Deal Check (owner ask 2026-11-17). Only while that run is on.
+  if (autoPdfFor && !allowedTabs.some((t) => t.id === "planning")) allowedTabs = [...allowedTabs, TABS.find((t) => t.id === "planning")].filter(Boolean);
   if (canApprove(user) && !allowedTabs.some((t) => t.id === "approvals")) {
     const pendN = (amendRequests || []).filter((r) => r.status === "pending").length;
     allowedTabs = [...allowedTabs, { id: "approvals", label: `✅ Approvals${pendN ? ` (${pendN})` : ""}` }];

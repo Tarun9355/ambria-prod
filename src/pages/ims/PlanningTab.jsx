@@ -33,7 +33,9 @@ export default function PlanningTab({ prodRequests, projects, functions, setFunc
   const roleConfig = (settings?.roleTabs || {})[authUser?.role];
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
   const allowed = isAdmin || !roleConfig?.subTabs?.planning ? allTabs : allTabs.filter((t) => roleConfig.subTabs.planning.includes(t.id));
-  const tabs = allowed.length > 0 ? allowed : allTabs;
+  const tabs0 = allowed.length > 0 ? allowed : allTabs;
+  // Deal Check's hidden PDF run needs Dept Ops even if this role's Planning sub-tabs leave it out (everyone can download, 2026-11-17)
+  const tabs = autoPdfFor && !tabs0.some((t) => t.id === "deptops") ? [...tabs0, allTabs.find((t) => t.id === "deptops")] : tabs0;
   const [sub, setSub] = useState(() => { const saved = sessionStorage.getItem("ambria-ims-planning-sub"); return tabs.some((t) => t.id === saved) ? saved : (tabs[0]?.id || "deptops"); });
   useEffect(() => { sessionStorage.setItem("ambria-ims-planning-sub", sub); }, [sub]);
   // ── ONE ROW FOR BOTH PICKERS ON A PHONE ──

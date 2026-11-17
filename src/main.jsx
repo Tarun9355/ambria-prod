@@ -26,6 +26,9 @@ if (/[?&](sweep=1\b|pdfEvent=)/.test(window.location.hash) && window.self !== wi
       },
     });
     if (/[?&]sweep=1\b/.test(window.location.hash)) window.__AMBRIA_SWEEP__ = true; // only once the private storage is in place
+    // The PDF run: IMS opens for anyone signed in to Studio, even without IMS access (owner ask 2026-11-17: everyone can
+    // download from Deal Check). App.jsx's IMS guard and IMS's tab gates read this.
+    if (/[?&]pdfEvent=/.test(window.location.hash)) window.__AMBRIA_PDF_FRAME__ = true;
   } catch { /* cannot isolate sessionStorage — then no sweep runs here at all */ }
 }
 
