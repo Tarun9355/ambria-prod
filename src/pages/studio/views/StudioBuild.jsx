@@ -39,6 +39,7 @@ import { groupIdsForZones } from "../../../lib/studio/zoneGroups";
 import { CUSTOM_ZONE_TAG_PREFIX } from "../../../lib/studio/keys.js";
 import { thumbUrl, fitUrl } from "../../../lib/studio/thumb.js";
 import LooseFabricEditor from "../../../components/studio/LooseFabricEditor.jsx";
+import { isPastFunction, reducedItems } from "../../../lib/studio/pastFunctionLock.js";
 import { prefetchImages } from "../../../lib/studio/prefetchImages.js";
 import { makeS } from "../../../lib/studio/styles";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
@@ -1243,8 +1244,8 @@ export default function StudioBuild({ ctx }) {
     savedInsps, setStep, setPreviewImg,
     floralRatio, setFloralRatio,
     zoneKeys, customZones, setCustomZones, zoneLabelsD, zoneMeta,
-    enabledEls, setEnabledEls, customMode, toggleEl,
-    zoneElements, setZoneElements, zoneConfig, setZoneConfig, setActiveZones,
+    enabledEls, setEnabledEls: setEnabledElsRaw, customMode, toggleEl: toggleElRaw,
+    zoneElements, setZoneElements: setZoneElementsRaw, zoneConfig, setZoneConfig, setActiveZones,
     zoneOrder, setZoneOrder,
     calcElsCost, calcStructCost, calcPhotoCost, getElPrice, applyFloralRatio,
     elSelectedPhoto, selectElPhoto, setElSelectedPhoto, grpSel, setGrpSel, elNotes, setElNotes,
@@ -1295,6 +1296,41 @@ export default function StudioBuild({ ctx }) {
     favPhotos, saveFavPhotos,
     trussStockShort, trussShortAlternatives,
   } = ctx;
+  // ── A FUNCTION THAT IS OVER: ADD, NEVER TAKE AWAY ── (owner ask 2026-11-17)
+  // On a booked deal, a function whose date has passed (lib/studio/pastFunctionLock.js) takes new items but no removal,
+  // lower qty, kit part taken out, or zone switched off - what went to the event is a fact by then. Every element write in
+  // this view goes through setZoneElements below, so each of those paths is covered by one check.
+  const pastLocked = (clientLedger || []).find((c) => c.id === activeClientId)?.status === "booked" && isPastFunction(activeFnMeta?.date);
+  const pastLockNoteRef = useRef(0);
+  const pastLockNote = (what) => {
+    const now = Date.now();
+    if (now - pastLockNoteRef.current < 1500) return; // one message, not one per render pass
+    pastLockNoteRef.current = now;
+    setTimeout(() => showMsg?.(`This function is over — items can be added, not removed or reduced${what ? ` (${what})` : ""}`, "red"), 0);
+  };
+  const setZoneElements = (upd) => {
+    if (!pastLocked) { setZoneElementsRaw(upd); return; }
+    setZoneElementsRaw((prev) => {
+      const next = typeof upd === "function" ? upd(prev) : upd;
+      const cut = reducedItems(prev, next, imsInventory);
+      if (cut.length) { pastLockNote(`${cut[0].name} ${cut[0].from} → ${cut[0].to}`); return prev; }
+      return next;
+    });
+  };
+  const zoneHasItems = (k) => Array.isArray(zoneElements?.[k]) && zoneElements[k].some((e) => (Number(e?.qty) || 0) > 0);
+  const toggleEl = (k) => {
+    if (pastLocked && enabledEls?.[k] && zoneHasItems(k)) { pastLockNote("a zone with items can't be switched off"); return; }
+    toggleElRaw(k);
+  };
+  const setEnabledEls = (upd) => {
+    if (!pastLocked) { setEnabledElsRaw(upd); return; }
+    setEnabledElsRaw((prev) => {
+      const next = typeof upd === "function" ? upd(prev) : upd;
+      const off = Object.keys(prev || {}).find((k) => prev[k] && !next?.[k] && zoneHasItems(k));
+      if (off) { pastLockNote("a zone with items can't be switched off"); return prev; }
+      return next;
+    });
+  };
   // Migration 059: the live rate lists ABOVE stay live-only wherever this file renders a picker's
   // CHOICES (a deleted material must never be newly pickable) — these merged "…Priced" versions are
   // for a PRICE/LABEL LOOKUP only, so a floor/zone already pointed at a since-deleted carpet/print/
