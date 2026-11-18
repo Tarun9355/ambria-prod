@@ -6904,12 +6904,14 @@ undefined
                   {list.map(m=>{
                     const isSel=curEl?.mandiId===m.id;
                     const nV=Array.isArray(m.colorVariants)?m.colorVariants.length:0;
+                    // most flowers carry their photos on their colours (IMS Mandi), not on the flower itself
+                    const ph=m.photoUrl||(Array.isArray(m.colorVariants)?m.colorVariants.find(v=>v?.photoUrl)?.photoUrl:"")||"";
                     return (
                       <button type="button" key={m.id} className="mv-card" onClick={()=>pick(m)} title={`${m.name} - ₹${mandiElUnitPrice({flowerPick:true},m,m.currentPrice).toLocaleString("en-IN")} per ${m.unit||"bundle"}`}
                         style={{cursor:"pointer",padding:10,borderRadius:10,border:isSel?"2px solid #DB2777":`1px solid ${border}`,textAlign:"left",fontFamily:"inherit",
                           background:isSel?"rgba(219,39,119,0.07)":isDark?"rgba(255,255,255,0.03)":"#FAFAFA",display:"flex",flexDirection:"column",gap:6,position:"relative"}}>
-                        {m.photoUrl
-                          ? <img src={fitUrl(m.photoUrl,150)} loading="lazy" decoding="async" alt="" style={{width:"100%",height:70,objectFit:"cover",borderRadius:6,background:isDark?"#1a1a2e":"#eee"}}/>
+                        {ph
+                          ? <img src={fitUrl(ph,150)} loading="lazy" decoding="async" alt="" style={{width:"100%",height:70,objectFit:"cover",borderRadius:6,background:isDark?"#1a1a2e":"#eee"}}/>
                           : <span style={{width:"100%",height:70,borderRadius:6,background:isDark?"rgba(255,255,255,0.05)":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:textS}}>🌸</span>}
                         <span style={{fontSize:13,fontWeight:600,color:textP,lineHeight:1.2}}>{m.name}</span>
                         <span style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>₹{mandiElUnitPrice({flowerPick:true},m,m.currentPrice).toLocaleString("en-IN")}/{m.unit||"bundle"}</span>
