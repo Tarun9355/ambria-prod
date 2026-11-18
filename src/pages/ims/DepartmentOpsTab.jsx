@@ -1171,6 +1171,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   const deckCacheRef = useRef(null); // {key, url, name}
   // The Dept Ops PDF's language (the EN | हिं toggle by Download PDF): English or Hindi, remembered per viewer in this browser.
   const [pdfLang, setPdfLangState] = useState(() => {
+    // Deal Check's "All departments PDF" frame says which language it wants (&pdfLang=, DeptPdfButton) - used for that run only,
+    // never written back over this browser's own IMS choice.
+    try { const m = /[?&]pdfLang=(hi|en)\b/.exec(window.location.hash); if (m && window.__AMBRIA_PDF_FRAME__) return m[1]; } catch { /* no hash */ }
     try { return localStorage.getItem(PDF_LANG_KEY) === "hi" ? "hi" : "en"; } catch { return "en"; }
   });
   const setPdfLang = (l) => {
