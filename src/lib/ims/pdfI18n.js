@@ -105,6 +105,7 @@ export const PDF_HI = {
   "Free of cost": "फ्री (FOC)",
   "Already at the venue from an earlier event - free, not to be loaded or picked up": "पिछले इवेंट से वेन्यू पर पहले से लगा है - फ्री, लोड नहीं करना, न उठाना",
   "Platform + carpet": "प्लेटफ़ॉर्म + कार्पेट",
+  "Site supervisor": "साइट सुपरवाइज़र",
   "Where": "कहाँ",
   "Fixed at venue": "वेन्यू पर फिक्स",
   "Already standing here - not to be loaded": "यहाँ पहले से लगा है - लोड नहीं करना",

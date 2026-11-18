@@ -16,7 +16,7 @@ import { INV_CATS } from "../../lib/inventory/constants";
 import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
 import VenuesEditor from "./VenuesEditor.jsx";
-import SupervisorVenueChips, { useVenueProperties } from "./SupervisorVenues.jsx";
+import SupervisorVenuePicker, { useInhouseVenues } from "./SupervisorVenues.jsx";
 import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
 import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, DEFAULT_PLATFORM_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
@@ -418,7 +418,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
   // to its selected child rather than becoming a panel id of its own.
   const activePanel = forcedMode ? mode : (panel === "masterdata" ? masterPanel : panel);
   // the venues a supervisor can be fixed at - loaded only while the Supervisors panel is open
-  const venueProperties = useVenueProperties(activePanel === "supervisors");
+  const inhouseVenues = useInhouseVenues(activePanel === "supervisors");
   // supervisors.fixed_venues exists once migration 070 has run - every row read back carries it then
   const supervisorVenuesReady = (supervisors || []).some((s) => Array.isArray(s.fixedVenues));
 
@@ -2516,7 +2516,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
               <button onClick={() => removeSupervisor(s.id)} className="text-red-400 hover:text-red-600 text-sm">✕</button>
             </div>
             {/* which venue(s) this supervisor is fixed at (owner ask 2026-11-18) */}
-            <SupervisorVenueChips value={s.fixedVenues} onChange={(v) => updateSupervisor(s.id, "fixedVenues", v)} properties={venueProperties} disabled={!supervisorVenuesReady} />
+            <SupervisorVenuePicker value={s.fixedVenues} onChange={(v) => updateSupervisor(s.id, "fixedVenues", v)} venues={inhouseVenues} disabled={!supervisorVenuesReady} />
             </div>
           ))}
           {supervisors.length === 0 && <p className="text-sm text-gray-400 italic text-center py-4">No supervisors yet. Add one above.</p>}

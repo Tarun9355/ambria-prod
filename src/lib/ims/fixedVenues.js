@@ -561,3 +561,29 @@ export function heavyElementExtraForFn(fn, settings, inventory) {
   });
   return { total, breakdown };
 }
+
+// The site supervisors fixed at the event's venue(s) (owner ask 2026-11-18) - Admin → Settings → Supervisors fixes a supervisor at
+// one or more in-house venues (supervisors.fixedVenues: venue ids - a sub-venue like Aura, or a whole property like Exotica).
+// A function's venue matches a place by its own name, its parent's (Aura → Exotica, settings.venueParents - so a supervisor fixed at
+// a whole property covers its every venue) or a name that carries the place's ("Exotica Aura"), "Ambria " ignored.
+// Active supervisors only, each once, in roster order. properties: [{ id, name }] - the properties and in-house venues together.
+export function siteSupervisorsFor(settings, venueNames, properties, supervisors) {
+  const props = (Array.isArray(properties) ? properties : []).filter((p) => p && p.id && normVenue(p.name));
+  if (!props.length) return [];
+  const parents = parentMap(settings);
+  const ids = new Set();
+  (Array.isArray(venueNames) ? venueNames : [venueNames]).forEach((vn) => {
+    const name = String(vn || "").trim();
+    if (!name) return;
+    const cands = [name, parents[name]].filter(Boolean).map(normVenue);
+    props.forEach((p) => {
+      const pn = normVenue(p.name);
+      if (cands.some((c) => c === pn || ` ${c} `.includes(` ${pn} `))) ids.add(p.id);
+    });
+  });
+  if (!ids.size) return [];
+  return (Array.isArray(supervisors) ? supervisors : [])
+    .filter((s) => s && s.active !== false && Array.isArray(s.fixedVenues) && s.fixedVenues.some((id) => ids.has(id)))
+    .map((s) => ({ name: String(s.name || "").trim(), phone: String(s.phone || "").trim() }))
+    .filter((s) => s.name);
+}

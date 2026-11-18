@@ -134,6 +134,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     blockedItemsGrouped = [], blockedItems = [], trucks = [], movements = [], fabricReqRows = [],
     trussPlanOf, fabricEntriesOf, fabricPalettesOf, carpetPlanOf, elementPlanOf, zoneLabelFor,
     zoneAdminOrder, dealCheckMode, preparedBy,
+    siteSupervisors = [], // the supervisors fixed at the event's venue (Admin → Supervisors; lib/ims/fixedVenues siteSupervisorsFor)
   } = ctx;
   // Mirrors DepartmentOpsTab.jsx's own `venueOf`/`eventDate` — kept local rather than added to ctx
   // since both are one-line derivations of `sel`/`settings` already in scope.
@@ -1823,6 +1824,11 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
   .orn i{display:block;width:90px;height:1px;background:#C9A96E}
   .orn b{display:block;width:8px;height:8px;background:#C9A96E;transform:rotate(45deg)}
   .cv-facts{display:flex;justify-content:center;gap:0}
+  .cv-card.has-sup{padding-bottom:96px}
+  .cv-sup{position:absolute;right:46px;bottom:36px;text-align:right;line-height:1.35}
+  .cv-sup .k{font-size:9.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#8A8272;margin-bottom:3px}
+  .cv-sup .v{font-size:13.5px;font-weight:700;color:#23345C}
+  .cv-sup .v span{margin-left:8px;font-weight:600;color:#5A6076;font-variant-numeric:tabular-nums}
   .cv-facts > div{padding:0 34px;border-left:1px solid #DDD6C6}
   .cv-facts > div:first-child{border-left:0}
   .cv-facts .k{font-size:11px;line-height:1.7;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#8A8272;margin-bottom:6px}
@@ -2121,7 +2127,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
 <div class="sheet" id="sheet">
 <header class="cover" data-block data-cover style="${bgCss(coverPhoto)}" ${bgData(coverPhoto)}>
   <div class="cv-shade"></div>
-  <div class="cv-card">
+  <div class="cv-card${siteSupervisors.length ? " has-sup" : ""}">
     <div class="cv-ribbon"></div>
     <div class="cv-corner tl"></div><div class="cv-corner tr"></div><div class="cv-corner bl"></div><div class="cv-corner br"></div>
     ${logos.dark ? `<img class="cv-logo" src="${logos.dark}" alt="Ambria — Design &amp; Decor">` : `<div class="cv-mark">AMBRIA</div>`}
@@ -2137,6 +2143,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     </div>
     ${sessions.length ? `<div class="cv-sec">${sessions.length === 1 ? t("The event") : t("{n} sessions", { n: sessions.length })}</div>
     <div class="cv-sessions${sessions.length > 4 || (anyPalette && sessions.length > 2) ? " many dense" : (sessions.length > 2 || (anyPalette && sessions.length === 2)) ? " many" : ""}">${sessions.map((s, i) => sesCard(s, i)).join("")}</div>` : ""}
+    ${/* the site supervisor(s) fixed at this venue, with their number - bottom right of the event card (owner ask 2026-11-18) */ ""}
+    ${siteSupervisors.length ? `<div class="cv-sup"><div class="k">${t("Site supervisor")}</div>${siteSupervisors.slice(0, 3).map((s) => `<div class="v">${esc(hn(s.name))}${s.phone ? `<span>${esc(s.phone)}</span>` : ""}</div>`).join("")}</div>` : ""}
   </div>
   <div class="cv-bottom"><span>${esc(bookTitle)} / ${esc((selDateStr || "").slice(0, 4) || new Date().getFullYear())}</span>${logos.light ? `<img class="cv-logo-l" src="${logos.light}" alt="Ambria — Design &amp; Decor">` : `<span>Ambria · Design &amp; Decor</span>`}</div>
 </header>

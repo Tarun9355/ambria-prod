@@ -16,7 +16,8 @@ import ChangeLogEntry from "../../components/shared/ChangeLogEntry";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { fetchOpsVendors } from "../../lib/ims/opsVendors";
-import { venueWithParent, standingQty, venueCalendarColor, VENUE_CALENDAR_LEGEND } from "../../lib/ims/fixedVenues";
+import { venueWithParent, standingQty, venueCalendarColor, VENUE_CALENDAR_LEGEND, siteSupervisorsFor } from "../../lib/ims/fixedVenues";
+import { useInhouseVenues } from "./SupervisorVenues.jsx";
 import { carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import ElementChoicePlan from "./ElementChoicePlan.jsx";
@@ -729,6 +730,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // this tab's own PDF: its shared book's name when it has one ("Fabric & Tenting")
   const deptBookName = (SHARED_BOOKS.find(g => g.includes(dept)) || [dept]).join(" & ");
   const [exportNote, setExportNote] = useState("");
+  // Ambria's properties and in-house venues (venues table) - to find the supervisors fixed at the event's venue for the PDF cover
+  const inhouseVenues = useInhouseVenues(true);
   const [search, setSearch] = useState("");
   const [leadEntry, setLeadEntry] = useState(null); // LMS entry no of the lead we arrived from
   // Month shown by the event picker below. Starts on the current month and is nudged, once, to a
@@ -3547,6 +3550,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     // "Prepared by" is always the salesperson who sold the deal (deptBookHtml reads sel.salesperson) - this is only the fallback
     // for an order with none recorded: the dept plan's last editor, else (combined book) the exporting user.
     preparedBy: opts?.combined ? null : (deptData.updatedBy || null),
+    // the supervisors fixed at this event's venue(s) (Admin → Supervisors) - on the cover with their number (owner ask 2026-11-18)
+    siteSupervisors: siteSupervisorsFor(settings, [...(Array.isArray(sel?.functionsDetail) ? sel.functionsDetail.map((f) => f?.venue) : []), sel?.venue], [...inhouseVenues.properties, ...inhouseVenues.inhouse], supervisors),
   }, zoneLabels, logos, opts);
 
   // ── THE DOWNLOAD ──

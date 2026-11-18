@@ -2,19 +2,24 @@ import { useEffect, useState } from "react";
 import { supabase, fetchAll } from "../../lib/supabase";
 import { assembleVenuesFromRows } from "../../lib/ims/venueProperties";
 
-// Which venue(s) a site supervisor is fixed at (owner ask 2026-11-18) - Admin → Settings → 👷 Supervisors. Picked from the
-// Ambria properties (Manaktala, Exotica, Pushpanjali…) in the `venues` table, by id, so a renamed property stays linked. Stored on
-// the supervisor's own row (supervisors.fixed_venues, migration 070).
+// Which venue(s) a site supervisor is fixed at (owner ask 2026-11-18) - Admin → Settings → 👷 Supervisors. Every in-house venue
+// (Aura, Valencia, Poolside…) from the `venues` table, grouped under its property, in a dropdown; picked by id, so a rename stays
+// linked. Stored on the supervisor's own row (supervisors.fixed_venues, migration 070). A property's own id (picked before the
+// dropdown) still works - it covers that property's every venue (lib/ims/fixedVenues siteSupervisorsFor).
 
-// The properties, read-only and live (same source the Fixed Venues editor reads). `enabled` false: nothing loaded, no channel.
-export function useVenueProperties(enabled = true) {
-  const [properties, setProperties] = useState([]);
+// The properties and their in-house venues, read-only and live (same source the Fixed Venues editor reads).
+// `enabled` false: nothing loaded, no channel.
+export function useInhouseVenues(enabled = true) {
+  const [venues, setVenues] = useState({ properties: [], inhouse: [] });
   useEffect(() => {
     if (!enabled) return undefined;
     let cancelled = false;
     const load = async () => {
       const rows = await fetchAll("venues").catch(() => []);
-      if (!cancelled) setProperties((assembleVenuesFromRows(rows).properties || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name))));
+      if (cancelled) return;
+      const v = assembleVenuesFromRows(rows);
+      const byName = (a, b) => String(a.name).localeCompare(String(b.name));
+      setVenues({ properties: (v.properties || []).slice().sort(byName), inhouse: (v.inhouse || []).slice().sort(byName) });
     };
     load();
     const ch = supabase
@@ -23,42 +28,48 @@ export function useVenueProperties(enabled = true) {
       .subscribe();
     return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, [enabled]);
-  return properties;
+  return venues;
 }
 
-// Chips - one per property, tap to fix / unfix the supervisor there (more than one allowed). value: property ids.
+// Dropdown + the picked venues as tags (more than one allowed). value: venue ids.
 // disabled: the database has no fixed_venues column yet (migration 070 not run) - shown, not editable.
-export default function SupervisorVenueChips({ value, onChange, properties, disabled = false }) {
-  const picked = new Set(Array.isArray(value) ? value : []);
-  // a property deleted since it was picked still shows, so it can be taken off
-  const gone = [...picked].filter((id) => !properties.some((p) => p.id === id));
-  const toggle = (id) => {
-    if (disabled) return;
-    const next = new Set(picked);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    onChange([...next]);
-  };
-  if (!properties.length && !gone.length) return <span className="text-xs text-gray-400">No venues yet</span>;
+export default function SupervisorVenuePicker({ value, onChange, venues, disabled = false }) {
+  const properties = venues?.properties || [];
+  const inhouse = venues?.inhouse || [];
+  const picked = Array.isArray(value) ? value : [];
+  const nameOf = new Map([...properties.map((p) => [p.id, p.name]), ...inhouse.map((v) => [v.id, v.parent ? `${v.name} · ${v.parent}` : v.name])]);
+  const add = (id) => { if (!disabled && id && !picked.includes(id)) onChange([...picked, id]); };
+  const remove = (id) => { if (!disabled) onChange(picked.filter((x) => x !== id)); };
+  const free = (id) => !picked.includes(id);
+  const groups = properties.map((p) => ({ p, list: inhouse.filter((v) => v.propertyId === p.id && free(v.id)) }));
+  const loose = inhouse.filter((v) => !v.propertyId && free(v.id));
   return (
-    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Fixed at venue">
+    <div className="flex flex-wrap items-center gap-1.5">
       <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mr-0.5">Fixed at</span>
-      {properties.map((p) => {
-        const on = picked.has(p.id);
-        return (
-          <button key={p.id} type="button" onClick={() => toggle(p.id)} aria-pressed={on} disabled={disabled}
-            title={disabled ? "Run migration 070 first (adds supervisors.fixed_venues)" : on ? `Fixed at ${p.name} - tap to take off` : `Fix at ${p.name}`}
-            className={"min-h-[28px] px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 " +
-              (on ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-200 text-gray-600 hover:bg-indigo-50 hover:text-indigo-700")}>
-            {p.icon ? `${p.icon} ` : ""}{p.name}
-          </button>
-        );
-      })}
-      {gone.map((id) => (
-        <button key={id} type="button" onClick={() => toggle(id)} disabled={disabled} title="This venue was deleted - tap to take it off"
-          className="min-h-[28px] px-2.5 py-1 rounded-full text-xs font-semibold border border-amber-300 bg-amber-50 text-amber-700">
-          ⚠ deleted venue ✕
-        </button>
+      {picked.map((id) => (
+        <span key={id} className={"inline-flex items-center gap-1 min-h-[28px] pl-2.5 pr-1.5 py-1 rounded-full text-xs font-semibold border " +
+          (nameOf.has(id) ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-amber-50 border-amber-300 text-amber-700")}>
+          {nameOf.get(id) || "⚠ deleted venue"}
+          <button type="button" onClick={() => remove(id)} disabled={disabled} aria-label={`Remove ${nameOf.get(id) || "venue"}`}
+            className="w-5 h-5 inline-flex items-center justify-center rounded-full hover:bg-white/80 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">✕</button>
+        </span>
       ))}
+      <select value="" onChange={(e) => add(e.target.value)} disabled={disabled}
+        title={disabled ? "Run migration 070 first (adds supervisors.fixed_venues)" : "Fix this supervisor at a venue"}
+        className="h-8 border border-gray-200 rounded-lg px-2 text-xs text-gray-600 bg-white disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
+        <option value="">{picked.length ? "+ Add venue" : "Select venue…"}</option>
+        {groups.map(({ p, list }) => (
+          <optgroup key={p.id} label={p.name}>
+            {free(p.id) && <option value={p.id}>{p.name} (all its venues)</option>}
+            {list.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </optgroup>
+        ))}
+        {loose.length > 0 && (
+          <optgroup label="Other in-house">
+            {loose.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </optgroup>
+        )}
+      </select>
     </div>
   );
 }
