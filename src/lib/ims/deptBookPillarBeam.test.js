@@ -31,6 +31,12 @@ describe("Dept Book truss card: a beam used as a pillar", () => {
     expect(pillars).toContain("× 2 ft (Beam)");
     expect(pillars).not.toContain("× 12 ft (Beam)");
   });
+  it("a Tenting head's edited plan keeps the beam tag (Planning saves it with the group)", () => {
+    const c = { ...ctx, sel: { ...ctx.sel, deptOps: { Tenting: { trussPlan: { "0|stage|0": { pillars: [{ len: 12, n: 2 }, { len: 2, n: 3, beam: true }] } } } } } };
+    const pillars = cardOf(buildDeptBookHtml(c), "Pillars");
+    expect(pillars).toContain("× 2 ft (Beam)");
+    expect(pillars).toContain("<b>3</b>");
+  });
   it("the Beams card itself does not mark its own pieces", () => {
     const html = buildDeptBookHtml(ctx);
     const i = html.indexOf("🔗 ");

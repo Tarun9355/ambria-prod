@@ -6193,8 +6193,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                       // untouched. Only the DEFAULT changes — a dept head's own saved edit (ed.pillars/
                       // ed.beams) always wins, same as before.
                       const matInv = trussInvForMaterial(trussInv, row.trussMaterial);
-                      const realGroupsOf = (arr, resolver) => { const m = {}; (arr || []).forEach(x => { (resolver(x, matInv).pieces || []).forEach(pc => { m[pc.size] = (m[pc.size] || 0) + pc.qty; }); }); return Object.entries(m).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, n]) => ({ len: Number(len), n })); };
-                      const pillarGroups = Array.isArray(ed?.pillars) ? ed.pillars : realGroupsOf(topo.pillars, (p, inv) => resolvePillarHeight(p.H, inv));
+                      // markBeams (the pillars): a pillar made up with a beam at the ground (resolvePillarHeight - 14 ft = 12 ft pillar + 2 ft beam)
+                      // keeps that piece apart, tagged beam: true (owner ask 2026-11-18) - shown "(Beam)" here and in the PDF, and kept in an edit
+                      const realGroupsOf = (arr, resolver, markBeams = false) => { const m = {}; (arr || []).forEach(x => { (resolver(x, matInv).pieces || []).forEach(pc => { const k = `${markBeams && pc.type === "beam" ? "b" : "p"}|${pc.size}`; m[k] = (m[k] || 0) + pc.qty; }); }); return Object.entries(m).map(([k, n]) => { const [kind, len] = k.split("|"); return { len: Number(len), n, ...(kind === "b" ? { beam: true } : {}) }; }).sort((a, b) => b.len - a.len || (a.beam ? 1 : 0) - (b.beam ? 1 : 0)); };
+                      const pillarGroups = Array.isArray(ed?.pillars) ? ed.pillars : realGroupsOf(topo.pillars, (p, inv) => resolvePillarHeight(p.H, inv), true);
                       // Pillars / beams the stock sizes cannot make (a 9 ft pillar when only 10 and 12 ft are held) left the tiles
                       // above without them, as if none were needed - said out loud under the tiles (the Setup Book lists them too).
                       const cannotMake = (arr, resolver, lenOf) => { const m = {}; (arr || []).forEach(x => { if (!(resolver(x, matInv).pieces || []).length) { const L = Number(lenOf(x)) || 0; if (L > 0) m[L] = (m[L] || 0) + 1; } }); return Object.entries(m).map(([L, k]) => `${k} × ${L} ft`); };
@@ -6237,6 +6239,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
                                 <span>×</span>
                                 <input type="number" min="0" step="0.5" value={g.len ?? ""} onChange={e => setG(i, { len: e.target.value === "" ? "" : Number(e.target.value) })} className={numCls + " w-14"} />
                                 <span>ft</span>
+                                {g.beam && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200" title="A beam set at the ground under a pillar to make up its height - load it from the beams">Beam</span>}
                                 <button onClick={async () => { if (await askDelete("Remove this row?")) saveEd({ [field]: groups.filter((_, j) => j !== i) }); }} className="text-gray-300 hover:text-red-500 text-sm leading-none" title="Remove this row">×</button>
                               </div>
                             ))}
