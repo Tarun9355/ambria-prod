@@ -1288,7 +1288,9 @@ export const FLOWER_PICK_RATE_MULTIPLIER = 2;
 // By IMS Mandi CATEGORY only (owner, 2026-11-18: "greens chhodke sab"): "Greens" and "Premium greens" are left out, every other
 // category - Imported / local / Cut / Ladi / Loose flowers, drysticks, Jaimala … - is in, whatever a flower's own type says.
 export const isGreenMandi = (m) => /\bgreen(s|ery)?\b/i.test(String(m?.flowerCat || ""));
-export const isFlowerPickChoice = (m) => !!m?.id && !isGreenMandi(m);
+// Jaimala (its own category) and every item already addable on its own at its own markup (isDirectMandiElement - Jaimala,
+// Loose Petals …) stay out too (owner, 2026-11-18): they have their own entry in "+ Add element" and must not show at 2x as well.
+export const isFlowerPickChoice = (m) => !!m?.id && !isGreenMandi(m) && !/\bjaimala\b/i.test(String(m?.flowerCat || "")) && !isDirectMandiElement(m);
 // What one unit of a mandi element bills at: a picked flower 2x the mandi rate; any other direct mandi item its own Markup %.
 // base: the chosen variant's price, else the flower's (getElPriceFromMandi).
 export const mandiElUnitPrice = (el, parent, base) => {
