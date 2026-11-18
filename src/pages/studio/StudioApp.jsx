@@ -1370,8 +1370,22 @@ async function shortagesRaisedHere(flagged, cli, fns, inventory, opened) {
   const list = Array.isArray(flagged) ? flagged : [];
   if (!list.length) return list;
   let reserved = cli?.dcReservedInventory;
-  try { const fresh = await fetchReservedInventory(cli?.id); if (fresh !== undefined) reserved = fresh; }
-  catch (e) { console.warn("[oos gate] fresh reservation read failed, using this tab's copy:", e?.message || e); }
+  let units = cli?.dcReservedUnits;
+  try {
+    if (cli?.id) {
+      const { data, error } = await supabase.from("client_ledger").select("r:data->dcReservedInventory, u:data->dcReservedUnits").eq("id", cli.id).maybeSingle();
+      if (error) throw error;
+      if (data) { reserved = data.r ?? null; units = data.u ?? null; }
+    }
+  } catch (e) { console.warn("[oos gate] fresh reservation read failed, using this tab's copy:", e?.message || e); }
+  // dcReservedUnits - what the deal needed, item by item and kit parts included (fnUnitQty), the last time its stock reconcile went
+  // through - is the baseline once a deal has one: it is saved only by that reconcile, never by an autosave, so an edit the gate
+  // stopped stays "new" after a refresh, in another tab or device, and in the IMS sweep (testing review 2026-11-18). Only a deal
+  // with none yet falls back to what it needed when opened in this tab - and never in the hidden sweep, which opens the saved
+  // (possibly already-raised) build and would take a raise for the deal's own.
+  const hasUnits = units && typeof units === "object" && Object.keys(units).length > 0;
+  const sweep = typeof window !== "undefined" && !!window.__AMBRIA_SWEEP__;
+  opened = hasUnits ? units : (sweep ? null : opened);
   // the larger of the last reservation and what the deal needed when it was opened in this tab, item by item
   const base = {};
   [reserved, opened].forEach((src) => {
@@ -4371,7 +4385,7 @@ export default function StudioApp() {
             if (!opts.discount) { delete rest.guestDiscount; delete rest.guestDiscountBy; delete rest.guestDiscountAt; }
             // The same for the sold-deal reservation baseline: only the reconcile (and a function's removal, which reindexes it) writes
             // it - every other save (autosave, a second tab) carried its own stale copy back over the newer one (owner report 2026-11-15).
-            if (!opts.reserved) delete rest.dcReservedInventory;
+            if (!opts.reserved) { delete rest.dcReservedInventory; delete rest.dcReservedUnits; }
             row.data = rest;
           }
           return { ...row, updated_at: new Date().toISOString() };
@@ -10098,7 +10112,11 @@ export default function StudioApp() {
         // "changed" entries in the dept-head change log; the actual block reservations are rebuilt
         // fresh from current data regardless, so stock correctness itself isn't at risk).
         dcReservedInventory: reindexFnIdxObject(c.dcReservedInventory, removedIdx),
+        dcReservedUnits: reindexFnIdxObject(c.dcReservedUnits, removedIdx),
       };
+      // this tab's opened-snapshot (a fallback for a deal with no dcReservedUnits yet) is keyed by the old function numbers - drop
+      // it to an empty one rather than re-take it from the edited build, which would read a new item as already there
+      openedUnitsRef.current[id] = {};
       const cur = clientLedgerRef.current || [];
       try { saveClientLedger(cur.map((x) => (x.id === id ? { ...x, ...patch } : x)), null, { reserved: true }); } catch { /* best effort — the live state above is already correct for this tab */ }
       // The in-session Deal Check cache is the same shape again — stale otherwise, same reasoning as
@@ -10783,6 +10801,7 @@ export default function StudioApp() {
       if (!client || client.status !== "booked") return false;
       // only shortages this edit caused (shortagesRaisedHere) - one the booked deal already carried is not the salesperson's to fix
       const oosFlagged = await shortagesRaisedHere(scanOutOfStockElements(), client, collectAllFunctionData(), imsInventory, openedUnitsRef.current[client.id]);
+      if (activeClientIdRef.current !== client.id) return false; // switched to another client while the reservation was read
       if (oosFlagged.length > 0) { setOosGateReason("applyBookedChanges"); setOosGateModal(oosFlagged); return false; }
       // the same for truss / platform / batta and the ledger: only what was not already short when the deal was opened here
       const trussFlagged = newGateRows(scanTrussStockShortage(), client.id);
@@ -15143,12 +15162,25 @@ export default function StudioApp() {
       clearStockShortfall(eo.id);
     }
 
-    if (!changed) return;
+    // What each function needs now, item by item with kit parts (fnUnitQty) - the out-of-stock gate's baseline (shortagesRaisedHere).
+    // Merged over the saved one so a run over some functions only keeps the others'.
+    const unitsNow = { ...((cli.dcReservedUnits && typeof cli.dcReservedUnits === "object") ? cli.dcReservedUnits : {}) };
+    fnsToProcess.forEach((fn, i) => { unitsNow[fn.fnIdx ?? i] = Object.fromEntries(fnUnitQty(fn, inventoryList)); });
+
+    if (!changed) {
+      // nothing to reserve, but a deal saved before dcReservedUnits existed gets its baseline once
+      const hasUnits = cli.dcReservedUnits && typeof cli.dcReservedUnits === "object" && Object.keys(cli.dcReservedUnits).length > 0;
+      if (!hasUnits && !isFirstRun) {
+        const seeded = (clientLedgerRef.current || clientLedger).map((c) => (c.id === cli.id ? { ...c, dcReservedUnits: unitsNow } : c));
+        try { await saveClientLedger(seeded, null, { reserved: true }); } catch (e) { console.warn("[reconcile] units baseline save failed:", e?.message || e); }
+      }
+      return;
+    }
 
     // Persist what we just reserved so the NEXT run diffs against this, not the initial markSold state.
     // reserved: true - the only save that writes dcReservedInventory (saveClientLedger leaves it out of every other one). Awaited, so
     // a reconcile queued right behind this one reads the new baseline instead of logging the same change again.
-    const nextLedger = (clientLedgerRef.current || clientLedger).map((c) => (c.id === cli.id ? { ...c, dcReservedInventory: requiredByFn } : c));
+    const nextLedger = (clientLedgerRef.current || clientLedger).map((c) => (c.id === cli.id ? { ...c, dcReservedInventory: requiredByFn, dcReservedUnits: unitsNow } : c));
     await saveClientLedger(nextLedger, null, { reserved: true });
 
     // Notify department heads — one plain, terminal log entry per affected department. Never gates
