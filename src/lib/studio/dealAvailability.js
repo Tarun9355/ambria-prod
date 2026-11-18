@@ -402,3 +402,29 @@ export function fnUnitQty(fnData, imsInventory) {
   });
   return m;
 }
+
+// The out-of-stock rows of a BOOKED deal that its salesperson has just caused (owner ask 2026-11-18). A row is kept when one of its
+// short ids - the item itself (itemOut), or a short kit part (shortParts) - is now needed in that function MORE than the deal last
+// reserved (reserved = dcReservedInventory: { [fnIdx]: { [id]: qty } }, kit parts included, as fnUnitQty counts them). A row whose
+// ids are all within the reservation was not added or raised here - another deal took that stock - and is dropped. Nothing
+// reserved yet (or nothing for that function): every row is kept.
+export function shortagesRaisedSince(flagged, reserved, fns, imsInventory) {
+  const list = Array.isArray(flagged) ? flagged : [];
+  if (!reserved || typeof reserved !== "object" || !Object.keys(reserved).length) return list;
+  const units = new Map();
+  const unitsOf = (fi) => {
+    if (!units.has(fi)) {
+      const fnD = (fns || []).find((x, j) => (x?.fnIdx ?? j) === fi);
+      units.set(fi, fnD ? fnUnitQty(fnD, imsInventory) : new Map());
+    }
+    return units.get(fi);
+  };
+  return list.filter((f) => {
+    const res = reserved[f?.fnIdx];
+    if (!res || typeof res !== "object") return true;
+    const ids = [...(f.itemOut ? [f.invId] : []), ...(Array.isArray(f.shortParts) ? f.shortParts.map((sp) => sp?.id) : [])].filter(Boolean);
+    if (!ids.length) return true;
+    const u = unitsOf(f.fnIdx);
+    return ids.some((id) => (u.get(id) || 0) > (Number(res[id]) || 0) + 1e-6);
+  });
+}
