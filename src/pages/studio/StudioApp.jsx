@@ -2561,6 +2561,14 @@ export default function StudioApp() {
   // DISABLED" note near saveSession's own studio_sessions write).
   const buildSaveBaselineRef = useRef(null);
   const buildConflictWarnedAtRef = useRef(0);
+  // The session the baseline above stands for - its content, not just its stamp - so a "newer save" can be told apart from
+  // edits made HERE: when this tab has changed nothing since (its live build still equals this), the newer save is pulled in
+  // instead of blocking with the conflict dialog (adoptNewerSaveRef, set once loadClientSession exists). null = never
+  // adopt (a deliberately resumed OLDER session - see resumeSavedSession). Owner report 2026-11-18 (Yassica / Dharmender):
+  // after a reload or a Studio <-> IMS switch, the previous page's own exit-save landed after this one had loaded, and the
+  // dialog "You saved a newer version from another tab" kept coming back with no other tab open.
+  const buildBaselineSnapRef = useRef(null);
+  const adoptNewerSaveRef = useRef(null);
   // Which `${fnIdx}:${fnIdx}:${sourceVideoId}` pairs duplicateSourceVideoFnIdxs has already warned
   // about this client — see the effect right after allFunctionData's own definition. Reset on every
   // loadClientSession (a new client/deal) so a previous client's dismissed pairs never suppress a
@@ -9143,6 +9151,12 @@ export default function StudioApp() {
 
   // ── Save session — VERBATIM ──
   const saveSession = useCallback((opts = {}) => {
+    // IMS's hidden planning sweep (#/studio?sweep=1, main.jsx) opens booked deals only to sync their Deal Check snapshot -
+    // it never edits a build, so it never saves one, by ANY path. Only autoSaveBuild was gated (sweepRef.id), and only while a
+    // deal was mid-sync: the gap between deals, the hide / reload flush and the update-banner flush could still write the
+    // build under the IMS user's name - a fresh sessions[0] that made that person's real Studio tab, with the same deal open,
+    // say "You saved a newer version from another tab" when no other tab had it open (Yassica, Dharmender, 2026-11-18).
+    if (typeof window !== "undefined" && window.__AMBRIA_SWEEP__) return null;
     // Edit Access/per-user override, Admin → Users & Roles → Design Studio tab. First line, on
     // purpose — every manual save and every autosave timer funnels through this one function, and
     // the stale-save-guard machinery below (see STALE_SAVE_GUARD_PITFALLS.md) must never run for a
@@ -9200,6 +9214,31 @@ export default function StudioApp() {
     const buildMe = authUser?.name || "—";
     const buildConflict = !!(buildBaseline && buildRemoteSavedAt > buildBaseline.savedAt && buildRemoteSavedBy);
     if (buildConflict) {
+      // Nothing changed in THIS tab since its baseline (the live function's build and the deal's date / venue still equal what
+      // was loaded or last saved): the newer save cannot lose anything of ours, so load it instead of stopping - typically
+      // this tab's own previous page's exit-save that landed late. Anything edited here still gets the dialog below.
+      const baseSnap = buildBaselineSnapRef.current;
+      if (baseSnap && adoptNewerSaveRef.current && prevSnapForTotals) {
+        // every function, not only the one on screen: an edit made in another function, then switched away from before its
+        // save, must still count as "changed here"
+        const fnOf = (sn, i) => ((sn.savedActiveFnIdx ?? 0) === i ? sn : (Array.isArray(sn.fnSnapshots) ? sn.fnSnapshots[i] : sn.fnSnapshots?.[i]) || null);
+        const sameBuild = (x, y) => !!x && !!y && snapshotContentEqual(
+          { zc: x.zoneConfig || {}, ze: x.zoneElements || {}, en: x.enabledEls || {} },
+          { zc: y.zoneConfig || {}, ze: y.zoneElements || {}, en: y.enabledEls || {} });
+        let untouched = sameBuild({ zoneConfig, zoneElements, enabledEls }, fnOf(baseSnap, liveIdx))
+          && String(baseSnap.eventDate || "") === String(liveMeta.clientDate || "") && String(baseSnap.venue || "") === String(liveMeta.venue || "");
+        for (let i = 0; untouched && i < totalFns; i++) {
+          if (i === liveIdx) continue;
+          const lb = liveBuilds?.[i], bb = fnOf(baseSnap, i);
+          if (!lb && !bb) continue;
+          if (!sameBuild(lb, bb)) untouched = false;
+        }
+        if (untouched) {
+          const remote = prevSnapForTotals;
+          setTimeout(() => adoptNewerSaveRef.current?.(remote), 0);
+          return;
+        }
+      }
       if (buildConflictWarnedAtRef.current !== buildRemoteSavedAt) {
         buildConflictWarnedAtRef.current = buildRemoteSavedAt;
         const who = buildRemoteSavedBy === buildMe ? "You" : buildRemoteSavedBy;
@@ -9545,6 +9584,7 @@ export default function StudioApp() {
       // against its own latest write, not the load-time one (mirrors dcSaveBaselineRef's own advance
       // after a successful dcDraft save).
       buildSaveBaselineRef.current = { savedAt: snapshot.savedAt, savedBy: snapshot.savedBy };
+      buildBaselineSnapRef.current = snapshot;
       // The fnTotals remap above is consumed HERE, not where it was read — only a save that actually
       // lands as sessions[0] makes the next save's prevSnapForTotals reflect the new numbering; a
       // held-back save must leave the remap intact for whichever save finally does persist.
@@ -10749,6 +10789,8 @@ export default function StudioApp() {
     // already was). saveSession compares its own next write against this to tell a stale tab from
     // one that's actually caught up — see buildSaveBaselineRef's own comment.
     buildSaveBaselineRef.current = { savedAt: Number(client.sessions?.[0]?.savedAt) || 0, savedBy: client.sessions?.[0]?.savedBy || null };
+    // what is loaded IS sessions[0] only when that is the session being opened (a Resume of an older one is not)
+    buildBaselineSnapRef.current = (session && client.sessions?.[0] && session.id === client.sessions[0].id) ? client.sessions[0] : null;
     // A new client/deal starts with a clean slate for the duplicate-reference-video warning too —
     // see warnedVideoPairsRef's own comment.
     warnedVideoPairsRef.current = new Set();
@@ -11053,6 +11095,13 @@ export default function StudioApp() {
     window.addEventListener("pagehide", onHide);
     return () => window.removeEventListener("pagehide", onHide);
   }, []);
+  // The conflict check's "nothing changed here" path (saveSession): open the deal's newer save in place of this tab's copy.
+  adoptNewerSaveRef.current = (remote) => {
+    const c = (clientLedgerRef.current || []).find((x) => x.id === activeClientId);
+    if (!c || !remote || c.sessions?.[0]?.id !== remote.id) return; // the deal moved on again meanwhile - the next save re-checks
+    loadClientSession(c, remote, step, { isNewVisit: false, landingFnIdx: activeFnIdx });
+    showMsg?.("Loaded the newer save of this deal", "green");
+  };
   // Wraps loadClientSession for Event Info's "Load →" button only — the one place this was asked
   // for. Every OTHER caller of loadClientSession still calls it directly, unguarded, on purpose:
   // the automated planning-sync sweep is a system process re-opening a booked deal headlessly, not
@@ -11740,6 +11789,7 @@ export default function StudioApp() {
       // That is exactly the red "not auto-saved" toast seen immediately after a legitimate rollback.
       const curTop = (clientLedgerRef.current || clientLedger).find(c => c.id === activeClientIdRef.current)?.sessions?.[0] || null;
       buildSaveBaselineRef.current = { savedAt: Number(curTop?.savedAt) || 0, savedBy: curTop?.savedBy || null };
+      buildBaselineSnapRef.current = null; // an older session on screen is never "unchanged from" the newest - no adopting
     };
     const idx = Number.isInteger(targetFnIdx) ? targetFnIdx : activeFnIdx;
     // A history row's target index comes from an OLDER session's own numbering

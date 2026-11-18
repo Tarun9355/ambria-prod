@@ -82,3 +82,19 @@ is stale — skip the write and tell the user, instead of silently overwriting s
   is still a row away. See any past conversation recovering a dropped function or a reverted total
   for the exact SQL pattern (read the history, identify the right `session_id`, re-surface it as the
   current one) — never guess, always read the actual rows back before writing a fix.
+
+6. **"Newer save" is not always "someone else's work" — this tab's own previous page can land late.**
+   After a reload or a Studio ⇄ IMS switch, the page that went away flushes its pending edit on the way
+   out (pagehide / unmount). That write can land AFTER the new page has already loaded the deal, so the
+   new page's baseline is older than its own just-landed save, and the dialog said "You saved a newer
+   version from another tab" with no other tab open (Yassica / Dharmender, 2026-11-18). The guard now
+   checks whether THIS tab changed anything since its baseline (`buildBaselineSnapRef` — the baseline's
+   content, every function's build plus date / venue). Nothing changed → the newer save is simply
+   loaded in place (`adoptNewerSaveRef`), nothing is overwritten. Anything changed → the dialog, as
+   before. This is a PULL, never a push: it never lets a stale tab write over a newer save, so it does
+   not reopen pitfall #3. A resumed OLDER session sets the content baseline to null (never adopts).
+
+7. **The planning sweep frame never saves a build.** `saveSession` returns at once when
+   `window.__AMBRIA_SWEEP__` is set — the sweep opens booked deals only to sync their Deal Check
+   snapshot. Gating only `autoSaveBuild` (sweepRef.id) left the between-deals gap and the hide /
+   reload flushes able to write a build under the IMS user's name.
