@@ -6938,7 +6938,18 @@ undefined
                         style={{cursor:"pointer",padding:10,borderRadius:10,border:isSel?"2px solid #DB2777":`1px solid ${border}`,textAlign:"left",fontFamily:"inherit",
                           background:isSel?"rgba(219,39,119,0.07)":isDark?"rgba(255,255,255,0.03)":"#FAFAFA",display:"flex",flexDirection:"column",gap:6,position:"relative"}}>
                         {ph
-                          ? <img src={fitUrl(ph,150)} loading="lazy" decoding="async" alt="" style={{width:"100%",height:70,objectFit:"cover",borderRadius:6,background:isDark?"#1a1a2e":"#eee"}}/>
+                          ? <img src={fitUrl(ph,150)} loading="lazy" decoding="async" alt={m.name||""} title="Click to see the full photo"
+                              onClick={e=>{
+                                // the full photo (the card itself picks the flower) - every flower on this list with a photo, so ← → walk them
+                                e.stopPropagation();
+                                const photoOf=(x)=>x.photoUrl||(Array.isArray(x.colorVariants)?x.colorVariants.find(v=>v?.photoUrl)?.photoUrl:"")||"";
+                                const withPhoto=list.filter(x=>photoOf(x));
+                                setLightbox({idx:Math.max(0,withPhoto.findIndex(x=>x.id===m.id)),items:withPhoto.map(x=>({src:photoOf(x),name:x.name||"Flower",details:[
+                                  ["Rate",`₹${mandiElUnitPrice({flowerPick:true},x,x.currentPrice).toLocaleString("en-IN")} / ${x.unit||"bundle"} (2× mandi)`],
+                                  ...(Array.isArray(x.colorVariants)&&x.colorVariants.length>1?[["Colours",String(x.colorVariants.length)]]:[]),
+                                ]}))});
+                              }}
+                              style={{width:"100%",height:70,objectFit:"cover",borderRadius:6,background:isDark?"#1a1a2e":"#eee",cursor:"zoom-in"}}/>
                           : <span style={{width:"100%",height:70,borderRadius:6,background:isDark?"rgba(255,255,255,0.05)":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:textS}}>🌸</span>}
                         <span style={{fontSize:13,fontWeight:600,color:textP,lineHeight:1.2}}>{m.name}</span>
                         <span style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>₹{mandiElUnitPrice({flowerPick:true},m,m.currentPrice).toLocaleString("en-IN")}/{m.unit||"bundle"}</span>
