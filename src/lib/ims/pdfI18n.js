@@ -101,7 +101,7 @@ export const PDF_HI = {
   "Colour not picked": "रंग नहीं चुना",
   "Repeat": "रिपीट",
   "FOC – leave at venue, do not pick up": "FOC – वेन्यू पर छोड़ें, न उठाएं",
-  "FOC · {dept}": "FOC · {dept}",
+  "FOC · {dept}": "FOC (फ्री) · {dept}",
   "Free of cost": "फ्री (FOC)",
   "Already at the venue from an earlier event - free, not to be loaded or picked up": "पिछले इवेंट से वेन्यू पर पहले से लगा है - फ्री, लोड नहीं करना, न उठाना",
   "Platform + carpet": "प्लेटफ़ॉर्म + कार्पेट",
