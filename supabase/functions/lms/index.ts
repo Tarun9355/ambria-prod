@@ -59,12 +59,16 @@ const REQ_BODY: Record<string, (p: number) => Record<string, string>> = {
 // dhc_ / dhcd_ for contracts). A guest can show up here for a long time before (or without
 // ever) becoming a contract, so Studio's lead search needs this list, not the contract one.
 const LEAD_ENDPOINT = "/api/v1/processerp_api/get_decor_information_list";
-// status: "" returns only the OPEN pipeline (open / mild / warm / hot). A lead marked "Closed With Us" (LMS status "closed",
-// lead_decor_list.js: #decor_status_search) never came back, so a won decor lead was missing from Studio's search - Saksham
-// #01387, 11 Dec 2026 (owner report 2026-11-17). The sync now also asks for "closed"; "dead" and "waste" stay out.
-const LEAD_REQ_BODY = (p: number, status = "") => ({ loggeduserid: "1", entertain_search: "", source_search: "", lead_type_search: "", entertain_venue_search: "", priority_search: "", fromdate: "", uptodated: "", entertain_assginee_search: "", entertain_status_search: status, decor_status_search: status, search_date_type: "", visited_search: "", follow_dated: "", page_limit: String(p) });
-// The lead statuses Studio needs: the open pipeline (status "") and the won ones.
-const LEAD_STATUS_PASSES = ["", "closed"];
+// The plain list returns only the OPEN pipeline (open / mild / warm / hot): a lead marked "Closed With Us" (LMS status
+// "closed") never came back, so a won decor lead was missing from Studio's search - Saksham #01387, 11 Dec 2026 (owner report
+// 2026-11-17). Probed against the live API (2026-11-18): the entertain_* filters are ignored, decor_status_search errors on
+// LMS's side ("undefined local variable `ignore_status'") for every value, but decor_search (the guest search) also returns
+// closed / dead / waste leads - and "%" matches every lead (1,623 then, 186 pages). So a second pass asks with "%"; dead and
+// waste are dropped below, the open ones it repeats are kept once.
+const LEAD_REQ_BODY = (p: number, search = "") => ({ loggeduserid: "1", entertain_search: "", source_search: "", lead_type_search: "", entertain_venue_search: "", priority_search: "", fromdate: "", uptodated: "", entertain_assginee_search: "", entertain_status_search: "", decor_search: search, search_date_type: "", visited_search: "", follow_dated: "", page_limit: String(p) });
+const LEAD_SEARCH_PASSES = ["", "%"];
+// every lead, not only the open ones, runs past the 200-page ceiling the contract lists use
+const LEAD_PAGE_CEILING = 500;
 
 async function lmsCall(endpoint: string, body: unknown) {
   const r = await fetch(LMS_BASE + endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -187,13 +191,13 @@ function normalizeLeadRow(raw: any) {
 async function fetchDecorLeads() {
   const map = new Map<string, any>();
   let failed = false;
-  // one pass per status (LEAD_STATUS_PASSES) into the same map - a lead seen in both is kept once
-  for (const status of LEAD_STATUS_PASSES) {
+  // one pass per search (LEAD_SEARCH_PASSES) into the same map - a lead seen in both is kept once
+  for (const search of LEAD_SEARCH_PASSES) {
   let page = 1;
-  while (page <= PAGE_CEILING) {
+  while (page <= LEAD_PAGE_CEILING) {
     const pages = Array.from({ length: BATCH }, (_, i) => page + i);
     const results = await Promise.all(pages.map((p) =>
-      lmsCall(LEAD_ENDPOINT, LEAD_REQ_BODY(p, status)).then((d) => ({ p, rows: d?.leadinfo || [] })).catch(() => { failed = true; return { p, rows: [] }; })
+      lmsCall(LEAD_ENDPOINT, LEAD_REQ_BODY(p, search)).then((d) => ({ p, rows: d?.leadinfo || [] })).catch(() => { failed = true; return { p, rows: [] }; })
     ));
     for (const { rows } of results.sort((a, b) => a.p - b.p)) {
       for (const raw of rows) {
