@@ -589,7 +589,9 @@ export default function StudioModals({ ctx }) {
         // A booked deal's change that could not be reserved (owner ask 2026-11-17): no Close and no click-outside - it stays
         // until every row is fixed (each Fix re-checks; the last one closes it). Sold / push-to-IMS keep their Close: closing
         // those only cancels that one action.
-        const locked = oosGateReason === "dealCheckAutoSync";
+        // Unlocked again (owner ask 2026-11-18): a booked deal's gate now lists only shortages NEW since it was last shown (StudioApp),
+        // and some of those (stock held at Fixed Venues) are not the salesperson's to fix - a gate with no way out stranded them.
+        const locked = false;
         return (
       <div onClick={locked ? undefined : () => { setOosGateModal(null); setOosGateReason(null); }} style={{position:"fixed",inset:0,zIndex:9400,background:"rgba(10,10,20,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div onClick={e => e.stopPropagation()} style={{width:"min(520px, 100%)",maxHeight:"80vh",background:isDark?"#0F0F1A":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>

@@ -6818,6 +6818,9 @@ export default function StudioApp() {
   // ALREADY-sold event was already over-committed before this build existed, which isn't this
   // salesperson's problem to fix and correctly stays unflagged).
   const SELF_CHECK_EOID = "__self_check__";
+  // The out-of-stock rows a booked deal's gate has already shown in this tab, per client (see the dealCheckAutoSync gate).
+  const oosGateSeenRef = useRef({});
+  const oosGateKey = (f) => [f.fnIdx, f.zoneKey, f.invId, f.need, ...(Array.isArray(f.shortParts) ? f.shortParts.map((p) => `${p.id}:${p.need}`) : [])].join("|");
   const scanTrussStockShortage = useCallback(() => {
     const trussInv = studioFloralData?.trussInv;
     if (!trussInv) return [];
@@ -15481,9 +15484,18 @@ export default function StudioApp() {
           // by hand. A plain toast (not the hard modal) says the same thing without interrupting
           // whatever picker/gate the salesperson is already in.
           if (activeClientIdRef.current === activeClientId) {
-            if (!silent) {
+            // Only what is NEW since this deal's gate was last shown in this tab (owner ask 2026-11-18): a shortage the deal
+            // already carried - stock locked at Fixed Venues, say - came back on every Deal Check open of a booked deal and,
+            // with the gate locked, could not be got past. A row counts as new when its function / zone / item / need (or a
+            // short kit part's need) was not in the last list shown; a bigger need is new again.
+            const seenOos = oosGateSeenRef.current[activeClientId] || (oosGateSeenRef.current[activeClientId] = new Set());
+            const freshOos = oosFlagged.filter((f) => !seenOos.has(oosGateKey(f)));
+            oosFlagged.forEach((f) => seenOos.add(oosGateKey(f)));
+            if (!silent && freshOos.length) {
               setOosGateReason("dealCheckAutoSync");
-              setOosGateModal(oosFlagged);
+              setOosGateModal(freshOos);
+            } else if (!silent) {
+              /* every shortage here was already shown - nothing new to stop for */
             } else {
               showMsg?.(`⚠ ${oosFlagged.length} item${oosFlagged.length === 1 ? "" : "s"} out of stock — stock not updated. Open Deal Check to fix.`, "red");
             }

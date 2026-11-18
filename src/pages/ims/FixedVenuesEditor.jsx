@@ -527,7 +527,9 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                     }}
                     onBlur={(e) => {
                       const n = parseInt(e.target.value, 10);
-                      const safe = Number.isFinite(n) && n >= 0 ? (avail > 0 ? Math.min(n, Math.max(0, avail - discQtyVal)) : n) : 0;
+                      // capped whenever the item is known - also at 0 (all of it already standing elsewhere), which used to let any
+                      // number through (Small Golden Chandelier: 30 standing at Pushpanjali of 15 owned, 2026-11-18)
+                      const safe = Number.isFinite(n) && n >= 0 ? (inv ? Math.min(n, Math.max(0, avail - discQtyVal)) : n) : 0;
                       updItem(v.id, it.invId, { fullQty: safe });
                       setNumDraft((d) => { const next = { ...d }; delete next[draftKey(v.id, it.invId, "fullQty")]; return next; });
                     }}
@@ -546,7 +548,7 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                     }}
                     onBlur={(e) => {
                       const n = parseInt(e.target.value, 10);
-                      const safe = Number.isFinite(n) && n >= 0 ? (avail > 0 ? Math.min(n, Math.max(0, avail - fullQtyVal)) : n) : 0;
+                      const safe = Number.isFinite(n) && n >= 0 ? (inv ? Math.min(n, Math.max(0, avail - fullQtyVal)) : n) : 0;
                       updItem(v.id, it.invId, { qty: safe });
                       setNumDraft((d) => { const next = { ...d }; delete next[draftKey(v.id, it.invId, "qty")]; return next; });
                     }}
@@ -591,6 +593,13 @@ export default function FixedVenuesEditor({ settings, setSettings, inventory = [
                         ? <>you own {stock}, and {heldBy} {elsewhere.length === 1 && elsewhere[0].qty === 1 ? "is" : "are"} already installed elsewhere. Free {elsewhere.length === 1 && elsewhere[0].qty === 1 ? "it" : "them"} there, or raise the stock in Inventory.</>
                         : <>that is your whole stock. Raise it in Inventory to install more.</>}
                       {" "}Anything higher snaps back to {avail}.
+                      {/* already saved above the limit (entered before the cap, or the stock went down since): fit it in one click */}
+                      {inv && combinedQty > avail && (
+                        <button type="button" className="ml-2 px-2 py-0.5 rounded bg-amber-600 text-white font-semibold hover:bg-amber-700"
+                          onClick={() => { const full = Math.min(fullQtyVal, avail); updItem(v.id, it.invId, { fullQty: full, qty: Math.max(0, avail - full) }); }}>
+                          Fit to {avail}
+                        </button>
+                      )}
                     </div>
                   )}
                   {atCap && (

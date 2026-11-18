@@ -60,7 +60,8 @@ describe("runDealCheckGenerate only pops the hard gate modal / its own toasts wh
     expect(idx).toBeGreaterThan(-1);
     const guardStart = src.lastIndexOf("if (activeClientIdRef.current === activeClientId)", idx);
     const guardBlock = src.slice(guardStart, idx);
-    expect(guardBlock).toMatch(/if \(!silent\) \{\s*$/m);
+    // still only a run the salesperson can see - now also only for shortages new since the gate was last shown (owner ask 2026-11-18)
+    expect(guardBlock).toMatch(/if \(!silent && freshOos\.length\) \{\s*$/m);
   });
 
   it("the success toast stays gated on !silent (pre-existing, unchanged)", () => {
