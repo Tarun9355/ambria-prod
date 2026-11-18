@@ -1,3 +1,4 @@
+import { isPlatformFoc } from "./foc.js";
 // Event taxonomy + zone definitions (faithful to the reference Studio app).
 // VERBATIM copies of the module-scope constants/helpers — only `export` added.
 //
@@ -345,7 +346,7 @@ export function carpetNewShares({ zoneConfig = {}, enabledEls = {}, zoneOrder = 
   keys.forEach((zk) => {
     const zc = zoneConfig[zk];
     [zc, ...(Array.isArray(zc.extraPlatformRows) ? zc.extraPlatformRows : [])].forEach((row, ri) => {
-      if (!row || row.cpT === CARPET_OFF) return;
+      if (!row || row.cpT === CARPET_OFF || isPlatformFoc(row)) return; // a FOC floor's carpet is already down - opens no roll
       const label = carpetPricingFor(row.cpT, carpetMaterials).label || "";
       if (!/new/i.test(label)) return;
       const mk = String(row.cpT || label).toLowerCase();
@@ -370,6 +371,8 @@ export function carpetNewShares({ zoneConfig = {}, enabledEls = {}, zoneOrder = 
 // shareKey: "<zoneKey>|<rowIdx>" of this floor in its function - with rates.carpetNewShare (carpetNewShares) a Carpet New
 // floor bills its share of the function's rolls instead of whole rolls of its own.
 export function platformRowCost(row, rates, shareKey) {
+  // FOC (lib/studio/foc.js): platform and carpet already laid at the venue - nothing billed
+  if (isPlatformFoc(row)) return { platform: 0, carpet: 0 };
   const fd = row?.floorDims || {};
   const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
   // How many identical footprints this one row represents — defaults to 1 (every row created

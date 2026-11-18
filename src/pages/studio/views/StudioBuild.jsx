@@ -13,7 +13,7 @@ import { IconClipboard, IconPencil, IconRuler, IconBolt, IconWall, IconPlatform,
   IconSearch, IconCamera, IconPrinter, IconNote, IconCalendar, IconFlower, IconFactory,
   IconCart, IconCopy, IconRepeat, IconAlert, IconPalette, IconChevron, IconSparkle,
   IconPlay, IconBox, IconSave, IconSliders, IconStar, IconCrown, IconFiller, IconGift } from "../../../components/icons.jsx";
-import { isFoc, isTrussFoc, withoutTrussFoc } from "../../../lib/studio/foc.js";
+import { isFoc, isTrussFoc, isPlatformFoc, withoutTrussFoc } from "../../../lib/studio/foc.js";
 import { getEffectivePricing, resolveDateCategory } from "../../../lib/inventory/helpers";
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, CATEGORIES, venueTypeLabel,
@@ -925,7 +925,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   // required. See calcStructCost's own comment (StudioApp.jsx) for the engine-side half of this.
   const rowDims = zc.floorDims || {};
   const rowCostRaw = platformRowCost(
-    { plH: zc.plH, floorDims: rowDims, cpT: zc.cpT, plQty: zc.plQty, cpInvId: zc.cpInvId },
+    { plH: zc.plH, floorDims: rowDims, cpT: zc.cpT, plQty: zc.plQty, cpInvId: zc.cpInvId, platformFoc: zc.platformFoc },
     { platformRates: platformRatesPriced, carpetMaterials: carpetMaterialsPriced, imsInventory, carpetNewShare },
     `${zoneKey}|${rowIdx || 0}`,
   );
@@ -967,7 +967,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   const carpetBillSqft = cpShare ? cpShare.billed : billedCarpetSqft(carpetNeedSqft, carpetBilledRaw.label);
   const carpetRolls = carpetBillSqft > 0 && /new/i.test(carpetBilledRaw.label || "") ? Math.round(carpetBillSqft / 1500) : 0;
   const nf = (n) => Math.round(n).toLocaleString("en-IN");
-  const carpetWhy = zc.cpT === CARPET_OFF || !(carpetNeedSqft > 0) ? "" : [
+  const carpetWhy = zc.cpT === CARPET_OFF || !(carpetNeedSqft > 0) || isPlatformFoc(zc) ? "" : [
     carpetLaid.shortBilled !== carpetLaid.short ? `${carpetLaid.long} × ${carpetLaid.short} → ${carpetLaid.long} × ${carpetLaid.shortBilled} = ${nf(carpetNeedSqft)} sqft (10 ft roll)` : "",
     // Carpet New, shared across this function's floors: this floor opens a roll, or takes what an earlier floor's roll left
     cpShare && !cpShare.billed ? `from the roll already opened (${nf(cpShare.leftBefore)} sqft were left) · ${nf(cpShare.leftAfter)} sqft left` : "",
@@ -997,6 +997,18 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     above: they are off on every area-created zone, which emptied the card. */}
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:`1px solid ${border}`}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{display:"inline-flex",alignItems:"center",gap:6,fontWeight:600,color:textP}}><IconPlatform size={12}/>Platform</span>
+                    {/* FOC (owner ask 2026-11-18): this floor - platform AND its carpet - is already laid at the venue from an earlier
+                        event. Billed nothing, no crew, no truck, nothing held or planned in IMS (lib/studio/foc.js isPlatformFoc). Same
+                        gift mark as the truss FOC. Writes platformFoc: true, or removes it (undefined drops out of the saved JSON). */}
+                    <button type="button" aria-pressed={isPlatformFoc(zc)}
+                      onClick={()=>sZ({platformFoc: isPlatformFoc(zc) ? undefined : true})}
+                      title={isPlatformFoc(zc)
+                        ? "FOC — this platform and its carpet are already at the venue: free, not blocked. Click to bill them normally again."
+                        : "Mark FOC (free of cost) — this platform and the carpet on it are already laid at the venue from an earlier event: the guest isn't billed, no crew or truck is counted, and nothing is blocked or planned in IMS."}
+                      style={{display:"inline-flex",alignItems:"center",gap:4,height:20,padding:isPlatformFoc(zc)?"0 7px":"0 4px",borderRadius:6,cursor:"pointer",fontFamily:"inherit",lineHeight:1,fontSize:10.5,fontWeight:700,
+                        color:isPlatformFoc(zc)?"#7C3AED":textS,background:isPlatformFoc(zc)?"#7C3AED18":"transparent",border:isPlatformFoc(zc)?"1px solid #7C3AED66":"1px solid transparent",opacity:isPlatformFoc(zc)?1:0.6}}>
+                      <IconGift size={11}/>{isPlatformFoc(zc)&&"FOC"}
+                    </button>
                     {/* ── A SEGMENTED CONTROL, BECAUSE IT IS A CHOICE ──
                         These were borderless buttons separated by nothing, differing only in font
                         weight and an 8%-black wash when picked. Nobody could tell they were pressable,

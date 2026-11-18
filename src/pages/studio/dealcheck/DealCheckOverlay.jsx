@@ -42,7 +42,7 @@ const DC_BG = Object.values(
 )[0] || null;
 // The zone-row action marks, taken from Build so one action does not have two pictures.
 import { IconFactory, IconCart, IconPlatform, IconCheck, IconAlert, IconChevron, IconBox, IconRepeat, IconSparkle, IconGift } from "../../../components/icons.jsx";
-import { cardIsFoc, isTrussFoc } from "../../../lib/studio/foc.js";
+import { cardIsFoc, isTrussFoc, isPlatformFoc } from "../../../lib/studio/foc.js";
 import { todayStr } from "../../../lib/ims/attendance";
 
 // ═══ SURFACES ═══
@@ -1358,9 +1358,9 @@ export default function DealCheckOverlay({ ctx }) {
               venueByFn[fnIdx] = fn.fnVenue || "";
               Object.keys(fn.enabledEls).filter(k => fn.enabledEls[k]).forEach(zk => {
                 const zc = fn.zoneConfig[zk]; if (!zc) return;
-                [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty },
+                [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty, platformFoc: zc.platformFoc },
                   ...(zc.extraPlatformRows || [])].forEach(row => {
-                  if (!row.plH) return;
+                  if (!row.plH || isPlatformFoc(row)) return; // FOC floor: already laid at the venue
                   const L = Number(row.floorDims?.L) || 0, W = Number(row.floorDims?.W) || 0;
                   if (L <= 0 || W <= 0) return;
                   const qty = Math.max(1, Math.round(Number(row.plQty) || 1));

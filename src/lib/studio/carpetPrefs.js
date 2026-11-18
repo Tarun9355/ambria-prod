@@ -7,6 +7,7 @@
 // Deal Check's carpet card, the layout pushed to IMS) already looks. Anything that changes a pick goes through
 // prefsPatch, so the two can't disagree.
 
+import { isPlatformFoc } from "./foc.js";
 import { carpetLaidDims } from "./taxonomy.js";
 
 export const CARPET_PREF_MAX = 3;
@@ -69,6 +70,7 @@ export function setPrefsPatch(picks) {
 // (taxonomy.platformRowCost), so stock checks and the bill can never disagree about how much carpet a floor is.
 // Laid on the 10 ft roll (taxonomy.carpetLaidDims): the shorter side up to the next 10 ft - the folded carpet is used too.
 export function floorSqftOf(row) {
+  if (isPlatformFoc(row)) return 0; // FOC: the carpet is already down at the venue - nothing to lay, plan, hold or staff
   const area = carpetLaidDims(row?.floorDims || {}).area;
   const qty = Math.max(1, Math.round(Number(row?.plQty) || 1));
   return area * qty;

@@ -1,3 +1,4 @@
+import { isPlatformFoc } from "../studio/foc.js";
 import { supabase } from "../supabase";
 import { eoToFnList, isDeptHead, expireStaleSimulations } from "./trussEngine";
 
@@ -106,7 +107,7 @@ export const buildEventPlatformAllocation = (eventMeta, fnList) => {
       if (enabledEls && Object.keys(enabledEls).length > 0 && !enabledEls[zoneKey]) return;
       const rows = [zc, ...(Array.isArray(zc.extraPlatformRows) ? zc.extraPlatformRows : [])];
       rows.forEach((row) => {
-        if (!row?.plH) return; // no platform picked on this row
+        if (!row?.plH || isPlatformFoc(row)) return; // no platform picked on this row / FOC: already laid at the venue
         const L = parseFloat(row.floorDims?.L) || 0;
         const W = parseFloat(row.floorDims?.W) || 0;
         const qty = Math.max(1, parseInt(row.plQty, 10) || 1);

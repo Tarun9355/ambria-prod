@@ -13,7 +13,7 @@
 import { fmt } from "../format";
 import { walkKitUnits, flowerPaletteHexFor } from "./helpers";
 import { DEPTS } from "./deptClassify";
-import { isTrussFoc } from "../studio/foc.js";
+import { isTrussFoc, isPlatformFoc } from "../studio/foc.js";
 import { venueWithParent, standingQty, fixedVenueFor } from "./fixedVenues";
 import { ZONE_META, trussBaseArea, CARPET_OFF, carpetPricingFor, carpetTakesStockPick } from "../studio/taxonomy";
 import { venueKey } from "../venueKey.js";
@@ -591,24 +591,27 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       if (truss) out.push({ k: t("Truss"), v: truss + (sizedExtra.length ? " " + t("+{n} more", { n: sizedExtra.length }) : "") });
       else if (sizedExtra.length) out.push({ k: t("Truss"), v: t("{n} truss|{n} trusses", { n: sizedExtra.length }) });
       if (focN) out.push({ k: t("Truss"), v: t("FOC — already at the venue") + (focN > 1 ? ` ×${focN}` : "") });
+      // FOC floor (lib/studio/foc.js isPlatformFoc): platform and carpet already laid - nothing to carry, the crew is told so
       const plats = [
-        z.plH ? [platLbl(z.plH, z.plHft), floor].filter(Boolean).join(" · ") : "",
-        ...extraPl.map(r => [platLbl(r?.plH, r?.plHft), ftArea(r?.floorDims)].filter(Boolean).join(" · ")),
+        z.plH && !isPlatformFoc(z) ? [platLbl(z.plH, z.plHft), floor].filter(Boolean).join(" · ") : "",
+        ...extraPl.filter(r => !isPlatformFoc(r)).map(r => [platLbl(r?.plH, r?.plHft), ftArea(r?.floorDims)].filter(Boolean).join(" · ")),
       ].filter(Boolean);
       if (plats.length) out.push({ k: t("Platform"), v: plats.join("; ") });
+      const platFocN = [z, ...extraPl].filter(r => r && isPlatformFoc(r)).length;
+      if (platFocN) out.push({ k: t("Platform"), v: t("FOC — already at the venue") + (platFocN > 1 ? ` ×${platFocN}` : "") });
       // "— None —" is stored as the CARPET_OFF sentinel: no carpet, so no Carpet chip (it printed "Carpet __off__")
       // Only a carpet that is actually chosen (owner ask 2026-11-03): Build defaults every floor to Carpet Old, so a floor nobody
       // picked a carpet for printed "Carpet Old". A stock carpet (Old) shows once sales picked one in Build or Planning decided
       // one; a New / Flex carpet (not picked from stock) shows when that material is set.
       const hasCarpet = (() => {
-        if (!z.cpT || z.cpT === CARPET_OFF) return false;
+        if (!z.cpT || z.cpT === CARPET_OFF || isPlatformFoc(z)) return false;
         if (!carpetTakesStockPick(carpetPricingFor(z.cpT, settings?.carpetMaterials).label)) return true;
         if (prefsOf(z).length > 0) return true;
         return fi != null && !!validDecision(carpetDecided[carpetKey(fi, zk, 0)], { date: fn?.date, fnLabel: fn?.type || fn?.name });
       })();
       if (hasCarpet) out.push({ k: t("Carpet"), v: [hn(carpetName(z.cpT)), floor].filter(Boolean).join(" · ") });
       // No "Masking Yes" chip (owner ask 2026-11-03): the wall masking prints with its colour and pieces in the fabric row.
-      if (!z.plH && !hasCarpet && floor) out.push({ k: t("Floor"), v: floor });
+      if (!z.plH && !hasCarpet && floor && !isPlatformFoc(z)) out.push({ k: t("Floor"), v: floor });
       return out;
     };
     // ── THE FABRIC COLOURS ── Liza / Velvet curtain / Wall masking colour of each zone, under the truss size (owner ask 2026-11-01): the

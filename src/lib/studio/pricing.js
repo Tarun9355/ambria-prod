@@ -13,7 +13,7 @@ import { priceForInvItem } from "../ims/helpers.js";
 // below for how it's used.
 import { builtBeamTotal, PILLAR_BUDGET_FT, resolvePillarHeight, resolveBeamSegment, pillarCountForSpanRaw, materialHasSpanPadding } from "../ims/trussEngine.js";
 import { platformAvgRatePerSqft } from "../ims/platformEngine.js";
-import { isTrussFoc } from "./foc.js";
+import { isTrussFoc, isPlatformFoc } from "./foc.js";
 import { normalizedTrussCounts, TRUSS_MATERIAL_KEYS } from "../ims/fixedVenues.js";
 export { resolveMandiFlower, pillarCountForSpanRaw };
 
@@ -1484,7 +1484,7 @@ const imsField = {
 // Carpet sqft = zone floor area (L×W). rentalRate = item rental (₹/sqft); purchaseRate = item.cost (₹/sqft).
 export const calcZoneCarpet = (zc, carpetItem, markupPct) => {
   const out = { needed: 0, reused: 0, fresh: 0, reusedCost: 0, freshCost: 0, cost: 0, rentalRate: 0, purchaseRate: 0 };
-  if (!zc || !zc.cpT || zc.cpT === CARPET_OFF || !carpetItem) return out;
+  if (!zc || !zc.cpT || zc.cpT === CARPET_OFF || !carpetItem || isPlatformFoc(zc)) return out;
   // No truss-dims (zc.dims) fallback — Carpet must never silently size itself off the truss's own
   // footprint; see StudioApp.jsx's calcStructCost for the full reasoning.
   const fd = zc.floorDims || {};
@@ -1541,10 +1541,10 @@ export function buildPlatformPlan(fns, dealCheckData) {
       if (!zc) return;
       // Each zone can carry more than one platform footprint (row 0 = the zone's own scalar
       // plH/floorDims, plus any zc.extraPlatformRows added via "+ Add Platform") — one entry per row.
-      const rows = [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty },
+      const rows = [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty, platformFoc: zc.platformFoc },
         ...(zc.extraPlatformRows || [])];
       rows.forEach((row, rowIdx) => {
-        if (!row.plH) return;
+        if (!row.plH || isPlatformFoc(row)) return; // FOC: already laid at the venue - nothing to supply
         const fd = row.floorDims || {};
         const L = Number(fd.L) || 0, W = Number(fd.W) || 0;
         if (L <= 0 || W <= 0) return;

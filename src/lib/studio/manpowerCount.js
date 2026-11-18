@@ -23,6 +23,7 @@
 // three read the NUMBER from here, so it can never disagree between them even while the
 // explanation stays tailored per audience/file.
 
+import { isPlatformFoc } from "./foc.js";
 import { matchFlowerPattern } from "../ims/flowerHelpers";
 import { resolveTrussConfig, calcZoneTrussPreview, calcZoneFabric, scaleTrussPreview } from "./pricing";
 import { heavyExtraLabour, eventTimingMultFor } from "../ims/constants";
@@ -63,8 +64,9 @@ export function tentingZoneUsage(fn, ctx) {
         try { const pv = scaleTrussPreview(calcZoneTrussPreview(row, ctx.trussInv), row?.trussQty); if (pv?.topology?.pillarCount) truss += pv.topology.pillarCount; } catch { /* zone has no resolvable truss preview */ }
       });
     }
-    const rows = [{ plH: z.plH, floorDims: z.floorDims || {}, plQty: z.plQty, cpT: z.cpT }, ...(z.extraPlatformRows || [])];
+    const rows = [{ plH: z.plH, floorDims: z.floorDims || {}, plQty: z.plQty, cpT: z.cpT, platformFoc: z.platformFoc }, ...(z.extraPlatformRows || [])];
     rows.forEach((row) => {
+      if (isPlatformFoc(row)) return; // FOC floor: platform and carpet already laid - no crew
       if (row.cpT !== CARPET_OFF) {
         const area = floorSqftOf(row);
         if (area > 0) carpet += area;

@@ -15,12 +15,28 @@ export const isFoc = (el) => el?.foc === true;
 // calcZoneFabricCost - so every reader of a truss row follows without a check of its own.
 export const isTrussFoc = (row) => row?.trussFoc === true;
 
+// FOC on a PLATFORM (owner ask 2026-11-18): this floor - the platform AND the carpet on it - is already laid at the venue from a
+// previous event. Billed nothing, no platform / carpet crew or truck, nothing reserved or planned in IMS (battas, carpet stock,
+// the Tenting carpet plan). `row` is the zone config itself (its own floor, row 0) or one entry of zc.extraPlatformRows; the flag
+// is platformFoc because row 0 IS the zone config. Checked at the source - taxonomy.platformRowCost / carpetNewShares,
+// carpetPrefs.floorSqftOf (the carpet sqft every plan, stock check and crew count reads), buildPlatformPlan - plus the few
+// places that rebuild row 0 field by field (which must carry the flag along).
+export const isPlatformFoc = (row) => row?.platformFoc === true;
+
 // A zone config without any truss FOC - for every path that carries a build into ANOTHER deal or context (a library master's
 // saved build, picking that photo, copying a build from another client). "Already at the venue" is true of this event only:
 // carried along, it would silently bill a truss, its fabric and masking at Rs 0 on a deal where nobody chose that.
+// Also drops a platform FOC (platformFoc, on the zone and its extraPlatformRows) - "already at the venue" is this event's only.
 export function withoutTrussFoc(cfg) {
   if (!cfg || typeof cfg !== "object") return cfg;
-  const { trussFoc: _f, ...rest } = cfg; // eslint-disable-line no-unused-vars
+  const { trussFoc: _f, platformFoc: _pf, ...rest } = cfg; // eslint-disable-line no-unused-vars
+  if (Array.isArray(rest.extraPlatformRows)) {
+    rest.extraPlatformRows = rest.extraPlatformRows.map((r) => {
+      if (!r || typeof r !== "object") return r;
+      const { platformFoc: _x, ...o } = r; // eslint-disable-line no-unused-vars
+      return o;
+    });
+  }
   if (Array.isArray(rest.extraTrussRows)) {
     rest.extraTrussRows = rest.extraTrussRows.map((r) => {
       if (!r || typeof r !== "object") return r;
