@@ -99,8 +99,16 @@ describe("book: flower cards in the combined book (owner report 2026-11-14)", ()
       artZones: [{ zone: "stage", el: "Flower Reet", flower: 10, green: 8, qty: 3, realPct: 0 }] }],
   };
   const book = (d, opts) => buildDeptBookHtml({ ...ctx(d, []), sel: selF, inventory: inv2, flowerPatterns: pats, floralModeBySub: new Map() }, {}, {}, opts);
-  it("the combined book prints a 100% artificial piece's card with its bunches, not a bare floral-foam card", () => {
+  // owner ask 2026-11-18: no flower recipes in the combined book - the piece stays on its zone page, its recipe prints in the
+  // Floral book only (and no bare floral-foam card comes back in its place)
+  it("the combined book prints the piece but no recipe card, bunches or floral-foam card", () => {
     const html = book("Floral", { combined: true });
+    expect(html).toContain("Flower Reet");
+    expect(html).not.toContain("Artificial flowers");
+    expect(html).not.toContain("floral foam");
+  });
+  it("the Floral book prints the 100% artificial piece's recipe card with its bunches", () => {
+    const html = book("Floral", {});
     expect(html).toContain("Artificial flowers");
     expect(html).toContain("Artificial 100%");
   });
@@ -146,10 +154,11 @@ describe("book: a recipe renamed since Deal Check ran prints one card, not two (
       artZones: [{ zone: "stage", el: "Flower Trail", flower: 43, green: 64, qty: 9, realPct: 35 }] }],
   };
   it("the old name's bunches and lines land on the renamed piece's card", () => {
-    const html = buildDeptBookHtml({ ...ctx("Floral", []), sel: selR, inventory: inv2, flowerPatterns: pats, floralModeBySub: new Map() }, {}, {}, { combined: true });
+    // the Floral book - the only one that prints recipes now (owner ask 2026-11-18)
+    const html = buildDeptBookHtml({ ...ctx("Floral", []), sel: selR, inventory: inv2, flowerPatterns: pats, floralModeBySub: new Map() }, {}, {}, {});
     expect(html).toContain("Flower Trail Rft");
-    // the bunches once, on the one card (not a count of "43" - the footer's generated-at time can hold that too)
-    expect(html.split("Artificial flowers").length - 1).toBe(1);
+    // one card, under the new name (the Floral book also has its own artificial-bunches table, so the word is not counted)
+    expect(html.split("🌸 Flower Trail Rft").length - 1).toBe(1);
     expect(html).not.toMatch(/🌸 Flower Trail</);
   });
 });

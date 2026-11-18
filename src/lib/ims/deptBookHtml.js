@@ -1409,7 +1409,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // one sales downloads for a client (owner report 2026-11-14: its flower pieces showed only a stray "floral foam" card,
       // because the combined book skipped the recipe cards but still printed Deal Check's leftover real lines). Any other
       // single-department book has no flower cards at all.
-      const floralCards = combined || inBook("Floral");
+      // Not in the combined book any more (owner ask 2026-11-18: "all dept wali pdf se flower receipe hata do") - the flower pieces
+      // stay on their zone pages as items; their recipes (flowers, artificial bunches) print in the Floral book only. The stray
+      // "floral foam" card that once followed came from the leftover pages, which the combined book does not print.
+      const floralCards = !combined && inBook("Floral");
       // ── ARTIFICIAL BUNCHES UNDER THEIR OWN ARRANGEMENT ──
       // A zone's artificial flowers and greens used to print as a block of their own ("Ulta Pulta Pot — flowers 10.8
       // bunches"), apart from the arrangement they go into. They now sit in that arrangement's own block, in whole bunches
