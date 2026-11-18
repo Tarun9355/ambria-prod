@@ -24,7 +24,7 @@ import { catalogueDeletedLabel, catalogueDeletedTitle } from "../../../lib/studi
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
-import { trussRowCost, calcZoneFabricCost, calcZoneFabric, guestFabricMultiplier, fabricRepeatDiscount, fabricPartRepeatOn, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction, isFlowerPickChoice, mandiElUnitPrice } from "../../../lib/studio/pricing";
+import { trussRowCost, calcZoneFabricCost, calcZoneFabric, guestFabricMultiplier, fabricRepeatDiscount, fabricPartRepeatOn, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction, isFlowerPickChoice, mandiElUnitPrice, flowerPickRateOf } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig, trussInvForMaterial, nearestCleanSpans, nearestCleanHeights, trussPillarCount } from "../../../lib/studio/pricing";
 import { reservedTrussStockOnDate, skeletonMaterialKey } from "../../../lib/ims/trussEngine";
@@ -1670,7 +1670,10 @@ export default function StudioBuild({ ctx }) {
       at = elems.length - 1;
     } else {
       if (!elems[idx]) return;
-      elems[idx] = { ...elems[idx], name: m.name, unit: m.unit || "bundle", mandiId: m.id, mandiVariantId: vId, flowerPick: true };
+      const unit = m.unit || "bundle";
+      // a different unit (bundle -> kg …) starts again at 1: "5 bundles" must not become "5 kg" unseen
+      const qty = String(elems[idx].unit || "") === unit ? elems[idx].qty : 1;
+      elems[idx] = { ...elems[idx], name: m.name, unit, qty, mandiId: m.id, mandiVariantId: vId, flowerPick: true };
     }
     setZoneElements((p) => ({ ...p, [k]: elems }));
     if (variants.length > 1) setMandiVariantPicker({ k, idx: at, mandiId: m.id });
@@ -5250,7 +5253,8 @@ undefined
                       // addable above at their own markup (Jaimala, Loose Petals) are not listed twice.
                       const qt=q.trim();
                       const fpBrowse=qt&&("flowers".startsWith(qt)||/flower|phool|फूल/.test(qt))?[{kind:"fpbrowse"}]:[];
-                      const fpMatches=smartFilter(mandiCatalogue.filter(m=>isFlowerPickChoice(m)&&!isDirectMandiElement(m)),q,m=>[m.name,m.flowerCat]);
+                      // by name only, at most 30 (a category word like "flower" would list them all - "see all" is for that)
+                      const fpMatches=smartFilter(mandiCatalogue.filter(m=>isFlowerPickChoice(m)),q,m=>[m.name]).slice(0,30);
                       const matches=[...fpBrowse,...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt})),...mandiMatches.map(m=>({kind:"mandi",m})),...fpMatches.map(m=>({kind:"fp",m}))];
                       if(!addElPos||addElPos.key!==k) return null;
                       return matches.length>0?createPortal(<div className="ael-widget" style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
@@ -5301,7 +5305,7 @@ undefined
                                 <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(219,39,119,0.12)",color:"#DB2777",fontWeight:700,flexShrink:0}}>🌸 FLOWER · {mi.unit||"bundle"}</span>
                                 {nInZone>0&&<span title={`Already added ${nInZone} time(s) to this zone`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(5,150,105,0.15)",color:"#059669",fontWeight:700,flexShrink:0}}>✓ ADDED ×{nInZone}</span>}
                               </div>
-                              <div style={{fontSize:11,color:textS,marginTop:2}}>₹{mandiElUnitPrice({flowerPick:true},mi,mi.currentPrice).toLocaleString("en-IN")}/{mi.unit||"bundle"} (2× mandi){Array.isArray(mi.colorVariants)&&mi.colorVariants.length>1?` · ${mi.colorVariants.length} colours`:""}</div>
+                              <div style={{fontSize:11,color:textS,marginTop:2}}>₹{flowerPickRateOf(mi).toLocaleString("en-IN")}/{mi.unit||"bundle"} (2× mandi){Array.isArray(mi.colorVariants)&&mi.colorVariants.length>1?` · ${mi.colorVariants.length} colours`:""}</div>
                             </div>
                           </div>; }
                           if(m.kind==="mandi"){ const mi=m.m; const variants=Array.isArray(mi.colorVariants)?mi.colorVariants:[]; const nInZone=countInZone("mandiId",mi.id); return <div key={"mandi:"+mi.id}
@@ -6948,7 +6952,7 @@ undefined
                     // most flowers carry their photos on their colours (IMS Mandi), not on the flower itself
                     const ph=m.photoUrl||(Array.isArray(m.colorVariants)?m.colorVariants.find(v=>v?.photoUrl)?.photoUrl:"")||"";
                     return (
-                      <button type="button" key={m.id} className="mv-card" onClick={()=>pick(m)} title={`${m.name} - ₹${mandiElUnitPrice({flowerPick:true},m,m.currentPrice).toLocaleString("en-IN")} per ${m.unit||"bundle"}`}
+                      <button type="button" key={m.id} className="mv-card" onClick={()=>pick(m)} title={`${m.name} - ₹${flowerPickRateOf(m).toLocaleString("en-IN")} per ${m.unit||"bundle"}`}
                         style={{cursor:"pointer",padding:10,borderRadius:10,border:isSel?"2px solid #DB2777":`1px solid ${border}`,textAlign:"left",fontFamily:"inherit",
                           background:isSel?"rgba(219,39,119,0.07)":isDark?"rgba(255,255,255,0.03)":"#FAFAFA",display:"flex",flexDirection:"column",gap:6,position:"relative"}}>
                         {ph
@@ -6959,14 +6963,14 @@ undefined
                                 const photoOf=(x)=>x.photoUrl||(Array.isArray(x.colorVariants)?x.colorVariants.find(v=>v?.photoUrl)?.photoUrl:"")||"";
                                 const withPhoto=list.filter(x=>photoOf(x));
                                 setLightbox({idx:Math.max(0,withPhoto.findIndex(x=>x.id===m.id)),items:withPhoto.map(x=>({src:photoOf(x),name:x.name||"Flower",details:[
-                                  ["Rate",`₹${mandiElUnitPrice({flowerPick:true},x,x.currentPrice).toLocaleString("en-IN")} / ${x.unit||"bundle"} (2× mandi)`],
+                                  ["Rate",`₹${flowerPickRateOf(x).toLocaleString("en-IN")} / ${x.unit||"bundle"} (2× mandi)`],
                                   ...(Array.isArray(x.colorVariants)&&x.colorVariants.length>1?[["Colours",String(x.colorVariants.length)]]:[]),
                                 ]}))});
                               }}
                               style={{width:"100%",height:70,objectFit:"cover",borderRadius:6,background:isDark?"#1a1a2e":"#eee",cursor:"zoom-in"}}/>
                           : <span style={{width:"100%",height:70,borderRadius:6,background:isDark?"rgba(255,255,255,0.05)":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:textS}}>🌸</span>}
                         <span style={{fontSize:13,fontWeight:600,color:textP,lineHeight:1.2}}>{m.name}</span>
-                        <span style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>₹{mandiElUnitPrice({flowerPick:true},m,m.currentPrice).toLocaleString("en-IN")}/{m.unit||"bundle"}</span>
+                        <span style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>₹{flowerPickRateOf(m).toLocaleString("en-IN")}/{m.unit||"bundle"}</span>
                         {nV>1&&<span style={{fontSize:10.5,color:textS}}>{nV} colours</span>}
                       </button>
                     );

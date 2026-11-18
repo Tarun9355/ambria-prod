@@ -1298,6 +1298,11 @@ export const mandiElUnitPrice = (el, parent, base) => {
   if (el?.flowerPick) return Math.round(b * FLOWER_PICK_RATE_MULTIPLIER);
   return Math.round(b * (1 + (Number(parent?.markup) || 0) / 100));
 };
+// The rate a flower card will bill when picked: a one-colour flower is given that colour (placeFlowerPick), so its price.
+export const flowerPickRateOf = (m) => {
+  const v = Array.isArray(m?.colorVariants) && m.colorVariants.length === 1 ? m.colorVariants[0] : null;
+  return mandiElUnitPrice({ flowerPick: true }, m, (v || m)?.currentPrice);
+};
 
 // ═══ Flower Palette colour-ratio (owner ask, 2026-10-17) ═══
 // Build's Flower Palette control now allows picking MORE than one colour, with a ratio between

@@ -3662,6 +3662,10 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
         if (!deptsWithWork.length) { tell("error", { reason: "No department plan on this event yet — sync it from Deal Check first" }); return; }
         pdfAllCarpetsRef.current = true;
         ok = await exportPdf(deptsWithWork, { combined: true });
+      } catch (err) {
+        // a throw still reports back (it used to leave Deal Check on "Building PDF…" until its own timer ran out)
+        notes.unshift(String(err?.message || err || "error"));
+        ok = false;
       } finally { window.alert = realAlert; pdfAllCarpetsRef.current = false; clearInterval(beat); }
       tell(ok ? "done" : "error", { notes });
       onAutoPdfDone?.();

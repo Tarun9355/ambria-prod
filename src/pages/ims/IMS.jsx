@@ -381,14 +381,16 @@ export default function IMS() {
     try { const m = /[?&]pdfEvent=([^&]+)/.exec(window.location.hash); return m && window.self !== window.top ? decodeURIComponent(m[1]) : null; } catch { return null; }
   });
   const autoPdfOpenedRef = useRef(false);
-  // Tell Deal Check this frame is up (signed in, loading IMS) and keep saying so until Dept Ops takes over - see DeptPdfButton.
+  // Tell Deal Check this frame is up (signed in, loading IMS) while IMS loads - see DeptPdfButton. Only while loading: once the
+  // data is in, Dept Ops opens the event and says "alive" itself as it builds, so a frame whose event never opens goes quiet and
+  // Deal Check gives up after 90 s instead of waiting out the 5-minute cap.
   useEffect(() => {
-    if (!autoPdfFor) return undefined;
+    if (!autoPdfFor || !loading) return undefined;
     const tell = () => { try { window.parent?.postMessage({ type: "ambria-dept-pdf", phase: "alive" }, window.location.origin); } catch { /* not framed */ } };
     tell();
     const t = setInterval(tell, 10000);
     return () => clearInterval(t);
-  }, [autoPdfFor]);
+  }, [autoPdfFor, loading]);
   useEffect(() => {
     if (!autoPdfFor || loading || autoPdfOpenedRef.current) return;
     autoPdfOpenedRef.current = true;

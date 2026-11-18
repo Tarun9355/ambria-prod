@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isFlowerPickChoice, isGreenMandi, mandiElUnitPrice, FLOWER_PICK_RATE_MULTIPLIER } from "./pricing";
+import { isFlowerPickChoice, isGreenMandi, mandiElUnitPrice, flowerPickRateOf, FLOWER_PICK_RATE_MULTIPLIER } from "./pricing";
 
 // Build's "🌸 + Add flowers" (owner ask 2026-11-18): every mandi flower but the greens, billed at 2x the mandi rate.
 describe("flower pick", () => {
@@ -33,5 +33,11 @@ describe("flower pick", () => {
     expect(mandiElUnitPrice({}, { markup: 50 }, 120)).toBe(180);
     expect(mandiElUnitPrice({}, { markup: null }, 120)).toBe(120);
     expect(mandiElUnitPrice(undefined, undefined, "x")).toBe(0);
+  });
+
+  it("the rate shown is the rate billed: a one-colour flower shows its colour's price", () => {
+    expect(flowerPickRateOf({ currentPrice: 100, colorVariants: [{ variantId: "v", currentPrice: 150 }] })).toBe(300);
+    expect(flowerPickRateOf({ currentPrice: 100, colorVariants: [{ currentPrice: 150 }, { currentPrice: 90 }] })).toBe(200);
+    expect(flowerPickRateOf({ currentPrice: 100 })).toBe(200);
   });
 });
