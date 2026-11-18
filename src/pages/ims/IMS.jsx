@@ -157,8 +157,12 @@ const purchaseToRow = (p) => ({ id: p.id, vendor_id: p.vendorSnapshot?.vendorId 
 const rowToOverhead = (row) => ({ ...(row.data || {}), id: row.id, amount: row.amount ?? row.data?.amount ?? 0, category: row.category ?? row.data?.category });
 const overheadToRow = (o) => ({ id: o.id, name: o.description ?? null, amount: o.amount ?? 0, category: o.category ?? null, data: o });
 
-const rowToSupervisor = (row) => ({ id: row.id, name: row.name, phone: row.phone, active: row.active });
-const supervisorToRow = (s) => ({ id: s.id, name: s.name ?? null, phone: s.phone ?? null, active: s.active ?? true });
+// fixedVenues (supervisors.fixed_venues, migration 070): the venue property ids the supervisor is fixed at. Read only when the column
+// exists (undefined before the migration) and written only then, so a save never names a column the database does not have yet.
+const rowToSupervisor = (row) => ({ id: row.id, name: row.name, phone: row.phone, active: row.active,
+  ...("fixed_venues" in (row || {}) ? { fixedVenues: Array.isArray(row.fixed_venues) ? row.fixed_venues : [] } : {}) });
+const supervisorToRow = (s) => ({ id: s.id, name: s.name ?? null, phone: s.phone ?? null, active: s.active ?? true,
+  ...(Array.isArray(s.fixedVenues) ? { fixed_venues: s.fixedVenues } : {}) });
 
 const rowToUser = (row) => ({ id: row.id, name: row.name, username: row.username, role: row.role, permissions: row.permissions || [], active: row.active ?? true, phone: row.phone, email: row.email, apps: row.apps ?? null, departments: row.departments ?? null, tabOverride: row.tab_override ?? null, createdAt: row.created_at });
 // ═══ A STABLE ORDER FOR THE USERS TABLE ═══

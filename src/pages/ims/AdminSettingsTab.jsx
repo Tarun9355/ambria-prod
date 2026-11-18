@@ -16,6 +16,7 @@ import { INV_CATS } from "../../lib/inventory/constants";
 import DihariTimingsPanel from "./DihariTimingsPanel.jsx";
 import FixedVenuesEditor from "./FixedVenuesEditor.jsx";
 import VenuesEditor from "./VenuesEditor.jsx";
+import SupervisorVenueChips, { useVenueProperties } from "./SupervisorVenues.jsx";
 import { getFloralMode } from "../../lib/rateCard";
 import { RC_UNITS } from "../../lib/studio/constants";
 import { DEFAULT_TRUSS_RATES, DEFAULT_MASKING_RATES, DEFAULT_PLATFORM_RATES, TRUSS_SHAPES, TRUSS_MATERIALS, DRAPE_DENSITIES } from "../../lib/studio/taxonomy";
@@ -416,6 +417,10 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
   // mode="recipes"), so grouping must not change how those are reached — hence the group resolves
   // to its selected child rather than becoming a panel id of its own.
   const activePanel = forcedMode ? mode : (panel === "masterdata" ? masterPanel : panel);
+  // the venues a supervisor can be fixed at - loaded only while the Supervisors panel is open
+  const venueProperties = useVenueProperties(activePanel === "supervisors");
+  // supervisors.fixed_venues exists once migration 070 has run - every row read back carries it then
+  const supervisorVenuesReady = (supervisors || []).some((s) => Array.isArray(s.fixedVenues));
 
   // Canva connect status — one shared account authorizes the integration for the whole team, so
   // this just reports whether that's been done, and re-checks whenever this panel opens (e.g.
@@ -2500,7 +2505,8 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
             <button onClick={addSupervisor} className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm">+ Add Supervisor</button>
           </div>
           {supervisors.map((s) => (
-            <div key={s.id} className="flex items-center gap-3 bg-white border rounded-xl px-4 py-3">
+            <div key={s.id} className="bg-white border rounded-xl px-4 py-3 space-y-2">
+            <div className="flex items-center gap-3">
               <input value={s.name} onChange={(e) => updateSupervisor(s.id, "name", e.target.value)} className="flex-1 border rounded-lg px-3 py-1.5 text-sm font-medium" />
               <input value={s.phone} onChange={(e) => updateSupervisor(s.id, "phone", phone10(e.target.value))} inputMode="numeric" maxLength={10} placeholder="Phone (10 digits)" className="w-40 border rounded-lg px-3 py-1.5 text-sm" />
               <label className="flex items-center gap-1 text-xs">
@@ -2508,6 +2514,9 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                 Active
               </label>
               <button onClick={() => removeSupervisor(s.id)} className="text-red-400 hover:text-red-600 text-sm">✕</button>
+            </div>
+            {/* which venue(s) this supervisor is fixed at (owner ask 2026-11-18) */}
+            <SupervisorVenueChips value={s.fixedVenues} onChange={(v) => updateSupervisor(s.id, "fixedVenues", v)} properties={venueProperties} disabled={!supervisorVenuesReady} />
             </div>
           ))}
           {supervisors.length === 0 && <p className="text-sm text-gray-400 italic text-center py-4">No supervisors yet. Add one above.</p>}
