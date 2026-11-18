@@ -3559,7 +3559,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // saves it, paginated block by block — see lib/ims/deptBookPdf.js's renderDeptBook for exactly
   // how; this is just the gate in front of it plus the React state (exporting/deckView/...) around
   // it. { view: true } shows the finished PDF in the viewer below instead of saving it.
-  const exportPdf = async (depts, { view = false, cacheKey = "", gate = true, combined } = {}) => {
+  const exportPdf = async (depts, { view = false, cacheKey = "", gate = true, combined, onFile = null } = {}) => {
     if (exporting) return;
     // `combined` lets a caller force the "all departments" book even when `depts` happens to hold
     // just one name — an event with work in only ONE department still means "the all-departments
@@ -3627,7 +3627,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     if (!view && deckCacheRef.current) { URL.revokeObjectURL(deckCacheRef.current.url); deckCacheRef.current = null; }
     const { ok, url, name } = await renderDeptBook({
       buildHtml, lang: pdfLang, multi, dept, depts, group: shared, sel, selDateStr, view,
-      onNote: setExportNote,
+      onNote: setExportNote, onFile,
     });
     // a department head's download: the changes so far are seen (markChangesSeen) - not a View, and not an admin's download
     if (!view && ok) markChangesSeen(inThisBook);
@@ -3667,7 +3667,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       try {
         if (!deptsWithWork.length) { tell("error", { reason: "No department plan on this event yet — sync it from Deal Check first" }); return; }
         pdfAllCarpetsRef.current = true;
-        ok = await exportPdf(deptsWithWork, { combined: true });
+        // the file goes up to Deal Check, which saves it from the page itself (Safari drops a download started in this hidden frame)
+        ok = await exportPdf(deptsWithWork, { combined: true, onFile: (blob, name) => tell("file", { blob, name }) });
       } catch (err) {
         // a throw still reports back (it used to leave Deal Check on "Building PDF…" until its own timer ran out)
         notes.unshift(String(err?.message || err || "error"));

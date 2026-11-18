@@ -118,7 +118,9 @@ export const fixH2cTextBaseline = (reportDoc) => {
 // everything else (`sel`, `inventory`, department-scoped data, ...) already closed over.
 // Never throws: a failure falls back to an HTML download of the same content, same as before.
 // group: a shared book - several departments in ONE book (Fabric & Tenting, owner ask 2026-11-11), built in a single pass with opts.depts.
-export async function renderDeptBook({ buildHtml, lang, multi, dept, depts, group = null, sel, selDateStr, view = false, onNote }) {
+// onFile(blob, name): hand the finished PDF to the caller instead of saving it here - Deal Check's hidden IMS frame passes it up to
+// the page, which saves it (Safari ignores a download started inside a hidden frame with no click behind it - owner's video 2026-11-18).
+export async function renderDeptBook({ buildHtml, lang, multi, dept, depts, group = null, sel, selDateStr, view = false, onNote, onFile = null }) {
   const shared = !multi && Array.isArray(group) && group.length > 1 ? group : null;
   const bookLabel = multi ? "All departments" : shared ? shared.join(" & ") : null;
   // Zone names as the admin set them in Studio (e.g. "Centre Lounge"), not the raw keys. A failed
@@ -410,6 +412,7 @@ export async function renderDeptBook({ buildHtml, lang, multi, dept, depts, grou
     const fileName = `${safe(bookLabel || depts[0])} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}${lang === "hi" ? " (Hindi)" : ""}.pdf`;
     let url = null;
     if (view) { url = URL.createObjectURL(pdf.output("blob")); }
+    else if (typeof onFile === "function") onFile(pdf.output("blob"), fileName);
     else pdf.save(fileName);
     ok = true;
     // Said out loud, because a report quietly missing a page is worse than one that failed

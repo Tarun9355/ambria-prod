@@ -19,6 +19,11 @@ export default function DeptPdfButton({ eventOrderId, clientKey, border = "rgba(
   const [lang, setLangState] = useState(readLang);
   const setLang = (l) => { const v = l === "hi" ? "hi" : "en"; setLangState(v); try { localStorage.setItem(LANG_KEY, v); } catch { /* private window: this session only */ } };
   const [note, setNote] = useState("");
+  // the last PDF the frame handed up: { href, name } - kept a while as a "⬇ Save PDF" link, the sure way on Safari (a click of the
+  // viewer's own), in case the automatic save below was held back
+  const [file, setFile] = useState(null);
+  const fileTimer = useRef(null);
+  useEffect(() => () => { clearTimeout(fileTimer.current); if (file?.href) URL.revokeObjectURL(file.href); }, [file]);
   const heard = useRef(false);
   // Once this deal's event order has been seen, the button stays for as long as this deal is open. The
   // order is looked up in a list that live updates replace row by row, and for a moment a row can come
@@ -48,7 +53,23 @@ export default function DeptPdfButton({ eventOrderId, clientKey, border = "rgba(
       heard.current = true;
       // the frame is alive and working (a Hindi book also asks for its names - well past 90 s on a big event): the quiet timer restarts
       if (d.phase === "alive") { clearTimeout(quiet); quiet = setTimeout(onQuiet, 90000); return; }
-      if (d.phase === "done") finish("PDF downloaded" + (d.notes?.length ? " — " + d.notes[0] : ""), d.notes?.length ? 15000 : NOTE_MS);
+      // the finished PDF from the frame - saved from this page, not from inside the hidden frame, which Safari does not allow
+      // without a click there (owner's video 2026-11-18: "Building PDF…" and no file on a Mac)
+      if (d.phase === "file" && d.blob) {
+        try {
+          const href = URL.createObjectURL(d.blob);
+          const name = d.name || "All departments.pdf";
+          const a = document.createElement("a");
+          a.href = href; a.download = name; a.rel = "noopener";
+          document.body.appendChild(a); a.click(); a.remove();
+          setFile({ href, name }); // the link stays for 2 minutes (its URL is freed when it goes)
+          clearTimeout(fileTimer.current);
+          fileTimer.current = setTimeout(() => setFile(null), 120000);
+        } catch (err) { console.warn("[dept pdf] save failed:", err); }
+        return;
+      }
+      // "ready", not "downloaded": a browser can hold the automatic save back - the Save PDF link beside it then saves it
+      if (d.phase === "done") finish("PDF ready" + (d.notes?.length ? " — " + d.notes[0] : ""), d.notes?.length ? 15000 : NOTE_MS);
       else if (d.phase === "error") finish(d.reason || "Could not build the PDF" + (d.notes?.length ? " — " + d.notes[0] : ""), 15000);
     };
     window.addEventListener("message", onMsg);
@@ -58,6 +79,7 @@ export default function DeptPdfButton({ eventOrderId, clientKey, border = "rgba(
   }, [run]);
 
   if (!orderId) return null;
+  const startRun = () => { setNote(""); setFile(null); setRun(true); };
   const frameUrl = `${window.location.origin}${window.location.pathname}#/ims?pdfEvent=${encodeURIComponent(orderId)}&pdfLang=${lang}`;
   const langBtn = (k, label, name) => (
     <button key={k} type="button" onClick={() => setLang(k)} disabled={run} aria-pressed={lang === k} title={`PDF in ${name}`}
@@ -68,11 +90,18 @@ export default function DeptPdfButton({ eventOrderId, clientKey, border = "rgba(
     <>
       {run && <iframe title="dept-pdf" src={frameUrl} aria-hidden="true" tabIndex={-1} style={{ position: "fixed", top: 0, left: -20000, width: 1400, height: 900, opacity: 0, pointerEvents: "none", border: 0 }} />}
       {note && <span style={{ fontSize: 12, fontWeight: 600, color: "#1A1A2E", maxWidth: 260 }}>{note}</span>}
+      {/* the finished file, one click away - if the browser held the automatic download back (Safari), this always works */}
+      {file && !run && (
+        <a href={file.href} download={file.name} title={`Save ${file.name}`}
+          style={{ height: 32, padding: "0 12px", borderRadius: 999, background: "#1A1A2E", color: "#fff", fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none", whiteSpace: "nowrap" }}>
+          ⬇ Save PDF
+        </a>
+      )}
       {/* the book's language - English or Hindi */}
       <span role="group" aria-label="PDF language" style={{ display: "inline-flex", alignItems: "center", gap: 2, padding: 3, borderRadius: 999, border: `1px solid ${border}` }}>
         {langBtn("en", "EN", "English")}{langBtn("hi", "हिं", "Hindi")}
       </span>
-      <button onClick={() => { setNote(""); setRun(true); }} disabled={run}
+      <button onClick={startRun} disabled={run}
         title="One PDF with every department's plan for this event, as IMS Planning builds it — from the last synced Deal Check figures"
         style={{ height: 36, padding: "0 14px", borderRadius: 999, border: `1px solid ${border}`, background: "transparent", color: "#1A1A2E", fontSize: 12.5, fontWeight: 700, cursor: run ? "default" : "pointer", opacity: run ? 0.7 : 1, display: "inline-flex", alignItems: "center", gap: 7, whiteSpace: "nowrap" }}>
         {run
