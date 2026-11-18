@@ -24,7 +24,7 @@ import { catalogueDeletedLabel, catalogueDeletedTitle } from "../../../lib/studi
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
-import { trussRowCost, calcZoneFabricCost, calcZoneFabric, guestFabricMultiplier, fabricRepeatDiscount, fabricPartRepeatOn, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction } from "../../../lib/studio/pricing";
+import { trussRowCost, calcZoneFabricCost, calcZoneFabric, guestFabricMultiplier, fabricRepeatDiscount, fabricPartRepeatOn, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction, isFlowerPickChoice, mandiElUnitPrice } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig, trussInvForMaterial, nearestCleanSpans, nearestCleanHeights, trussPillarCount } from "../../../lib/studio/pricing";
 import { reservedTrussStockOnDate, skeletonMaterialKey } from "../../../lib/ims/trussEngine";
@@ -1403,6 +1403,9 @@ export default function StudioBuild({ ctx }) {
   // colour/variant of a raw mandi flower it's using. A grid of photo cards, same visual language
   // as the Availability Checker (StudioModals.jsx), instead of a plain <select>.
   const [mandiVariantPicker, setMandiVariantPicker] = useState(null);
+  // "🌸 + Add flowers": {k, idx} - idx null adds a new flower card to zone k, a number changes that card's flower.
+  const [flowerPicker, setFlowerPicker] = useState(null);
+  const [flowerPickQ, setFlowerPickQ] = useState("");
   // Exchange Kit: { k, idx } of the kit element whose kit is being chosen (an item with more than one kit - lib/studio/kitVariants.js)
   const [kitPicker, setKitPicker] = useState(null);
   // Full-screen photo preview — { items: [{src, name}], idx }. Carries the zone's whole matched
@@ -5175,6 +5178,10 @@ undefined
                       onClick={()=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...(p[k]||{}),looseFabric:[...((p[k]?.looseFabric)||[]),{kind:"liza",colour:"",qty:0}]}}));setLooseOpenZones(p=>({...p,[k]:true}));}}
                       title="Add loose Liza, masking or curtains to this zone - billed with Truss & Masking"
                       style={{fontSize:11,fontWeight:600,color:accent,background:"transparent",border:`1px dashed ${accent}80`,borderRadius:7,padding:"3px 9px",cursor:"pointer",whiteSpace:"nowrap",fontFamily:"inherit"}}>🧵 + Add loose fabric</button>}
+                    {/* one loose mandi flower per card, any flower but the greens, 2x the mandi rate (pricing.mandiElUnitPrice) */}
+                    <button type="button" onClick={()=>{setFlowerPickQ("");setFlowerPicker({k,idx:null});}}
+                      title="Add a loose flower from IMS Mandi (every flower except greens) - booked in its own unit, billed at 2x the mandi rate"
+                      style={{fontSize:11,fontWeight:600,color:"#DB2777",background:"transparent",border:"1px dashed rgba(219,39,119,0.5)",borderRadius:7,padding:"3px 9px",cursor:"pointer",whiteSpace:"nowrap",fontFamily:"inherit"}}>🌸 + Add flowers</button>
                     <input value={zoneElSearch[k]||""}
                       onChange={e=>{
                         setZoneElSearch(p=>({...p,[k]:e.target.value}));
@@ -5578,6 +5585,8 @@ undefined
                                   <span style={{flex:1,minWidth:0,overflowWrap:"anywhere",lineHeight:1.3}}>{c.name}</span></span>)}
                               </span>;
                         })()}
+                        {!!el.flowerPick&&<button type="button" onClick={()=>{setFlowerPickQ("");setFlowerPicker({k,idx});}} title="Pick a different flower for this card"
+                          style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:6,border:"1px solid rgba(219,39,119,0.4)",background:"transparent",color:"#DB2777",cursor:"pointer",fontFamily:"inherit"}}>🌸 Change flower</button>}
                         {!!el.mandiId&&(()=>{
                           const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
                           const parent=mandiCat.find(m=>m.id===el.mandiId);
@@ -6852,6 +6861,69 @@ undefined
         </div>
       ), document.body);
     })()}
+    {/* "🌸 + Add flowers": every IMS Mandi flower except the greens, one per card, 2x the mandi rate in the flower's own unit.
+        A flower with several colours opens its variant picker straight after, as Jaimala's card does. */}
+    {flowerPicker && (()=>{
+      const {k,idx}=flowerPicker;
+      const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
+      const curEl=idx==null?null:(zoneElements[k]||[])[idx];
+      const all=mandiCat.filter(isFlowerPickChoice).sort((a,b)=>String(a.name||"").localeCompare(String(b.name||"")));
+      const list=flowerPickQ.trim()?smartFilter(all,flowerPickQ,m=>[m.name,m.flowerCat]):all;
+      const close=()=>{setFlowerPicker(null);setFlowerPickQ("");};
+      const pick=(m)=>{
+        const variants=Array.isArray(m.colorVariants)?m.colorVariants:[];
+        const vId=variants.length===1?variants[0].variantId:"";
+        const elems=[...(zoneElements[k]||[])];
+        let at=idx;
+        if(idx==null){
+          elems.push({name:m.name,qty:1,unit:m.unit||"bundle",size:"",mandiId:m.id,mandiVariantId:vId,flowerPick:true,...(isRepeatCat(k,"elements")?{repeatOverride:false}:{})});
+          at=elems.length-1;
+        } else {
+          if(!elems[idx]) { close(); return; }
+          elems[idx]={...elems[idx],name:m.name,unit:m.unit||"bundle",mandiId:m.id,mandiVariantId:vId,flowerPick:true};
+        }
+        setZoneElements(p=>({...p,[k]:elems}));
+        close();
+        if(variants.length>1) setMandiVariantPicker({k,idx:at,mandiId:m.id});
+      };
+      return createPortal((
+        <div className="ui-overlay-in" onClick={close} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(10,10,20,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div className="ui-pop-in" onClick={e=>e.stopPropagation()} role="dialog" aria-label="Choose a flower" style={{width:"min(720px,100%)",maxHeight:"84vh",background:isDark?"#15151f":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+              <div style={{fontSize:14.5,fontWeight:700,color:textP,flex:1,minWidth:0}}>🌸 {idx==null?"Which flower?":`Change flower${curEl?.name?` (now ${curEl.name})`:""}`}</div>
+              <input autoFocus value={flowerPickQ} onChange={e=>setFlowerPickQ(e.target.value)} placeholder="Search flowers…"
+                style={{width:180,maxWidth:"40vw",padding:"6px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textP,fontSize:13,fontFamily:"inherit"}}/>
+              <button onClick={close} aria-label="Close" style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textP,fontSize:14.5,cursor:"pointer"}}>✕</button>
+            </div>
+            <div style={{padding:"6px 18px 0",fontSize:11.5,color:textS}}>Every flower in IMS Mandi except greens · booked in its own unit · billed at 2× the mandi rate</div>
+            <div style={{padding:"12px 18px 16px",overflowY:"auto",flex:1}}>
+              {list.length===0 ? (
+                <div style={{padding:30,textAlign:"center",color:textS,fontSize:13,fontStyle:"italic"}}>{all.length?`No flower matches "${flowerPickQ}".`:"No flowers in IMS Mandi yet."}</div>
+              ) : (
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:10}}>
+                  {list.map(m=>{
+                    const isSel=curEl?.mandiId===m.id;
+                    const nV=Array.isArray(m.colorVariants)?m.colorVariants.length:0;
+                    return (
+                      <button type="button" key={m.id} className="mv-card" onClick={()=>pick(m)} title={`${m.name} - ₹${mandiElUnitPrice({flowerPick:true},m,m.currentPrice).toLocaleString("en-IN")} per ${m.unit||"bundle"}`}
+                        style={{cursor:"pointer",padding:10,borderRadius:10,border:isSel?"2px solid #DB2777":`1px solid ${border}`,textAlign:"left",fontFamily:"inherit",
+                          background:isSel?"rgba(219,39,119,0.07)":isDark?"rgba(255,255,255,0.03)":"#FAFAFA",display:"flex",flexDirection:"column",gap:6,position:"relative"}}>
+                        {m.photoUrl
+                          ? <img src={fitUrl(m.photoUrl,150)} loading="lazy" decoding="async" alt="" style={{width:"100%",height:70,objectFit:"cover",borderRadius:6,background:isDark?"#1a1a2e":"#eee"}}/>
+                          : <span style={{width:"100%",height:70,borderRadius:6,background:isDark?"rgba(255,255,255,0.05)":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:textS}}>🌸</span>}
+                        <span style={{fontSize:13,fontWeight:600,color:textP,lineHeight:1.2}}>{m.name}</span>
+                        <span style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>₹{mandiElUnitPrice({flowerPick:true},m,m.currentPrice).toLocaleString("en-IN")}/{m.unit||"bundle"}</span>
+                        {nV>1&&<span style={{fontSize:10.5,color:textS}}>{nV} colours</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ), document.body);
+    })()}
     {mandiVariantPicker && (()=>{
       const {k,idx,mandiId}=mandiVariantPicker;
       const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
@@ -6889,7 +6961,7 @@ undefined
                             const withPhoto=variants.filter(x=>x.photoUrl);
                             setLightbox({idx:Math.max(0,withPhoto.findIndex(x=>x.variantId===v.variantId)),items:withPhoto.map(x=>({src:x.photoUrl,name:x.name||"Unnamed",details:[
                               ["Flower",parent?.name||"—"],
-                              ["Rate",`₹${Math.round((Number(x.currentPrice)||0)*(1+(Number(parent?.markup)||0)/100)).toLocaleString("en-IN")} / ${parent?.unit||"unit"}`],
+                              ["Rate",`₹${mandiElUnitPrice(el,parent,x.currentPrice).toLocaleString("en-IN")} / ${parent?.unit||"unit"}`],
                               ["Colour / variant",x.name||"Unnamed"],
                             ]}))});
                           }} style={{width:"100%",height:50,objectFit:"cover",borderRadius:6,background:isDark?"#1a1a2e":"#eee",cursor:"zoom-in"}}/>
@@ -6898,7 +6970,7 @@ undefined
                         )}
                         <div style={{fontSize:13,fontWeight:600,color:textP,lineHeight:1.2}}>{v.name||"Unnamed"}</div>
                         {/* the rate the build bills: mandi price × (1 + the flower's Markup %), as getElPriceFromMandi */}
-                        <div style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>₹{Math.round((Number(v.currentPrice)||0)*(1+(Number(parent?.markup)||0)/100)).toLocaleString("en-IN")}/{parent?.unit||"unit"}</div>
+                        <div style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>₹{mandiElUnitPrice(el,parent,v.currentPrice).toLocaleString("en-IN")}/{parent?.unit||"unit"}</div>
                       </div>
                     );
                   })}

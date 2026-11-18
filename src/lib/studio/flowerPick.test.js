@@ -1,0 +1,29 @@
+import { describe, it, expect } from "vitest";
+import { isFlowerPickChoice, isGreenMandi, mandiElUnitPrice, FLOWER_PICK_RATE_MULTIPLIER } from "./pricing";
+
+// Build's "🌸 + Add flowers" (owner ask 2026-11-18): every mandi flower but the greens, billed at 2x the mandi rate.
+describe("flower pick", () => {
+  it("offers every flower except the greens", () => {
+    expect(isFlowerPickChoice({ id: "a", name: "Rose", flowerType: "flower" })).toBe(true);
+    expect(isFlowerPickChoice({ id: "b", name: "Orchid", flowerType: "real_only" })).toBe(true);
+    expect(isFlowerPickChoice({ id: "c", name: "Mapped", flowerType: "mapping" })).toBe(true);
+    expect(isFlowerPickChoice({ id: "d", name: "Jaimala", markup: 50 })).toBe(true);
+    expect(isFlowerPickChoice({ id: "e", name: "Ruscus", flowerType: "green" })).toBe(false);
+    expect(isFlowerPickChoice({ id: "f", name: "Fern", isGreen: true })).toBe(false);
+    expect(isFlowerPickChoice({ id: "g", name: "Asparagus", flowerCat: "Greens" })).toBe(false);
+    expect(isFlowerPickChoice({ name: "no id" })).toBe(false);
+    expect(isGreenMandi({ flowerCat: "Evergreen roses" })).toBe(false);
+  });
+
+  it("a picked flower bills 2x the mandi rate, ignoring the flower's own markup", () => {
+    expect(FLOWER_PICK_RATE_MULTIPLIER).toBe(2);
+    expect(mandiElUnitPrice({ flowerPick: true }, { markup: 0 }, 120)).toBe(240);
+    expect(mandiElUnitPrice({ flowerPick: true }, { markup: 50 }, 120)).toBe(240);
+  });
+
+  it("any other direct mandi item keeps its own Markup %", () => {
+    expect(mandiElUnitPrice({}, { markup: 50 }, 120)).toBe(180);
+    expect(mandiElUnitPrice({}, { markup: null }, 120)).toBe(120);
+    expect(mandiElUnitPrice(undefined, undefined, "x")).toBe(0);
+  });
+});

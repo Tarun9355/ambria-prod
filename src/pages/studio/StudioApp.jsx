@@ -101,7 +101,7 @@ import {
   defaultZoneFromArea, resolveMandiFlower, calcZoneTrussPreview,
   calcZoneFabric, calcZoneFabricCost, guestFabricMultiplier, fabricRepeatDiscount, maskingAfterRepeat, calcZoneCarpet, buildPlatformPlan, getStudioAvailable,
   buildTopology, trussRowCost, repeatCatFor, repeatCatsOn, REPEAT_CAT_LABELS,
-  freshFnForManpower, snapRowDimsForProduction, scaleTrussPreview,
+  freshFnForManpower, snapRowDimsForProduction, scaleTrussPreview, mandiElUnitPrice,
 } from "../../lib/studio/pricing";
 import { normalizePaintAllocation, maxRepaintCostInSubcat, paintLinesFor, paintTotalFor } from "../../lib/studio/paint";
 import { sheetItemLine } from "../../lib/studio/sheetRounding";
@@ -5189,8 +5189,8 @@ export default function StudioApp() {
     // Markup is the flower's own selling margin over bare mandi cost (IMS Mandi Prices "Markup %")
     // — Loose Petals has none by default and keeps billing at pure cost; any other mandi item made
     // directly addable via a markup bills at cost × (1 + markup%).
-    const markupPct = Number(parent.markup) || 0;
-    const unitPrice = Math.round(baseRate * (1 + markupPct / 100));
+    // A Build "🌸 + Add flowers" card (el.flowerPick) bills at 2x the mandi rate instead (pricing.mandiElUnitPrice).
+    const unitPrice = mandiElUnitPrice(el, parent, baseRate);
     const qty = el.qty || 0;
     return { rc: null, unitPrice, lineCost: qty * unitPrice, area: 0, warning: null, isFloralBlend: false, realPct: null };
   }, [dealCheckData, studioFloralData]);

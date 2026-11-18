@@ -1280,6 +1280,21 @@ export const isDirectMandiElement = (m) => {
   return name === "loose petals" || Number(m?.markup) > 0;
 };
 
+// ═══ Build's "🌸 + Add flowers" (owner ask 2026-11-18) ═══
+// A card for ONE loose mandi flower, picked from every flower in IMS Mandi except the greens, booked in that flower's own unit
+// (bundle / kg …) and billed at twice the mandi rate. Marked on the element as `flowerPick: true` (it is otherwise a plain
+// el.mandiId element - same Deal Check / IMS floral flow as Jaimala or Loose Petals).
+export const FLOWER_PICK_RATE_MULTIPLIER = 2;
+export const isGreenMandi = (m) => m?.flowerType === "green" || !!m?.isGreen || /\bgreen(s|ery)?\b/i.test(String(m?.flowerCat || ""));
+export const isFlowerPickChoice = (m) => !!m?.id && !isGreenMandi(m);
+// What one unit of a mandi element bills at: a picked flower 2x the mandi rate; any other direct mandi item its own Markup %.
+// base: the chosen variant's price, else the flower's (getElPriceFromMandi).
+export const mandiElUnitPrice = (el, parent, base) => {
+  const b = Number(base) || 0;
+  if (el?.flowerPick) return Math.round(b * FLOWER_PICK_RATE_MULTIPLIER);
+  return Math.round(b * (1 + (Number(parent?.markup) || 0) / 100));
+};
+
 // ═══ Flower Palette colour-ratio (owner ask, 2026-10-17) ═══
 // Build's Flower Palette control now allows picking MORE than one colour, with a ratio between
 // them — unlike Fabric Palette (which just widens the set of anchors autoFillFabricAllocation can
