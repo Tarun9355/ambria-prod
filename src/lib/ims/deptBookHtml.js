@@ -761,19 +761,22 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         // A pillar / beam the stock sizes cannot make (a 6 or 9 ft pillar when only 10 and 12 ft are held - owner report 2026-11-03)
         // came back with no pieces and simply vanished, so the card read as if the truss needed none. It is listed at the length it
         // needs, marked missing, so the crew knows to arrange it.
-        const realGroupsOf = (arr, resolver, idealOf) => {
+        const realGroupsOf = (arr, resolver, idealOf, markBeams = false) => {
           const m = {}, miss = {};
           (arr || []).forEach(x => {
             const pcs = resolver(x, matInv).pieces || [];
             if (!pcs.length && idealOf) { const L = Number(idealOf(x)) || 0; if (L > 0) miss[L] = (miss[L] || 0) + 1; return; }
-            pcs.forEach(pc => { m[pc.size] = (m[pc.size] || 0) + pc.qty; });
+            // keyed by kind too: a pillar made up with a beam spacer at the ground (resolvePillarHeight - 14 ft = 12 ft pillar +
+            // 2 ft beam) lists that piece as a beam (owner ask 2026-11-18), so the crew loads a beam for it, not a pillar
+            pcs.forEach(pc => { const k = `${markBeams && pc.type === "beam" ? "b" : "p"}|${pc.size}`; m[k] = (m[k] || 0) + pc.qty; });
           });
           return [
-            ...Object.entries(m).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, n]) => ({ len: Number(len), n })),
+            ...Object.entries(m).map(([k, n]) => { const [kind, len] = k.split("|"); return { len: Number(len), n, ...(kind === "b" ? { beam: true } : {}) }; })
+              .sort((a, b) => b.len - a.len || (a.beam ? 1 : 0) - (b.beam ? 1 : 0)),
             ...Object.entries(miss).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, n]) => ({ len: Number(len), n, missing: true })),
           ];
         };
-        const pillars = Array.isArray(ed?.pillars) ? ed.pillars : realGroupsOf(pv.topology.pillars, (p, inv) => resolvePillarHeight(p.H, inv), p => p.H);
+        const pillars = Array.isArray(ed?.pillars) ? ed.pillars : realGroupsOf(pv.topology.pillars, (p, inv) => resolvePillarHeight(p.H, inv), p => p.H, true);
         const beams = Array.isArray(ed?.beams) ? ed.beams : realGroupsOf(pv.topology.beams, (b, inv) => resolveBeamSegment(b.lengthFt, inv), b => b.lengthFt);
         const bRft = ed?.batta?.rft ?? pv.batta?.rftRequired ?? 0;
         const bBuf = ed?.batta?.buf ?? pv.batta?.bufferPct ?? 10;
@@ -1253,7 +1256,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // the fabric row comes out of the photo's floor too, so it never makes a page taller than it was without it
       const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(Math.max(160, 260 - (fabStrip ? 44 : 0) - trussPx - notePx), PAGE_PX - headPx - rows * (ROW_H + ARROW));
       const pieces = (groups) => groups.reduce((a, g) => a + (Number(g.n) || 0), 0);
-      const sizeLines = (groups) => groups.map(g => `<div class="ztk-l${g.missing ? " ztk-miss" : ""}"><b>${esc(g.n)}</b><span>× ${esc(g.len)} ft${g.missing ? ` ⚠ ${t("not in stock")}` : ""}</span></div>`).join("");
+      const sizeLines = (groups) => groups.map(g => `<div class="ztk-l${g.missing ? " ztk-miss" : ""}"><b>${esc(g.n)}</b><span>× ${esc(g.len)} ft${g.beam ? ` (${t("Beam")})` : ""}${g.missing ? ` ⚠ ${t("not in stock")}` : ""}</span></div>`).join("");
       const tkCard = (icon, title, count, body) => `<div class="ztk-c"><div class="ztk-h"><span>${icon} ${title}</span>${count != null ? `<b>${esc(count)}</b>` : ""}</div>${body}</div>`;
       // Owner ask (2026-11-07): Pillars/Beams are material-specific stock (iron/pole/aluminium
       // aren't interchangeable), so the crew needs the material named on the card, not just "Pillars"/
