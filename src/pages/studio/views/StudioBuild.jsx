@@ -5305,7 +5305,7 @@ undefined
                             <div style={{width:56,height:56,borderRadius:8,flexShrink:0,background:"rgba(219,39,119,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26}}>🌸</div>
                             <div style={{flex:1,minWidth:0}}>
                               <div style={{fontWeight:700,color:"#DB2777"}}>Flowers — see all</div>
-                              <div style={{fontSize:11,color:textS,marginTop:2}}>Every flower in IMS Mandi except greens · 2× the mandi rate</div>
+                              <div style={{fontSize:11,color:textS,marginTop:2}}>Every flower in IMS Mandi except greens</div>
                             </div>
                           </div>;
                           if(m.kind==="fp"){ const mi=m.m; const ph=mi.photoUrl||(Array.isArray(mi.colorVariants)?mi.colorVariants.find(v=>v?.photoUrl)?.photoUrl:"")||""; const nInZone=countInZone("mandiId",mi.id); return <div key={"fp:"+mi.id}
@@ -5320,7 +5320,7 @@ undefined
                                 <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(219,39,119,0.12)",color:"#DB2777",fontWeight:700,flexShrink:0}}>🌸 FLOWER · {mi.unit||"bundle"}</span>
                                 {nInZone>0&&<span title={`Already added ${nInZone} time(s) to this zone`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(5,150,105,0.15)",color:"#059669",fontWeight:700,flexShrink:0}}>✓ ADDED ×{nInZone}</span>}
                               </div>
-                              <div style={{fontSize:11,color:textS,marginTop:2}}>₹{flowerPickRateOf(mi).toLocaleString("en-IN")}/{mi.unit||"bundle"} (2× mandi){Array.isArray(mi.colorVariants)&&mi.colorVariants.length>1?` · ${mi.colorVariants.length} colours`:""}</div>
+                              <div style={{fontSize:11,color:textS,marginTop:2}}>₹{flowerPickRateOf(mi).toLocaleString("en-IN")}/{mi.unit||"bundle"}{Array.isArray(mi.colorVariants)&&mi.colorVariants.length>1?` · ${mi.colorVariants.length} colours`:""}</div>
                             </div>
                           </div>; }
                           if(m.kind==="mandi"){ const mi=m.m; const variants=Array.isArray(mi.colorVariants)?mi.colorVariants:[]; const nInZone=countInZone("mandiId",mi.id); return <div key={"mandi:"+mi.id}
@@ -6958,7 +6958,7 @@ undefined
                 style={{width:180,maxWidth:"40vw",padding:"6px 10px",borderRadius:8,border:`1px solid ${border}`,background:"transparent",color:textP,fontSize:13,fontFamily:"inherit"}}/>
               <button onClick={close} aria-label="Close" style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textP,fontSize:14.5,cursor:"pointer"}}>✕</button>
             </div>
-            <div style={{padding:"6px 18px 0",fontSize:11.5,color:textS}}>Every flower in IMS Mandi except greens · booked in its own unit · billed at 2× the mandi rate</div>
+            <div style={{padding:"6px 18px 0",fontSize:11.5,color:textS}}>Every flower in IMS Mandi except greens · booked in its own unit</div>
             {cats.length>1&&<div role="group" aria-label="Flower category" style={{padding:"10px 18px 0",display:"flex",flexWrap:"wrap",gap:6}}>
               {[["",`All ${all.length}`],...cats.map(c=>[c,`${c} ${nByCat[c]}`])].map(([c,label])=>{
                 const on=(flowerPickCat&&nByCat[flowerPickCat]?flowerPickCat:"")===c;
@@ -6989,7 +6989,7 @@ undefined
                                 const photoOf=(x)=>x.photoUrl||(Array.isArray(x.colorVariants)?x.colorVariants.find(v=>v?.photoUrl)?.photoUrl:"")||"";
                                 const withPhoto=list.filter(x=>photoOf(x));
                                 setLightbox({idx:Math.max(0,withPhoto.findIndex(x=>x.id===m.id)),items:withPhoto.map(x=>({src:photoOf(x),name:x.name||"Flower",details:[
-                                  ["Rate",`₹${flowerPickRateOf(x).toLocaleString("en-IN")} / ${x.unit||"bundle"} (2× mandi)`],
+                                  ["Rate",`₹${flowerPickRateOf(x).toLocaleString("en-IN")} / ${x.unit||"bundle"}`],
                                   ...(Array.isArray(x.colorVariants)&&x.colorVariants.length>1?[["Colours",String(x.colorVariants.length)]]:[]),
                                 ]}))});
                               }}
