@@ -188,7 +188,7 @@ export default function StudioEventInfo({ ctx }) {
     extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
     activeFnIdx, setActiveFnIdx, switchActiveFn, pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval, reindexEventOrderForRemoval,
     setLastFnRemoval, autoSaveBuild,
-    clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch, ledgerReady, ledgerLoadError, houseAgencyFeePct,
+    clientLedger, saveClientLedger, activeClientId, setActiveClientId, setClientSearch, ledgerReady, ledgerLoadError, houseAgencyFeePct, clientsLite,
     activeClient, loadClientSession, loadClientSessionGuarded, resumeSavedSession, startNewDeal, askConfirm,
     loadedClientIdentityRef, confirmClientRename, revertClientNameEdit,
     lmsLeads, lmsLoading, lmsError, lmsFilling, lmsCacheRef, setLmsRefreshCounter, loadLmsLead,
@@ -201,6 +201,10 @@ export default function StudioEventInfo({ ctx }) {
     trVenues, venueParents, resolveTrVenue,
     mode, setMode, canManageAny,
   } = ctx;
+  // Search runs on the clients alone while their saved builds still download (StudioApp's clientsLite); a Load only once
+  // the builds are in (sessionsReady) - loading a deal from a session-less copy would open it empty.
+  const sessionsReady = ledgerReady && !ledgerLoadError;
+  const searchClients = sessionsReady ? clientLedger : ((Array.isArray(clientsLite) && clientsLite.length) ? clientsLite : clientLedger);
 
   // ═══ PHONE — 10 DIGITS ═══
   // Indian mobiles are 10 digits. Strips everything non-numeric and tolerates the two prefixes
@@ -1518,7 +1522,7 @@ export default function StudioEventInfo({ ctx }) {
                         .map(f => String(f?.fnDate || "").slice(0, 10)).filter(Boolean)
                     );
                     if (ph.length !== 10 || leadDates.size === 0) return false;  // nothing dependable to match on
-                    return (clientLedger || []).some(c => {
+                    return (searchClients || []).some(c => {
                       if (!c) return false;
                       if (digits10(c.phone) !== ph) return false;
                       // Phone AND date, and nothing else. An earlier version also treated "already
@@ -1559,7 +1563,9 @@ export default function StudioEventInfo({ ctx }) {
                   // to run while it hasn't, but showing a list whose every button just silently toasts
                   // "still loading" on click is worse than showing the same waiting state this already
                   // shows for the plain still-in-flight case.
-                  if (lmsLoading || !ledgerReady || ledgerLoadError) {
+                  // The clients alone (clientsLite) are enough to SEARCH - the saved builds (sessions) can still be downloading;
+                  // each result's Load waits for them (sessionsReady below).
+                  if (lmsLoading || !(ledgerReady || (Array.isArray(clientsLite) && clientsLite.length)) || ledgerLoadError) {
                     // The search line stays (it says what is being waited on); the result rows' shape fills in below it.
                     return <div style={{marginBottom:16,padding:"10px 12px",borderRadius:10,background:isDark?"rgba(59,130,246,0.06)":"rgba(59,130,246,0.04)",border:`1px solid ${isDark?"rgba(59,130,246,0.2)":"rgba(59,130,246,0.15)"}`,display:"flex",flexDirection:"column",gap:10}}>
                       <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -1666,7 +1672,7 @@ export default function StudioEventInfo({ ctx }) {
                     const slots = (Array.isArray(c.functions) && c.functions.length) ? c.functions : [{ date: c.eventDate }];
                     return slots.some(f => leadDates.has(String(f?.date || "").slice(0, 10)));
                   });
-                  const matchesBeforeRepFilter = clientLedger.filter(c => {
+                  const matchesBeforeRepFilter = searchClients.filter(c => {
                     if (!c.name) return false;
                     const hay = c.name.toLowerCase().replace(/\s+/g, " ");
                     const nameMatch = qName.length >= 2 && nameWords.every(w => hay.includes(w));
@@ -1794,7 +1800,7 @@ export default function StudioEventInfo({ ctx }) {
                             {c.lmsLeadId && <span style={{padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:700,background:"rgba(34,197,94,0.15)",color:C.green}}>📥 LMS #{c.lmsLeadId}</span>}
                           </div>
                           <div style={{fontSize:10,color:textM,marginTop:2}}>
-                            {sessionCount > 0
+                            {!sessionsReady ? <>Loading saved work…</> : sessionCount > 0
                               ? <>
                                   {sessionCount} session{sessionCount>1?"s":""}
                                   {latest && <> · Last: <strong style={{color:textP}}>{latest.savedBy || "—"}</strong> {timeAgo(latest.savedAt)}</>}
@@ -1808,7 +1814,7 @@ export default function StudioEventInfo({ ctx }) {
                             reason to make someone re-click through Event Info/Browse to see work
                             they've already done. Nothing saved yet lands on Browse instead, where a
                             fresh deal actually starts. */}
-                        <button className="ei-btn ei-solid" onClick={() => loadClientSessionGuarded(c, latest || null, latest ? 2 : 1)} style={{padding:"5px 12px",borderRadius:6,border:"none",background:accent,color:isDark?"#1a1a2e":"#fff",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
+                        <button className="ei-btn ei-solid" disabled={!sessionsReady} title={sessionsReady ? undefined : "Loading this client's saved work — a moment"} onClick={() => { if (sessionsReady) loadClientSessionGuarded(c, latest || null, latest ? 2 : 1); }} style={{opacity:sessionsReady?1:0.55,padding:"5px 12px",borderRadius:6,border:"none",background:accent,color:isDark?"#1a1a2e":"#fff",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
                       </div>;
                     })}
                   </div>) : null;
