@@ -5,8 +5,10 @@ import { supabase, subscribeTable } from "../supabase";
 // cross-checked it; edited again after that check, it comes back. The check is stored per item in `inventory_reviews`
 // (migration 069) as the item version (inventory.updated_at) that was checked.
 
-// Changes before this went live are not listed - the 1,200+ existing items were never "new" to anyone.
-export const REVIEW_SINCE = Date.parse("2026-11-17T00:00:00+05:30");
+// How far back the list reaches: the last 30 days, rolling (owner ask 2026-11-18 - it started at the day it went live). A change
+// older than that and never checked drops off by itself; checking still clears an item at once.
+export const REVIEW_WINDOW_DAYS = 30;
+export const reviewSince = (now = Date.now()) => now - REVIEW_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
 const ts = (v) => { const n = Date.parse(v || ""); return Number.isFinite(n) ? n : 0; };
 
@@ -17,9 +19,9 @@ export const lastChangeAt = (item) => Math.max(ts(item?.updatedAt), ts(item?.cre
 export const changeKind = (item) => (ts(item?.updatedAt) - ts(item?.createdAt) > 60000 ? "Edited" : "Added");
 
 // reviews: { [itemId]: { reviewedVersion, reviewedBy } }
-export function needsCheck(item, reviews) {
+export function needsCheck(item, reviews, now = Date.now()) {
   const at = lastChangeAt(item);
-  if (!at || at < REVIEW_SINCE) return false;
+  if (!at || at < reviewSince(now)) return false;
   const r = reviews?.[item.id];
   return !r || ts(r.reviewedVersion) < at;
 }
