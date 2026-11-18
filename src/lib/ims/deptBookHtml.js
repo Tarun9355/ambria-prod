@@ -597,7 +597,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         ...extraPl.filter(r => !isPlatformFoc(r)).map(r => [platLbl(r?.plH, r?.plHft), ftArea(r?.floorDims)].filter(Boolean).join(" · ")),
       ].filter(Boolean);
       if (plats.length) out.push({ k: t("Platform"), v: plats.join("; ") });
-      const platFocN = [z, ...extraPl].filter(r => r && isPlatformFoc(r)).length;
+      const platFocN = [z, ...extraPl].filter(r => r && isPlatformFoc(r) && ftArea(r.floorDims) && (r.plH || r.cpT !== CARPET_OFF)).length;
       if (platFocN) out.push({ k: t("Platform"), v: t("FOC — already at the venue") + (platFocN > 1 ? ` ×${platFocN}` : "") });
       // "— None —" is stored as the CARPET_OFF sentinel: no carpet, so no Carpet chip (it printed "Carpet __off__")
       // Only a carpet that is actually chosen (owner ask 2026-11-03): Build defaults every floor to Carpet Old, so a floor nobody
@@ -1640,7 +1640,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     const focPages = (() => {
       const byDept = new Map();
       const push = (d, it) => { if (!d || !(combined || inBook(d))) return; (byDept.get(d) || byDept.set(d, []).get(d)).push(it); };
-      const whereOf = (fn, fi, zk) => [zoneName(zk, fn), (fns || []).length > 1 ? (hn(fn?.type) || t("Function {n}", { n: fi + 1 })) : ""].filter(Boolean).join(" · ");
+      const whereOf = (fn, fi, zk) => [hn(zoneName(zk, fn)), (fns || []).length > 1 ? (hn(fn?.type) || t("Function {n}", { n: fi + 1 })) : ""].filter(Boolean).join(" · ");
       (fns || []).forEach((fn, fi) => {
         if (!fn) return;
         const en = fn.enabledEls || {};
@@ -1649,7 +1649,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           list.forEach((e) => {
             if (!e?.foc) return;
             const id = e.invId || e.imsId;
-            const inv = id ? invById.get(String(id)) : null;
+            // by id, else by name - the same lookup the zone pages use, so a FOC item named only by name is here too
+            const inv = (id ? invById.get(String(id)) : null) || invByName.get(String(e.name || "").trim().toLowerCase()) || null;
             const d = inv ? (deptByInvId.get(String(inv.id)) || catToDept(inv.category || inv.cat)) : (e.patternId || e.mandiId ? "Floral" : "");
             push(d, { name: e.name || inv?.name || "", qty: Number(e.qty) || 1, unit: String(inv?.unit || e.unit || "").trim(), photo: invPhoto(inv, null), dims: inv ? invDims(inv) : "", deptTag: "", kit: 0, recipe: [], extra: [[t("Where"), whereOf(fn, fi, zk)]] });
           });
@@ -1657,12 +1658,15 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         Object.entries(fn.zones || {}).forEach(([zk, z]) => {
           if (!z || en[zk] === false) return;
           [z, ...(Array.isArray(z.extraTrussRows) ? z.extraTrussRows : [])].forEach((row) => {
-            if (!row || !isTrussFoc(row)) return;
+            if (!row || !isTrussFoc(row) || row.trussQty === 0 || !((trussBaseArea(row).area || 0) > 0)) return; // a sized truss only
             push("Tenting", { name: [t("Truss"), trussTypeLbl(row.trT)].filter(Boolean).join(" "), qty: Math.max(1, Number(row.trussQty) || 1), unit: "", photo: "", dims: ftArea(row.dims), deptTag: "", kit: 0, recipe: [], extra: [[t("Where"), whereOf(fn, fi, zk)]] });
           });
           [z, ...(Array.isArray(z.extraPlatformRows) ? z.extraPlatformRows : [])].forEach((row) => {
-            if (!row || !isPlatformFoc(row)) return;
-            push("Tenting", { name: [t("Platform + carpet"), platLbl(row.plH, row.plHft)].filter(Boolean).join(" · "), qty: Math.max(1, Math.round(Number(row.plQty) || 1)), unit: "", photo: "", dims: ftArea(row.floorDims), deptTag: "", kit: 0, recipe: [], extra: [[t("Where"), whereOf(fn, fi, zk)]] });
+            if (!row || !isPlatformFoc(row) || !ftArea(row.floorDims)) return; // a floor with a size only
+            const hasCarpet = row.cpT !== CARPET_OFF; // unset = the default carpet, which is billed and laid
+            const what = row.plH ? (hasCarpet ? t("Platform + carpet") : t("Platform")) : (hasCarpet ? t("Carpet") : "");
+            if (!what) return;
+            push("Tenting", { name: [what, platLbl(row.plH, row.plHft)].filter(Boolean).join(" · "), qty: Math.max(1, Math.round(Number(row.plQty) || 1)), unit: "", photo: "", dims: ftArea(row.floorDims), deptTag: "", kit: 0, recipe: [], extra: [[t("Where"), whereOf(fn, fi, zk)]] });
           });
         });
       });

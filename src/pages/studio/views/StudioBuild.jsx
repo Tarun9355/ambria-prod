@@ -901,7 +901,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
     { pickHint: `the first you tap is the 1st choice. Planning decides which of the ${CARPET_PREF_MAX} is used. A stock pick only, it does not change the price.`, priceMode: "rental", hidePrice: true, unitLabel: "sqft", neededLabel: floorSqftNow > 0 ? `${Math.round(floorSqftNow)} sqft needed for this floor` : "",
       multi: { max: CARPET_PREF_MAX, need: Math.round(floorSqftNow), current: prefs.map(p => p.id), onSave: (picks) => sZ(setPrefsPatch(picks)), onSaveAll: onCarpetAll ? ((picks) => onCarpetAll(picks, zoneKey, rowIdx)) : null } });
   const guardFd = (d, n) => {
-    const rem = prefs.length && carpetRemainingOf ? carpetRemainingOf(zoneKey, rowIdx) : null;
+    const rem = prefs.length && carpetRemainingOf && !isPlatformFoc(zc) ? carpetRemainingOf(zoneKey, rowIdx) : null;
     if (rem != null) {
       const L = d === "L" ? n : (Number(fd.L) || 0), W = d === "W" ? n : (Number(fd.W) || 0);
       const area = L * W * Math.max(1, Math.round(Number(zc.plQty) || 1));
@@ -1136,7 +1136,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                       material rate above). Three ranked choices, so Planning has a fallback and decides which one is used from what
                       is free on the day; Deal Check and Planning show the same three. The 1st choice is also what older readers
                       (stock checks, Deal Check's carpet card) still see as the pick. */}
-                  {openAvailModal && zc.cpT!==CARPET_OFF && isStockCarpet && (()=>{
+                  {openAvailModal && zc.cpT!==CARPET_OFF && isStockCarpet && !isPlatformFoc(zc) && (()=>{
                     const floorSqft=floorSqftNow;
                     const open=openCarpetPicker;
                     const done=prefs.length>=CARPET_PREF_MAX;
@@ -1628,8 +1628,11 @@ export default function StudioBuild({ ctx }) {
       // The tile says the carpet state up front, so a floor with no carpet, or one whose carpet runs
       // short, is visible without opening the section. "⚠" marks it for red in sectionTile.
       const size = (fd.W || fd.L) ? `${fd.W || "–"} × ${fd.L || "–"} ft` : "";
-      const rows = [zc, ...(zc.extraPlatformRows || [])];
-      const short = rows.reduce((a, _r, ri) => a + carpetShortOf(k, ri), 0);
+      // a FOC floor (lib/studio/foc.js) has its carpet already down - nothing to pick, no warning
+      const allRows = [zc, ...(zc.extraPlatformRows || [])];
+      const rows = allRows.filter(r => !isPlatformFoc(r));
+      if (!rows.length) return size ? `${size} · FOC` : "FOC";
+      const short = allRows.reduce((a, r, ri) => a + (isPlatformFoc(r) ? 0 : carpetShortOf(k, ri)), 0);
       if (short > 0) return `⚠ Carpet short ${Math.round(short)} sqft`;
       const anySize = rows.some(r => (Number(r?.floorDims?.L) || 0) > 0 && (Number(r?.floorDims?.W) || 0) > 0);
       const allOff = rows.every(r => r?.cpT === CARPET_OFF);
@@ -1703,7 +1706,7 @@ export default function StudioBuild({ ctx }) {
     orderedZoneKeys.filter(k => enabledEls[k] && zoneConfig?.[k]).forEach(k => {
       const z = zoneConfig[k];
       [z, ...(z.extraPlatformRows || [])].forEach((r, ri) => {
-        if (!r || r.cpT === CARPET_OFF) return;
+        if (!r || r.cpT === CARPET_OFF || isPlatformFoc(r)) return; // a FOC floor's carpet is already down
         const fdz = r.floorDims || {};
         const area = floorSqftOf(r);
         // withEmpty ("Save to all"): also floors with a carpet set but no size yet — they take no

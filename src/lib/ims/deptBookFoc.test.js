@@ -61,6 +61,20 @@ describe("Dept Book FOC section", () => {
     expect(buildDeptBookHtml(...c)).not.toContain("FOC · ");
   });
 
+  it("a FOC item known only by name is listed too, and an empty FOC floor is not", () => {
+    const c = ctx("Furniture", true);
+    c[0].sel.functionsDetail = [{
+      ...fn,
+      elements: { stage: [{ name: "Round Table", qty: 2, foc: true }] }, // no invId - matched by name
+      zones: { stage: { platformFoc: true }, lounge: { plH: "4in", floorDims: { L: 10, W: 10 }, platformFoc: true, cpT: "__off__" } },
+    }];
+    const foc = focPart(buildDeptBookHtml(...c));
+    expect(foc).toContain("FOC · Furniture");
+    expect(foc).toContain("Round Table");
+    expect(foc).not.toContain("Platform + carpet"); // stage: FOC but no floor; lounge: carpet off
+    expect(foc).toContain("Platform"); // lounge's sized platform, no carpet
+  });
+
   it("the Hindi book says it in Hindi", () => {
     const c = ctx("Tenting", false);
     c[3].lang = "hi";

@@ -6867,7 +6867,7 @@ export default function StudioApp() {
         const result = allocatePlatformForDate({}, date, list, trussInv, "studio-presale-check");
         if (list.find((ev) => ev.eoId === SELF_CHECK_EOID)?.shortageBorne) {
           const over = result[date]?.stockSummary?.overflow || {};
-          const where = fnsForDate.flatMap((f) => Object.entries(f.zones).filter(([zk, zc]) => (!Object.keys(f.enabledEls).length || f.enabledEls[zk]) && [zc, ...(zc?.extraPlatformRows || [])].some((r) => r?.plH)).map(([zk]) => `${fnName(f.fnIdx)} · ${zoneName(f.fnIdx, zk)}`));
+          const where = fnsForDate.flatMap((f) => Object.entries(f.zones).filter(([zk, zc]) => (!Object.keys(f.enabledEls).length || f.enabledEls[zk]) && [zc, ...(zc?.extraPlatformRows || [])].some((r) => r?.plH && !isPlatformFoc(r))).map(([zk]) => `${fnName(f.fnIdx)} · ${zoneName(f.fnIdx, zk)}`));
           flagged.push({ domain: "platform", emoji: "🛏️", date, detail: Object.values(over).map((sqft) => `${sqft} sqft`).join(", ") || "stock shortfall", where });
         }
       }
