@@ -1273,8 +1273,11 @@ export default function DealCheckOverlay({ ctx }) {
                       // Same resolveBeamSegment/resolvePillarHeight resolver DCTrussTab.jsx's own
                       // Pillars/Beams tiles already use (see that file's realBeamSizeCounts comment).
                       const matInv = trussInvForMaterial(tInv, row.trussMaterial);
-                      const pmap = {}, bmap = {};
-                      (pv.topology.pillars || []).forEach(p => { (resolvePillarHeight(p.H, matInv).pieces || []).forEach(pc => { pmap[pc.size] = (pmap[pc.size] || 0) + pc.qty; }); });
+                      // smap: a beam set at the ground under a pillar to make up its height (resolvePillarHeight - 14 ft = 12 ft pillar
+                      // + 2 ft beam). It was listed as "Truss pillar 2ft" (owner report 2026-11-18) - it is a beam from beam stock, so it
+                      // is named one, apart from the beam segments (it is priced inside the pillar's height, at the pillar rate).
+                      const pmap = {}, bmap = {}, smap = {};
+                      (pv.topology.pillars || []).forEach(p => { (resolvePillarHeight(p.H, matInv).pieces || []).forEach(pc => { const m = pc.type === "beam" ? smap : pmap; m[pc.size] = (m[pc.size] || 0) + pc.qty; }); });
                       (pv.topology.beams || []).forEach(b => { (resolveBeamSegment(b.lengthFt, matInv).pieces || []).forEach(pc => { bmap[pc.size] = (bmap[pc.size] || 0) + pc.qty; }); });
                       // Per-piece rate = this zone's own effective ₹/RFT (cost ÷ total RFT, already
                       // material-aware via trussInvForMaterial inside calcZoneTrussPreview) × the
@@ -1288,6 +1291,7 @@ export default function DealCheckOverlay({ ctx }) {
                       const pillarRftRateEff = pv.costs.pillarRft > 0 ? pv.costs.pillarCost / pv.costs.pillarRft : 0;
                       const beamRftRateEff = pv.costs.beamRft > 0 ? pv.costs.beamCost / pv.costs.beamRft : 0;
                       Object.entries(pmap).forEach(([ft, n]) => { const unit = Math.round(Number(ft) * pillarRftRateEff); deptInv["Tenting"].push({ name: `Truss pillar ${ft}ft`, photo: "", qty: n, unit, total: unit * n, sub: "truss structure" }); });
+                      Object.entries(smap).forEach(([ft, n]) => { const unit = Math.round(Number(ft) * pillarRftRateEff); deptInv["Tenting"].push({ name: `Truss beam ${ft}ft (pillar base)`, photo: "", qty: n, unit, total: unit * n, sub: "truss structure" }); });
                       Object.entries(bmap).forEach(([ft, n]) => { const unit = Math.round(Number(ft) * beamRftRateEff); deptInv["Tenting"].push({ name: `Truss beam ${ft}ft`, photo: "", qty: n, unit, total: unit * n, sub: "truss structure" }); });
                       if (pv.batta?.rftWithBuffer > 0 && pv.costs.battaCost > 0) {
                         const battaUnit = Math.round(pv.costs.battaCost / pv.batta.rftWithBuffer);

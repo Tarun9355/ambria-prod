@@ -185,7 +185,9 @@ export default function DCTrussTab({ ctx }) {
                         // below so "8 beams" (a reassuring but physically wrong headline when no stock
                         // size matches the ideal segment length) doesn't read as literal piece count.
                         let realJoints = 0, realJointsShortage = false;
-                        const realBeamSizeCounts = {}, realPillarSizeCounts = {};
+                        // realPillarBaseCounts: the beams set at the ground under a pillar (14 ft = 12 ft pillar + 2 ft beam) - still in
+                        // realPillarSizeCounts (the pillar's height, its RFT and price), only shown as "(beam)" (owner ask 2026-11-18)
+                        const realBeamSizeCounts = {}, realPillarSizeCounts = {}, realPillarBaseCounts = {};
                         if (pv?.topology) {
                           const matInv = trussInvForMaterial(trussInv, snappedRow.trussMaterial);
                           (pv.topology.beams || []).forEach(b => {
@@ -198,10 +200,10 @@ export default function DCTrussTab({ ctx }) {
                             const r = resolvePillarHeight(p.H, matInv);
                             if (r.shortage) realJointsShortage = true;
                             realJoints += r.joints || 0;
-                            (r.pieces || []).forEach(pc => { realPillarSizeCounts[pc.size] = (realPillarSizeCounts[pc.size] || 0) + pc.qty; });
+                            (r.pieces || []).forEach(pc => { realPillarSizeCounts[pc.size] = (realPillarSizeCounts[pc.size] || 0) + pc.qty; if (pc.type === "beam") realPillarBaseCounts[pc.size] = (realPillarBaseCounts[pc.size] || 0) + pc.qty; });
                           });
                         }
-                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (25%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (25%)" : ""}`, pv, row, rowIdx, snapNote, realJoints, realJointsShortage, realBeamSizeCounts, realPillarSizeCounts };
+                        return { zk, zLabel: rowIdx > 0 ? `${zLabel} (truss #${rowIdx + 1})${isRepeat ? " · ♻️ Repeat (25%)" : ""}` : `${zLabel}${isRepeat ? " · ♻️ Repeat (25%)" : ""}`, pv, row, rowIdx, snapNote, realJoints, realJointsShortage, realBeamSizeCounts, realPillarSizeCounts, realPillarBaseCounts };
                       });
                     }).filter(x => x.pv && x.pv.source !== "none");
                     return { fn, previews };
@@ -474,7 +476,7 @@ export default function DCTrussTab({ ctx }) {
                               </div>
                             )}
                           </div>
-                          {previews.map(({ zk, zLabel, pv, row, rowIdx, snapNote, realJoints, realJointsShortage, realBeamSizeCounts, realPillarSizeCounts }, previewIdx) => {
+                          {previews.map(({ zk, zLabel, pv, row, rowIdx, snapNote, realJoints, realJointsShortage, realBeamSizeCounts, realPillarSizeCounts, realPillarBaseCounts }, previewIdx) => {
                             const isInvalid = pv.smartFlag === "red";
                             const topo = pv.topology;
                             const costs = pv.costs;
@@ -595,7 +597,13 @@ export default function DCTrussTab({ ctx }) {
                                             </div>
                                             <div style={{...NUM,color:INK,fontWeight:600,lineHeight:1.5}}>
                                               {realCount > 0 ? <>
-                                                {fmtSizeCounts(realPillarSizeCounts)} = {Math.round(realRft * 100) / 100} RFT
+                                                {(() => {
+                                                  // the ground beams apart, as "(beam)" - the pillars themselves without them
+                                                  const base = realPillarBaseCounts || {};
+                                                  const own = Object.fromEntries(Object.entries(realPillarSizeCounts).map(([k, n]) => [k, n - (base[k] || 0)]).filter(([, n]) => n > 0));
+                                                  const beamTxt = Object.entries(base).filter(([, n]) => n > 0).sort((a, b) => Number(b[0]) - Number(a[0])).map(([len, n]) => `${n} × ${len}ft (beam)`).join(" · ");
+                                                  return [fmtSizeCounts(own), beamTxt].filter(Boolean).join(" · ");
+                                                })()} = {Math.round(realRft * 100) / 100} RFT
                                                 {Math.abs(realRft - billedRft) >= 0.01 && <span title="Billed at the clean height you asked for; real stock resolves slightly differently" style={{color:INK_3,fontWeight:500}}> · billed {billedRft} RFT</span>}
                                               </> : <>{groupByLen(topo.pillars, p => p.H)} = {billedRft} RFT</>}
                                             </div>
