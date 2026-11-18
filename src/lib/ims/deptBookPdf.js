@@ -441,17 +441,23 @@ export async function renderDeptBook({ buildHtml, lang, multi, dept, depts, grou
       const safe = (s) => String(s || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
       const htmlDoc = buildHtml(zoneLabels, zoneAdminOrder, logos, { combined: multi, depts: shared || undefined, lang, names: hiNames });
       const blob = new Blob([htmlDoc], { type: "text/html;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
       const label = bookLabel || dept;
-      a.download = `${safe(`${label} (partial — export failed)`)} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}${lang === "hi" ? " (Hindi)" : ""}.html`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      // Revoked on a timer, not immediately: Chrome cancels an in-flight download if the object
-      // URL disappears in the same tick as the click.
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      const htmlName = `${safe(`${label} (partial — export failed)`)} - ${safe(sel?.clientName || "Event")} - ${safe(selDateStr || "no date")}${lang === "hi" ? " (Hindi)" : ""}.html`;
+      if (typeof onFile === "function") {
+        // Deal Check's hidden frame: the page saves it (Safari drops a download started in a hidden frame)
+        onFile(blob, htmlName);
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = htmlName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        // Revoked on a timer, not immediately: Chrome cancels an in-flight download if the object
+        // URL disappears in the same tick as the click.
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      }
       alert(`The PDF could not be generated, so the report downloaded as an HTML file instead — open it and print to PDF.\n\nReason: ${err?.message || err}`);
     } catch (fallbackErr) {
       console.error("PDF: the HTML fallback failed too", fallbackErr);
