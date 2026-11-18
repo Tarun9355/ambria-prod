@@ -1657,6 +1657,23 @@ export default function StudioBuild({ ctx }) {
   // default every category falls back to (repeatCatFor) until a chip is individually flipped away
   // from it, and flipping the zone toggle later must not silently wipe an earlier per-chip choice.
   const isRepeatCat = (k, cat) => repeatCatFor(zoneConfig[k], cat);
+  // A Flowers card (el.flowerPick, pricing.mandiElUnitPrice): idx null adds one to zone k, a number swaps that card's flower.
+  // A flower with several colours opens its variant picker next, as Jaimala's card does.
+  const placeFlowerPick = (k, idx, m) => {
+    const variants = Array.isArray(m?.colorVariants) ? m.colorVariants : [];
+    const vId = variants.length === 1 ? variants[0].variantId : "";
+    const elems = [...(zoneElements[k] || [])];
+    let at = idx;
+    if (idx == null) {
+      elems.push({ name: m.name, qty: 1, unit: m.unit || "bundle", size: "", mandiId: m.id, mandiVariantId: vId, flowerPick: true, ...(isRepeatCat(k, "elements") ? { repeatOverride: false } : {}) });
+      at = elems.length - 1;
+    } else {
+      if (!elems[idx]) return;
+      elems[idx] = { ...elems[idx], name: m.name, unit: m.unit || "bundle", mandiId: m.id, mandiVariantId: vId, flowerPick: true };
+    }
+    setZoneElements((p) => ({ ...p, [k]: elems }));
+    if (variants.length > 1) setMandiVariantPicker({ k, idx: at, mandiId: m.id });
+  };
   const toggleRepeatCat = (k, cat) => setZoneConfig(p => ({ ...p, [k]: { ...(p[k] || {}), repeatCats: { ...(p[k]?.repeatCats), [cat]: !isRepeatCat(k, cat) } } }));
   // ── ONE CARPET ACROSS THE FUNCTION ──
   // Every carpeted floor of this function in zone order (row 0 = the zone's own floor, then its
@@ -5178,10 +5195,6 @@ undefined
                       onClick={()=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...(p[k]||{}),looseFabric:[...((p[k]?.looseFabric)||[]),{kind:"liza",colour:"",qty:0}]}}));setLooseOpenZones(p=>({...p,[k]:true}));}}
                       title="Add loose Liza, masking or curtains to this zone - billed with Truss & Masking"
                       style={{fontSize:11,fontWeight:600,color:accent,background:"transparent",border:`1px dashed ${accent}80`,borderRadius:7,padding:"3px 9px",cursor:"pointer",whiteSpace:"nowrap",fontFamily:"inherit"}}>🧵 + Add loose fabric</button>}
-                    {/* one loose mandi flower per card, any flower but the greens, 2x the mandi rate (pricing.mandiElUnitPrice) */}
-                    <button type="button" onClick={()=>{setFlowerPickQ("");setFlowerPicker({k,idx:null});}}
-                      title="Add a loose flower from IMS Mandi (every flower except greens) - booked in its own unit, billed at 2x the mandi rate"
-                      style={{fontSize:11,fontWeight:600,color:"#DB2777",background:"transparent",border:"1px dashed rgba(219,39,119,0.5)",borderRadius:7,padding:"3px 9px",cursor:"pointer",whiteSpace:"nowrap",fontFamily:"inherit"}}>🌸 + Add flowers</button>
                     <input value={zoneElSearch[k]||""}
                       onChange={e=>{
                         setZoneElSearch(p=>({...p,[k]:e.target.value}));
@@ -5231,7 +5244,13 @@ undefined
                       // (isDirectMandiElement, lib/studio/pricing.js).
                       const mandiCatalogue=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
                       const mandiMatches=smartFilter(mandiCatalogue.filter(m=>isDirectMandiElement(m)),q,m=>[m.name]);
-                      const matches=[...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt})),...mandiMatches.map(m=>({kind:"mandi",m}))];
+                      // Flowers (owner ask 2026-11-18): "flower" / "phool" offers the full picker (every IMS Mandi flower but the greens), and a
+                      // flower's own name adds it straight as a Flowers card - 2x the mandi rate (pricing.mandiElUnitPrice). Items already
+                      // addable above at their own markup (Jaimala, Loose Petals) are not listed twice.
+                      const qt=q.trim();
+                      const fpBrowse=qt&&("flowers".startsWith(qt)||/flower|phool|फूल/.test(qt))?[{kind:"fpbrowse"}]:[];
+                      const fpMatches=smartFilter(mandiCatalogue.filter(m=>isFlowerPickChoice(m)&&!isDirectMandiElement(m)),q,m=>[m.name,m.flowerCat]);
+                      const matches=[...fpBrowse,...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt})),...mandiMatches.map(m=>({kind:"mandi",m})),...fpMatches.map(m=>({kind:"fp",m}))];
                       if(!addElPos||addElPos.key!==k) return null;
                       return matches.length>0?createPortal(<div className="ael-widget" style={{position:"fixed",top:addElPos.top,bottom:addElPos.bottom,left:addElPos.left,zIndex:10000,background:cardBg,border:`1px solid ${border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.2)",maxHeight:340,overflowY:"auto",width:320}}>
                         {matches.map(m=>{
@@ -5259,6 +5278,29 @@ undefined
                                 {nInZone>0&&<span title={`Already added ${nInZone} time(s) to this zone — this adds another row (a different size/config), not a duplicate of the same one`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(5,150,105,0.15)",color:"#059669",fontWeight:700,flexShrink:0}}>✓ ADDED ×{nInZone}</span>}
                               </div>
                               <div style={{fontSize:11,color:textS,marginTop:2}}>{pt.sub?pt.sub+" › ":""}Flower recipe — no inventory item</div>
+                            </div>
+                          </div>; }
+                          if(m.kind==="fpbrowse") return <div key="fpbrowse" onClick={()=>{setZoneElSearch(prev=>({...prev,[k]:""}));setFlowerPickQ("");setFlowerPicker({k,idx:null});}}
+                            style={{padding:"10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10,background:"rgba(219,39,119,0.05)"}}>
+                            <div style={{width:56,height:56,borderRadius:8,flexShrink:0,background:"rgba(219,39,119,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26}}>🌸</div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontWeight:700,color:"#DB2777"}}>Flowers — see all</div>
+                              <div style={{fontSize:11,color:textS,marginTop:2}}>Every flower in IMS Mandi except greens · 2× the mandi rate</div>
+                            </div>
+                          </div>;
+                          if(m.kind==="fp"){ const mi=m.m; const ph=mi.photoUrl||(Array.isArray(mi.colorVariants)?mi.colorVariants.find(v=>v?.photoUrl)?.photoUrl:"")||""; const nInZone=countInZone("mandiId",mi.id); return <div key={"fp:"+mi.id}
+                            onClick={()=>{ placeFlowerPick(k,null,mi); setZoneElSearch(prev=>({...prev,[k]:""})); }}
+                            style={{padding:"8px 10px",fontSize:12,cursor:"pointer",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
+                            <div style={{width:56,height:56,borderRadius:8,overflow:"hidden",flexShrink:0,background:isDark?"#1a1a2e":"#eee",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                              {ph ? <img src={thumbUrl(ph, 56)} loading="lazy" decoding="async" alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/> : <span style={{fontSize:22,opacity:0.5}}>🌸</span>}
+                            </div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontWeight:500,color:textP,display:"flex",alignItems:"center",gap:4,minWidth:0}}>
+                                <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{mi.name}</span>
+                                <span style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(219,39,119,0.12)",color:"#DB2777",fontWeight:700,flexShrink:0}}>🌸 FLOWER · {mi.unit||"bundle"}</span>
+                                {nInZone>0&&<span title={`Already added ${nInZone} time(s) to this zone`} style={{fontSize:10,padding:"2px 6px",borderRadius:3,background:"rgba(5,150,105,0.15)",color:"#059669",fontWeight:700,flexShrink:0}}>✓ ADDED ×{nInZone}</span>}
+                              </div>
+                              <div style={{fontSize:11,color:textS,marginTop:2}}>₹{mandiElUnitPrice({flowerPick:true},mi,mi.currentPrice).toLocaleString("en-IN")}/{mi.unit||"bundle"} (2× mandi){Array.isArray(mi.colorVariants)&&mi.colorVariants.length>1?` · ${mi.colorVariants.length} colours`:""}</div>
                             </div>
                           </div>; }
                           if(m.kind==="mandi"){ const mi=m.m; const variants=Array.isArray(mi.colorVariants)?mi.colorVariants:[]; const nInZone=countInZone("mandiId",mi.id); return <div key={"mandi:"+mi.id}
@@ -6870,22 +6912,7 @@ undefined
       const all=mandiCat.filter(isFlowerPickChoice).sort((a,b)=>String(a.name||"").localeCompare(String(b.name||"")));
       const list=flowerPickQ.trim()?smartFilter(all,flowerPickQ,m=>[m.name,m.flowerCat]):all;
       const close=()=>{setFlowerPicker(null);setFlowerPickQ("");};
-      const pick=(m)=>{
-        const variants=Array.isArray(m.colorVariants)?m.colorVariants:[];
-        const vId=variants.length===1?variants[0].variantId:"";
-        const elems=[...(zoneElements[k]||[])];
-        let at=idx;
-        if(idx==null){
-          elems.push({name:m.name,qty:1,unit:m.unit||"bundle",size:"",mandiId:m.id,mandiVariantId:vId,flowerPick:true,...(isRepeatCat(k,"elements")?{repeatOverride:false}:{})});
-          at=elems.length-1;
-        } else {
-          if(!elems[idx]) { close(); return; }
-          elems[idx]={...elems[idx],name:m.name,unit:m.unit||"bundle",mandiId:m.id,mandiVariantId:vId,flowerPick:true};
-        }
-        setZoneElements(p=>({...p,[k]:elems}));
-        close();
-        if(variants.length>1) setMandiVariantPicker({k,idx:at,mandiId:m.id});
-      };
+      const pick=(m)=>{ close(); placeFlowerPick(k,idx,m); };
       return createPortal((
         <div className="ui-overlay-in" onClick={close} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(10,10,20,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div className="ui-pop-in" onClick={e=>e.stopPropagation()} role="dialog" aria-label="Choose a flower" style={{width:"min(720px,100%)",maxHeight:"84vh",background:isDark?"#15151f":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
