@@ -1,3 +1,4 @@
+import { userTabOn } from "../../lib/ims/tabAccess";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/AuthContext";
@@ -2798,7 +2799,8 @@ export default function IMS() {
   // (so a narrow role like Site Supervisor lands on its own tab out of the box, not the whole app),
   // else to every tab EXCEPT Site — a brand-new, never-configured role has no business on a
   // single-purpose cross-department screen just because nobody has set up its Tab Access yet.
-  const roleConfig = (settings?.roleTabs || {})[user?.role] || DEFAULT_ROLE_TABS[user?.role] || { tabs: TABS.filter((t) => t.id !== "site").map((t) => t.id) };
+  // (the role's own list, with the same fallbacks - saved Tab Access, else DEFAULT_ROLE_TABS, else every tab but Site - is now read
+  // through userTabOn → roleTabOn in lib/ims/tabAccess, below)
   const isAdmin = user?.role === "Admin" || user?.id === "u_admin";
   // Dashboard is Admin-only, full stop — not something a per-role Tab Access config can grant.
   // It's a company-wide rollup (total stock, finance-adjacent numbers, every upcoming function),
@@ -2810,7 +2812,11 @@ export default function IMS() {
   // all saved before this feature existed, so nobody had ticked it for any role, and without this
   // force-include every non-admin would be unable to reach Attendance at all until an admin went
   // and edited every single role by hand.
-  let allowedTabs = isAdmin ? TABS : TABS.filter((t) => t.id !== "dashboard" && (t.id === "attendance" || (roleConfig.tabs || []).includes(t.id)));
+  // The user's own Tab Access override (Admin → Users → Edit → tabs) on top of the role - userTabOn (lib/ims/tabAccess), the same
+  // read Admin's override screen shows. This read the ROLE only, so a tab switched on for one person never appeared (owner report
+  // 2026-11-19: Anmol, role Sales, given Planning by hand, still had only Attendance and Inventory). Dashboard stays Admin-only and
+  // Attendance stays on for everyone, whatever an override says.
+  let allowedTabs = isAdmin ? TABS : TABS.filter((t) => t.id !== "dashboard" && (t.id === "attendance" || userTabOn(user, settings, "ims", t.id)));
   // Calendar restricted to one specific account only (owner ask, 2026-11-16, Pratik only, nobody
   // else — confirmed to exclude Tarun too, despite Date Pricing Config/the Auto-Sync lock code
   // living only inside this tab and being separately owner-gated to HIS id, DATE_PRICING_OWNER_ID;

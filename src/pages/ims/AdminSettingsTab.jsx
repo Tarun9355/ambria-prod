@@ -1,3 +1,4 @@
+import { userSubTabs } from "../../lib/ims/tabAccess";
 import { useState, useEffect, useRef } from "react";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { supabase, updateRow as rawUpdateRow, deleteRow as rawDeleteRow } from "../../lib/supabase";
@@ -400,11 +401,13 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
   // ("settings" for these 8 panels, "masterdata" for the 7 below) rather than a new data shape.
   // Same fallback rule as every other tab: no restriction recorded (or an empty result) means
   // everything shows, so a role saved before this existed is unaffected.
-  const roleConfig = (settings?.roleTabs || {})[authUser?.role];
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
-  const allowedPanels = isAdmin || !roleConfig?.subTabs?.settings ? panels : panels.filter((p) => roleConfig.subTabs.settings.includes(p.id));
+  // the user's own Tab Access override (Admin → Users → Edit) on top of the role - userSubTabs (lib/ims/tabAccess); it read the role only
+  const settingsSubs = userSubTabs(authUser, settings, "ims", "settings");
+  const allowedPanels = isAdmin || !settingsSubs ? panels : panels.filter((p) => settingsSubs.includes(p.id));
   const panelsShown = allowedPanels.length > 0 ? allowedPanels : panels;
-  const allowedMasterData = isAdmin || !roleConfig?.subTabs?.masterdata ? MASTER_DATA : MASTER_DATA.filter((m) => roleConfig.subTabs.masterdata.includes(m.id));
+  const masterSubs = userSubTabs(authUser, settings, "ims", "masterdata");
+  const allowedMasterData = isAdmin || !masterSubs ? MASTER_DATA : MASTER_DATA.filter((m) => masterSubs.includes(m.id));
   const masterDataShown = allowedMasterData.length > 0 ? allowedMasterData : MASTER_DATA;
 
   // "Supervisors" was always the default landing panel regardless of array order — keep that for

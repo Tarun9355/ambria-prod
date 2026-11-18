@@ -3,14 +3,15 @@ import { Tabs } from "../../components/ui";
 import PLTab from "./PLTab.jsx";
 import CompanyPLTab from "./CompanyPLTab.jsx";
 import OverheadsTab from "./OverheadsTab.jsx";
-import { hasTabPerm } from "../../lib/ims/tabAccess";
+import { hasTabPerm, userSubTabs } from "../../lib/ims/tabAccess";
 
 // Faithful to the reference FinanceTab wrapper (Event P&L / Company P&L / Overheads).
 export default function FinanceTab({ projects, functions, inventory, purchase, settings, setSettings, overheads, setOverheads, authUser }) {
   const allTabs = [{ id: "pl", label: "📊 Event P&L" }, { id: "company_pl", label: "📊 Company P&L" }, { id: "overheads", label: "🏢 Overheads" }];
-  const roleConfig = (settings?.roleTabs || {})[authUser?.role];
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
-  const allowed = isAdmin || !roleConfig?.subTabs?.finance ? allTabs : allTabs.filter((t) => roleConfig.subTabs.finance.includes(t.id));
+  // the user's own Tab Access override (Admin → Users → Edit) on top of the role - userSubTabs (lib/ims/tabAccess); it read the role only
+  const subsOn = userSubTabs(authUser, settings, "ims", "finance");
+  const allowed = isAdmin || !subsOn ? allTabs : allTabs.filter((t) => subsOn.includes(t.id));
   const tabs = allowed.length > 0 ? allowed : allTabs;
   const [sub, setSub] = useState(tabs[0]?.id || "pl");
   // Edit Access/per-user override, Admin → Users & Roles — computed once, passed to Event P&L and

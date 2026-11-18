@@ -4,7 +4,7 @@ import PaintPlanningTab from "./PaintPlanningTab.jsx";
 import AdminSettingsTab from "./AdminSettingsTab.jsx";
 import StructurePlanningTab from "./StructurePlanningTab.jsx";
 import DepartmentOpsTab from "./DepartmentOpsTab.jsx";
-import { hasTabPerm } from "../../lib/ims/tabAccess";
+import { hasTabPerm, userSubTabs } from "../../lib/ims/tabAccess";
 
 // Faithful to the reference PlanningTab wrapper (sub-tabs: Truss / Paint / Truss&Batta /
 // Fabric Stock). Manpower and Boxes & Challans were decommissioned — no longer needed.
@@ -30,9 +30,10 @@ export default function PlanningTab({ prodRequests, projects, functions, setFunc
     { id: "fabricstock", label: "🧵 Fabric Stock" },
     { id: "truck", label: "🚚 Truck" },
   ];
-  const roleConfig = (settings?.roleTabs || {})[authUser?.role];
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
-  const allowed = isAdmin || !roleConfig?.subTabs?.planning ? allTabs : allTabs.filter((t) => roleConfig.subTabs.planning.includes(t.id));
+  // the user's own Tab Access override (Admin → Users → Edit) on top of the role - userSubTabs (lib/ims/tabAccess); it read the role only
+  const subsOn = userSubTabs(authUser, settings, "ims", "planning");
+  const allowed = isAdmin || !subsOn ? allTabs : allTabs.filter((t) => subsOn.includes(t.id));
   const tabs0 = allowed.length > 0 ? allowed : allTabs;
   // Deal Check's hidden PDF run needs Dept Ops even if this role's Planning sub-tabs leave it out (everyone can download, 2026-11-17)
   const tabs = autoPdfFor && !tabs0.some((t) => t.id === "deptops") ? [...tabs0, allTabs.find((t) => t.id === "deptops")] : tabs0;

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Tabs } from "../../components/ui";
 import AdminSettingsTab from "./AdminSettingsTab.jsx";
 import FlowerMandiTab from "./FlowerMandiTab.jsx";
-import { hasTabPerm } from "../../lib/ims/tabAccess";
+import { hasTabPerm, userSubTabs } from "../../lib/ims/tabAccess";
 
 // Faithful to the reference FlowersTab wrapper (Mandi / Recipes / Transfers). Mandi + Recipes
 // render AdminSettingsTab via the `mode` prop. Transfers renders FlowerMandiTab via the `mode` prop.
@@ -12,9 +12,10 @@ export default function FlowersTab({ settings, setSettings, supervisors, setSupe
     { id: "recipes", label: "🌺 Recipes" },
     { id: "transfers", label: "🔄 Transfers" },
   ];
-  const roleConfig = (settings?.roleTabs || {})[authUser?.role];
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
-  const allowed = isAdmin || !roleConfig?.subTabs?.flowers ? allTabs : allTabs.filter((t) => roleConfig.subTabs.flowers.includes(t.id));
+  // the user's own Tab Access override (Admin → Users → Edit) on top of the role - userSubTabs (lib/ims/tabAccess); it read the role only
+  const subsOn = userSubTabs(authUser, settings, "ims", "flowers");
+  const allowed = isAdmin || !subsOn ? allTabs : allTabs.filter((t) => subsOn.includes(t.id));
   const tabs = allowed.length > 0 ? allowed : allTabs;
   const [sub, setSub] = useState(tabs[0]?.id || "mandi");
   // Edit Access/per-user override, Admin → Users & Roles — computed once, passed to every sub-tab.

@@ -1,3 +1,4 @@
+import { userSubTabs } from "../../lib/ims/tabAccess";
 import { useState } from "react";
 import { Tabs } from "../../components/ui";
 import VendorsTab from "./VendorsTab.jsx";
@@ -14,9 +15,10 @@ export default function AdminTab({ users, setUsers, addUser, vendors, setVendors
   // Same role-gating every other IMS tab wrapper does (PlanningTab.jsx, SupplyTab.jsx, ...) — this
   // one just never had it: Admin's own sub-tabs were shown to anyone with Admin access regardless
   // of what the role editor had recorded for them.
-  const roleConfig = (settings?.roleTabs || {})[authUser?.role];
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
-  const allowed = isAdmin || !roleConfig?.subTabs?.admin ? allTabs : allTabs.filter((t) => roleConfig.subTabs.admin.includes(t.id));
+  // the user's own Tab Access override (Admin → Users → Edit) on top of the role - userSubTabs (lib/ims/tabAccess); it read the role only
+  const subsOn = userSubTabs(authUser, settings, "ims", "admin");
+  const allowed = isAdmin || !subsOn ? allTabs : allTabs.filter((t) => subsOn.includes(t.id));
   const tabs = allowed.length > 0 ? allowed : allTabs;
   // "vendors" was always the default landing sub-tab regardless of order — keep that for any role
   // that still has it (unrestricted roles, i.e. almost everyone), only redirecting away from it for
