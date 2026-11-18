@@ -14936,9 +14936,29 @@ export default function StudioApp() {
       const zonesOfItem = {};
       Object.entries(newCards[fnIdx] || {}).forEach(([cardKey, c]) => {
         const zk = String(cardKey).split("::")[1] || "";
-        if (!c?.imsId || !zk) return;
+        if (!c || !zk) return;
         const zLabel = fn.zoneNames?.[zk] || (fn.customZones || []).find((cz) => cz?.id === zk)?.name || zk.replace(/[_-]+/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
-        (zonesOfItem[c.imsId] || (zonesOfItem[c.imsId] = new Set())).add(zLabel);
+        const at = (id) => { if (id) (zonesOfItem[id] || (zonesOfItem[id] = new Set())).add(zLabel); };
+        // Every id this card holds, the same ones requiredByFn counts above (owner ask 2026-11-18: the log showed no zone for
+        // most lines): a split card's own items, and a kit's parts - a Chivari Chair in a table kit, say - not just c.imsId.
+        const splitArr = Array.isArray(c.split) ? c.split.filter((s) => s && s.imsId) : [];
+        if (splitArr.length) { splitArr.forEach((s) => at(s.imsId)); return; }
+        if (!c?.imsId) return;
+        at(c.imsId);
+        const topItem = (inventoryList || []).find((x) => x.id === c.imsId);
+        if (topItem && Array.isArray(topItem.subItems) && topItem.subItems.length > 0) {
+          const edited = kitEditsNow?.[fnIdx]?.[cardKey];
+          walkKitUnits(topItem, 1, inventoryList, Array.isArray(edited) ? edited : undefined, (node) => at(node?.id));
+        }
+      });
+      // Deal Check's own manual items (manualByFn above) carry their zone too
+      manualItemsNow.filter((mi) => (mi.fnIdx ?? 0) === fnIdx && mi.imsId && mi.zoneKey).forEach((mi) => {
+        const zk = mi.zoneKey;
+        const zLabel = fn.zoneNames?.[zk] || (fn.customZones || []).find((cz) => cz?.id === zk)?.name || String(zk).replace(/[_-]+/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+        const at = (id) => { if (id) (zonesOfItem[id] || (zonesOfItem[id] = new Set())).add(zLabel); };
+        at(mi.imsId);
+        const topItem = (inventoryList || []).find((x) => x.id === mi.imsId);
+        if (topItem && Array.isArray(topItem.subItems) && topItem.subItems.length > 0) walkKitUnits(topItem, 1, inventoryList, undefined, (node) => at(node?.id));
       });
       ids.forEach((id) => {
         const now = req[id] || 0, was = prev[id] || 0;
