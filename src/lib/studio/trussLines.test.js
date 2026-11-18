@@ -14,10 +14,10 @@ describe("truss Tenting lines", () => {
     expect(lines.some((l) => l.name === "Truss pillar 2ft")).toBe(false);
   });
 
-  it("each piece keeps the rate it is billed at: total = 8 × ₹40 (pillar rate) + 1 × ₹30 (beam rate), unit their average", () => {
+  it("each piece keeps the rate it is billed at: 8 × ₹40 (pillar rate) + 1 × ₹30 (beam rate) = ₹350, rate their average ₹39, total rate × qty", () => {
     const [b2] = trussPieceLines({ beams: { 2: 1 }, bases: { 2: 8 } }, PILLAR, BEAM);
-    expect(b2.total).toBe(8 * 40 + 1 * 30);
-    expect(b2.unit).toBe(Math.round(350 / 9));
+    expect(b2.unit).toBe(39);
+    expect(b2.total).toBe(39 * 9); // rate x qty, so IMS's check holds (₹351 vs ₹350 billed - rounding)
   });
 
   it("bases only (no segment of that size) still make a beam line, at the pillar rate", () => {
