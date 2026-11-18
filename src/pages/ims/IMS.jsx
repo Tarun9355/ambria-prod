@@ -381,6 +381,14 @@ export default function IMS() {
     try { const m = /[?&]pdfEvent=([^&]+)/.exec(window.location.hash); return m && window.self !== window.top ? decodeURIComponent(m[1]) : null; } catch { return null; }
   });
   const autoPdfOpenedRef = useRef(false);
+  // Tell Deal Check this frame is up (signed in, loading IMS) and keep saying so until Dept Ops takes over - see DeptPdfButton.
+  useEffect(() => {
+    if (!autoPdfFor) return undefined;
+    const tell = () => { try { window.parent?.postMessage({ type: "ambria-dept-pdf", phase: "alive" }, window.location.origin); } catch { /* not framed */ } };
+    tell();
+    const t = setInterval(tell, 10000);
+    return () => clearInterval(t);
+  }, [autoPdfFor]);
   useEffect(() => {
     if (!autoPdfFor || loading || autoPdfOpenedRef.current) return;
     autoPdfOpenedRef.current = true;

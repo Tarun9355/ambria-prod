@@ -3651,6 +3651,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
       if (autoPdfStartedRef.current) return;
       autoPdfStartedRef.current = true;
       const tell = (phase, extra = {}) => { try { window.parent?.postMessage({ type: "ambria-dept-pdf", phase, ...extra }, window.location.origin); } catch { /* not framed */ } };
+      // "alive" every 10 s while the book builds, so Deal Check's 90 s quiet timer never cuts a long (Hindi) run short
+      tell("alive");
+      const beat = setInterval(() => tell("alive"), 10000);
       const notes = [];
       const realAlert = window.alert;
       window.alert = (m) => { notes.push(String(m).split("\n")[0]); };
@@ -3659,7 +3662,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
         if (!deptsWithWork.length) { tell("error", { reason: "No department plan on this event yet — sync it from Deal Check first" }); return; }
         pdfAllCarpetsRef.current = true;
         ok = await exportPdf(deptsWithWork, { combined: true });
-      } finally { window.alert = realAlert; pdfAllCarpetsRef.current = false; }
+      } finally { window.alert = realAlert; pdfAllCarpetsRef.current = false; clearInterval(beat); }
       tell(ok ? "done" : "error", { notes });
       onAutoPdfDone?.();
     }, 3000);

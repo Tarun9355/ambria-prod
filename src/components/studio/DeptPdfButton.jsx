@@ -8,10 +8,11 @@ import { useState, useEffect, useRef } from "react";
 // The frame is same-origin, so it can post back, and main.jsx gives it a private in-memory
 // sessionStorage so it cannot disturb the tab IMS remembers for this browser.
 const NOTE_MS = 7000;
-// The book's language, chosen here (owner ask 2026-11-18): English or Hindi, remembered per viewer in this browser. It rides to
+// The book's language, chosen here (owner ask 2026-11-18): Hindi by default, English when picked - remembered per viewer in this
+// browser (key v2: everyone starts on Hindi once, also a viewer who had picked EN under the old key). It rides to
 // the frame as &pdfLang=, which Dept Ops uses for that one run - IMS's own EN | हिं choice (its screen + PDF) is left alone.
-const LANG_KEY = "studio.dealCheck.pdfLang";
-const readLang = () => { try { return localStorage.getItem(LANG_KEY) === "hi" ? "hi" : "en"; } catch { return "en"; } };
+const LANG_KEY = "studio.dealCheck.pdfLang.v2";
+const readLang = () => { try { return localStorage.getItem(LANG_KEY) === "en" ? "en" : "hi"; } catch { return "hi"; } };
 
 export default function DeptPdfButton({ eventOrderId, clientKey, border = "rgba(26,26,46,0.15)" }) {
   const [run, setRun] = useState(false);
@@ -36,18 +37,22 @@ export default function DeptPdfButton({ eventOrderId, clientKey, border = "rgba(
   useEffect(() => {
     if (!run) return undefined;
     heard.current = false;
+    // Never hangs: a frame silent for 90 s (not signed in here, a stuck load…) or a run past 5 minutes ends the attempt.
+    // The frame says "alive" as it loads, opens the event and builds (IMS / DepartmentOpsTab), which restarts the 90 s. Before,
+    // only the final "done" counted, so a run past 90 s (a Hindi book, which also asks for its names) was cut off mid-build.
+    const onQuiet = () => finish(heard.current ? "The PDF stopped responding — try again" : "Could not start — refresh the page and try again", 15000);
+    let quiet = setTimeout(onQuiet, 90000);
     const onMsg = (e) => {
       const d = e.data;
       if (e.origin !== window.location.origin || !d || d.type !== "ambria-dept-pdf") return;
       heard.current = true;
+      // the frame is alive and working (a Hindi book also asks for its names - well past 90 s on a big event): the quiet timer restarts
+      if (d.phase === "alive") { clearTimeout(quiet); quiet = setTimeout(onQuiet, 90000); return; }
       if (d.phase === "done") finish("PDF downloaded" + (d.notes?.length ? " — " + d.notes[0] : ""), d.notes?.length ? 15000 : NOTE_MS);
       else if (d.phase === "error") finish(d.reason || "Could not build the PDF" + (d.notes?.length ? " — " + d.notes[0] : ""), 15000);
     };
     window.addEventListener("message", onMsg);
-    // Never hangs: nothing heard in 90 s (not signed in here, a slow load…) or a run
-    // past 4 minutes ends the attempt.
-    const quiet = setTimeout(() => { if (!heard.current) finish("Could not start — refresh the page and try again", 15000); }, 90000);
-    const cap = setTimeout(() => finish("The PDF took too long — stopped", 15000), 240000);
+    const cap = setTimeout(() => finish("The PDF took too long — stopped", 15000), 300000);
     return () => { window.removeEventListener("message", onMsg); clearTimeout(quiet); clearTimeout(cap); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run]);
