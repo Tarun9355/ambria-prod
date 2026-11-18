@@ -30,7 +30,7 @@ import StudioBrowse from "./views/StudioBrowse.jsx";
 import StudioBuild from "./views/StudioBuild.jsx";
 import StudioSummary from "./views/StudioSummary.jsx";
 import { kvGet, kvTryGet, kvSet, reliableSave } from "../../lib/ims/kv";
-import { hasTabPerm } from "../../lib/ims/tabAccess";
+import { hasTabPerm, userTabOn, userSubTabs } from "../../lib/ims/tabAccess";
 import { makeAmendRequest } from "../../lib/ims/amend";
 import { catToDept } from "../../lib/ims/deptClassify";
 import { availableAtVenue, lockedAtFixedVenues, isStandingAt, rentalSplit, fixedVenueDealDiscount, fixedVenueDiscountPctFor, proratedVenueDiscount, fixedVenueFor, builtQty, kitBuiltQty, venueSlackFor, standingReductionBySubcat, standingQty, combineAvailability, assembleFixedVenuesFromRows, fixedVenueOverlapOnDate } from "../../lib/ims/fixedVenues";
@@ -2934,31 +2934,21 @@ export default function StudioApp() {
   // (settings.roleTabs[role].studio.perms, the 8 canX flags). Drives hasPerm below.
   const [studioRoleTabs, setStudioRoleTabs] = useState({});
   useEffect(() => { (async () => { try { const v = await kvGet("roleTabs"); const p = typeof v === "string" ? JSON.parse(v) : v; if (p && typeof p === "object") setStudioRoleTabs(p); } catch { /* ignore */ } })(); }, []);
-  // Role's Studio tab/sub-tab config (settings.roleTabs[role].studio). null = admin (all).
-  // Unconfigured non-admin defaults to deal-builder only (matches the reference 'sales' default).
-  const studioCfg = useMemo(() => {
-    if (isAdmin) return null;
-    return studioRoleTabs?.[authUser?.role]?.studio || { tabs: ["design"], subTabs: {} };
-  }, [isAdmin, studioRoleTabs, authUser]);
-  const hasStudioTab = useCallback((t) => isAdmin || (studioCfg?.tabs || []).includes(t), [isAdmin, studioCfg]);
+  // Per-role Studio tab/sub-tab config lives in studioRoleTabs (loaded above). Per-user overrides
+  // (tabOverride / tab_override on the raw profile) layer on top via userTabOn/userSubTabs —
+  // exactly the same merge path IMS uses. The raw `user` from useAuth() carries tab_override;
+  // authUser is trimmed to {id,name,role,perms} and never does, so we pass `user` here.
+  const _studioCfg = useCallback(() => ({ roleTabs: studioRoleTabs }), [studioRoleTabs]);
+  const hasStudioTab = useCallback((t) => isAdmin || userTabOn(user, _studioCfg(), "studio", t), [isAdmin, user, _studioCfg]);
   const studioSub = useCallback((parent, sub) => {
     if (isAdmin) return true;
-    if (!(studioCfg?.tabs || []).includes(parent)) return false;
-    // "Restriction is opt-in" (RoleAccessModal.jsx's own documented rule for this exact data shape):
-    // an absent/empty subTabs[parent] means every child is visible — no admin action ever
-    // restricted anything under this tab, so nothing under it should be hidden. This used to
-    // require an explicit grant unconditionally, silently hiding Deal Check (and viewpricing/
-    // export, and every Settings sub-view routed through here) for every Sales role that was
-    // never individually hand-customized, since the seeded default is {tabs:["design"],subTabs:{}}
-    // — an admin who never touched a single toggle for a role saw "nothing restricted" and
-    // reasonably assumed everything was visible, while this returned false for all of it.
-    // studioLibraryAllowed already implements this same rule correctly; this brings dealcheck/
-    // viewpricing/export/settings-sub-views (everything else routed through studioSub) in line
-    // with it instead of being the one path still requiring an explicit grant.
-    const subs = studioCfg?.subTabs?.[parent];
+    const cfg = _studioCfg();
+    if (!userTabOn(user, cfg, "studio", parent)) return false;
+    // "Restriction is opt-in": absent/empty subTabs means every child is visible.
+    const subs = userSubTabs(user, cfg, "studio", parent);
     if (!subs || subs.length === 0) return true;
     return subs.includes(sub);
-  }, [isAdmin, studioCfg]);
+  }, [isAdmin, user, _studioCfg]);
   // Which Studio Settings sub-views (venues/tags/clients/calendar/users/zones/palettes/
   // priority) this role can see — consumed by ManageSettings.
   const studioSettingsAllowed = useCallback((view) => isAdmin || studioSub("settings", view), [isAdmin, studioSub]);
@@ -2967,11 +2957,12 @@ export default function StudioApp() {
   // the IMS supply-tab convention: no sub-config = full access to the granted tab).
   const studioLibraryAllowed = useCallback((view) => {
     if (isAdmin) return true;
-    if (!(studioCfg?.tabs || []).includes("library")) return false;
-    const subs = studioCfg?.subTabs?.library;
+    const cfg = _studioCfg();
+    if (!userTabOn(user, cfg, "studio", "library")) return false;
+    const subs = userSubTabs(user, cfg, "studio", "library");
     if (!subs || subs.length === 0) return true;
     return subs.includes(view);
-  }, [isAdmin, studioCfg]);
+  }, [isAdmin, user, _studioCfg]);
   // Map the reference's canX perm flags onto the Studio tab/sub-tab grants. Every existing
   // hasPerm("canX") call site across Studio/views/manage keeps working through this.
   const hasPerm = useCallback((perm) => {
