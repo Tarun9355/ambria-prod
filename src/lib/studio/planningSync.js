@@ -86,7 +86,8 @@ export function planningUpcoming(eo, now = Date.now()) {
 // v25 (2026-11-17): the guest's 25% structure discount (truss / platform / carpet / print) is Repeat only - a Fixed
 // Venue with a Fresh chip no longer takes it, so those deals' income per department goes up.
 // v26 (2026-11-18): carpet is laid on a 10 ft roll - the shorter side counts up to the next 10 ft (24 x 6 -> 24 x 10), for
-// the bill, the carpet stock plan and the carpet labour alike.
+// the bill, the carpet stock plan and the carpet labour alike. And a Carpet New roll (1500 sqft) opened by one floor is used by
+// the function's next floors before another is billed (taxonomy.carpetNewShares).
 export const PLANNING_SNAPSHOT_VERSION = 26;
 const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-18T09:00:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;

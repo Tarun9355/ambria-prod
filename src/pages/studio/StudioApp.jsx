@@ -90,7 +90,7 @@ const NAV_RULE = { width: 1, height: 22, background: "rgba(255,255,255,0.1)", fl
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
-  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, platformRowCost, billedCarpetSqft, carpetLaidDims, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
+  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, platformRowCost, billedCarpetSqft, carpetLaidDims, carpetNewShares, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
   resolveVenueGensets,
   assemblePrintMaterialsFromRows, assembleCarpetMaterialsFromRows, assemblePlatformRatesFromRows, assembleMaskingRatesFromRows, assembleTrussRatesFromRows,
 } from "../../lib/studio/taxonomy";
@@ -373,7 +373,7 @@ export function calcStructCost(zk, zc, rates, applyDiscount) {
     });
   }
   const platformRows = [{ plH: zc.plH, floorDims: fd, cpT: zc.cpT, plQty: zc.plQty, cpInvId: zc.cpInvId }, ...(zc.extraPlatformRows || [])];
-  platformRows.forEach((row) => { const { platform, carpet } = platformRowCost(row, rates); r.platform += platform; r.carpet += carpet; });
+  platformRows.forEach((row, ri) => { const { platform, carpet } = platformRowCost(row, rates, `${zk}|${ri}`); r.platform += platform; r.carpet += carpet; });
   if (zc.archOn && zc.archT) { const aq = zc.archQty || 0, aw = zc.archW || 0, ah = zc.archH || 0; r.arches = aq * aw * ah * (BASE_RATES.arch[zc.archT] || 60); }
   if (zc.pillarQty) { r.pillars = (zc.pillarQty || 0) * BASE_RATES.pillar; }
   if (zc.glassOn && zc.glassT) { const gq = zc.glassQty || 0, gw = zc.glassW || 0, gh = zc.glassH || 0; r.glass = gq * gw * gh * (BASE_RATES.glass[zc.glassT] || 120); }
@@ -4990,6 +4990,21 @@ export default function StudioApp() {
     platformRates: withDeletedRates(imsPlatformRates, deletedCatalogue.platformRates, "key"),
     imsInventory: invForPricing, rcFactorByKey, trussInv: studioFloralData?.trussInv ?? dealCheckData?.trussInv,
   }), [imsPrintMaterials, imsCarpetMaterials, imsTrussRates, imsMaskingRates, imsFabricMultiplier, imsPlatformRates, deletedCatalogue, invForPricing, rcFactorByKey, studioFloralData, dealCheckData]);
+  // structRates for ONE function: the same, plus that function's Carpet New roll share (taxonomy.carpetNewShares), so a roll
+  // opened by one floor is used by the next before another is billed. Cached per zone-config object (a function's config
+  // only changes identity when it is edited).
+  const fnRatesCacheRef = useRef(new WeakMap());
+  const fnRatesBaseRef = useRef(null);
+  if (fnRatesBaseRef.current !== structRates) { fnRatesBaseRef.current = structRates; fnRatesCacheRef.current = new WeakMap(); }
+  const structRatesFor = (zc, en, order, customZonesFn) => {
+    if (!zc || typeof zc !== "object") return structRates;
+    const hit = fnRatesCacheRef.current.get(zc);
+    const sig = JSON.stringify([en || {}, order || [], (customZonesFn || []).map((c) => c?.id)]);
+    if (hit && hit.sig === sig) return hit.rates;
+    const rates = { ...structRates, carpetNewShare: carpetNewShares({ zoneConfig: zc, enabledEls: en || {}, zoneOrder: order || [], baseOrder: [...zoneKeys, ...(customZonesFn || []).map((c) => c?.id).filter(Boolean)], carpetMaterials: structRates.carpetMaterials }) };
+    fnRatesCacheRef.current.set(zc, { sig, rates });
+    return rates;
+  };
 
   // Cost% for pricing an inventory-sourced element's shortfall (qty beyond what's free in stock
   // for the active date) — same rate_card_categories row as the scaling factor, same join key.
@@ -6480,7 +6495,8 @@ export default function StudioApp() {
     const zones = Object.entries(zoneConfig).filter(([zk, cfg]) => enabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
     // structDiscountFor is per-zone (zc.repeat varies per zone), unlike the old venue-only truss
     // discount this replaced.
-    zones.forEach(z => { c += withPrintFlat(scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, activeFnMeta?.venue || venue))), z.type, zoneConfig, enabledEls, (zk2) => !!structDiscountFor(zoneConfig[zk2], activeFnMeta?.venue || venue).print).total; }); // the ACTIVE function's venue, not function 1's
+    const activeRates = structRatesFor(zoneConfig, enabledEls, zoneOrder, customZones); // + this function's Carpet New roll share
+    zones.forEach(z => { c += withPrintFlat(scaleStruct(calcStructCost(z.type, z.config, activeRates, structDiscountFor(z.config, activeFnMeta?.venue || venue))), z.type, zoneConfig, enabledEls, (zk2) => !!structDiscountFor(zoneConfig[zk2], activeFnMeta?.venue || venue).print).total; }); // the ACTIVE function's venue, not function 1's
     // Cross-function reuse (guest-facing) — same eligibility activeCrossFnReuseQty already computes
     // for StudioBuild.jsx's own per-card display (see its own declaration comment for the full
     // history): this total used to have NO mechanism for it at all, so a function with a same-venue,
@@ -7040,7 +7056,8 @@ export default function StudioApp() {
     // which was already emptied out elsewhere, so the loop never actually added any cost;
     // removing it just retires visibly-dead code, it doesn't change any computed total.
     const zones = Object.entries(fZoneConfig).filter(([zk, cfg]) => fEnabledEls[zk] && cfg).map(([zk, cfg]) => ({ id: zk, type: zk, name: zk, config: cfg }));
-    zones.forEach(z => { decor += withPrintFlat(scaleStruct(calcStructCost(z.type, z.config, structRates, structDiscountFor(z.config, fVenue))), z.type, fZoneConfig, fEnabledEls, (zk2) => !!structDiscountFor(fZoneConfig[zk2], fVenue).print).total; });
+    const fnRates = structRatesFor(fZoneConfig, fEnabledEls, fnData.zoneOrder, fnData.customZones); // + its Carpet New roll share
+    zones.forEach(z => { decor += withPrintFlat(scaleStruct(calcStructCost(z.type, z.config, fnRates, structDiscountFor(z.config, fVenue))), z.type, fZoneConfig, fEnabledEls, (zk2) => !!structDiscountFor(fZoneConfig[zk2], fVenue).print).total; });
     // Availability-shortfall pricing now runs for EVERY function, each against its OWN date's
     // blocks (blocksByDate — warmed for every function's date, not just the active one). It used to
     // only run for whichever function was the active Build tab (activeBlocksForDate has no other
@@ -7732,7 +7749,7 @@ export default function StudioApp() {
           itemCount += (el2.qty || 0);
         });
       }
-      const zl = fZoneConfig[k] ? withPrintFlat(scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))), k, fZoneConfig, fEnabledEls, (zk2) => !!structDiscountFor(fZoneConfig[zk2], fVenue).print) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
+      const zl = fZoneConfig[k] ? withPrintFlat(scaleStruct(calcStructCost(k, fZoneConfig[k], structRatesFor(fZoneConfig, fEnabledEls, fnData.zoneOrder, fnData.customZones), structDiscountFor(fZoneConfig[k], fVenue))), k, fZoneConfig, fEnabledEls, (zk2) => !!structDiscountFor(fZoneConfig[zk2], fVenue).print) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0 };
       const customCost = dcCustomItems
         .filter(c => c.fnIdx === fnData.fnIdx && c.zoneKey === k)
         .reduce((s, c) => s + (c.manualPrice || c.refPrice || 0) * (Number(c.qty) || 1), 0);
@@ -12961,7 +12978,7 @@ export default function StudioApp() {
           });
         });
       }
-      const zl = fZoneConfig[k] ? withPrintFlat(scaleStruct(calcStructCost(k, fZoneConfig[k], structRates, structDiscountFor(fZoneConfig[k], fVenue))), k, fZoneConfig, fEnabledEls, (zk2) => !!structDiscountFor(fZoneConfig[zk2], fVenue).print) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
+      const zl = fZoneConfig[k] ? withPrintFlat(scaleStruct(calcStructCost(k, fZoneConfig[k], structRatesFor(fZoneConfig, fEnabledEls, fnData.zoneOrder, fnData.customZones), structDiscountFor(fZoneConfig[k], fVenue))), k, fZoneConfig, fEnabledEls, (zk2) => !!structDiscountFor(fZoneConfig[zk2], fVenue).print) : { truss: 0, masking: 0, platform: 0, carpet: 0, total: 0, arches: 0, pillars: 0, glass: 0 };
       const structItems = [];
       const zc = fZoneConfig[k] || {};
       const zm = zoneMeta[k];
@@ -13090,7 +13107,7 @@ export default function StudioApp() {
         // (undiscounted, unscaled) platformRowCost output, so the rows always sum back to exactly
         // zl.platform / zl.carpet.
         const _platRows = [{ plH: zc.plH, floorDims: zc.floorDims, cpT: zc.cpT, plQty: zc.plQty, cpInvId: zc.cpInvId }, ...(zc.extraPlatformRows || [])];
-        const _platRaw = _platRows.map((row) => platformRowCost(row, structRates));
+        const _platRaw = _platRows.map((row, ri) => platformRowCost(row, structRatesFor(fZoneConfig, fEnabledEls, fnData.zoneOrder, fnData.customZones), `${k}|${ri}`));
         const _platRawSumP = _platRaw.reduce((s, r2) => s + r2.platform, 0);
         const _platRawSumC = _platRaw.reduce((s, r2) => s + r2.carpet, 0);
         _platRows.forEach((row, ri) => {
@@ -13116,7 +13133,8 @@ export default function StudioApp() {
             // "New" carpet bills in whole 1500-sqft rolls (billedCarpetSqft) — the real qty this row
             // is charged for, not the raw floor area, so Qty × Rate keeps matching this row's share.
             // and before that the 10 ft roll rule (carpetLaidDims): 24 x 6 bills 24 x 10
-            const billedQty = billedCarpetSqft(carpetLaidDims(rFd).area * rQty, cp.label);
+            const _share = structRatesFor(fZoneConfig, fEnabledEls, fnData.zoneOrder, fnData.customZones).carpetNewShare?.[`${k}|${ri}`];
+            const billedQty = _share ? _share.billed : billedCarpetSqft(carpetLaidDims(rFd).area * rQty, cp.label);
             const share = _platRawSumC > 0 ? _platRaw[ri].carpet / _platRawSumC : 0;
             structItems.push({
               name: "Carpet (" + cp.label + " ₹" + _cpRate + "/sqft)" + suffix,
@@ -15828,7 +15846,7 @@ export default function StudioApp() {
     imsPrintMaterials, imsCarpetMaterials,
     // Truss & masking rates (IMS Admin → Settings → 🏗️ Truss & Masking Rates) + the bundled object
     // passed to calcStructCost everywhere
-    imsTrussRates, imsMaskingRates, imsPlatformRates, structRates,
+    imsTrussRates, imsMaskingRates, imsPlatformRates, structRates: structRatesFor(zoneConfig, enabledEls, zoneOrder, customZones), structRatesBase: structRates,
     // Pure flower-recipe elements with no inventory backing (e.g. "Flower Garden") — addable
     // alongside inventory items, priced straight from the recipe
     recipeOnlyPatterns, getElPriceFromPattern,

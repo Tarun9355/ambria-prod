@@ -325,7 +325,47 @@ export function carpetRateForRow(row, carpetMaterials, inventory) {
   const cp = carpetPricingFor(row?.cpT, carpetMaterials);
   return { ...cp, fromItem: false };
 }
-export function platformRowCost(row, rates) {
+// Carpet New rolls shared across a FUNCTION's floors (owner ask 2026-11-18): a 1500 sqft roll opened by one floor is used up
+// by the next floors before another roll is bought. Floors are taken in the function's zone order (zoneOrder, then baseOrder,
+// then the rest), each zone's own floor then its extra platform floors; only switched-on zones. The floor that OPENS a roll
+// is billed the whole roll (1500 x rate, more rolls if it needs more); a floor that fits in what is left bills nothing.
+// Returns { "<zoneKey>|<rowIdx>": { need, billed, leftBefore, leftAfter } } for Carpet New floors only - platformRowCost
+// reads it through rates.carpetNewShare, every other carpet is unchanged.
+export function carpetNewShares({ zoneConfig = {}, enabledEls = {}, zoneOrder = [], baseOrder = [], carpetMaterials } = {}) {
+  const all = Object.keys(zoneConfig || {});
+  const keys = all.filter((k) => zoneConfig[k] && enabledEls?.[k]);
+  const rank = (k) => {
+    const i = (zoneOrder || []).indexOf(k); if (i >= 0) return i - 1e6;
+    const j = (baseOrder || []).indexOf(k); if (j >= 0) return j;
+    return 1e6 + all.indexOf(k);
+  };
+  keys.sort((a, b) => rank(a) - rank(b));
+  const out = {};
+  let left = 0;
+  keys.forEach((zk) => {
+    const zc = zoneConfig[zk];
+    [zc, ...(Array.isArray(zc.extraPlatformRows) ? zc.extraPlatformRows : [])].forEach((row, ri) => {
+      if (!row || row.cpT === CARPET_OFF) return;
+      if (!/new/i.test(carpetPricingFor(row.cpT, carpetMaterials).label || "")) return;
+      const qty = Math.max(1, Math.round(Number(row.plQty) || 1));
+      const need = carpetLaidDims(row.floorDims || {}).area * qty;
+      if (!(need > 0)) return;
+      const leftBefore = left;
+      let billed = 0;
+      if (need <= left) left -= need;
+      else {
+        const extra = need - left;
+        billed = Math.ceil(extra / CARPET_NEW_ROLL_SQFT - 1e-9) * CARPET_NEW_ROLL_SQFT;
+        left = billed - extra;
+      }
+      out[`${zk}|${ri}`] = { need, billed, leftBefore, leftAfter: left };
+    });
+  });
+  return out;
+}
+// shareKey: "<zoneKey>|<rowIdx>" of this floor in its function - with rates.carpetNewShare (carpetNewShares) a Carpet New
+// floor bills its share of the function's rolls instead of whole rolls of its own.
+export function platformRowCost(row, rates, shareKey) {
   const fd = row?.floorDims || {};
   const a = (fd.L || fd.S || 0) * (fd.W || (fd.S || 0));
   // How many identical footprints this one row represents — defaults to 1 (every row created
@@ -340,7 +380,8 @@ export function platformRowCost(row, rates) {
     // Guest price: the material's rate, whichever physical carpet is picked.
     const cp = carpetPricingFor(row?.cpT, rates?.carpetMaterials);
     // the 10 ft roll rule (carpetLaidDims), then Carpet New's whole 1500 sqft rolls on top
-    carpet = billedCarpetSqft(carpetLaidDims(fd).area * qty, cp.label) * cp.rate;
+    const share = shareKey && rates?.carpetNewShare ? rates.carpetNewShare[shareKey] : null;
+    carpet = (share ? share.billed : billedCarpetSqft(carpetLaidDims(fd).area * qty, cp.label)) * cp.rate;
   }
   return { platform, carpet };
 }

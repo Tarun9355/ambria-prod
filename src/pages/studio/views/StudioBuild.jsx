@@ -875,7 +875,7 @@ export function PrintRefPhoto({ value, onChange, S, textS, border, accent }) {
   );
 }
 
-export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsCarpetMaterialsPriced, imsPlatformRatesPriced, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1, guestDiscPct = 0 }) {
+export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsCarpetMaterialsPriced, imsPlatformRatesPriced, imsInventory = [], nested = false, title, onRemove, scale = 1, openAvailModal, zoneKey, rowIdx = 0, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1, guestDiscPct = 0 , carpetNewShare = null}) {
   // imsCarpetMaterials/imsPlatformRates stay LIVE-only (the picker's own choices — a deleted
   // material must never be newly pickable); the …Priced fallbacks (migration 059, default to the
   // live list when the caller hasn't passed the merged one) are for PRICE/LABEL lookups only, so a
@@ -926,8 +926,11 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   const rowDims = zc.floorDims || {};
   const rowCostRaw = platformRowCost(
     { plH: zc.plH, floorDims: rowDims, cpT: zc.cpT, plQty: zc.plQty, cpInvId: zc.cpInvId },
-    { platformRates: platformRatesPriced, carpetMaterials: carpetMaterialsPriced, imsInventory },
+    { platformRates: platformRatesPriced, carpetMaterials: carpetMaterialsPriced, imsInventory, carpetNewShare },
+    `${zoneKey}|${rowIdx || 0}`,
   );
+  // This floor's part of the function's Carpet New rolls (taxonomy.carpetNewShares) - for the "why" line under the amount.
+  const cpShare = carpetNewShare?.[`${zoneKey}|${rowIdx || 0}`] || null;
   // guestPriceMultiplier — the Platform/Carpet SECTION TILE total already folds this in
   // (scaleStruct); this per-row card computed straight off platformRowCost and never got it, same
   // Rate-vs-Amount mismatch as the Truss card above.
@@ -961,11 +964,14 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   const carpetQty = Math.max(1, Math.round(Number(zc.plQty) || 1));
   const carpetLaid = carpetLaidDims(rowDims); // the 10 ft roll: shorter side up to the next 10 ft
   const carpetNeedSqft = carpetLaid.area * carpetQty;
-  const carpetBillSqft = billedCarpetSqft(carpetNeedSqft, carpetBilledRaw.label);
-  const carpetRolls = carpetBillSqft > carpetNeedSqft && carpetNeedSqft > 0 ? Math.round(carpetBillSqft / 1500) : 0;
+  const carpetBillSqft = cpShare ? cpShare.billed : billedCarpetSqft(carpetNeedSqft, carpetBilledRaw.label);
+  const carpetRolls = carpetBillSqft > 0 && /new/i.test(carpetBilledRaw.label || "") ? Math.round(carpetBillSqft / 1500) : 0;
+  const nf = (n) => Math.round(n).toLocaleString("en-IN");
   const carpetWhy = zc.cpT === CARPET_OFF || !(carpetNeedSqft > 0) ? "" : [
-    carpetLaid.shortBilled !== carpetLaid.short ? `${carpetLaid.long} × ${carpetLaid.short} → ${carpetLaid.long} × ${carpetLaid.shortBilled} = ${carpetNeedSqft.toLocaleString("en-IN")} sqft (10 ft roll)` : "",
-    carpetRolls ? `${carpetRolls} roll${carpetRolls > 1 ? "s" : ""} = ${carpetBillSqft.toLocaleString("en-IN")} sqft billed` : "",
+    carpetLaid.shortBilled !== carpetLaid.short ? `${carpetLaid.long} × ${carpetLaid.short} → ${carpetLaid.long} × ${carpetLaid.shortBilled} = ${nf(carpetNeedSqft)} sqft (10 ft roll)` : "",
+    // Carpet New, shared across this function's floors: this floor opens a roll, or takes what an earlier floor's roll left
+    cpShare && !cpShare.billed ? `from the roll already opened (${nf(cpShare.leftBefore)} sqft were left) · ${nf(cpShare.leftAfter)} sqft left` : "",
+    carpetRolls ? `${carpetRolls} roll${carpetRolls > 1 ? "s" : ""} = ${nf(carpetBillSqft)} sqft billed${cpShare ? ` · ${nf(cpShare.leftAfter)} sqft left for the next floor` : ""}` : "",
     guestDiscPct > 0 ? `−${guestDiscPct}% Fixed Venue / Repeat` : "",
   ].filter(Boolean).join(" · ");
   const [cpUploading, setCpUploading] = useState(false);
@@ -1176,12 +1182,12 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
 //
 // platformRowCost already runs per row over zc.extraPlatformRows and buildPlatformPlan draws one
 // ops entry each, so the cost and the plan were ready long before there was a way to add one.
-export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsCarpetMaterialsPriced, imsPlatformRatesPriced, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1, guestDiscPct = 0 }) {
+export function FloorStack({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsCarpetMaterialsPriced, imsPlatformRatesPriced, imsInventory = [], scale = 1, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier = 1, guestDiscPct = 0, carpetNewShare = null }) {
   const rows = zc.extraPlatformRows || [];
   const write = (next) => sZ({ extraPlatformRows: next });
   // accent rides in `shared`, so both the first floor and every added row get it from one place —
   // FloorCard needs it for the platform-height control's selected fill.
-  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsCarpetMaterialsPriced, imsPlatformRatesPriced, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier, guestDiscPct };
+  const shared = { S, zm, st, fmt, showCosts, isDark, border, accent, textP, textS, imsCarpetMaterials, imsPlatformRates, imsCarpetMaterialsPriced, imsPlatformRatesPriced, imsInventory, scale, openAvailModal, zoneKey, onCarpetAll, carpetShortOf, carpetRemainingOf, carpetReuse, guestPriceMultiplier, guestDiscPct, carpetNewShare };
   return (<>
     <FloorCard {...shared} zc={zc} sZ={sZ} sFD={sFD} fd={fd} title={rows.length ? "Floor 1" : "Floor"} />
     {rows.map((row, ri) => {
@@ -1270,7 +1276,7 @@ export default function StudioBuild({ ctx }) {
     // Carpet material rates (IMS Admin → Settings → 🟫 Carpet Materials) — own master list
     imsCarpetMaterials,
     // Truss & masking rates (IMS Admin → Settings → 🏗️ Truss & Masking Rates) + bundled calcStructCost input
-    imsTrussRates, imsMaskingRates, structRates,
+    imsTrussRates, imsMaskingRates, structRates, structRatesBase,
     // Platform rates (IMS Admin → Settings → 🪵 Platform Rates)
     imsPlatformRates,
     // Deleted-catalogue snapshot (migration 059) — a deleted inventory item/recipe/kit part's ⚠ badge.
@@ -6078,7 +6084,7 @@ undefined
                 customMaskingField={customMaskingField} maskOpts={maskingOptions(imsMaskingRates)} trussRates={imsTrussRates} structRates={structRates} scale={zoneScaleVal(k)} guestDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} guestFabricDiscPct={structDiscountFor(zc,aVenue)?.truss?25:0} maskingColours={maskingColours} fabricPaletteColours={{liza:anchorsForPaletteByMaterial(imsPaletteCatalogue,activeFabricPaletteStr,"liza"),curtain:anchorsForPaletteByMaterial(imsPaletteCatalogue,activeFabricPaletteStr,"curtain")}} maskingColourOptions={maskingColourOptions} guestPriceMultiplier={guestPriceMultiplier} fabricChipRepeat={repeatCatFor(zc,"truss")} trussRepeat={repeatCatFor(zc,"truss")||!!structDiscountFor(zc,aVenue)?.truss} trussReserved={trussReserved} stockDateLabel={stockDateLabel} stockShortOf={(ri) => trussStockShort?.[`${activeFnIdx || 0}|${k}|${ri}`]} stockAltsOf={(ri) => trussShortAlternatives?.[`${activeFnIdx || 0}|${k}|${ri}`]} />}
               {/* ── PLATFORM + CARPET → then floor dims ── */}
               {zoneSection[k]==="platform"&&<FloorStack S={S} zc={zc} zm={zm} st={st} sZ={sZ} sFD={sFD} fd={fd} fmt={fmt} showCosts={showCosts}
-                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsCarpetMaterialsPriced={imsCarpetMaterialsPriced} imsPlatformRatesPriced={imsPlatformRatesPriced} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseNow()} guestPriceMultiplier={guestPriceMultiplier} guestDiscPct={structDiscountFor(zc,aVenue)?.platform?25:0} />}
+                isDark={isDark} border={border} accent={accent} textP={textP} textS={textS} imsCarpetMaterials={imsCarpetMaterials} imsPlatformRates={imsPlatformRates} imsCarpetMaterialsPriced={imsCarpetMaterialsPriced} imsPlatformRatesPriced={imsPlatformRatesPriced} imsInventory={imsInventory} scale={zoneScaleVal(k)} openAvailModal={openAvailModal} zoneKey={k} onCarpetAll={applyCarpetToAll} carpetShortOf={carpetShortOf} carpetRemainingOf={carpetRemainingOf} carpetReuse={carpetReuseNow()} guestPriceMultiplier={guestPriceMultiplier} guestDiscPct={structDiscountFor(zc,aVenue)?.platform?25:0}  carpetNewShare={structRates?.carpetNewShare} />}
             </div>);
           })()}
           </Fragment>}
@@ -6552,7 +6558,7 @@ undefined
                 else setCorrectPhoto(p=>({...p,draft:{...p.draft,cfg:fn(p.draft?.cfg||{}),cfgDirty:true}}));};
               const writeEls=(fn)=>{if(ownsLive)setZoneElements(p=>({...p,[zk]:fn(p[zk]||[])}));
                 else setCorrectPhoto(p=>({...p,draft:{...p.draft,elements:fn(p.draft?.elements||[]),elsDirty:true}}));};
-              const zm=zoneMeta[zk],st=withPrintFlat(scaleStruct(calcStructCost(zk,cfgCur,structRates,structDiscountFor(cfgCur,aVenue))),zk);
+              const zm=zoneMeta[zk],st=withPrintFlat(scaleStruct(calcStructCost(zk,cfgCur,ownsLive?structRates:(structRatesBase||structRates),structDiscountFor(cfgCur,aVenue))),zk);
               const sZ=u=>writeCfg(cur=>({...cur,...u}));
               const sD=(d,v)=>writeCfg(cur=>{const dims={...(cur.dims||{}),[d]:parseFloat(v)||0};
                 const n=[dims.W||dims.S,dims.L,dims.H].filter(x=>(Number(x)||0)>0).length;const trT=n>=3?"box":n===2?"singleU":cur.trT;
