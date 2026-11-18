@@ -90,8 +90,9 @@ export function planningUpcoming(eo, now = Date.now()) {
 // the function's next floors before another is billed (taxonomy.carpetNewShares).
 // v27 (2026-11-18): a beam set at the ground under a pillar (14 ft = 12 ft pillar + 2 ft beam) is its own Tenting line,
 // "Truss beam 2ft (pillar base)", not a "Truss pillar 2ft".
-export const PLANNING_SNAPSHOT_VERSION = 27;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-18T12:45:00Z");
+// v28 (2026-11-18): that ground beam joins the same size's "Truss beam Nft" line instead (one line per beam size, 8 + 1 = 9).
+export const PLANNING_SNAPSHOT_VERSION = 28;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-18T13:35:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // Synced before, and a planning input changed after that sync (a minute of slack: the sync's own write

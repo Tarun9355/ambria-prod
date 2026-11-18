@@ -8,10 +8,11 @@ import { PLANNING_SNAPSHOT_VERSION } from "./planningSync.js";
 const read = (p) => readFileSync(resolve(__dirname, p), "utf8");
 
 describe("ground beam under a pillar - Deal Check wiring", () => {
-  it("Tenting lines: pillar pieces of type beam go to their own 'Truss beam Nft (pillar base)' line", () => {
+  it("Tenting lines: a ground beam joins its size's one 'Truss beam Nft' line (owner ask: one line per beam size, 8 + 1 = 9)", () => {
     const src = read("../../pages/studio/dealcheck/DealCheckOverlay.jsx");
     expect(src).toMatch(/const m = pc\.type === "beam" \? smap : pmap;/);
-    expect(src).toContain("name: `Truss beam ${ft}ft (pillar base)`");
+    expect(src).not.toContain("(pillar base)`");
+    expect(src).toMatch(/const nb = bmap\[ft\] \|\| 0, ns = smap\[ft\] \|\| 0, n = nb \+ ns;/);
   });
   it("truss tab: the ground beams are shown apart as '(beam)', still inside the pillar total", () => {
     const src = read("../../pages/studio/dealcheck/tabs/DCTrussTab.jsx");
@@ -19,6 +20,6 @@ describe("ground beam under a pillar - Deal Check wiring", () => {
     expect(src).toContain("(beam)`");
   });
   it("planning snapshot bumped so IMS rebuilds the Tenting lines", () => {
-    expect(PLANNING_SNAPSHOT_VERSION).toBeGreaterThanOrEqual(27);
+    expect(PLANNING_SNAPSHOT_VERSION).toBeGreaterThanOrEqual(28);
   });
 });
