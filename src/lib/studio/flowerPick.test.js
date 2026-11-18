@@ -8,9 +8,13 @@ describe("flower pick", () => {
     expect(isFlowerPickChoice({ id: "b", name: "Orchid", flowerType: "real_only" })).toBe(true);
     expect(isFlowerPickChoice({ id: "c", name: "Mapped", flowerType: "mapping" })).toBe(true);
     expect(isFlowerPickChoice({ id: "d", name: "Jaimala", markup: 50 })).toBe(true);
-    expect(isFlowerPickChoice({ id: "e", name: "Ruscus", flowerType: "green" })).toBe(false);
-    expect(isFlowerPickChoice({ id: "f", name: "Fern", isGreen: true })).toBe(false);
+    // by category only: a flower typed "green" in a flower category still shows
+    expect(isFlowerPickChoice({ id: "e", name: "Ruscus", flowerType: "green", flowerCat: "Cut flower" })).toBe(true);
+    expect(isFlowerPickChoice({ id: "f", name: "Fern", isGreen: true, flowerCat: "local flower" })).toBe(true);
     expect(isFlowerPickChoice({ id: "g", name: "Asparagus", flowerCat: "Greens" })).toBe(false);
+    expect(isFlowerPickChoice({ id: "h", name: "Monstera", flowerCat: "Premium greens" })).toBe(false);
+    for (const cat of ["Imported flower", "local flower", "drysticks", "Ladi Flower", "Loose Flowers", "Cut flower", "banglore daisy", "Jaimala"])
+      expect(isFlowerPickChoice({ id: cat, name: cat, flowerCat: cat })).toBe(true);
     expect(isFlowerPickChoice({ name: "no id" })).toBe(false);
     expect(isGreenMandi({ flowerCat: "Evergreen roses" })).toBe(false);
   });

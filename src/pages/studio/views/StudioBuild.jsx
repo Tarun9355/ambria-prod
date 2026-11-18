@@ -1406,6 +1406,7 @@ export default function StudioBuild({ ctx }) {
   // "🌸 + Add flowers": {k, idx} - idx null adds a new flower card to zone k, a number changes that card's flower.
   const [flowerPicker, setFlowerPicker] = useState(null);
   const [flowerPickQ, setFlowerPickQ] = useState("");
+  const [flowerPickCat, setFlowerPickCat] = useState(""); // the picker's category chip ("" = all)
   // Exchange Kit: { k, idx } of the kit element whose kit is being chosen (an item with more than one kit - lib/studio/kitVariants.js)
   const [kitPicker, setKitPicker] = useState(null);
   // Full-screen photo preview — { items: [{src, name}], idx }. Carries the zone's whole matched
@@ -6910,8 +6911,13 @@ undefined
       const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
       const curEl=idx==null?null:(zoneElements[k]||[])[idx];
       const all=mandiCat.filter(isFlowerPickChoice).sort((a,b)=>String(a.name||"").localeCompare(String(b.name||"")));
-      const list=flowerPickQ.trim()?smartFilter(all,flowerPickQ,m=>[m.name,m.flowerCat]):all;
-      const close=()=>{setFlowerPicker(null);setFlowerPickQ("");};
+      // IMS Mandi's own categories (all but the greens), as chips, A-Z, the count beside each
+      const cats=[];const nByCat={};
+      all.forEach(m=>{const c=String(m.flowerCat||"Other").trim()||"Other";if(!(c in nByCat)){nByCat[c]=0;cats.push(c);}nByCat[c]++;});
+      cats.sort((a,b)=>a.localeCompare(b));
+      const inCat=flowerPickCat&&nByCat[flowerPickCat]?all.filter(m=>(String(m.flowerCat||"Other").trim()||"Other")===flowerPickCat):all;
+      const list=flowerPickQ.trim()?smartFilter(inCat,flowerPickQ,m=>[m.name,m.flowerCat]):inCat;
+      const close=()=>{setFlowerPicker(null);setFlowerPickQ("");setFlowerPickCat("");};
       const pick=(m)=>{ close(); placeFlowerPick(k,idx,m); };
       return createPortal((
         <div className="ui-overlay-in" onClick={close} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(10,10,20,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
@@ -6923,6 +6929,14 @@ undefined
               <button onClick={close} aria-label="Close" style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${border}`,background:"transparent",color:textP,fontSize:14.5,cursor:"pointer"}}>✕</button>
             </div>
             <div style={{padding:"6px 18px 0",fontSize:11.5,color:textS}}>Every flower in IMS Mandi except greens · booked in its own unit · billed at 2× the mandi rate</div>
+            {cats.length>1&&<div role="group" aria-label="Flower category" style={{padding:"10px 18px 0",display:"flex",flexWrap:"wrap",gap:6}}>
+              {[["",`All ${all.length}`],...cats.map(c=>[c,`${c} ${nByCat[c]}`])].map(([c,label])=>{
+                const on=(flowerPickCat&&nByCat[flowerPickCat]?flowerPickCat:"")===c;
+                return <button type="button" key={c||"__all"} onClick={()=>setFlowerPickCat(c)} aria-pressed={on}
+                  style={{fontSize:12,fontWeight:600,padding:"5px 11px",borderRadius:999,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",
+                    border:on?"1px solid #DB2777":`1px solid ${border}`,background:on?"#DB2777":"transparent",color:on?"#fff":textP}}>{label}</button>;
+              })}
+            </div>}
             <div style={{padding:"12px 18px 16px",overflowY:"auto",flex:1}}>
               {list.length===0 ? (
                 <div style={{padding:30,textAlign:"center",color:textS,fontSize:13,fontStyle:"italic"}}>{all.length?`No flower matches "${flowerPickQ}".`:"No flowers in IMS Mandi yet."}</div>
