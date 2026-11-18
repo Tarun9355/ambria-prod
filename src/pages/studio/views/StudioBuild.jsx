@@ -5648,6 +5648,17 @@ undefined
                             <span>{cur?.name||"Choose variant…"}</span>
                           </button>;
                         })()}
+                        {/* pieces in one unit of a mandi flower (IMS Mandi "Pcs/Unit"), and in this card's qty - owner ask 2026-11-18 */}
+                        {!!el.mandiId&&(()=>{
+                          const parent=((dealCheckData||studioFloralData)?.mandiCatalogue||[]).find(m=>m.id===el.mandiId);
+                          const per=Number(parent?.gattharSize)||0;
+                          const u=parent?.unit||el.unit||"";
+                          if(!(per>0)||u==="piece") return null;
+                          const q=Number(el.qty)||0;
+                          return <span title={`IMS Mandi: 1 ${u} = ${per} pieces`} style={{fontSize:11,fontWeight:600,color:textS,padding:"2px 8px",borderRadius:6,border:`1px solid ${border}`,whiteSpace:"nowrap"}}>
+                            1 {u} = {per} pcs{q>0&&q!==1?` · ${Math.round(q*per).toLocaleString("en-IN")} pcs`:""}
+                          </span>;
+                        })()}
                         {hasSizes&&!priceInfo.isFloralBlend&&["S","M","B"].map(s=><button key={s} onClick={()=>{const elems=[...(zoneElements[k]||[])];elems[idx]={...elems[idx],size:s};setZoneElements(p=>({...p,[k]:elems}));}} style={{padding:"1px 6px",borderRadius:4,border:"none",fontSize:11,fontWeight:(el.size||"M")===s?700:400,cursor:"pointer",background:(el.size||"M")===s?"rgba(0,0,0,0.06)":"transparent",color:(el.size||"M")===s?"#666":textS}}>{s}</button>)}
                         {priceInfo.isFloralBlend&&priceInfo.patternSMB&&["S","M","B"].map(s=>{
                           const sImg = sizeImgFor(s);
@@ -6971,7 +6982,8 @@ undefined
                           : <span style={{width:"100%",height:70,borderRadius:6,background:isDark?"rgba(255,255,255,0.05)":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:textS}}>🌸</span>}
                         <span style={{fontSize:13,fontWeight:600,color:textP,lineHeight:1.2}}>{m.name}</span>
                         <span style={{fontSize:12,color:isDark?"#F59E0B":"#B45309",fontWeight:600}}>₹{flowerPickRateOf(m).toLocaleString("en-IN")}/{m.unit||"bundle"}</span>
-                        {nV>1&&<span style={{fontSize:10.5,color:textS}}>{nV} colours</span>}
+                        {(()=>{const per=Number(m.gattharSize)||0;const bits=[per>0&&m.unit!=="piece"?`${per} pcs/${m.unit||"bundle"}`:"",nV>1?`${nV} colours`:""].filter(Boolean);
+                          return bits.length?<span style={{fontSize:10.5,color:textS}}>{bits.join(" · ")}</span>:null;})()}
                       </button>
                     );
                   })}
