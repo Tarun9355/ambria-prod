@@ -6526,7 +6526,7 @@ export default function StudioApp() {
       c += (ci.manualPrice || ci.refPrice || 0) * (Number(ci.qty) || 1);
     });
     return c;
-  }, [venue, enabledEls, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates, dealCheckData, studioFloralData, fvCfgForRepeat, clientLedger, activeClientId]);
+  }, [venue, enabledEls, zoneConfig, zoneElements, calcElsCost, dcCustomItems, activeFnIdx, structRates, dealCheckData, studioFloralData, fvCfgForRepeat, clientLedger, activeClientId, zoneOrder, customZones]);
 
   const transportCalc = useMemo(() => {
     // The ACTIVE function's own venue and date. `venue` / `clientDate` are function 1's — using them

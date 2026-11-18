@@ -5,7 +5,7 @@
 // resolveMandiFlower already lives in the shared IMS flower helpers — import +
 // re-export it here so callers can use it from the studio pricing namespace.
 import { resolveMandiFlower } from "../ims/flowerHelpers.js";
-import { CARPET_OFF, trussRateFor, maskingRateFor, trussBaseArea } from "./taxonomy";
+import { CARPET_OFF, trussRateFor, maskingRateFor, trussBaseArea, carpetLaidDims } from "./taxonomy";
 // trussRowCost prices a custom ceiling / masking panel off a real IMS inventory item, so it needs
 // the same valuation the rest of the app uses rather than a second opinion on what an item costs.
 import { priceForInvItem } from "../ims/helpers.js";
@@ -1464,7 +1464,8 @@ export const calcZoneCarpet = (zc, carpetItem, markupPct) => {
   // No truss-dims (zc.dims) fallback — Carpet must never silently size itself off the truss's own
   // footprint; see StudioApp.jsx's calcStructCost for the full reasoning.
   const fd = zc.floorDims || {};
-  const needed = Math.round((Number(fd.L) || 0) * (Number(fd.W) || 0));
+  // the 10 ft roll x Qty (taxonomy.carpetLaidDims) - the sqft the bill, the stock plan and the card's own "needed" use
+  const needed = Math.round(carpetLaidDims(fd).area * Math.max(1, Math.round(Number(zc.plQty) || 1)));
   if (needed <= 0) return out;
   const owned = imsField.qtyOwned(carpetItem);
   const reused = Math.min(needed, owned);

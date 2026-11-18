@@ -1648,7 +1648,7 @@ export default function StudioEventInfo({ ctx }) {
                               })()}
                             </div>
                           </div>
-                          <button className="ei-btn ei-solid" onClick={() => loadLmsLead(lead)} style={{padding:"5px 12px",borderRadius:6,border:"none",background:"#15803D",color:"#fff",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
+                          <button className="ei-btn ei-solid" disabled={!sessionsReady} title={sessionsReady ? undefined : "Loading Studio's saved work — a moment"} onClick={() => { if (sessionsReady) loadLmsLead(lead); }} style={{opacity:sessionsReady?1:0.55,padding:"5px 12px",borderRadius:6,border:"none",background:"#15803D",color:"#fff",fontSize:10,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Load →</button>
                         </div>;
                       })}
                     </div>

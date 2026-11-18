@@ -1420,7 +1420,9 @@ export default function DealCheckOverlay({ ctx }) {
                 rows.forEach((row, rIdx) => {
                   if (!row || !row.cpT || row.cpT === CARPET_OFF) return;
                   const fd = row.floorDims || {}; // no truss-dims fallback — see calcStructCost's own comment (StudioApp.jsx)
-                  const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
+                  // floorSqftOf: the 10 ft roll x Qty - the same sqft the Planning carpet plan (carpetPlan.floorSqftOf), the
+                  // bill and the stock check use; IMS pairs this line with its plan floor by exactly this figure
+                  const area = floorSqftOf(row);
                   if (!(area > 0)) return;
                   const carpetItem = row._pick ? dcInventoryCache.find(x => x.id === row._pick) : null;
                   // Ambria's own cost: a specific carpet picked from IMS costs ITS rental per sqft

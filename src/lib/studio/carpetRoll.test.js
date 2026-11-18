@@ -51,4 +51,11 @@ describe("Carpet New roll shared across floors", () => {
     expect(platformRowCost(zoneConfig.entry, rates, "entry|0").carpet).toBe(0);
     expect(platformRowCost(zoneConfig.entry, { carpetMaterials: mats }).carpet).toBe(1500 * 15); // without a share: a roll of its own
   });
+  it("a roll is one material's: two Carpet New materials never share", () => {
+    const m2 = [...mats, { id: "new2", name: "Carpet New Grey", ratePerSqft: 18 }];
+    const zoneConfig = { stage: zone(50, 10), entry: { cpT: "new2", floorDims: { L: 20, W: 10 } } };
+    const s = carpetNewShares({ zoneConfig, enabledEls: { stage: true, entry: true }, zoneOrder: ["stage", "entry"], carpetMaterials: m2 });
+    expect(s["stage|0"].billed).toBe(1500);
+    expect(s["entry|0"].billed).toBe(1500); // its own roll, not the Red one's leftover
+  });
 });

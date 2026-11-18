@@ -341,23 +341,27 @@ export function carpetNewShares({ zoneConfig = {}, enabledEls = {}, zoneOrder = 
   };
   keys.sort((a, b) => rank(a) - rank(b));
   const out = {};
-  let left = 0;
+  const leftBy = {}; // per material - a roll of one Carpet New material never covers a floor of another
   keys.forEach((zk) => {
     const zc = zoneConfig[zk];
     [zc, ...(Array.isArray(zc.extraPlatformRows) ? zc.extraPlatformRows : [])].forEach((row, ri) => {
       if (!row || row.cpT === CARPET_OFF) return;
-      if (!/new/i.test(carpetPricingFor(row.cpT, carpetMaterials).label || "")) return;
+      const label = carpetPricingFor(row.cpT, carpetMaterials).label || "";
+      if (!/new/i.test(label)) return;
+      const mk = String(row.cpT || label).toLowerCase();
       const qty = Math.max(1, Math.round(Number(row.plQty) || 1));
       const need = carpetLaidDims(row.floorDims || {}).area * qty;
       if (!(need > 0)) return;
-      const leftBefore = left;
+      const leftBefore = leftBy[mk] || 0;
       let billed = 0;
+      let left = leftBefore;
       if (need <= left) left -= need;
       else {
         const extra = need - left;
         billed = Math.ceil(extra / CARPET_NEW_ROLL_SQFT - 1e-9) * CARPET_NEW_ROLL_SQFT;
         left = billed - extra;
       }
+      leftBy[mk] = left;
       out[`${zk}|${ri}`] = { need, billed, leftBefore, leftAfter: left };
     });
   });
