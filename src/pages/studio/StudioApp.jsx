@@ -1366,13 +1366,23 @@ async function fetchReservedInventory(clientId) {
 // last reserved (dcReservedInventory, read fresh): if the function still needs no more of it than was reserved, nobody added or
 // raised it here - another deal took that stock, or Fixed Venues hold it - so it is not this edit's to fix and does not stop the
 // gate (nor the reconcile; the server's own cap never oversells). A deal with nothing reserved yet keeps every row.
-async function shortagesRaisedHere(flagged, cli, fns, inventory) {
+async function shortagesRaisedHere(flagged, cli, fns, inventory, opened) {
   const list = Array.isArray(flagged) ? flagged : [];
   if (!list.length) return list;
   let reserved = cli?.dcReservedInventory;
   try { const fresh = await fetchReservedInventory(cli?.id); if (fresh !== undefined) reserved = fresh; }
   catch (e) { console.warn("[oos gate] fresh reservation read failed, using this tab's copy:", e?.message || e); }
-  return shortagesRaisedSince(list, reserved, fns, inventory);
+  // the larger of the last reservation and what the deal needed when it was opened in this tab, item by item
+  const base = {};
+  [reserved, opened].forEach((src) => {
+    if (!src || typeof src !== "object") return;
+    Object.entries(src).forEach(([fi, items]) => {
+      if (!items || typeof items !== "object") return;
+      const b = base[fi] || (base[fi] = {});
+      Object.entries(items).forEach(([id, q]) => { b[id] = Math.max(Number(b[id]) || 0, Number(q) || 0); });
+    });
+  });
+  return shortagesRaisedSince(list, base, fns, inventory);
 }
 
 // A FOC'd element is priced at zero everywhere — guest, internal cost/margin, and everything
@@ -6722,6 +6732,21 @@ export default function StudioApp() {
     return all;
   }, [fn, clientDate, venue, clientShift, clientPax, clientPalette, clientFlowerPalette, clientLayoutUrl, zoneElements, zoneConfig, enabledEls, elSelectedPhoto, itemQty, itemGrades, activeZones, zoneOrder, customZones, elTiers, floralRatio, customGensets, customTripRate, elNotes, floralOverrides, extraFunctions, fnBuilds, activeFnIdx, sourceVideo]);
   const collectAllFunctionData = useCallback(() => allFunctionData, [allFunctionData]);
+  // What a BOOKED deal needed, per function and item (kit parts included, fnUnitQty), the moment it was opened in this tab - taken
+  // once, when every function has loaded. The out-of-stock gate (shortagesRaisedHere) counts a shortage as this salesperson's only
+  // when an item is now needed beyond BOTH this and the deal's last reservation: whatever was already short when the deal was
+  // opened (owner report 2026-11-18, after the reservation check alone still listed kit parts and Deal Check swaps) is not.
+  const openedUnitsRef = useRef({});
+  useEffect(() => {
+    if (!allFnsLoaded || !activeClientId || openedUnitsRef.current[activeClientId]) return;
+    if ((clientLedger || []).find((c) => c.id === activeClientId)?.status !== "booked") return;
+    if (!Array.isArray(imsInventory) || !imsInventory.length) return; // kit parts need the inventory to be walked
+    const fns = allFunctionData || [];
+    if (!fns.length) return;
+    const snap = {};
+    fns.forEach((f, j) => { snap[f?.fnIdx ?? j] = Object.fromEntries(fnUnitQty(f, imsInventory)); });
+    openedUnitsRef.current[activeClientId] = snap;
+  }, [allFnsLoaded, activeClientId, clientLedger, imsInventory, allFunctionData]);
   // Layout, same reasoning as snapshotFnRef / saveSessionRef — read from synchronous paths.
   useLayoutEffect(() => { collectAllFunctionDataRef.current = collectAllFunctionData; committedRemovalEpochRef.current = fnRemovalEpochRef.current; });
   // ── EARLY WARNING: TWO FUNCTIONS JUST STARTED SHARING ONE REFERENCE VIDEO ──
@@ -10736,7 +10761,7 @@ export default function StudioApp() {
       const client = activeClient;
       if (!client || client.status !== "booked") return false;
       // only shortages this edit caused (shortagesRaisedHere) - one the booked deal already carried is not the salesperson's to fix
-      const oosFlagged = await shortagesRaisedHere(scanOutOfStockElements(), client, collectAllFunctionData(), imsInventory);
+      const oosFlagged = await shortagesRaisedHere(scanOutOfStockElements(), client, collectAllFunctionData(), imsInventory, openedUnitsRef.current[client.id]);
       if (oosFlagged.length > 0) { setOosGateReason("applyBookedChanges"); setOosGateModal(oosFlagged); return false; }
       const trussFlagged = scanTrussStockShortage();
       if (trussFlagged.length > 0) { setTrussStockGateModal(trussFlagged); return false; }
@@ -15474,7 +15499,7 @@ export default function StudioApp() {
           return !(card.imsId && card.imsId !== f.invId);
         });
         // a booked deal stops only for a shortage this edit caused (shortagesRaisedHere)
-        const blockingOos = await shortagesRaisedHere(oosFlagged, cli, fnsToProcess, inventory);
+        const blockingOos = await shortagesRaisedHere(oosFlagged, cli, fnsToProcess, inventory, openedUnitsRef.current[cli.id]);
         if (blockingOos.length > 0) {
           // Only surface the modal if this is STILL the active client on screen (round 4 regression
           // review, finding #1): this call's own `cli`/`activeClientId` are frozen as of whenever it
