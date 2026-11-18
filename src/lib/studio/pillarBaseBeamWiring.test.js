@@ -12,7 +12,7 @@ describe("ground beam under a pillar - Deal Check wiring", () => {
     const src = read("../../pages/studio/dealcheck/DealCheckOverlay.jsx");
     expect(src).toMatch(/const m = pc\.type === "beam" \? smap : pmap;/);
     expect(src).not.toContain("(pillar base)`");
-    expect(src).toMatch(/const nb = bmap\[ft\] \|\| 0, ns = smap\[ft\] \|\| 0, n = nb \+ ns;/);
+    expect(src).toContain("trussPieceLines({ pillars: pmap, beams: bmap, bases: smap }, pillarRftRateEff, beamRftRateEff)");
   });
   it("truss tab: the ground beams are shown apart as '(beam)', still inside the pillar total", () => {
     const src = read("../../pages/studio/dealcheck/tabs/DCTrussTab.jsx");

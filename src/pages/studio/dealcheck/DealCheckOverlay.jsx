@@ -8,6 +8,7 @@
 import { useState, useEffect, useRef } from "react";
 import { dealAgencyFeePct } from "../../../lib/studio/agencyFee";
 import { floralPlanByFn } from "../../../lib/studio/floralCost";
+import { trussPieceLines } from "../../../lib/studio/trussLines";
 import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
 import { validDecision } from "../../../lib/ims/carpetPlan";
 import { elementChoices, ELEMENT_PREF_LABELS } from "../../../lib/studio/elementPrefs";
@@ -1291,13 +1292,9 @@ export default function DealCheckOverlay({ ctx }) {
                       // × QTY" comment).
                       const pillarRftRateEff = pv.costs.pillarRft > 0 ? pv.costs.pillarCost / pv.costs.pillarRft : 0;
                       const beamRftRateEff = pv.costs.beamRft > 0 ? pv.costs.beamCost / pv.costs.beamRft : 0;
-                      Object.entries(pmap).forEach(([ft, n]) => { const unit = Math.round(Number(ft) * pillarRftRateEff); deptInv["Tenting"].push({ name: `Truss pillar ${ft}ft`, photo: "", qty: n, unit, total: unit * n, sub: "truss structure" }); });
-                      [...new Set([...Object.keys(bmap), ...Object.keys(smap)])].forEach((ft) => {
-                        const nb = bmap[ft] || 0, ns = smap[ft] || 0, n = nb + ns;
-                        if (!(n > 0)) return;
-                        const total = nb * Math.round(Number(ft) * beamRftRateEff) + ns * Math.round(Number(ft) * pillarRftRateEff);
-                        deptInv["Tenting"].push({ name: `Truss beam ${ft}ft`, photo: "", qty: n, unit: Math.round(total / n), total, sub: "truss structure" });
-                      });
+                      // one line per stock item and size - a ground beam joins its size's "Truss beam Nft" line (lib/studio/trussLines)
+                      trussPieceLines({ pillars: pmap, beams: bmap, bases: smap }, pillarRftRateEff, beamRftRateEff)
+                        .forEach((l) => deptInv["Tenting"].push({ ...l, photo: "", sub: "truss structure" }));
                       if (pv.batta?.rftWithBuffer > 0 && pv.costs.battaCost > 0) {
                         const battaUnit = Math.round(pv.costs.battaCost / pv.batta.rftWithBuffer);
                         deptInv["Tenting"].push({ name: "Batta", photo: "", qty: pv.batta.rftWithBuffer, unit: battaUnit, total: Math.round(pv.costs.battaCost), sub: "truss structure" });
