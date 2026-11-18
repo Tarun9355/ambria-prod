@@ -1167,7 +1167,7 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     </div>
                   )}
                 </div>
-                {showCosts&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,textAlign:"right"}}><div style={{whiteSpace:"nowrap"}}>Carpet <span title={guestDiscPct>0?"Discount applied":undefined} style={{fontWeight:600,color:guestDiscPct>0?"#10B981":textP}}>{fmt(carpetShown)}</span></div>{carpetWhy&&<div style={{fontSize:10.5,color:textS,marginTop:2,maxWidth:220,lineHeight:1.3}}>{carpetWhy}</div>}</div>}
+                {showCosts&&<div style={{fontSize:11.5,color:textS,paddingBottom:8,textAlign:"right"}}><div style={{whiteSpace:"nowrap"}}>Carpet <span title={[guestDiscPct>0?"Discount applied":"",carpetWhy].filter(Boolean).join(" · ")||undefined} style={{fontWeight:600,color:guestDiscPct>0?"#10B981":textP}}>{fmt(carpetShown)}</span></div></div>}
               </div>
               {cpLimit&&<div style={{fontSize:11.5,color:"#EF4444",fontWeight:700,lineHeight:1.3,marginBottom:4}}>⚠ {cpLimit}</div>}
               <div style={{fontSize:11.5,color:textS,lineHeight:1.3,marginBottom:4}}>{(fd.L||fd.W)?`${fd.L||0}×${fd.W||0} = ${(fd.L||0)*(fd.W||0)} sqft${(zc.plQty||1)>1?` × ${zc.plQty}`:""}`:"No floor size set — priced at 0 sqft until you enter one below"}</div>
