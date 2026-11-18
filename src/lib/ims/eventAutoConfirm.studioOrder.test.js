@@ -99,7 +99,8 @@ describe("autoConfirmEO's Studio-order path (source-reading wiring check)", () =
     const body = src.slice(start, end);
     expect(start).toBeGreaterThan(-1);
     expect(body).not.toMatch(/writeBlocks/);
-    expect(body).toMatch(/op\.add\.push\(\{ date: fn\.fnDate, qty: sumQty, status: "confirmed", source: "ims-autoconfirm" \}\);/);
+    // whole units since kit parts are reserved too (a part's per-kit share can be fractional) - eventAutoConfirm.kitParts.test.js
+    expect(body).toMatch(/op\.add\.push\(\{ date: fn\.fnDate, qty: Math\.ceil\(sumQty - 1e-6\), status: "confirmed", source: "ims-autoconfirm" \}\);/);
     expect(body).toMatch(/applyBlocksRpc\(\[\.\.\.opsByItem\.values\(\)\], \{ onShort: "cap" \}\);/);
   });
 

@@ -18,7 +18,7 @@
 // auto-confirm pipeline itself.
 import { useState, useEffect, useCallback, useRef } from "react";
 import { normalizeSizeClass, sizeClassToPatternKey } from "./flowerHelpers";
-import { lookupBySubcat } from "./helpers";
+import { lookupBySubcat, walkKitUnits } from "./helpers";
 import { supabase } from "../supabase";
 import { isFoc, isTrussFoc } from "../studio/foc.js";
 import { filterLiveBlocks, heldOnDate, isLiveBlockStatus } from "./liveBlocks.js";
@@ -264,6 +264,9 @@ export function studioOrderItems(eo, inventory) {
           zone: zoneKey, element: el.name || el.label || "", qty, sizeClass: normalizeSizeClass(el.size),
           fnIdx, fnDate, fnVenue, fnShift: fn?.shift || "", fnType: fn?.type || "",
           stage: 1, match, alternatives: [],
+          // the kit's parts as THIS deal has them (Build / Deal Check kit edits) - executeConfirmBlocks reserves those, not
+          // the catalogue's default parts, so a part swapped out in Studio is never held here
+          ...(Array.isArray(el.kitOverrides) ? { kitOverrides: el.kitOverrides } : {}),
         });
       });
     });
@@ -908,6 +911,17 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
       const sc=normalizeSizeClass(a.r.sizeClass);
       const key=id+"|"+sc;
       m.set(key,(m.get(key)||0)+(a.r.qty||1));
+      // A kit reserves its PARTS too (owner ask 2026-11-18: "Sold dabate hi block ho jaane chahiye"). This used to hold only the
+      // kit's own id, so until Studio's own reconcile ran (it walks the parts, but on Sold it can be deferred to a hidden
+      // Deal Check run that a closed tab never finishes) a kit's part - Fabric Cocktail Table inside Full Round Bar - read as
+      // free stock. Same walker Studio's reconcile uses (walkKitUnits, nested kits too); the deal's own kit edits when the
+      // item is the one Studio picked, never a swapped-in item's. Studio adopts these "ims-autoconfirm" entries when it runs.
+      const kitOv = (a.r.match && a.itemToBlock.id === a.r.match.id && Array.isArray(a.r.kitOverrides)) ? a.r.kitOverrides : undefined;
+      walkKitUnits(a.itemToBlock, a.r.qty||1, inventory, kitOv, (node, nodeQty) => {
+        if (!node?.id || node.id === id || !(nodeQty > 0)) return;
+        const pk = node.id + "|M";
+        m.set(pk, (m.get(pk)||0) + nodeQty);
+      });
     }
     // ── Step 3: pairwise de-dup across functions sharing (fnDate, fnVenue) ─
     // For each fnIdx (after first), find most recent prior fnIdx with same (date, venue);
@@ -970,7 +984,7 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
         const [itemId, sc] = compositeKey.split("|");
         byInv.set(itemId, (byInv.get(itemId)||0) + qty);
         // For project bridge — one entry per (itemId, sizeClass)
-        blockedItems.push({itemId,qty,sizeClass:sc||"M",zone:"",fnIdx:fn.fnIdx,fnDate:fn.fnDate,fnVenue:fn.fnVenue});
+        blockedItems.push({itemId,qty:Math.ceil(qty-1e-6),sizeClass:sc||"M",zone:"",fnIdx:fn.fnIdx,fnDate:fn.fnDate,fnVenue:fn.fnVenue});
       });
       // For a Studio order (bug 6, 2026-11-14) `results` already came from studioOrderItems' exact-
       // invId-only matching, never aiMatchEvent's own fuzzy stage-2 — so this can't create a WRONG-
@@ -994,7 +1008,8 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
         if (!opsByItem.has(itemId)) opsByItem.set(itemId, { item_id: itemId, event_id: eo.id, remove: [], add: [] });
         const op = opsByItem.get(itemId);
         op.remove.push({ source: "ims-autoconfirm", date: fn.fnDate });
-        op.add.push({ date: fn.fnDate, qty: sumQty, status: "confirmed", source: "ims-autoconfirm" });
+        // whole units: a kit part's per-kit share can be fractional (e.g. 0.5 of a cover per piece)
+        op.add.push({ date: fn.fnDate, qty: Math.ceil(sumQty - 1e-6), status: "confirmed", source: "ims-autoconfirm" });
         accepted++;
       });
     });
