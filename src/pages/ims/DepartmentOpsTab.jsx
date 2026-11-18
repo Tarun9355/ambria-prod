@@ -3551,7 +3551,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     // for an order with none recorded: the dept plan's last editor, else (combined book) the exporting user.
     preparedBy: opts?.combined ? null : (deptData.updatedBy || null),
     // the supervisors fixed at this event's venue(s) (Admin → Supervisors) - on the cover with their number (owner ask 2026-11-18)
-    siteSupervisors: siteSupervisorsFor(settings, [...(Array.isArray(sel?.functionsDetail) ? sel.functionsDetail.map((f) => f?.venue) : []), sel?.venue], [...inhouseVenues.properties, ...inhouseVenues.inhouse], supervisors),
+    siteSupervisors: siteSupervisorsFor(settings, [...(Array.isArray(sel?.functionsDetail) ? sel.functionsDetail.map((f) => f?.venue) : []), sel?.venue], [...inhouseVenues.properties, ...inhouseVenues.inhouse], supervisors, inhouseVenues.inhouse),
   }, zoneLabels, logos, opts);
 
   // ── THE DOWNLOAD ──

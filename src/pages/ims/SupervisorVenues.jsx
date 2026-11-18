@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { supabase, fetchAll } from "../../lib/supabase";
 import { assembleVenuesFromRows } from "../../lib/ims/venueProperties";
 
-// Which venue(s) a site supervisor is fixed at (owner ask 2026-11-18) - Admin → Settings → 👷 Supervisors. Every in-house venue
-// (Aura, Valencia, Poolside…) from the `venues` table, grouped under its property, in a dropdown; picked by id, so a rename stays
-// linked. Stored on the supervisor's own row (supervisors.fixed_venues, migration 070). A property's own id (picked before the
-// dropdown) still works - it covers that property's every venue (lib/ims/fixedVenues siteSupervisorsFor).
+// Which venue(s) a site supervisor is fixed at (owner ask 2026-11-18) - Admin → Settings → 👷 Supervisors. A dropdown of the main
+// venues only (Exotica, Manaktala, Pushpanjali, Restro - the `venues` table's properties): an event at any of a property's
+// sub-venues counts under it (lib/ims/fixedVenues siteSupervisorsFor). Picked by id, so a rename stays linked. Stored on the
+// supervisor's own row (supervisors.fixed_venues, migration 070).
 
 // The properties and their in-house venues, read-only and live (same source the Fixed Venues editor reads).
 // `enabled` false: nothing loaded, no channel.
@@ -37,12 +37,11 @@ export default function SupervisorVenuePicker({ value, onChange, venues, disable
   const properties = venues?.properties || [];
   const inhouse = venues?.inhouse || [];
   const picked = Array.isArray(value) ? value : [];
+  // a sub-venue picked before the list became main venues only still shows by name, so it can be taken off
   const nameOf = new Map([...properties.map((p) => [p.id, p.name]), ...inhouse.map((v) => [v.id, v.parent ? `${v.name} · ${v.parent}` : v.name])]);
   const add = (id) => { if (!disabled && id && !picked.includes(id)) onChange([...picked, id]); };
   const remove = (id) => { if (!disabled) onChange(picked.filter((x) => x !== id)); };
   const free = (id) => !picked.includes(id);
-  const groups = properties.map((p) => ({ p, list: inhouse.filter((v) => v.propertyId === p.id && free(v.id)) }));
-  const loose = inhouse.filter((v) => !v.propertyId && free(v.id));
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mr-0.5">Fixed at</span>
@@ -58,17 +57,7 @@ export default function SupervisorVenuePicker({ value, onChange, venues, disable
         title={disabled ? "Run migration 070 first (adds supervisors.fixed_venues)" : "Fix this supervisor at a venue"}
         className="h-8 border border-gray-200 rounded-lg px-2 text-xs text-gray-600 bg-white disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
         <option value="">{picked.length ? "+ Add venue" : "Select venue…"}</option>
-        {groups.map(({ p, list }) => (
-          <optgroup key={p.id} label={p.name}>
-            {free(p.id) && <option value={p.id}>{p.name} (all its venues)</option>}
-            {list.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-          </optgroup>
-        ))}
-        {loose.length > 0 && (
-          <optgroup label="Other in-house">
-            {loose.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-          </optgroup>
-        )}
+        {properties.filter((p) => free(p.id)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
     </div>
   );

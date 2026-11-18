@@ -54,3 +54,15 @@ describe("site supervisors - fixed at an in-house venue (dropdown)", () => {
     expect(siteSupervisorsFor(settings, ["Valencia"], places, s2)).toEqual([]);
   });
 });
+
+describe("site supervisors - main venues only (owner ask 2026-11-18)", () => {
+  const inhouse = [{ id: "v_val", name: "Valencia", propertyId: "p_ex" }, { id: "v_aura", name: "Aura", propertyId: "p_ex" }];
+  const s3 = [{ id: "x", name: "ExoticaGuy", phone: "2", active: true, fixedVenues: ["p_ex"] }];
+  it("an event at a sub-venue counts under its main venue, from the Venues table even with no venueParents entry", () => {
+    expect(siteSupervisorsFor({}, ["Valencia"], props, s3, inhouse).map((s) => s.name)).toEqual(["ExoticaGuy"]);
+    expect(siteSupervisorsFor({}, ["Ambria Aura"], props, s3, inhouse).map((s) => s.name)).toEqual(["ExoticaGuy"]);
+  });
+  it("without the inhouse list it falls back to venueParents only", () => {
+    expect(siteSupervisorsFor({}, ["Valencia"], props, s3)).toEqual([]);
+  });
+});

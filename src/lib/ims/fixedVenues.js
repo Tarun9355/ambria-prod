@@ -567,15 +567,19 @@ export function heavyElementExtraForFn(fn, settings, inventory) {
 // A function's venue matches a place by its own name, its parent's (Aura → Exotica, settings.venueParents - so a supervisor fixed at
 // a whole property covers its every venue) or a name that carries the place's ("Exotica Aura"), "Ambria " ignored.
 // Active supervisors only, each once, in roster order. properties: [{ id, name }] - the properties and in-house venues together.
-export function siteSupervisorsFor(settings, venueNames, properties, supervisors) {
+// inhouse (optional): the venues table's sub-venues [{ name, propertyId }] - a sub-venue's property is taken from there too, not
+// only from settings.venueParents, so an event at Valencia counts under the property the Venues editor files it under.
+export function siteSupervisorsFor(settings, venueNames, properties, supervisors, inhouse = []) {
   const props = (Array.isArray(properties) ? properties : []).filter((p) => p && p.id && normVenue(p.name));
   if (!props.length) return [];
   const parents = parentMap(settings);
+  const propName = new Map(props.map((p) => [p.id, p.name]));
+  const subParent = new Map((Array.isArray(inhouse) ? inhouse : []).filter((v) => v && v.propertyId && propName.has(v.propertyId)).map((v) => [normVenue(v.name), propName.get(v.propertyId)]));
   const ids = new Set();
   (Array.isArray(venueNames) ? venueNames : [venueNames]).forEach((vn) => {
     const name = String(vn || "").trim();
     if (!name) return;
-    const cands = [name, parents[name]].filter(Boolean).map(normVenue);
+    const cands = [name, parents[name], subParent.get(normVenue(name))].filter(Boolean).map(normVenue);
     props.forEach((p) => {
       const pn = normVenue(p.name);
       if (cands.some((c) => c === pn || ` ${c} `.includes(` ${pn} `))) ids.add(p.id);
