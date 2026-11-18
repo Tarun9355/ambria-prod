@@ -24,7 +24,7 @@ import { isCancelledEO } from "./liveBlocks.js";
 // stripping a second time (bug 6, 2026-11-15 adversarial matrix) — deliberately still NOT merged into
 // venueKey.js's own `venueKey`/`fnVenueKey` (see that file's header comment for why: those answer a
 // different, intentionally raw-string question for the bug-8-hardened per-venue allocation code).
-export function normVenue(s) { return String(s || "").toLowerCase().replace(/^ambria\s+/, "").trim().replace(/[.,;:]+$/, "").trim(); }
+export function normVenue(s) { return String(s || "").trim().toLowerCase().replace(/^ambria\s+/, "").trim().replace(/[.,;:]+$/, "").trim(); }
 
 // Truss materials a Fixed Venue's standing pillars/beams can be tracked against — the same set
 // Build's own truss material picker offers (TRUSS_MATERIALS, lib/studio/taxonomy.js).
@@ -575,14 +575,21 @@ export function siteSupervisorsFor(settings, venueNames, properties, supervisors
   const parents = parentMap(settings);
   const propName = new Map(props.map((p) => [p.id, p.name]));
   const subParent = new Map((Array.isArray(inhouse) ? inhouse : []).filter((v) => v && v.propertyId && propName.has(v.propertyId)).map((v) => [normVenue(v.name), propName.get(v.propertyId)]));
+  // a sub-venue (an id in `inhouse`) matches only its own exact name; a property also by containment ("Exotica Aura"), but only
+  // when no property's name is the venue exactly ("Exotica Grand" is its own venue, not Exotica's) - testing review 2026-11-18
+  const subIds = new Set((Array.isArray(inhouse) ? inhouse : []).map((v) => v && v.id).filter(Boolean));
   const ids = new Set();
   (Array.isArray(venueNames) ? venueNames : [venueNames]).forEach((vn) => {
-    const name = String(vn || "").trim();
+    const name = String((vn && typeof vn === "object" ? vn.name : vn) || "").trim(); // a legacy { name } venue too
     if (!name) return;
     const cands = [name, parents[name], subParent.get(normVenue(name))].filter(Boolean).map(normVenue);
-    props.forEach((p) => {
+    const exact = props.filter((p) => cands.includes(normVenue(p.name)));
+    const exactProp = exact.some((p) => !subIds.has(p.id));
+    exact.forEach((p) => ids.add(p.id));
+    if (!exactProp) props.forEach((p) => {
+      if (subIds.has(p.id)) return;
       const pn = normVenue(p.name);
-      if (cands.some((c) => c === pn || ` ${c} `.includes(` ${pn} `))) ids.add(p.id);
+      if (cands.some((c) => ` ${c} `.includes(` ${pn} `))) ids.add(p.id);
     });
   });
   if (!ids.size) return [];

@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+
+let channelSeq = 0; // a channel name of its own per hook instance - supabase reuses a channel by name, and two mounts sharing one broke live updates
 import { supabase, fetchAll } from "../../lib/supabase";
 import { assembleVenuesFromRows } from "../../lib/ims/venueProperties";
 
@@ -10,7 +12,8 @@ import { assembleVenuesFromRows } from "../../lib/ims/venueProperties";
 // The properties and their in-house venues, read-only and live (same source the Fixed Venues editor reads).
 // `enabled` false: nothing loaded, no channel.
 export function useInhouseVenues(enabled = true) {
-  const [venues, setVenues] = useState({ properties: [], inhouse: [] });
+  // loaded: the first read has come back (or failed) - Dept Ops' hidden auto PDF waits for it so the cover's supervisor is not missed
+  const [venues, setVenues] = useState({ properties: [], inhouse: [], loaded: false });
   useEffect(() => {
     if (!enabled) return undefined;
     let cancelled = false;
@@ -19,11 +22,11 @@ export function useInhouseVenues(enabled = true) {
       if (cancelled) return;
       const v = assembleVenuesFromRows(rows);
       const byName = (a, b) => String(a.name).localeCompare(String(b.name));
-      setVenues({ properties: (v.properties || []).slice().sort(byName), inhouse: (v.inhouse || []).slice().sort(byName) });
+      setVenues({ properties: (v.properties || []).slice().sort(byName), inhouse: (v.inhouse || []).slice().sort(byName), loaded: true });
     };
     load();
     const ch = supabase
-      .channel("realtime:venues:supervisor-venues")
+      .channel(`realtime:venues:supervisor-venues:${++channelSeq}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "venues" }, load)
       .subscribe();
     return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };

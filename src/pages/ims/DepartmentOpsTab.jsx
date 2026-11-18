@@ -3651,7 +3651,8 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // in a frame nobody can see.
   const autoPdfStartedRef = useRef(false);
   useEffect(() => {
-    if (!autoPdfFor || autoPdfStartedRef.current || selId !== autoPdfFor || !sel) return undefined;
+    // and the venues read, so the cover's site supervisor is there (the timer below builds with this render's closure)
+    if (!autoPdfFor || autoPdfStartedRef.current || selId !== autoPdfFor || !sel || !inhouseVenues.loaded) return undefined;
     const t = setTimeout(async () => {
       if (autoPdfStartedRef.current) return;
       autoPdfStartedRef.current = true;
@@ -3677,7 +3678,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     }, 3000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoPdfFor, selId, sel, deptsWithWork]);
+  }, [autoPdfFor, selId, sel, deptsWithWork, inhouseVenues.loaded]);
   // What the department PDF is built from. The item photos come from inventory, not the event, so a
   // photo added since must count too; floral cards also read the recipes and the mandi list.
   const deckKeyNow = () => {

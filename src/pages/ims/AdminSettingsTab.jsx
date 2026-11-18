@@ -431,7 +431,9 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
   useEffect(() => { if (activePanel === "canva") refreshCanvaStatus(); }, [activePanel]);
 
   function addSupervisor() {
-    const id = "S" + String(supervisors.length + 1).padStart(3, "0");
+    // one past the highest S-number in use - a count reused a live id after a delete, and the upsert overwrote that supervisor
+    const top = (supervisors || []).reduce((m, s) => { const n = /^S(\d+)$/.exec(String(s?.id || "")); return n ? Math.max(m, Number(n[1])) : m; }, 0);
+    const id = "S" + String(top + 1).padStart(3, "0");
     setSupervisors([...supervisors, { id, name: "New Supervisor", phone: "", active: true }]);
   }
   function updateSupervisor(id, field, val) { setSupervisors((prev) => prev.map((s) => s.id === id ? { ...s, [field]: val } : s)); }
