@@ -1159,6 +1159,17 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
                     {(imsCarpetMaterials||[]).map(m=><option key={m.id} value={m.id} style={{color:"#111827",background:"#fff"}}>{m.name}{showCosts?` · ₹${m.ratePerSqft}/sqft`:""}</option>)}
                   </select>
                   )}
+                  {/* Carpet New's 1500 sqft roll (taxonomy.carpetNewShares): how much this floor uses and how much of the roll is left for
+                      the function's next floor (owner ask 2026-11-18) - a short line under the material, not the long caption that
+                      sat under the amount */}
+                  {cpShare && zc.cpT!==CARPET_OFF && !isPlatformFoc(zc) && (
+                    <div style={{marginTop:5,fontSize:11,fontWeight:600}}>
+                      {/* only what is left - no calculation (owner ask 2026-11-18) */}
+                      <span style={{padding:"2px 8px",borderRadius:6,background:cpShare.leftAfter>0?"rgba(5,150,105,0.08)":"rgba(0,0,0,0.04)",color:cpShare.leftAfter>0?"#047857":textS}}>
+                        🧻 {Math.round(cpShare.leftAfter).toLocaleString("en-IN")} sqft left in the roll
+                      </span>
+                    </div>
+                  )}
                   {/* ── CARPET PREFERENCES ── Which physical carpet is a stock pick only — it never changes the price (that is the
                       material rate above). Three ranked choices, so Planning has a fallback and decides which one is used from what
                       is free on the day; Deal Check and Planning show the same three. The 1st choice is also what older readers
