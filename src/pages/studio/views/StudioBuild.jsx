@@ -5169,9 +5169,12 @@ undefined
                     Gated on the panel: adding to a collapsed list would look like nothing happened. */}
                 {isElCardOpen(k)&&<div className="ael-widget" style={{position:"relative",display:"flex",alignItems:"center",gap:6}}>
                     {/* loose Liza / masking / curtains for this zone, truss or not (billed with Truss & Masking) */}
-                    {!((zoneConfig[k]?.looseFabric||[]).length) && <button type="button" onClick={()=>setLooseOpenZones(p=>({...p,[k]:!p[k]}))}
+                    {/* one click adds the first row straight away (owner ask 2026-11-18) - the same blank row as the editor's own
+                        "+ Add loose fabric" (LooseFabricEditor.addRow); once a row is there the editor shows and this button hides */}
+                    {!((zoneConfig[k]?.looseFabric||[]).length) && <button type="button"
+                      onClick={()=>{setActiveZones([]);setZoneConfig(p=>({...p,[k]:{...(p[k]||{}),looseFabric:[...((p[k]?.looseFabric)||[]),{kind:"liza",colour:"",qty:0}]}}));setLooseOpenZones(p=>({...p,[k]:true}));}}
                       title="Add loose Liza, masking or curtains to this zone - billed with Truss & Masking"
-                      style={{fontSize:11,fontWeight:600,color:accent,background:looseOpenZones[k]?`${accent}14`:"transparent",border:`1px dashed ${accent}80`,borderRadius:7,padding:"3px 9px",cursor:"pointer",whiteSpace:"nowrap",fontFamily:"inherit"}}>🧵 Loose fabric</button>}
+                      style={{fontSize:11,fontWeight:600,color:accent,background:"transparent",border:`1px dashed ${accent}80`,borderRadius:7,padding:"3px 9px",cursor:"pointer",whiteSpace:"nowrap",fontFamily:"inherit"}}>🧵 + Add loose fabric</button>}
                     <input value={zoneElSearch[k]||""}
                       onChange={e=>{
                         setZoneElSearch(p=>({...p,[k]:e.target.value}));
