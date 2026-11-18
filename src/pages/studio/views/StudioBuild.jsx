@@ -829,6 +829,33 @@ export function TrussStack({ S, customCeilingField, customMaskingField, k, zc, z
       return <TrussCard key={row.id || ri} {...shared} zc={row} sZ={setRow} sD={setDim}
         nested title={`Truss ${ri + 2}`} rowIdx={ri} stockShort={stockShortOf?.(ri + 1)} stockAlts={stockAltsOf?.(ri + 1)} onRemove={() => write(rows.filter((_, i) => i !== ri))} />;
     })}
+    {/* ── WHAT ELSE THE TRUSS & MASKING TOTAL CARRIES ── (owner report 2026-11-18: "truss mai kuch selected ni hai tab bhi price
+        kyu dikhara") The section's total also takes loose fabric (added from the Elements panel) and three old zone fields with no
+        control of their own here - arches, pillars, glass - which an old saved zone or a library photo can still carry. Each is
+        named with its amount; the old ones can be taken off (✕). */}
+    {showCosts && (() => {
+      const hasTruss = [zc, ...rows].some((r) => r && !r.trussFoc && r.trussQty !== 0 && (trussBaseArea(r).area || 0) > 0);
+      const looseOn = (Array.isArray(zc.looseFabric) ? zc.looseFabric : []).some((r) => (Number(r?.qty) || 0) > 0);
+      const parts = [
+        !hasTruss && looseOn && (st?.fabric || 0) > 0 ? { k: "loose", label: "Loose fabric", v: st.fabric } : null,
+        (st?.pillars || 0) > 0 ? { k: "pillars", label: `Pillars ×${zc.pillarQty || 0}`, v: st.pillars, clear: { pillarQty: 0 } } : null,
+        (st?.arches || 0) > 0 ? { k: "arches", label: "Arches", v: st.arches, clear: { archOn: false } } : null,
+        (st?.glass || 0) > 0 ? { k: "glass", label: "Glass", v: st.glass, clear: { glassOn: false } } : null,
+      ].filter(Boolean);
+      if (!parts.length) return null;
+      return (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, margin: "2px 0 6px", fontSize: 11.5, color: textS }}>
+          <span>Also in Truss &amp; Masking:</span>
+          {parts.map((p) => (
+            <span key={p.k} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 999, border: `1px solid ${border}`, color: textP, fontWeight: 600 }}>
+              {p.label} · {fmt(Math.round(p.v))}
+              {p.clear && <button type="button" onClick={() => sZ(p.clear)} title={`Take ${p.label.toLowerCase()} off this zone - an old setting with no control of its own here`}
+                aria-label={`Remove ${p.label}`} style={{ border: "none", background: "transparent", color: "#E11D48", cursor: "pointer", fontSize: 13, fontWeight: 700, lineHeight: 1, padding: 0 }}>✕</button>}
+            </span>
+          ))}
+        </div>
+      );
+    })()}
     {/* Adds a DUPLICATE, not a blank row: a zone with two trusses almost always has two of the same,
         so copying is the shorter path and clearing a field beats re-entering five. Copies the LAST
         truss, so repeated clicks give identical structures and editing Truss 2 before adding Truss 3
