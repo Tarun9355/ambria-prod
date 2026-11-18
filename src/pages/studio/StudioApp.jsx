@@ -14538,10 +14538,16 @@ export default function StudioApp() {
     // sees them via focReq, which releases rather than reserves — see further down).
     const requiredByFn = {};
     const focByFn = {};
+    // For the change log only: an id held as a kit's PART (partParentsByFn: part -> the kits it came from) vs one held in its
+    // own right (directByFn). Lets the log tell a recount (a kit, unchanged, now counting its parts) from a real edit.
+    const partParentsByFn = {};
+    const directByFn = {};
     fnsToProcess.forEach((fn, i) => {
       const fnIdx = fn.fnIdx ?? i;
       const byItem = {};
       const focByItem = {};
+      const partParents = {};
+      const direct = new Set();
       Object.entries(newCards[fnIdx] || {}).forEach(([cardKey, c]) => {
         // Split fulfilment (Deal Check's own Split picker, writes card.split = [{imsId, qty}, …]) —
         // checked BEFORE the plain c.imsId/qty guard below, same order dcCostRollup's own split
@@ -14568,7 +14574,7 @@ export default function StudioApp() {
         if (manualEl?._dcManualId && !isFoc_) return;
         const tgt = isFoc_ ? focByItem : byItem;
         if (splitArr.length) {
-          splitArr.forEach((s) => { tgt[s.imsId] = (tgt[s.imsId] || 0) + (Number(s.qty) || 0); });
+          splitArr.forEach((s) => { tgt[s.imsId] = (tgt[s.imsId] || 0) + (Number(s.qty) || 0); if (!isFoc_) direct.add(s.imsId); });
           return;
         }
         if (!c.imsId) return;
@@ -14581,13 +14587,19 @@ export default function StudioApp() {
           walkKitUnits(topItem, qty, inventoryList, overrideSubItems, (node, nodeQty) => {
             if (!node?.id) return;
             tgt[node.id] = (tgt[node.id] || 0) + nodeQty;
+            if (isFoc_) return;
+            if (node.id === topItem.id) direct.add(node.id);
+            else (partParents[node.id] || (partParents[node.id] = new Set())).add(topItem.id);
           });
         } else {
           tgt[c.imsId] = (tgt[c.imsId] || 0) + qty;
+          if (!isFoc_) direct.add(c.imsId);
         }
       });
       requiredByFn[fnIdx] = byItem;
       focByFn[fnIdx] = focByItem;
+      partParentsByFn[fnIdx] = partParents;
+      directByFn[fnIdx] = direct;
     });
 
     // Deal Check manual items (finding C, bug 6 audit, 2026-11-14): this is NEW reservation behavior,
@@ -14907,6 +14919,10 @@ export default function StudioApp() {
     // (that baseline is markSold's own initial confirm, not a "change" worth notifying anyone about).
     let changed = false;
     const changesByDept = {};
+    // A RECOUNT, NOT AN EDIT (owner report 2026-11-18): a part of a kit whose own qty did not change, newly counted (or no longer
+    // counted) because the reservation now walks kit parts - nobody added or removed anything. It used to be logged "Added 1 item
+    // by <whoever opened Deal Check>". Logged apart, by "System (stock re-count)", named with its kit.
+    const recountByDept = {};
     fnsToProcess.forEach((fn, i) => {
       const fnIdx = fn.fnIdx ?? i;
       const req = requiredByFn[fnIdx] || {};
@@ -14929,6 +14945,14 @@ export default function StudioApp() {
         const item = (inventoryList || []).find((x) => x.id === id);
         const dept = catToDept(item?.cat || item?.category, dealCheckData?.categoryDepartments);
         const change = now === 0 ? "removed" : was === 0 ? "added" : "qty_changed";
+        const parents = partParentsByFn[fnIdx]?.[id];
+        const recount = !!parents && !directByFn[fnIdx]?.has(id)
+          && [...parents].every((k) => (Number(prev[k]) || 0) > 0 && (Number(req[k]) || 0) === (Number(prev[k]) || 0));
+        if (recount) {
+          const kitNames = [...parents].map((k) => (inventoryList || []).find((x) => x.id === k)?.name || k).join(", ");
+          (recountByDept[dept] || (recountByDept[dept] = [])).push({ name: `${item?.name || id} (part of ${kitNames})`, qty: now || was, change, from: was, to: now, fn: fnLabel, zones: [...(zonesOfItem[[...parents][0]] || [])], sub: item?.subCat || item?.subcategory || "" });
+          return;
+        }
         if (!changesByDept[dept]) changesByDept[dept] = [];
         // from / to / function / zones / sub-category: the log can say "151 → 157 · Cocktail · Entry", and pair a switch (changeLog)
         changesByDept[dept].push({ name: item?.name || id, qty: now || was, change, from: was, to: now, fn: fnLabel, zones: [...(zonesOfItem[id] || [])], sub: item?.subCat || item?.subcategory || "" });
@@ -15066,6 +15090,14 @@ export default function StudioApp() {
         requestedBy: authUser?.name || "—",
       }), status: "logged" };
       submitAmendRequest(amendReq);
+    }
+    // the recounts: same log, but by the system - nobody edited the deal
+    for (const [dept, items] of Object.entries(recountByDept)) {
+      submitAmendRequest({ ...makeAmendRequest({
+        eventOrderId: eo.id, clientId: cli.id, clientName: cli.name || "",
+        department: dept, items, reason: "Auto-logged: stock re-counted - kit parts now reserved; the deal itself did not change",
+        requestedBy: "System (stock re-count)",
+      }), status: "logged" });
     }
   }, [eventOrders, dealCheckData, clientLedger, saveClientLedger, submitAmendRequest, authUser, showMsg]);
 
