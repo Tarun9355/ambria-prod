@@ -17,6 +17,8 @@ describe("flower pick", () => {
     expect(isFlowerPickChoice({ id: "f", name: "Fern", isGreen: true, flowerCat: "local flower" })).toBe(true);
     expect(isFlowerPickChoice({ id: "g", name: "Asparagus", flowerCat: "Greens" })).toBe(false);
     expect(isFlowerPickChoice({ id: "h", name: "Monstera", flowerCat: "Premium greens" })).toBe(false);
+    expect(isFlowerPickChoice({ id: "o", name: "floral foam", flowerCat: "Other" })).toBe(false);
+    expect(isFlowerPickChoice({ id: "o2", name: "Otherworld rose", flowerCat: "Cut flower" })).toBe(true);
     for (const cat of ["Imported flower", "local flower", "drysticks", "Ladi Flower", "Loose Flowers", "Cut flower", "banglore daisy"])
       expect(isFlowerPickChoice({ id: cat, name: cat, flowerCat: cat })).toBe(true);
     expect(isFlowerPickChoice({ name: "no id" })).toBe(false);
