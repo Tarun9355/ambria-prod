@@ -1564,6 +1564,11 @@ export default function StudioApp() {
   // work" versus "we do not know yet". Browse was answering the first while the truth was the
   // second — see the skeleton condition there.
   const [ledgerReady, setLedgerReady] = useState(false);
+  // The clients alone (name, phone, dates, status - no saved builds), the moment client_ledger_light lands. Event Info's
+  // client search reads these while the saved sessions are still downloading (recent_studio_sessions: ~14 MB, 2,445 rows on
+  // 2026-11-18 - several seconds on office WiFi / an iPad, and the search sat on "Searching…" the whole time). Search ONLY:
+  // clientLedger itself still waits for the sessions, so nothing restores, saves or loads a deal from a session-less copy.
+  const [clientsLite, setClientsLite] = useState(null);
   // Did the client_ledger fetch on mount actually FAIL (network blip, offline), as opposed to just
   // legitimately coming back empty? A failure used to be swallowed by a bare `catch { /* ignore */ }`
   // — the ledger stayed empty, the mount-restore effect couldn't find the client sessionStorage
@@ -3183,6 +3188,7 @@ export default function StudioApp() {
         // remove as a precaution — client_ledger's own load still runs first in this effect either
         // way, which was the real, confirmed win.
         const rows = await loadClientRows();
+        if (Array.isArray(rows) && !cancelled) setClientsLite(rows.map(rowToClient).filter(Boolean));
         // NOT wrapped in its own try/catch. loadSessionRows() already has an internal fallback for
         // the one case that's actually safe to treat as "no sessions yet" (the recent_studio_sessions
         // RPC not existing before its migration runs) — it only throws for a genuine, unexpected
@@ -15763,7 +15769,7 @@ export default function StudioApp() {
     venue, setVenue, fn, setFn, clientName, setClientName, clientDate, setClientDate, clientPhone, setClientPhone,
     clientBrideGroom, setClientBrideGroom, clientShift, setClientShift, clientPax, setClientPax, clientVenueOther, setClientVenueOther,
     clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette, clientLayoutUrl, setClientLayoutUrl, extraFunctions, setExtraFunctions, expandedFnIdx, setExpandedFnIdx,
-    activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching, allFnsLoaded, ledgerReady,
+    activeFnIdx, setActiveFnIdx, activeFnMeta, fnBuilds, setFnBuilds, isFnSwitching, allFnsLoaded, ledgerReady, clientsLite,
     copyBuildsFromClient,
     // The optimistic index — which function was CLICKED, before the switch commits. Build's own
     // pill nav has always read `fnPending ?? activeFnIdx`; Deal Check never received it, so it had
