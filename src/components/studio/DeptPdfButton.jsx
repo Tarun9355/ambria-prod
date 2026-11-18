@@ -22,9 +22,15 @@ export default function DeptPdfButton({ eventOrderId, clientKey, border = "rgba(
   // the last PDF the frame handed up: { href, name } - kept a while as a "⬇ Save PDF" link, the sure way on Safari (a click of the
   // viewer's own), in case the automatic save below was held back
   const [file, setFile] = useState(null);
-  const fileTimer = useRef(null);
-  useEffect(() => () => { clearTimeout(fileTimer.current); if (file?.href) URL.revokeObjectURL(file.href); }, [file]);
+  // the link's own 2 minutes, and the file's URL freed when it goes (two effects: one timer must not be cancelled by the other's cleanup)
+  useEffect(() => {
+    if (!file) return undefined;
+    const t = setTimeout(() => setFile(null), 120000);
+    return () => clearTimeout(t);
+  }, [file]);
+  useEffect(() => () => { if (file?.href) URL.revokeObjectURL(file.href); }, [file]);
   const heard = useRef(false);
+  const gotFile = useRef(false); // the frame's file reached this page in the current run
   // Once this deal's event order has been seen, the button stays for as long as this deal is open. The
   // order is looked up in a list that live updates replace row by row, and for a moment a row can come
   // back without its details — the lookup then found nothing and the button blinked out and back.
@@ -42,6 +48,7 @@ export default function DeptPdfButton({ eventOrderId, clientKey, border = "rgba(
   useEffect(() => {
     if (!run) return undefined;
     heard.current = false;
+    gotFile.current = false;
     // Never hangs: a frame silent for 90 s (not signed in here, a stuck load…) or a run past 5 minutes ends the attempt.
     // The frame says "alive" as it loads, opens the event and builds (IMS / DepartmentOpsTab), which restarts the 90 s. Before,
     // only the final "done" counted, so a run past 90 s (a Hindi book, which also asks for its names) was cut off mid-build.
@@ -56,20 +63,31 @@ export default function DeptPdfButton({ eventOrderId, clientKey, border = "rgba(
       // the finished PDF from the frame - saved from this page, not from inside the hidden frame, which Safari does not allow
       // without a click there (owner's video 2026-11-18: "Building PDF…" and no file on a Mac)
       if (d.phase === "file" && d.blob) {
-        try {
-          const href = URL.createObjectURL(d.blob);
-          const name = d.name || "All departments.pdf";
-          const a = document.createElement("a");
-          a.href = href; a.download = name; a.rel = "noopener";
-          document.body.appendChild(a); a.click(); a.remove();
-          setFile({ href, name }); // the link stays for 2 minutes (its URL is freed when it goes)
-          clearTimeout(fileTimer.current);
-          fileTimer.current = setTimeout(() => setFile(null), 120000);
-        } catch (err) { console.warn("[dept pdf] save failed:", err); }
+        gotFile.current = true;
+        clearTimeout(quiet); // the file is here - nothing left to wait for from the frame
+        const name = d.name || "All departments.pdf";
+        const html = /\.html$/i.test(name); // the build threw and the frame sent its fallback report instead of the PDF
+        // the bytes are copied first, so the file outlives the frame (it is removed as the run ends); the copy is what is saved
+        Promise.resolve(typeof d.blob.arrayBuffer === "function" ? d.blob.arrayBuffer().then((buf) => new Blob([buf], { type: d.blob.type || (html ? "text/html" : "application/pdf") })) : d.blob)
+          .catch(() => d.blob)
+          .then((blob) => {
+            const href = URL.createObjectURL(blob);
+            try {
+              const a = document.createElement("a");
+              a.href = href; a.download = name; a.rel = "noopener";
+              document.body.appendChild(a); a.click(); a.remove();
+            } catch (err) { console.warn("[dept pdf] auto save failed - the Save link is there:", err); }
+            setFile({ href, name }); // the link stays for 2 minutes
+            finish(html
+              ? "The PDF could not be built - a web page of the report is ready, open it and print to PDF" + (d.notes?.length ? " — " + d.notes[0] : "")
+              : "PDF ready — if it didn't download, tap ⬇ Save PDF", html ? 15000 : 12000);
+          })
+          .catch((err) => { console.warn("[dept pdf] could not keep the file:", err); finish("The PDF was built but could not be saved — try again", 15000); });
         return;
       }
       // "ready", not "downloaded": a browser can hold the automatic save back - the Save PDF link beside it then saves it
-      if (d.phase === "done") finish("PDF ready" + (d.notes?.length ? " — " + d.notes[0] : ""), d.notes?.length ? 15000 : NOTE_MS);
+      // a "done" with no file before it is not a PDF: say so instead of "ready" (the file post failed on the way)
+      if (d.phase === "done") finish(gotFile.current ? "PDF ready" + (d.notes?.length ? " — " + d.notes[0] : "") : "The PDF was built but did not reach this page — try again", gotFile.current && !d.notes?.length ? NOTE_MS : 15000);
       else if (d.phase === "error") finish(d.reason || "Could not build the PDF" + (d.notes?.length ? " — " + d.notes[0] : ""), 15000);
     };
     window.addEventListener("message", onMsg);
@@ -94,7 +112,7 @@ export default function DeptPdfButton({ eventOrderId, clientKey, border = "rgba(
       {file && !run && (
         <a href={file.href} download={file.name} title={`Save ${file.name}`}
           style={{ height: 32, padding: "0 12px", borderRadius: 999, background: "#1A1A2E", color: "#fff", fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none", whiteSpace: "nowrap" }}>
-          ⬇ Save PDF
+          {/\.html$/i.test(file.name) ? "⬇ Save report (.html)" : "⬇ Save PDF"}
         </a>
       )}
       {/* the book's language - English or Hindi */}

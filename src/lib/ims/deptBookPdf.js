@@ -323,6 +323,8 @@ export async function renderDeptBook({ buildHtml, lang, multi, dept, depts, grou
           if (!canvas.width || canvas.height < 4) break;
           try {
             img = canvas.toDataURL("image/jpeg", 0.85);
+            // a canvas the browser blanked (Safari past its canvas memory) exports as "data:," - not a page: try the next scale down
+            if (!img || img.length < 20) { img = null; lastErr = new Error("blank canvas at scale " + scale); freeCanvas(canvas); canvas = null; continue; }
             if (strip) photoless += 1;
             break;
           } catch (taintErr) {

@@ -3656,7 +3656,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
     const t = setTimeout(async () => {
       if (autoPdfStartedRef.current) return;
       autoPdfStartedRef.current = true;
-      const tell = (phase, extra = {}) => { try { window.parent?.postMessage({ type: "ambria-dept-pdf", phase, ...extra }, window.location.origin); } catch { /* not framed */ } };
+      // true when the post went through (a Blob that cannot be cloned throws - the caller must know, or Deal Check would say "ready")
+      const tell = (phase, extra = {}) => { try { window.parent?.postMessage({ type: "ambria-dept-pdf", phase, ...extra }, window.location.origin); return true; } catch { return false; /* not framed, or not cloneable */ } };
+      let fileLost = false;
       // "alive" every 10 s while the book builds, so Deal Check's 90 s quiet timer never cuts a long (Hindi) run short
       tell("alive");
       const beat = setInterval(() => tell("alive"), 10000);
@@ -3668,13 +3670,14 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
         if (!deptsWithWork.length) { tell("error", { reason: "No department plan on this event yet — sync it from Deal Check first" }); return; }
         pdfAllCarpetsRef.current = true;
         // the file goes up to Deal Check, which saves it from the page itself (Safari drops a download started in this hidden frame)
-        ok = await exportPdf(deptsWithWork, { combined: true, onFile: (blob, name) => tell("file", { blob, name }) });
+        ok = await exportPdf(deptsWithWork, { combined: true, onFile: (blob, name) => { if (!tell("file", { blob, name })) fileLost = true; } });
       } catch (err) {
         // a throw still reports back (it used to leave Deal Check on "Building PDF…" until its own timer ran out)
         notes.unshift(String(err?.message || err || "error"));
         ok = false;
       } finally { window.alert = realAlert; pdfAllCarpetsRef.current = false; clearInterval(beat); }
-      tell(ok ? "done" : "error", { notes });
+      if (fileLost) tell("error", { reason: "The PDF was built but could not be sent to this page — try again", notes });
+      else tell(ok ? "done" : "error", { notes });
       onAutoPdfDone?.();
     }, 3000);
     return () => clearTimeout(t);

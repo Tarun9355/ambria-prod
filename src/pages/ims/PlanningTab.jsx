@@ -37,7 +37,7 @@ export default function PlanningTab({ prodRequests, projects, functions, setFunc
   const tabs0 = allowed.length > 0 ? allowed : allTabs;
   // Deal Check's hidden PDF run needs Dept Ops even if this role's Planning sub-tabs leave it out (everyone can download, 2026-11-17)
   const tabs = autoPdfFor && !tabs0.some((t) => t.id === "deptops") ? [...tabs0, allTabs.find((t) => t.id === "deptops")] : tabs0;
-  const [sub, setSub] = useState(() => { const saved = sessionStorage.getItem("ambria-ims-planning-sub"); return tabs.some((t) => t.id === saved) ? saved : (tabs[0]?.id || "deptops"); });
+  const [sub, setSub] = useState(() => { if (autoPdfFor) return "deptops"; const saved = sessionStorage.getItem("ambria-ims-planning-sub"); return tabs.some((t) => t.id === saved) ? saved : (tabs[0]?.id || "deptops"); });
   useEffect(() => { sessionStorage.setItem("ambria-ims-planning-sub", sub); }, [sub]);
   // ── ONE ROW FOR BOTH PICKERS ON A PHONE ──
   // Dept Ops portals its department dropdown into this slot, so the section picker and the

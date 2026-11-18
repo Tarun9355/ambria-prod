@@ -14,13 +14,16 @@ describe("Deal Check PDF: saved by the page, not the hidden frame", () => {
   });
   it("the frame's auto run passes onFile and posts the file up", () => {
     const src = read("../../pages/ims/DepartmentOpsTab.jsx");
-    expect(src).toContain('ok = await exportPdf(deptsWithWork, { combined: true, onFile: (blob, name) => tell("file", { blob, name }) });');
+    expect(src).toContain('onFile: (blob, name) => { if (!tell("file", { blob, name })) fileLost = true; }');
+    // a file that could not be posted is reported as an error, never as "done"
+    expect(src).toContain('if (fileLost) tell("error", { reason: "The PDF was built but could not be sent to this page');
     expect(src).toMatch(/onNote: setExportNote, onFile,/);
   });
   it("Deal Check saves the posted file from the page and keeps a Save PDF link", () => {
     const src = read("./DeptPdfButton.jsx");
     expect(src).toContain('if (d.phase === "file" && d.blob)');
     expect(src).toContain("a.download = name;");
+    expect(src).toContain("gotFile.current");
     expect(src).toContain("⬇ Save PDF");
     expect(src).not.toContain('"PDF downloaded"');
   });
