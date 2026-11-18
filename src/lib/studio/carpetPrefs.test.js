@@ -171,7 +171,7 @@ describe("floorSqftOf — the sqft a floor needs is what it is billed on (footpr
     expect(floorSqftOf({ floorDims: { L: 20, W: 10 }, plQty: 0 })).toBe(200);
     expect(floorSqftOf({ floorDims: { L: 20, W: 10 }, plQty: "2" })).toBe(400);
   });
-  it("a square given as one side (S) is that side squared, like the bill", () => { expect(floorSqftOf({ floorDims: { S: 12 } })).toBe(144); });
+  it("a square given as one side (S) is laid on the 10 ft roll like the bill: 12 x 12 -> 12 x 20", () => { expect(floorSqftOf({ floorDims: { S: 12 } })).toBe(240); });
   it("no size, no row: 0", () => {
     expect(floorSqftOf({})).toBe(0);
     expect(floorSqftOf(undefined)).toBe(0);

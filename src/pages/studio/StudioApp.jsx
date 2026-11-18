@@ -90,7 +90,7 @@ const NAV_RULE = { width: 1, height: 22, background: "rgba(255,255,255,0.1)", fl
 import {
   DEFAULT_TAX, ZONE_META, ZONE_LABELS, ZONE_PRESETS, BASE_RATES,
   getCat, taxOr, FUNCTIONS, CATEGORIES, SHIFT_LETTER,
-  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, platformRowCost, billedCarpetSqft, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
+  carpetPricingFor, CARPET_OFF, trussRateFor, maskingRateFor, platformRateFor, platformRowCost, billedCarpetSqft, carpetLaidDims, trussBaseArea, TRUSS_MATERIALS, DRAPE_DENSITIES,
   resolveVenueGensets,
   assemblePrintMaterialsFromRows, assembleCarpetMaterialsFromRows, assemblePlatformRatesFromRows, assembleMaskingRatesFromRows, assembleTrussRatesFromRows,
 } from "../../lib/studio/taxonomy";
@@ -13115,7 +13115,8 @@ export default function StudioApp() {
             const _cpRate = Math.round(cp.rate * guestPriceMultiplier * 100) / 100;
             // "New" carpet bills in whole 1500-sqft rolls (billedCarpetSqft) — the real qty this row
             // is charged for, not the raw floor area, so Qty × Rate keeps matching this row's share.
-            const billedQty = billedCarpetSqft(rArea * rQty, cp.label);
+            // and before that the 10 ft roll rule (carpetLaidDims): 24 x 6 bills 24 x 10
+            const billedQty = billedCarpetSqft(carpetLaidDims(rFd).area * rQty, cp.label);
             const share = _platRawSumC > 0 ? _platRaw[ri].carpet / _platRawSumC : 0;
             structItems.push({
               name: "Carpet (" + cp.label + " ₹" + _cpRate + "/sqft)" + suffix,

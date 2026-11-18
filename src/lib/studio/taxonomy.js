@@ -298,6 +298,19 @@ export const CARPET_OFF = "__off__";
 // a zone can hold a legacy "new" enum OR a carpetMaterials row id, carpetPricingFor already
 // reconciles both into one label). Owner ask, 2026-10-17.
 const CARPET_NEW_ROLL_SQFT = 1500;
+// Carpet comes in 10 ft wide rolls and is laid along the floor's LONGER side; the strip is folded, never cut lengthwise
+// (owner ask 2026-11-18). So the shorter side is billed up to the next 10 ft: 24 x 6 -> 24 x 10 = 240 sqft, 24 x 12 and
+// 24 x 16 -> 24 x 20 = 480 sqft, 24 x 20 stays 480. Every carpet material. The platform under it keeps its real size.
+// One helper for the bill (platformRowCost) and for stock / IMS / manpower (carpetPrefs.floorSqftOf), so they agree.
+export const CARPET_ROLL_WIDTH_FT = 10;
+export function carpetLaidDims(fd) {
+  const L = Number(fd?.L) || Number(fd?.S) || 0;
+  const W = Number(fd?.W) || Number(fd?.S) || 0;
+  if (!(L > 0 && W > 0)) return { long: 0, short: 0, shortBilled: 0, area: 0 };
+  const long = Math.max(L, W), short = Math.min(L, W);
+  const shortBilled = Math.ceil(short / CARPET_ROLL_WIDTH_FT - 1e-9) * CARPET_ROLL_WIDTH_FT;
+  return { long, short, shortBilled, area: long * shortBilled };
+}
 export function billedCarpetSqft(rawSqft, carpetLabel) {
   if (!(rawSqft > 0)) return rawSqft;
   return /new/i.test(carpetLabel || "") ? Math.ceil(rawSqft / CARPET_NEW_ROLL_SQFT) * CARPET_NEW_ROLL_SQFT : rawSqft;
@@ -326,7 +339,8 @@ export function platformRowCost(row, rates) {
   if (row?.cpT !== CARPET_OFF) {
     // Guest price: the material's rate, whichever physical carpet is picked.
     const cp = carpetPricingFor(row?.cpT, rates?.carpetMaterials);
-    carpet = billedCarpetSqft(a * qty, cp.label) * cp.rate;
+    // the 10 ft roll rule (carpetLaidDims), then Carpet New's whole 1500 sqft rolls on top
+    carpet = billedCarpetSqft(carpetLaidDims(fd).area * qty, cp.label) * cp.rate;
   }
   return { platform, carpet };
 }

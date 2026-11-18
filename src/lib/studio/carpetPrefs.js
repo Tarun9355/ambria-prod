@@ -7,6 +7,8 @@
 // Deal Check's carpet card, the layout pushed to IMS) already looks. Anything that changes a pick goes through
 // prefsPatch, so the two can't disagree.
 
+import { carpetLaidDims } from "./taxonomy.js";
+
 export const CARPET_PREF_MAX = 3;
 export const CARPET_PREF_LABELS = ["1st choice", "2nd choice", "3rd choice"];
 
@@ -65,9 +67,9 @@ export function setPrefsPatch(picks) {
 
 // The sqft a floor row needs: its footprint times its Qty (identical footprints), the same figure the carpet is BILLED on
 // (taxonomy.platformRowCost), so stock checks and the bill can never disagree about how much carpet a floor is.
+// Laid on the 10 ft roll (taxonomy.carpetLaidDims): the shorter side up to the next 10 ft - the folded carpet is used too.
 export function floorSqftOf(row) {
-  const fd = row?.floorDims || {};
-  const area = (Number(fd.L) || Number(fd.S) || 0) * (Number(fd.W) || Number(fd.S) || 0);
+  const area = carpetLaidDims(row?.floorDims || {}).area;
   const qty = Math.max(1, Math.round(Number(row?.plQty) || 1));
   return area * qty;
 }

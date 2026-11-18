@@ -239,7 +239,7 @@ describe("tentingZoneUsage — Truss pillar count / Platform piece count for the
   // a zone element, so walkFnElements can't find it), just not fixed alongside them at the time.
   it("carpet: counts billed sqft (floorSqftOf) even with no platform height at all — a floor can be carpeted with no platform under it", () => {
     const zoneConfig = { stage: { floorDims: { L: 10, W: 8 } } }; // no plH — not a platform, still a carpeted floor
-    expect(tentingZoneUsage(fn({ zoneConfig }), baseCtx()).carpet).toBe(80);
+    expect(tentingZoneUsage(fn({ zoneConfig }), baseCtx()).carpet).toBe(100); // 10 x 8 laid on the 10 ft roll: 10 x 10
   });
 
   it("carpet: an unset cpT still counts (an unset cpT still bills the default carpet, per taxonomy's carpetPricingFor)", () => {
@@ -254,13 +254,13 @@ describe("tentingZoneUsage — Truss pillar count / Platform piece count for the
 
   it("carpet: extraPlatformRows each contribute their own sqft too", () => {
     const zoneConfig = { stage: { floorDims: { L: 10, W: 8 }, extraPlatformRows: [{ floorDims: { L: 6, W: 4 } }] } };
-    expect(tentingZoneUsage(fn({ zoneConfig }), baseCtx()).carpet).toBe(10 * 8 + 6 * 4);
+    expect(tentingZoneUsage(fn({ zoneConfig }), baseCtx()).carpet).toBe(10 * 10 + 6 * 10); // each on the 10 ft roll
   });
 
   it("carpet: feeds computePeopleRaw's Labours usage floor via heavyElementRanges, same as Truss/Platform", () => {
-    const zoneConfig = { stage: { floorDims: { L: 10, W: 8 }, plQty: 5 } }; // 80 sqft × 5 = 400 ÷ 200 = 2
+    const zoneConfig = { stage: { floorDims: { L: 10, W: 8 }, plQty: 5 } }; // 10 x 10 on the roll = 100 sqft × 5 = 500 ÷ 200 → 3
     const ctx = { ...baseCtx(), heavyElementRanges: [{ subCat: "Carpet", perCount: 200 }] };
-    expect(computePeopleRaw(fn({ zoneConfig }), "Labours", ctx)).toBe(2);
+    expect(computePeopleRaw(fn({ zoneConfig }), "Labours", ctx)).toBe(3);
   });
 });
 

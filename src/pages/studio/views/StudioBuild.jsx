@@ -18,7 +18,7 @@ import { getEffectivePricing, resolveDateCategory } from "../../../lib/inventory
 import {
   ZONE_TYPE_TO_AREA, getCat, taxOr, FUNCTIONS, CATEGORIES, venueTypeLabel,
   maskingOptions, platformOptions, defaultCarpetMatId, CARPET_OFF, TRUSS_MATERIALS, trussBaseArea, trussRateFor,
-  platformRowCost, liveAreaElementOptions, carpetPricingFor, carpetTakesStockPick, billedCarpetSqft,
+  platformRowCost, liveAreaElementOptions, carpetPricingFor, carpetTakesStockPick, billedCarpetSqft, carpetLaidDims,
 } from "../../../lib/studio/taxonomy";
 import { catalogueDeletedLabel, catalogueDeletedTitle } from "../../../lib/studio/deletedCatalogue";
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
@@ -958,11 +958,14 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   const isStockCarpet = carpetTakesStockPick(carpetBilled.label);
   // Why the Carpet amount is what it is - the card only showed "10x24 = 240 sqft", so a Carpet New floor billed for
   // a whole 1500 sqft roll (taxonomy billedCarpetSqft), less the Fixed Venue / Repeat cut, read as a wrong sum.
-  const carpetNeedSqft = ((rowDims.L || rowDims.S || 0) * (rowDims.W || rowDims.S || 0)) * Math.max(1, Math.round(Number(zc.plQty) || 1));
+  const carpetQty = Math.max(1, Math.round(Number(zc.plQty) || 1));
+  const carpetLaid = carpetLaidDims(rowDims); // the 10 ft roll: shorter side up to the next 10 ft
+  const carpetNeedSqft = carpetLaid.area * carpetQty;
   const carpetBillSqft = billedCarpetSqft(carpetNeedSqft, carpetBilledRaw.label);
   const carpetRolls = carpetBillSqft > carpetNeedSqft && carpetNeedSqft > 0 ? Math.round(carpetBillSqft / 1500) : 0;
   const carpetWhy = zc.cpT === CARPET_OFF || !(carpetNeedSqft > 0) ? "" : [
-    carpetRolls ? `${carpetRolls} roll${carpetRolls > 1 ? "s" : ""} = ${carpetBillSqft.toLocaleString("en-IN")} sqft billed (${carpetNeedSqft.toLocaleString("en-IN")} needed)` : "",
+    carpetLaid.shortBilled !== carpetLaid.short ? `${carpetLaid.long} × ${carpetLaid.short} → ${carpetLaid.long} × ${carpetLaid.shortBilled} = ${carpetNeedSqft.toLocaleString("en-IN")} sqft (10 ft roll)` : "",
+    carpetRolls ? `${carpetRolls} roll${carpetRolls > 1 ? "s" : ""} = ${carpetBillSqft.toLocaleString("en-IN")} sqft billed` : "",
     guestDiscPct > 0 ? `−${guestDiscPct}% Fixed Venue / Repeat` : "",
   ].filter(Boolean).join(" · ");
   const [cpUploading, setCpUploading] = useState(false);

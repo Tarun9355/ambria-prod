@@ -32,7 +32,7 @@ describe("carpetFloorsOf", () => {
         extraPlatformRows: [{ cpT: "old", floorDims: { L: 5, W: 4 }, cpPrefs: [pref(C)], cpInvId: "C", cpInvName: "Beige", cpInvFree: 50 }] },
     }), (fn, zk) => "Stage");
     expect(f.map((x) => x.key)).toEqual([carpetKey(0, "stage", 0), carpetKey(0, "stage", 1)]);
-    expect(f.map((x) => x.area)).toEqual([200, 20]);
+    expect(f.map((x) => x.area)).toEqual([200, 50]); // 5 x 4 is laid on the 10 ft roll: 5 x 10
     expect(f[0].prefs.map((p) => p.id)).toEqual(["A", "B"]);
     expect(f[1].zoneName).toBe("Stage (floor 2)");
     expect(f[0].date).toBe("2027-01-03");
@@ -98,12 +98,12 @@ describe("planCarpets", () => {
     }));
     const choice = { [fl[0].key]: { id: "A" }, [fl[1].key]: { id: "A" } };
     const { over } = planCarpets({ floors: fl, itemsById, blocks: {}, eventId: "e", choice });
-    expect(over.A).toMatchObject({ free: 100, committed: 160 });
+    expect(over.A).toMatchObject({ free: 100, committed: 200 }); // 10 x 6 counts 10 x 10 (10 ft roll)
   });
   it("no over-commit when it fits", () => {
     const fl = carpetFloorsOf(layout({
-      stage: { cpT: "old", floorDims: { L: 10, W: 5 }, cpPrefs: [pref(A)], cpInvId: "A", cpInvName: "Maroon", cpInvFree: 100 },
-      entry: { cpT: "old", floorDims: { L: 10, W: 5 }, cpPrefs: [pref(A)], cpInvId: "A", cpInvName: "Maroon", cpInvFree: 100 },
+      stage: { cpT: "old", floorDims: { L: 5, W: 5 }, cpPrefs: [pref(A)], cpInvId: "A", cpInvName: "Maroon", cpInvFree: 100 }, // 5 x 10 on the roll
+      entry: { cpT: "old", floorDims: { L: 5, W: 5 }, cpPrefs: [pref(A)], cpInvId: "A", cpInvName: "Maroon", cpInvFree: 100 },
     }));
     const choice = { [fl[0].key]: { id: "A" }, [fl[1].key]: { id: "A" } };
     expect(planCarpets({ floors: fl, itemsById, blocks: {}, eventId: "e", choice }).over).toEqual({});
