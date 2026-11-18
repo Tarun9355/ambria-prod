@@ -7017,6 +7017,27 @@ export default function StudioApp() {
     return shortfalls.map((s) => ({ domain: "ledger", emoji: "🔗", date: s.date, detail: `${s.short}× ${s.name} short of what this date really needs` }));
   }, [collectAllFunctionData, eventOrders, activeClientId, clientName, imsInventory, blocksDetailByDate, sharedFloralSettings, venueParents]);
 
+  // A BOOKED deal's truss / platform / batta and ledger shortages as they stood when it was opened in this tab (owner ask
+  // 2026-11-18: Apply Changes kept asking to fix shortages the deal already carried). Collected until the build is first changed
+  // here - stock and orders arrive a moment after the build, so a shortage seen while nothing is edited yet is the deal's own,
+  // old one. Apply Changes then stops only for a row not in this set; a bigger shortage reads differently, so it is new again.
+  const openedGateRowsRef = useRef({});
+  const gateRowKey = (r) => `${r?.domain || ""}|${r?.date || ""}|${r?.detail || ""}`;
+  useEffect(() => {
+    if (!allFnsLoaded || !activeClientId) return;
+    if ((clientLedger || []).find((c) => c.id === activeClientId)?.status !== "booked") return;
+    const fns = allFunctionData || [];
+    if (!fns.length) return;
+    let sig = "";
+    try { sig = JSON.stringify(fns.map((f) => [f?.fnIdx, f?.fnDate, f?.enabledEls, f?.zoneElements, f?.zoneConfig])); } catch { return; }
+    const entry = openedGateRowsRef.current[activeClientId] || (openedGateRowsRef.current[activeClientId] = { sig, keys: new Set(), touched: false });
+    if (entry.touched) return;
+    if (sig !== entry.sig) { entry.touched = true; return; } // the salesperson has changed the build - stop collecting
+    try { (scanTrussStockShortage() || []).forEach((r) => entry.keys.add(gateRowKey(r))); } catch { /* scan not ready yet */ }
+    try { (scanLedgerShortfalls() || []).forEach((r) => entry.keys.add(gateRowKey(r))); } catch { /* scan not ready yet */ }
+  }, [allFnsLoaded, activeClientId, clientLedger, allFunctionData, scanTrussStockShortage, scanLedgerShortfalls]); // eslint-disable-line react-hooks/exhaustive-deps
+  const newGateRows = (rows, cid) => { const keys = openedGateRowsRef.current[cid]?.keys; return keys ? (rows || []).filter((r) => !keys.has(gateRowKey(r))) : (rows || []); };
+
   // The SAME cross-function reuse quantities calcFunctionCost/calcFunctionBreakdown already build
   // and fold into the Live Estimate/Summary/Deal Check totals for the active function — but Build's
   // own LIVE per-card view (getElPrice/calcElsCost, called directly by StudioBuild.jsx, never
@@ -10763,7 +10784,8 @@ export default function StudioApp() {
       // only shortages this edit caused (shortagesRaisedHere) - one the booked deal already carried is not the salesperson's to fix
       const oosFlagged = await shortagesRaisedHere(scanOutOfStockElements(), client, collectAllFunctionData(), imsInventory, openedUnitsRef.current[client.id]);
       if (oosFlagged.length > 0) { setOosGateReason("applyBookedChanges"); setOosGateModal(oosFlagged); return false; }
-      const trussFlagged = scanTrussStockShortage();
+      // the same for truss / platform / batta and the ledger: only what was not already short when the deal was opened here
+      const trussFlagged = newGateRows(scanTrussStockShortage(), client.id);
       if (trussFlagged.length > 0) { setTrussStockGateModal(trussFlagged); return false; }
       // Checked here, BEFORE the bookedSystemTotal rebase below — not just inside
       // pushEventOrderPlan's own backstop — so a blocked push can never reset the "pending since
@@ -10775,7 +10797,7 @@ export default function StudioApp() {
       // still empty, this deal's own existing reservation would read as nobody's, and a perfectly fine
       // re-push could flag a false shortfall. The oos/truss gates above have the same pre-existing
       // exposure (unchanged here, out of scope for this phase) — only the new gate is moved.
-      const ledgerFlagged = scanLedgerShortfalls();
+      const ledgerFlagged = newGateRows(scanLedgerShortfalls(), client.id);
       if (ledgerFlagged.length > 0) { setLedgerStockGateModal(ledgerFlagged); return false; }
       const result = saveSession();
       if (!result || !result.client) { showMsg("Save a client first", "red"); return false; }
