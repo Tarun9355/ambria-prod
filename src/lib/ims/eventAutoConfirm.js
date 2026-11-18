@@ -903,6 +903,7 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
     // blocks are physical inventory units; sum fresh across sizes when writing block rows.
     // Map: fnIdx → Map((itemId|sizeClass) → totalQty)
     const fnAgg=new Map();
+    const kitOvByFnItem=new Map(); // "fnIdx|kitId" -> the deal's kit edits (el.kitOverrides)
     for(const a of accepts){
       const fnIdx=typeof a.r.fnIdx==="number"?a.r.fnIdx:0;
       if(!fnAgg.has(fnIdx)) fnAgg.set(fnIdx,new Map());
@@ -911,17 +912,8 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
       const sc=normalizeSizeClass(a.r.sizeClass);
       const key=id+"|"+sc;
       m.set(key,(m.get(key)||0)+(a.r.qty||1));
-      // A kit reserves its PARTS too (owner ask 2026-11-18: "Sold dabate hi block ho jaane chahiye"). This used to hold only the
-      // kit's own id, so until Studio's own reconcile ran (it walks the parts, but on Sold it can be deferred to a hidden
-      // Deal Check run that a closed tab never finishes) a kit's part - Fabric Cocktail Table inside Full Round Bar - read as
-      // free stock. Same walker Studio's reconcile uses (walkKitUnits, nested kits too); the deal's own kit edits when the
-      // item is the one Studio picked, never a swapped-in item's. Studio adopts these "ims-autoconfirm" entries when it runs.
-      const kitOv = (a.r.match && a.itemToBlock.id === a.r.match.id && Array.isArray(a.r.kitOverrides)) ? a.r.kitOverrides : undefined;
-      walkKitUnits(a.itemToBlock, a.r.qty||1, inventory, kitOv, (node, nodeQty) => {
-        if (!node?.id || node.id === id || !(nodeQty > 0)) return;
-        const pk = node.id + "|M";
-        m.set(pk, (m.get(pk)||0) + nodeQty);
-      });
+      // the deal's own kit edits for this kit (Step 4 reserves its parts from them) - only for the item Studio picked
+      if (a.r.match && a.itemToBlock.id === a.r.match.id && Array.isArray(a.r.kitOverrides) && !kitOvByFnItem.has(fnIdx+"|"+id)) kitOvByFnItem.set(fnIdx+"|"+id, a.r.kitOverrides);
     }
     // ── Step 3: pairwise de-dup across functions sharing (fnDate, fnVenue) ─
     // For each fnIdx (after first), find most recent prior fnIdx with same (date, venue);
@@ -983,8 +975,21 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
       myFresh.forEach((qty,compositeKey)=>{
         const [itemId, sc] = compositeKey.split("|");
         byInv.set(itemId, (byInv.get(itemId)||0) + qty);
+        // A kit holds its PARTS too (owner ask 2026-11-18: "Sold dabate hi block ho jaane chahiye"). This used to hold only the
+        // kit's own id, so until Studio's own reconcile ran (it walks the parts, but on Sold it can be deferred to a hidden Deal
+        // Check run that a closed tab never finishes) a part - Fabric Cocktail Table inside Full Round Bar - read as free stock.
+        // Same walker as Studio's reconcile (walkKitUnits, nested kits too), over the deal's own kit edits, from the kit's FRESH
+        // qty (the cross-function reuse above applies to its parts too). Blocks only: blockedItems (IMS's function item list,
+        // crew, POs) keeps the kit as one line, as before. Studio adopts these "ims-autoconfirm" entries when it runs.
+        const kitInv = inventory.find(x=>x.id===itemId);
+        if (kitInv && Array.isArray(kitInv.subItems) && kitInv.subItems.length) {
+          walkKitUnits(kitInv, qty, inventory, kitOvByFnItem.get(fn.fnIdx+"|"+itemId), (node, nodeQty) => {
+            if (!node?.id || node.id === itemId || !(nodeQty > 0)) return;
+            byInv.set(node.id, (byInv.get(node.id)||0) + nodeQty);
+          });
+        }
         // For project bridge — one entry per (itemId, sizeClass)
-        blockedItems.push({itemId,qty:Math.ceil(qty-1e-6),sizeClass:sc||"M",zone:"",fnIdx:fn.fnIdx,fnDate:fn.fnDate,fnVenue:fn.fnVenue});
+        blockedItems.push({itemId,qty,sizeClass:sc||"M",zone:"",fnIdx:fn.fnIdx,fnDate:fn.fnDate,fnVenue:fn.fnVenue});
       });
       // For a Studio order (bug 6, 2026-11-14) `results` already came from studioOrderItems' exact-
       // invId-only matching, never aiMatchEvent's own fuzzy stage-2 — so this can't create a WRONG-

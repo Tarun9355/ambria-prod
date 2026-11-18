@@ -16,11 +16,16 @@ describe("auto-confirm reserves a kit's parts", () => {
     const plain = studioOrderItems({ functionsDetail: [{ date: "d", elements: { bar: [{ invId: "K", qty: 2 }] } }] }, inv);
     expect(plain[0].kitOverrides).toBeUndefined();
   });
-  it("executeConfirmBlocks walks every accepted kit into its parts, with the deal's edits only for Studio's own pick", () => {
-    const src = readFileSync(new URL("./eventAutoConfirm.js", import.meta.url), "utf8");
-    const body = src.slice(src.indexOf("function executeConfirmBlocks("), src.indexOf("// ── Step 3"));
-    expect(body).toMatch(/walkKitUnits\(a\.itemToBlock, a\.r\.qty\|\|1, inventory, kitOv,/);
+  const src = readFileSync(new URL("./eventAutoConfirm.js", import.meta.url), "utf8");
+  const body = src.slice(src.indexOf("function executeConfirmBlocks("), src.indexOf("// Bridge: auto-create Project + Function"));
+  it("parts go into the BLOCK write, walked from each kit's fresh qty with the deal's edits (Studio's own pick only)", () => {
     expect(body).toContain("a.itemToBlock.id === a.r.match.id");
+    expect(body).toMatch(/walkKitUnits\(kitInv, qty, inventory, kitOvByFnItem\.get\(fn\.fnIdx\+"\|"\+itemId\)/);
+    expect(body).toMatch(/byInv\.set\(node\.id,/);
     expect(src).toMatch(/qty: Math\.ceil\(sumQty - 1e-6\)/);
+  });
+  it("IMS's function item list (blockedItems: crew, POs) keeps the kit as one line - no parts in it", () => {
+    expect(body).toContain("blockedItems.push({itemId,qty,sizeClass:sc||\"M\"");
+    expect(body).not.toMatch(/m\.set\(pk,/); // parts never enter the per-function aggregate
   });
 });
