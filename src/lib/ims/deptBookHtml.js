@@ -1633,6 +1633,43 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         return listPages(items, t("Fixed at venue"), hn(fv.name), t("Already standing here - not to be loaded"));
       }).join("");
     })();
+    // ── FOC, DEPARTMENT BY DEPARTMENT ── (owner ask 2026-11-18) at the very end of the book: everything marked FOC in Studio -
+    // an element (el.foc), a truss (isTrussFoc) and a platform with its carpet (isPlatformFoc) - already at the venue from an
+    // earlier event, so free and not to be loaded. One run of pages per department, in the book's department order; a
+    // department's own book shows only its own (the all-departments book shows every department).
+    const focPages = (() => {
+      const byDept = new Map();
+      const push = (d, it) => { if (!d || !(combined || inBook(d))) return; (byDept.get(d) || byDept.set(d, []).get(d)).push(it); };
+      const whereOf = (fn, fi, zk) => [zoneName(zk, fn), (fns || []).length > 1 ? (hn(fn?.type) || t("Function {n}", { n: fi + 1 })) : ""].filter(Boolean).join(" · ");
+      (fns || []).forEach((fn, fi) => {
+        if (!fn) return;
+        const en = fn.enabledEls || {};
+        Object.entries(fn.elements || {}).forEach(([zk, list]) => {
+          if (en[zk] === false || !Array.isArray(list)) return;
+          list.forEach((e) => {
+            if (!e?.foc) return;
+            const id = e.invId || e.imsId;
+            const inv = id ? invById.get(String(id)) : null;
+            const d = inv ? (deptByInvId.get(String(inv.id)) || catToDept(inv.category || inv.cat)) : (e.patternId || e.mandiId ? "Floral" : "");
+            push(d, { name: e.name || inv?.name || "", qty: Number(e.qty) || 1, unit: String(inv?.unit || e.unit || "").trim(), photo: invPhoto(inv, null), dims: inv ? invDims(inv) : "", deptTag: "", kit: 0, recipe: [], extra: [[t("Where"), whereOf(fn, fi, zk)]] });
+          });
+        });
+        Object.entries(fn.zones || {}).forEach(([zk, z]) => {
+          if (!z || en[zk] === false) return;
+          [z, ...(Array.isArray(z.extraTrussRows) ? z.extraTrussRows : [])].forEach((row) => {
+            if (!row || !isTrussFoc(row)) return;
+            push("Tenting", { name: [t("Truss"), trussTypeLbl(row.trT)].filter(Boolean).join(" "), qty: Math.max(1, Number(row.trussQty) || 1), unit: "", photo: "", dims: ftArea(row.dims), deptTag: "", kit: 0, recipe: [], extra: [[t("Where"), whereOf(fn, fi, zk)]] });
+          });
+          [z, ...(Array.isArray(z.extraPlatformRows) ? z.extraPlatformRows : [])].forEach((row) => {
+            if (!row || !isPlatformFoc(row)) return;
+            push("Tenting", { name: [t("Platform + carpet"), platLbl(row.plH, row.plHft)].filter(Boolean).join(" · "), qty: Math.max(1, Math.round(Number(row.plQty) || 1)), unit: "", photo: "", dims: ftArea(row.floorDims), deptTag: "", kit: 0, recipe: [], extra: [[t("Where"), whereOf(fn, fi, zk)]] });
+          });
+        });
+      });
+      const order = (d) => { const i = (bookDepts || []).indexOf(d); return i >= 0 ? i : 1000; };
+      return [...byDept.keys()].sort((a, b) => order(a) - order(b) || String(a).localeCompare(String(b)))
+        .flatMap((d) => listPages(byDept.get(d), t("FOC · {dept}", { dept: t(d) }), t("Free of cost"), t("Already at the venue from an earlier event - free, not to be loaded or picked up")));
+    })();
     const zoneHtml = [
       ...zonePageHtml,
       ...(combined ? [] : [
@@ -2109,6 +2146,7 @@ ${artRows.length ? sect(t("Artificial flowers & greens"), table([t("Item"), t("B
   + (artColourRows.length ? `<p class="meta">${t("Pull these specific bunches")}</p>` + table([t("Colour"), t("Bunches")], artColourRows, ["80%", "20%"]) : "")) : ""}
 ${!combined && moveRows.length ? sect(t("Dismantle routing"), table([t("Item"), t("Goes to"), t("Qty"), t("Logged by")], moveRows, ["38%", "32%", "12%", "18%"])) : ""}
 ${!combined && fabRows.length ? sect(t("Fabric required vs available"), table([t("Fabric · colour"), t("Required"), t("Available"), t("Status")], fabRows, ["40%", "20%", "20%", "20%"])) : ""}
+${focPages.join("")}
 <footer data-block>
   ${logos.dark ? `<img class="ft-logo" src="${logos.dark}" alt="Ambria — Design &amp; Decor">` : `<div class="ft-mark">AMBRIA · DESIGN &amp; DECOR</div>`}
   <div class="ft-meta">${t("Generated {date} · {name}", { date: esc(pdfDateTime(lang, new Date())), name: esc(hn(authUser?.name) || "—") })}</div>
