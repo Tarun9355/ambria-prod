@@ -6925,7 +6925,7 @@ undefined
       const pick=(m)=>{ close(); placeFlowerPick(k,idx,m); };
       return createPortal((
         <div className="ui-overlay-in" onClick={close} style={{position:"fixed",inset:0,zIndex:10000,background:"rgba(10,10,20,0.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
-          <div className="ui-pop-in" onClick={e=>e.stopPropagation()} role="dialog" aria-label="Choose a flower" style={{width:"min(720px,100%)",maxHeight:"84vh",background:isDark?"#15151f":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div className="ui-pop-in" onClick={e=>e.stopPropagation()} onKeyDown={e=>{if(e.key==="Escape"){e.stopPropagation();close();}}} role="dialog" aria-modal="true" aria-label="Choose a flower" style={{width:"min(720px,100%)",maxHeight:"84vh",background:isDark?"#15151f":"#fff",borderRadius:14,border:`1px solid ${border}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
             <div style={{padding:"14px 18px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",gap:10}}>
               <div style={{fontSize:14.5,fontWeight:700,color:textP,flex:1,minWidth:0}}>🌸 {idx==null?"Which flower?":`Change flower${curEl?.name?` (now ${curEl.name})`:""}`}</div>
               <input autoFocus value={flowerPickQ} onChange={e=>setFlowerPickQ(e.target.value)} placeholder="Search flowers…"
@@ -6937,7 +6937,7 @@ undefined
               {[["",`All ${all.length}`],...cats.map(c=>[c,`${c} ${nByCat[c]}`])].map(([c,label])=>{
                 const on=(flowerPickCat&&nByCat[flowerPickCat]?flowerPickCat:"")===c;
                 return <button type="button" key={c||"__all"} onClick={()=>setFlowerPickCat(c)} aria-pressed={on}
-                  style={{fontSize:12,fontWeight:600,padding:"5px 11px",borderRadius:999,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",
+                  style={{fontSize:12,fontWeight:600,minHeight:32,padding:"6px 12px",borderRadius:999,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",
                     border:on?"1px solid #DB2777":`1px solid ${border}`,background:on?"#DB2777":"transparent",color:on?"#fff":textP}}>{label}</button>;
               })}
             </div>}
@@ -6970,7 +6970,7 @@ undefined
                               style={{width:"100%",height:70,objectFit:"cover",borderRadius:6,background:isDark?"#1a1a2e":"#eee",cursor:"zoom-in"}}/>
                           : <span style={{width:"100%",height:70,borderRadius:6,background:isDark?"rgba(255,255,255,0.05)":"#eee",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,color:textS}}>🌸</span>}
                         <span style={{fontSize:13,fontWeight:600,color:textP,lineHeight:1.2}}>{m.name}</span>
-                        <span style={{fontSize:12,color:"#F59E0B",fontWeight:600}}>₹{flowerPickRateOf(m).toLocaleString("en-IN")}/{m.unit||"bundle"}</span>
+                        <span style={{fontSize:12,color:isDark?"#F59E0B":"#B45309",fontWeight:600}}>₹{flowerPickRateOf(m).toLocaleString("en-IN")}/{m.unit||"bundle"}</span>
                         {nV>1&&<span style={{fontSize:10.5,color:textS}}>{nV} colours</span>}
                       </button>
                     );
