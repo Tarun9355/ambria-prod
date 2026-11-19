@@ -19,7 +19,7 @@ const FUTURE = "2099-06-01", PAST = "2000-01-01";
 const makeGate = () => {
   const calls = { confirm: [], setDept: [], setOpsView: [], setModal: [], carpetPlanOf: 0, elementPlanOf: 0 };
   const run = async ({
-    multi = false, depts = ["Tenting"], shared = null, gate = true, allCarpets = false, onsiteOnly = false,
+    multi = false, depts = ["Tenting"], shared = null, gate = true, allCarpets = false,
     dept = "Tenting", deptOptions = ["Tenting", "Fabric"], carpetRows = [], itemRows = [], confirmAnswer = false, gateOpen = false,
   } = {}) => {
     const inThisBook = shared || depts;
@@ -31,10 +31,10 @@ const makeGate = () => {
     // eslint-disable-next-line no-new-func
     const fn = new Function(
       "multi", "inThisBook", "gate", "pdfAllCarpetsRef", "carpetGateOpenRef", "carpetPlanOf", "elementPlanOf", "confirm",
-      "onsiteOnly", "dept", "deptOptions", "setDept", "setOpsView", "setModal",
+      "dept", "deptOptions", "setDept", "setOpsView", "setModal",
       `return (async () => {\n${exportSrc.slice(gateStart, gateEnd)}\nreturn "pass";\n})();`,
     );
-    const out = await fn(multi, inThisBook, gate, pdfAllCarpetsRef, carpetGateOpenRef, carpetPlanOf, elementPlanOf, confirm, onsiteOnly, dept, deptOptions,
+    const out = await fn(multi, inThisBook, gate, pdfAllCarpetsRef, carpetGateOpenRef, carpetPlanOf, elementPlanOf, confirm, dept, deptOptions,
       (v) => calls.setDept.push(v), (v) => calls.setOpsView.push(v), (v) => calls.setModal.push(v));
     return { out, gateOpenAfter: carpetGateOpenRef.current };
   };
@@ -179,19 +179,6 @@ describe("items-only path: goCarpet is always false, goItems / button label / na
     expect(calls.confirm[0].body).toContain("Ask the Fabric head");
     expect(calls.setModal).toEqual([]);
     expect(calls.setDept).toEqual([]);
-  });
-  it("onsiteOnly (Site Supervisor view only): canItems false -> 'OK', told who to ask, no navigation even if deptOptions lists Fabric", async () => {
-    const { run, calls } = makeGate();
-    await run({ multi: true, depts: ["Fabric"], dept: "Fabric", deptOptions: ["Fabric", "Tenting"], onsiteOnly: true, itemRows: [itemRow()], confirmAnswer: true });
-    expect(calls.confirm[0].confirmLabel).toBe("OK");
-    expect(calls.confirm[0].body).toContain("Ask the Fabric head");
-    expect(calls.setModal).toEqual([]);
-  });
-  it("onsiteOnly with only carpet open: nothing to say, the download goes on", async () => {
-    const { run, calls } = makeGate();
-    const r = await run({ multi: true, depts: ["Tenting"], onsiteOnly: true, carpetRows: openCarpets });
-    expect(r.out).toBe("pass");
-    expect(calls.confirm).toHaveLength(0);
   });
 });
 

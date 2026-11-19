@@ -31,9 +31,6 @@ export const IMS_TABS = [
 export const IMS_SUBTABS = {
   planning: [
     { id: "deptops", label: "🏦 Dept Ops" },
-    // Dept Ops with only its Site Supervisor view (no Department Head view) - for a role that just reads the on-site side and
-    // downloads the department PDFs (owner ask 2026-11-19). "deptops" itself still gives both views.
-    { id: "deptops_onsite", label: "🚚 Dept Ops: Site Supervisor view only" },
     { id: "structure", label: "🏗️ Truss/Platform/Batta" },
     { id: "paint", label: "🎨 Paint" },
     { id: "trussbatta", label: "🏗️ Truss & Batta Config" },

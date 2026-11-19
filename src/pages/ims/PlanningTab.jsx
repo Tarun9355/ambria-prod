@@ -33,10 +33,7 @@ export default function PlanningTab({ prodRequests, projects, functions, setFunc
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
   // the user's own Tab Access override (Admin → Users → Edit) on top of the role - userSubTabs (lib/ims/tabAccess); it read the role only
   const subsOn = userSubTabs(authUser, settings, "ims", "planning");
-  // "deptops_onsite" (lib/ims/tabAccess): Dept Ops with only its Site Supervisor view. The full "deptops" wins when both are given, and the
-  // hidden Deal Check PDF run (autoPdfFor) always gets the full one.
-  const onsiteOnly = !isAdmin && !autoPdfFor && Array.isArray(subsOn) && subsOn.includes("deptops_onsite") && !subsOn.includes("deptops");
-  const allowed = isAdmin || !subsOn ? allTabs : allTabs.filter((t) => subsOn.includes(t.id) || (onsiteOnly && t.id === "deptops"));
+  const allowed = isAdmin || !subsOn ? allTabs : allTabs.filter((t) => subsOn.includes(t.id));
   const tabs0 = allowed.length > 0 ? allowed : allTabs;
   // Deal Check's hidden PDF run needs Dept Ops even if this role's Planning sub-tabs leave it out (everyone can download, 2026-11-17)
   const tabs = autoPdfFor && !tabs0.some((t) => t.id === "deptops") ? [...tabs0, allTabs.find((t) => t.id === "deptops")] : tabs0;
@@ -73,7 +70,7 @@ export default function PlanningTab({ prodRequests, projects, functions, setFunc
         <div className="min-w-0 flex-1"><Tabs tabs={tabs} active={sub} onChange={setSub} /></div>
         <div ref={setPickerSlot} className="sm:hidden shrink-0 empty:hidden" />
       </div>
-      {sub === "deptops" && <DepartmentOpsTab onsiteOnly={onsiteOnly} pickerSlot={pickerSlot} prodRequests={prodRequests} functions={functions} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} setInventory={setInventory} blocks={blocks} settings={settings} setSettings={setSettings} trussInv={trussInv} setTrussInv={setTrussInv} authUser={authUser} amendRequests={amendRequests} focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={onFocusHandled} onGoToCalendar={onGoToCalendar} autoPdfFor={autoPdfFor} onAutoPdfDone={onAutoPdfDone} supervisors={supervisors} rateCardCategories={rateCardCategories} />}
+      {sub === "deptops" && <DepartmentOpsTab pickerSlot={pickerSlot} prodRequests={prodRequests} functions={functions} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} setInventory={setInventory} blocks={blocks} settings={settings} setSettings={setSettings} trussInv={trussInv} setTrussInv={setTrussInv} authUser={authUser} amendRequests={amendRequests} focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={onFocusHandled} onGoToCalendar={onGoToCalendar} autoPdfFor={autoPdfFor} onAutoPdfDone={onAutoPdfDone} supervisors={supervisors} rateCardCategories={rateCardCategories} />}
       {sub === "structure" && <StructurePlanningTab trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} platformAlloc={platformAlloc} setPlatformAlloc={setPlatformAlloc} battaAlloc={battaAlloc} setBattaAlloc={setBattaAlloc} trussInv={trussInv} eventOrders={eventOrders} authUser={authUser} canEditPlanning={canEditPlanning} />}
       {sub === "paint" && <PaintPlanningTab projects={projects} functions={functions} inventory={inventory} settings={settings} />}
       {sub === "trussbatta" && <AdminSettingsTab mode="trussbatta" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} canEdit={canEditPlanning} />}
