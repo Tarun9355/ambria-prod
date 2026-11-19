@@ -708,7 +708,9 @@ function deriveMandiView(deptData, fp) {
 // new type on every render, which remounts it and takes the caret with it — the very bug this is
 // meant to fix.
 const TRUCK_FIELD_SAVE_MS = 600;
-function TruckTextBox({ value, onCommit, ...rest }) {
+// `clean` (optional) is applied to every keystroke, so what cannot be in the field never appears in
+// it — the phone box takes phone10 and a letter simply does not type.
+function TruckTextBox({ value, onCommit, clean, ...rest }) {
   const [draft, setDraft] = useState(value ?? "");
   const typing = useRef(false);
   const timer = useRef(null);
@@ -740,7 +742,7 @@ function TruckTextBox({ value, onCommit, ...rest }) {
       value={draft}
       onFocus={() => { typing.current = true; }}
       onChange={(e) => {
-        const v = e.target.value;
+        const v = clean ? clean(e.target.value) : e.target.value;
         setDraft(v);
         pending.current = v;
         if (timer.current) clearTimeout(timer.current);
@@ -5982,7 +5984,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           full-width fields stacked made each truck a screen tall before its items. */}
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         {[["Vehicle no.", "vehicle"], ["Driver", "driver"], ["Phone", "phone"]].map(([l, k]) => (
-                          <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className="block text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{l}</label><TruckTextBox value={t[k] || ""} onCommit={v => setTruck(t.id, { [k]: v })} placeholder={k === "vehicle" ? "outside vehicle?" : ""} className="mt-1 w-full h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></div>
+                          <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className="block text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{l}</label><TruckTextBox value={t[k] || ""} clean={k === "phone" ? phone10 : undefined} onCommit={v => setTruck(t.id, { [k]: v })} {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })} className="mt-1 w-full h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></div>
                         ))}
                       </div>
                       {loadItems.length > 0 ? (
@@ -6715,7 +6717,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       <div className="text-[10px] text-sky-600 mt-1 pl-1 space-y-0.5">
                         {r.whTrucks.map((t, j) => <div key={"w" + j} className="flex items-center gap-1.5 flex-wrap"><span>🚛 {t.qty}× from production house · Truck {t.n}{t.vehicle ? ` (${t.vehicle}${t.driver ? " · " + t.driver : ""})` : t.driver ? ` (${t.driver})` : ""}</span>{t.phone
                           ? <a href={"tel:" + t.phone} onClick={e => e.stopPropagation()} className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>📞 Call {t.driver || ""}</a>
-                          : <input defaultValue="" onClick={e => e.stopPropagation()} onBlur={e => { const v = e.target.value.trim(); if (v && t.id) setTruck(t.id, { phone: v }); }} placeholder="📞 add driver phone" className="border border-sky-300 rounded-full px-2 py-0.5 text-[10px] w-32" title="Enter the driver's phone to enable Call" />
+                          : <input defaultValue="" onClick={e => e.stopPropagation()} inputMode="numeric" maxLength={10} onChange={e => { e.target.value = phone10(e.target.value); }} onBlur={e => { const v = phone10(e.target.value); if (v && t.id) setTruck(t.id, { phone: v }); }} placeholder="📞 add driver phone" className="border border-sky-300 rounded-full px-2 py-0.5 text-[10px] w-32" title="Enter the driver's phone to enable Call" />
                         }</div>)}
                         {r.sources.map((s, j) => <div key={"r" + j} className="flex items-center gap-1.5 text-sky-700 flex-wrap"><span>↪️ {s.qty}× reused from {s.from} ({s.dept}){s.vehicle || s.driver ? ` · ${s.vehicle || ""}${s.vehicle && s.driver ? " · " : ""}${s.driver || ""}` : ""}</span>{s.phone && <a href={"tel:" + s.phone} onClick={e => e.stopPropagation()} className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5 hover:bg-emerald-100" title={"Call " + (s.driver || "driver") + " · " + s.phone}>📞 Call {s.driver || ""}</a>}{s.voiceNote && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700"><span title="voice note from the sending site — listen before it arrives">🎤 note:</span><audio src={s.voiceNote} controls className="h-6 max-w-[150px]" /></span>}</div>)}
                         {r.whTrucks.length === 0 && r.sources.length === 0 && <div className="text-gray-400">No truck assigned yet.</div>}
