@@ -693,7 +693,7 @@ function deriveMandiView(deptData, fp) {
   return { mandiTabs, legacyMandiLines, mandiLinesByFn, mandiLinesByFnMeta, mandiLinesArchived, liveFnByIdx, ownsStoredEntry, rawStoredFor, fallbackRowsFor, mandiRowsOfTab, mandiGrandReal, anyUnknownRealSpend };
 }
 
-export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [] }) {
+export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [] }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   // A labour usage row belongs to the department Deal Check charged it to (ur.dept — the item's own
@@ -758,7 +758,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
   // Admin → Transport's venue list (one settings row): the venue's standard genset counts, for the Lighting book's Power page
   // on an event synced before Studio sent each function's own gensets (lib/ims/gensetPlan). Read with truckCap below.
   const [trVenues, setTrVenues] = useState([]);
-  const [opsView, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
+  const [opsViewRaw, setOpsView] = useState(onsiteOnly ? "onsite" : "planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
+  // onsiteOnly (Planning sub-tab "Dept Ops: Site Supervisor view only"): this person never leaves the on-site view
+  const opsView = onsiteOnly ? "onsite" : opsViewRaw;
   // The mini calendar that used to sit in this rail is gone — the IMS Calendar tab is the one
   // calendar, and clicking an event there lands here with that event already selected. Its
   // date-filter state went with it; the search box still narrows the list.
@@ -3600,8 +3602,9 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
         const itemLines = listOf(itemsLeft, r => `${r.zoneName} · ${r.name}`, r => (r.status === "short" ? " (none of the choices covers it)" : ""));
         // The site's own dialog (not the browser's alert): says what is missing and takes them straight to the plan.
         // Someone who cannot open that department is told who to ask, not sent to a panel they cannot reach.
-        const canCarpet = dept === "Tenting" || deptOptions.includes("Tenting");
-        const canItems = dept === "Fabric" || deptOptions.includes("Fabric");
+        // a Site-Supervisor-view-only person has no plans to make: the message tells them who to ask instead of sending them there
+        const canCarpet = !onsiteOnly && (dept === "Tenting" || deptOptions.includes("Tenting"));
+        const canItems = !onsiteOnly && (dept === "Fabric" || deptOptions.includes("Fabric"));
         const goCarpet = carpetLeft.length > 0 && canCarpet;
         const goItems = !goCarpet && itemsLeft.length > 0 && canItems;
         const carpetHow = canCarpet ? "Pick a carpet for each in Tenting → Carpet plan (if no stock carpet can be used, choose \"Arrange separately\")" : "Ask the Tenting head to choose them in Planning → Tenting → Carpet plan";
@@ -3828,7 +3831,7 @@ export default function DepartmentOpsTab({ pickerSlot = null, prodRequests = [],
         read as clutter rather than as three controls. Unringed, the inactive tag is just a
         label until you want it, and the one that is outlined is the one that means something.
         28px tall, matching the bell. */}
-    {[["planning", "Department Head", IconClipboard], ["onsite", "Site Supervisor", IconTruck]].map(([k, label, Icon]) => {
+    {!onsiteOnly && [["planning", "Department Head", IconClipboard], ["onsite", "Site Supervisor", IconTruck]].map(([k, label, Icon]) => {
       const on = opsView === k;
       return (
         <button key={k} onClick={() => setOpsView(k)} aria-pressed={on}
