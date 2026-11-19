@@ -46,6 +46,7 @@ import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
 import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeLogs } from "../../lib/ims/recentChanges";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
+import { isMyEvent, supervisorIdsOfUser } from "../../lib/ims/mySupervisorEvents";
 import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
@@ -745,6 +746,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // picker grid; null shows every venue, same as before this existed. Click the active dot again
   // to clear it (toggle, not a separate "clear" control).
   const [venueFilter, setVenueFilter] = useState(null);
+  // "👷 My events" (Site-Supervisor-view-only role): the calendar shows only the events this login is the Site Supervisor of
+  const [myOnly, setMyOnly] = useState(false);
+  const mySupervisorIds = useMemo(() => (onsiteOnly ? supervisorIdsOfUser(authUser, supervisors) : []), [onsiteOnly, authUser, supervisors]);
   const [selId, setSelId] = useState(null);
   // True only while the PDF started from Deal Check is being built: that book shows all three carpets sales picked for a
   // floor; the PDF made here in Planning shows just the one Planning decided (the three only until it is decided).
@@ -1019,12 +1023,13 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return allEvents
       // Ops plans only for SOLD/finalised events — hide pending, cancelled and review deals.
       .filter(({ eo }) => isLiveEvent(eo))
+      .filter(({ eo }) => !(onsiteOnly && myOnly) || isMyEvent(eo, authUser, supervisors))
       // Every function's own venue, not just functionsDetail[0]'s — a multi-venue deal must be
       // findable by searching ANY of its venues, not only its first function's.
       .filter(({ eo }) => !q || (eo.clientName || "").toLowerCase().includes(q)
         || [eo.venue, ...(Array.isArray(eo.functionsDetail) ? eo.functionsDetail.map((f) => f?.venue) : [])].some((v) => (v || "").toLowerCase().includes(q)))
       .sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999"));
-  }, [allEvents, search]);
+  }, [allEvents, search, onsiteOnly, myOnly, authUser, supervisors]);
 
   // Open the picker on a month that actually has events — nearest upcoming, else the most recent
   // past one. Sold events cluster in a few months; landing on "today" usually meant an empty grid
@@ -1179,7 +1184,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // Deal Check's "All departments PDF" frame says which language it wants (&pdfLang=, DeptPdfButton) - used for that run only,
     // never written back over this browser's own IMS choice.
     try { const m = /[?&]pdfLang=(hi|en)\b/.exec(window.location.hash); if (m && window.__AMBRIA_PDF_FRAME__) return m[1]; } catch { /* no hash */ }
-    try { return localStorage.getItem(PDF_LANG_KEY) === "hi" ? "hi" : "en"; } catch { return "en"; }
+    // a Site-Supervisor-view-only person starts on Hindi (owner ask 2026-11-19), until they pick English themselves
+    try { const saved = localStorage.getItem(PDF_LANG_KEY); return saved === "hi" || saved === "en" ? saved : (onsiteOnly ? "hi" : "en"); } catch { return onsiteOnly ? "hi" : "en"; }
   });
   const setPdfLang = (l) => {
     const v = l === "hi" ? "hi" : "en";
@@ -3650,6 +3656,19 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // TDZ error the build does not catch.
   const exportDeptPdf = (depts, opts) => exportPdf(Array.isArray(depts) && depts.length ? depts : [dept], opts);
 
+  // Site-Supervisor-view-only role: "Floral PDF" and "All departments PDF" buttons under the event header. The Floral book is the one
+  // Floral department's book (recipes and all), built from the Floral tab - so a click from another department moves to Floral first
+  // and the download starts once that render is there.
+  const [floralPdfWanted, setFloralPdfWanted] = useState(false);
+  useEffect(() => {
+    if (!floralPdfWanted || dept !== "Floral" || !sel || exporting) return;
+    setFloralPdfWanted(false);
+    exportDeptPdf(["Floral"]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [floralPdfWanted, dept, sel, exporting]);
+  const downloadFloralPdf = () => { if (dept === "Floral") exportDeptPdf(["Floral"]); else { setFloralPdfWanted(true); setDept("Floral"); } };
+  const downloadAllDeptsPdf = () => { const all = deptsWithWork.length ? deptsWithWork : bookDepts; exportDeptPdf(all, { combined: all.length > 1 || all[0] !== dept }); };
+
   // Started from Studio's Deal Check ("All departments PDF"): IMS runs hidden in a frame, selects that event
   // and builds the combined book exactly as the Download PDF button does, then tells Deal Check how it went.
   // A few seconds' wait first lets the event's inventory, settings and blocks finish arriving, so the book
@@ -4075,7 +4094,15 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     {/* Today as a pill, the arrows as circles — the arrows are a pair doing one
                         job and the pill is a separate one, so they should not look alike. Drawn
                         chevrons rather than ‹ › glyphs, which sit off-centre in most faces. */}
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                      {onsiteOnly && (
+                        <button type="button" onClick={() => { setMyOnly(v => !v); setPickDay(null); }} aria-pressed={myOnly}
+                          title={myOnly ? "Showing only the events you are the Site Supervisor of - tap to show every event" : "Show only the events you are the Site Supervisor of"}
+                          className={"px-3.5 h-9 rounded-full text-xs font-semibold inline-flex items-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 "
+                            + (myOnly ? "bg-blue-600 text-white hover:bg-blue-700" : "bg-gray-900 text-white hover:bg-gray-700")}>
+                          <span aria-hidden="true">👷</span>{myOnly ? "My events ✓" : "My events"}
+                        </button>
+                      )}
                       <button onClick={() => { setPickDay(null); setPickMonth({ y: _now.getFullYear(), m: _now.getMonth() }); }}
                         className="px-3 h-9 rounded-full text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 transition">Today</button>
                       <button onClick={prev} title="Previous month" aria-label="Previous month"
@@ -4242,7 +4269,14 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   </div>
                   {monthTotal === 0 && (
                     <div className="px-4 py-3 text-center text-[11px] text-gray-400">
-                      {venueFilter ? (
+                      {onsiteOnly && myOnly ? (
+                        <>
+                          {mySupervisorIds.length === 0
+                            ? "Your login is not on the Site Supervisor list (Admin → Settings → Supervisors) with this name / phone number - ask the admin to add you."
+                            : "No events with you as the Site Supervisor this month - page to another month."}{" "}
+                          <button onClick={() => setMyOnly(false)} className="font-semibold text-blue-600 hover:text-blue-800">Show every event</button>
+                        </>
+                      ) : venueFilter ? (
                         <>No {VENUE_CALENDAR_LEGEND.find(v => v.code === venueFilter)?.label || venueFilter} events this month — other venues may still have some.{" "}
                           <button onClick={() => setVenueFilter(null)} className="font-semibold text-blue-600 hover:text-blue-800">Clear filter</button>
                         </>
@@ -4427,6 +4461,25 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 {viewSwitch}
               </div>
             </div>
+
+            {/* ── SITE SUPERVISOR: THE TWO PDFs ──
+                A Site-Supervisor-view-only person downloads the all-departments book or the Floral book (owner ask 2026-11-19); in
+                Hindi unless they switch the EN | हिं toggle. Labelled buttons, always on screen, phone and desktop alike. */}
+            {onsiteOnly && dept !== PAINT && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={downloadAllDeptsPdf} disabled={!sel || !!exporting}
+                  className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl text-sm font-semibold bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+                  {exporting === "download" ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" /> : <IconDownload />}
+                  <span>{exporting === "download" ? (exportNote || "Building the PDF…") : "All departments PDF"}</span>
+                </button>
+                {deptOptions.includes("Floral") && (
+                  <button type="button" onClick={downloadFloralPdf} disabled={!sel || !!exporting || floralPdfWanted}
+                    className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl text-sm font-semibold bg-white text-gray-800 ring-1 ring-gray-200 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+                    <span aria-hidden="true">🌸</span><span>Floral PDF</span>
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Recent changes — a salesperson can now add/remove/change items on a sold deal at any
                 time, no approval needed (owner decision, replaces the old last-minute amendment gate).
