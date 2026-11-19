@@ -3578,7 +3578,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // all-departments book) tells the crew which design goes where: an unmade decision has nothing to print, so those PDFs are refused until
     // it is made. Every other department's PDF is not held up. What is missing is named so it can be fixed in the plan.
     // The PDF started from Deal Check (it lists what sales asked for) and the viewer refreshing itself are not held up by this.
-    const needCarpets = multi || inThisBook.includes("Tenting");
+    // Carpet is NOT held up here any more (owner ask 2026-11-19: "ye carpet selection wala gate deal check pe hoga, yahan nahi"): the carpet
+    // choice is made and checked in Deal Check, so an IMS download never stops on it - the book's carpet card shows what sales picked,
+    // or says no carpet was picked. The overlay / cushion cover decision below still holds the Fabric and all-departments books.
+    const needCarpets = false;
     const needItems = multi || inThisBook.includes("Fabric");
     if (gate && !pdfAllCarpetsRef.current && (needCarpets || needItems)) {
       // Something whose function date has already passed has nothing left to plan, so history can always be downloaded.
