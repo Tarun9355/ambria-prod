@@ -782,7 +782,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // 🎨 Paint (owner ask 2026-11-01) is a view on the bar, not one of the ops departments: no income, crew or book of its own -
   // it lists the event's repainted items (PaintDeptView). Shown to whoever sees every department, or is given Paint.
   const PAINT = "Paint";
-  const deptOptions = [...(isAdmin || !myDepts ? DEPTS : DEPTS.filter((d) => myDepts.includes(d))), ...(isAdmin || !myDepts || myDepts.includes(PAINT) ? [PAINT] : [])];
+  const deptOptions = [...(isAdmin || !myDepts ? DEPTS : DEPTS.filter((d) => myDepts.includes(d))), ...(!onsiteOnly && (isAdmin || !myDepts || myDepts.includes(PAINT)) ? [PAINT] : [])]; // the Site-Supervisor-view-only role never gets Paint (its view prints paint costs)
   // the departments a PDF book is made for
   const bookDepts = deptOptions.filter((d) => d !== PAINT);
 

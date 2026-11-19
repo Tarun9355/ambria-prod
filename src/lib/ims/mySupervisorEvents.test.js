@@ -113,4 +113,7 @@ describe("Dept Ops wiring for the Site-Supervisor-view-only role", () => {
   it("the department starts on the first one they can see again (no Tenting default)", () => {
     expect(src).toMatch(/const \[dept, setDept\] = useState\(roleDept \|\| deptOptions\[0\] \|\| "Floral"\);/);
   });
+  it("that role is never offered Paint (its view prints paint costs), everyone else keeps it as before", () => {
+    expect(src).toContain("...(!onsiteOnly && (isAdmin || !myDepts || myDepts.includes(PAINT)) ? [PAINT] : [])]");
+  });
 });
