@@ -19,13 +19,13 @@ describe("role with only the Site Supervisor view of Dept Ops", () => {
     expect(userSubTabs(user, settings, "ims", "planning")).toEqual(["deptops_onsite"]);
     expect(hasTabPerm(user, settings, "ims", "planning", "edit")).toBe(false);
   });
-  it("wiring: PlanningTab turns it into Dept Ops with onsiteOnly (never for admin or the hidden PDF run); Dept Ops keeps to the on-site view", () => {
+  it("wiring: PlanningTab turns it into Dept Ops with onsiteOnly (never for admin or the hidden PDF run); Dept Ops hides the Department Head switch and shows only Inventory blocked", () => {
     const pt = read("PlanningTab.jsx");
     expect(pt).toContain('subsOn.includes("deptops_onsite") && !subsOn.includes("deptops")');
     expect(pt).toContain("!isAdmin && !autoPdfFor");
     expect(pt).toContain("<DepartmentOpsTab onsiteOnly={onsiteOnly}");
     const d = read("DepartmentOpsTab.jsx");
-    expect(d).toContain('const opsView = onsiteOnly ? "onsite" : opsViewRaw;');
+    expect(d).toContain('const opsView = opsViewRaw;');
     expect(d).toContain('{!onsiteOnly && [["planning", "Department Head"');
   });
 });

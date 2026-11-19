@@ -786,8 +786,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // the departments a PDF book is made for
   const bookDepts = deptOptions.filter((d) => d !== PAINT);
 
-  // a Site-Supervisor-view-only person has no department bar and starts on Tenting (the on-site screen the owner asked for), else the first they can see
-  const [dept, setDept] = useState(roleDept || (onsiteOnly && deptOptions.includes("Tenting") ? "Tenting" : deptOptions[0] || "Floral"));
+  const [dept, setDept] = useState(roleDept || deptOptions[0] || "Floral");
   // this tab's own PDF: its shared book's name when it has one ("Fabric & Tenting")
   const deptBookName = (SHARED_BOOKS.find(g => g.includes(dept)) || [dept]).join(" & ");
   const [exportNote, setExportNote] = useState("");
@@ -822,9 +821,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // Admin → Transport's venue list (one settings row): the venue's standard genset counts, for the Lighting book's Power page
   // on an event synced before Studio sent each function's own gensets (lib/ims/gensetPlan). Read with truckCap below.
   const [trVenues, setTrVenues] = useState([]);
-  const [opsViewRaw, setOpsView] = useState(onsiteOnly ? "onsite" : "planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
-  // onsiteOnly (Planning sub-tab "Dept Ops: Site Supervisor view only"): this person never leaves the on-site view
-  const opsView = onsiteOnly ? "onsite" : opsViewRaw;
+  const [opsViewRaw, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
+  // onsiteOnly (Planning sub-tab "Dept Ops: Site Supervisor view only"): the department bar stays, but each department shows only its Inventory blocked tile (no income, changes, fixed-venue stock or other tiles) and the Department Head / Site Supervisor switch is hidden
+  const opsView = opsViewRaw;
   // The mini calendar that used to sit in this rail is gone — the IMS Calendar tab is the one
   // calendar, and clicking an event there lands here with that event already selected. Its
   // date-filter state went with it; the search box still narrows the list.
@@ -3968,7 +3967,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
           row (see pickerSlot below) and this row is desktop-only; hidden rather than left empty,
           or its space-y gap would still open a blank band above the event. Without a slot it
           falls back to the old pulled-up placement. */}
-      {pickerSlot && !onsiteOnly && createPortal(
+      {pickerSlot && createPortal(
         <div data-hi-scope className="sm:hidden">
           {roleDept && !isAdmin
             ? <span className="inline-flex px-3 py-2 rounded-xl bg-blue-50 text-blue-700 text-[13px] font-semibold whitespace-nowrap">{DEPT_ICON[roleDept]} {roleDept}</span>
@@ -3994,8 +3993,6 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
           their heights cannot diverge — and ml-auto keeps this one on the right, clear of it.
           56 rather than the bare 48: this sits inside a `flex items-center` row that adds a few
           pixels of its own above the control, which the raw height calculation does not see. */}
-      {/* Site-Supervisor-view-only (owner ask 2026-11-19): no department bar - no chips, EN | हिं, Download PDF, Sync. Their PDFs and language sit under the event header. */}
-      {!onsiteOnly && (
       <div className="w-fit max-w-full ml-auto -mt-14 sm:mt-0 sm:ml-0 sm:bg-white sm:rounded-xl sm:shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] sm:px-3 sm:py-2">
       <div className="flex items-center gap-1.5">
         {/* Scrolls sideways rather than wrapping to a second row: eight departments at a phone
@@ -4054,7 +4051,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         <div className="flex items-center gap-1.5 shrink-0">
           {/* The PDF's language, right before the button it applies to (the phone has its own by the PDF icons). */}
           <PdfLangToggle value={pdfLang} onChange={setPdfLang} disabled={!!exporting} display="hidden sm:inline-flex" className="ml-1" />
-          <button onClick={() => { const allDepts = deptsWithWork.length ? deptsWithWork : bookDepts; exportDeptPdf(allDepts, { combined: allDepts.length > 1 || allDepts[0] !== dept }); }} disabled={!sel || !!exporting}
+          {/* the Site-Supervisor-view-only role has its own two PDF buttons under the event header, and no Sync */}
+          {!onsiteOnly && <button onClick={() => { const allDepts = deptsWithWork.length ? deptsWithWork : bookDepts; exportDeptPdf(allDepts, { combined: allDepts.length > 1 || allDepts[0] !== dept }); }} disabled={!sel || !!exporting}
             title={!sel ? "Pick an event first" : exporting === "download" ? "Building the PDF…"
               : `One PDF with all ${(deptsWithWork.length || bookDepts.length)} departments on this event`}
             className="hidden sm:inline-flex shrink-0 items-center gap-1.5 ml-1 px-3 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap border border-gray-200 bg-white text-gray-700 hover:text-gray-900 hover:bg-gray-50 hover:-translate-y-0.5 hover:shadow-[0_1px_2px_rgba(16,24,40,0.06),0_4px_10px_-6px_rgba(16,24,40,0.2)] disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:text-gray-700 disabled:hover:shadow-none transition-all duration-150">
@@ -4062,13 +4060,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
               ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" />
               : <IconDownload />}
             <span>{exporting === "download" && exportNote ? exportNote : "Download PDF"}</span>
-          </button>
+          </button>}
           {/* Only while an event's planning is older than an IMS setting / inventory change. */}
-          <PlanningSyncButton eventOrders={eventOrders} onlyOrder={sel} />
+          {!onsiteOnly && <PlanningSyncButton eventOrders={eventOrders} onlyOrder={sel} />}
         </div>
       </div>
       </div>
-      )}
       </div>
 
       {/* ── Department detail for the selected event ──
@@ -4531,7 +4528,6 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 Hindi unless they switch the EN | हिं toggle. Labelled buttons, always on screen, phone and desktop alike. */}
             {onsiteOnly && dept !== PAINT && (
               <div className="flex flex-wrap items-center gap-2">
-                <PdfLangToggle value={pdfLang} onChange={setPdfLang} disabled={!!exporting} display="hidden sm:inline-flex" />
                 <button type="button" onClick={downloadAllDeptsPdf} disabled={!sel || !!exporting}
                   className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl text-sm font-semibold bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
                   {exporting === "download" ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" /> : <IconDownload />}
@@ -4639,7 +4635,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 scopes the entire column, so it sits with the event rather than between cards. */}
 
             {/* This department's open requests from Supply → Production (Painter & Production in the Paint view) */}
-            {opsView === "planning" && <ProductionRequestsCard prodRequests={prodRequests} functions={functions} dept={dept} onZoom={setZoomImg}
+            {opsView === "planning" && !onsiteOnly && <ProductionRequestsCard prodRequests={prodRequests} functions={functions} dept={dept} onZoom={setZoomImg}
               eventDates={new Set([sel?.date, ...(Array.isArray(sel?.functionsDetail) ? sel.functionsDetail.map(f => f?.fnDate || f?.date) : [])].map(d => String(d || "").slice(0, 10)).filter(Boolean))} />}
 
             {dept === PAINT && <PaintDeptView sel={sel} inventory={inventory} colourCatalogue={settings?.colourCatalogue} defaultPaintCost={Number(settings?.defaultPaintCostPerItem) || 400} zoneLabel={zoneLabelFor} onZoom={setZoomImg} />}
@@ -4647,11 +4643,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
             {opsView === "planning" && dept !== PAINT && (<>
 
             {/* What stands permanently at each Fixed Venue for this department (read-only, from Settings → Fixed Venues). */}
-            <FixedVenueStockCard fixedVenues={fvSettings.fixedVenues} inventory={inventory} dept={dept} catToDept={catToDept} settings={fvSettings} eventVenue={sel?.venue} onZoom={setZoomImg} />
+            {!onsiteOnly && <FixedVenueStockCard fixedVenues={fvSettings.fixedVenues} inventory={inventory} dept={dept} catToDept={catToDept} settings={fvSettings} eventVenue={sel?.venue} onZoom={setZoomImg} />}
 
             {/* Department income (from Deal Check snapshot — matches Studio). Floral is split into real
                 (mandi) vs artificial; Manpower uses the LIVE edited plan so crew edits move the total. */}
-            {deptIncome ? (() => {
+            {onsiteOnly ? null : deptIncome ? (() => {
               // The maths moved to the `income` memo so the PDF export and this panel cannot
               // drift: a head added here but not there would put two different breakdowns of the
               // same department in front of the same person.
@@ -4745,7 +4741,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 department's own lines first and clickable (they open their block); other departments' for context. */}
             {(() => {
               const list = deptChangesOf(sel.id);
-              if (!list.length) return null;
+              if (onsiteOnly || !list.length) return null;
               return (
                 <div className="rounded-xl bg-white ring-1 ring-amber-300 shadow-[0_1px_2px_rgba(16,24,40,0.05)] overflow-hidden" role="status">
                   {/* the Activity log's own look (owner ask 2026-11-15) - an amber head so it still reads as a warning */}
@@ -4806,7 +4802,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 { k: "actuals", icon: "🧾", title: "Actuals", sub: hasActuals ? "real spend logged" : "nothing logged yet", value: hasActuals ? fmt(actualCost) : null },
                 { k: "truck", icon: "🚚", title: "Truck planning", sub: trucks.length ? n(trucks.length, "truck") + (fullTrucks ? ` · ${fullTrucks} full` : "") : "no trucks yet" },
                 SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && { k: "dism", icon: "🔁", title: "Dismantle plan", sub: "where each item goes after" },
-              ].filter(Boolean);
+              ].filter((t) => t && (!onsiteOnly || t.k === "inv")); // Site-Supervisor-view-only: Inventory blocked only
               return (
                 <div className={GRID}>
                   {tiles.map(t => (
