@@ -694,6 +694,63 @@ function deriveMandiView(deptData, fp) {
   return { mandiTabs, legacyMandiLines, mandiLinesByFn, mandiLinesByFnMeta, mandiLinesArchived, liveFnByIdx, ownsStoredEntry, rawStoredFor, fallbackRowsFor, mandiRowsOfTab, mandiGrandReal, anyUnknownRealSpend };
 }
 
+// ═══ A TRUCK'S VEHICLE / DRIVER / PHONE BOX ═══
+//
+// These used to save on EVERY keystroke. setTruck goes through setEventOrders, which upserts the
+// whole event_orders row — the deal's entire blob — and JSON.stringifies every order it holds to
+// work out what changed. A number plate is eight characters, so it was eight full-row writes, and
+// the box ran a second or more behind the typing (owner's screen recording, 2026-11-19).
+//
+// The box keeps what is being typed itself, so it is always instant, and saves once the typing
+// stops. It also saves at once on blur, and on unmount, so a value is never left only in here.
+//
+// Declared at module level, NOT inside DepartmentOpsTab: a component defined inside another is a
+// new type on every render, which remounts it and takes the caret with it — the very bug this is
+// meant to fix.
+const TRUCK_FIELD_SAVE_MS = 600;
+function TruckTextBox({ value, onCommit, ...rest }) {
+  const [draft, setDraft] = useState(value ?? "");
+  const typing = useRef(false);
+  const timer = useRef(null);
+  const pending = useRef(null);
+  const sent = useRef(null);
+  // onCommit closes over this render's props; held in a ref so a pending save never fires a stale one
+  const commit = useRef(onCommit);
+  commit.current = onCommit;
+
+  // Take the saved value when this box is NOT the one being typed into — another tab's edit, or a
+  // vehicle picked off the fleet. Take it WHILE typing too if it came back different from what was
+  // sent up: that is the caller having corrected it (a quantity clamped to the truck's room), and
+  // leaving the box showing the rejected figure would be a lie.
+  useEffect(() => {
+    const v = value ?? "";
+    if (!typing.current || (sent.current !== null && String(v) !== String(sent.current))) setDraft(v);
+  }, [value]);
+
+  const flush = () => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    if (pending.current !== null) { const v = pending.current; pending.current = null; sent.current = v; commit.current(v); }
+  };
+  // Typed, then the truck is collapsed or the tab left without blurring — still saved.
+  useEffect(() => flush, []);
+
+  return (
+    <input
+      {...rest}
+      value={draft}
+      onFocus={() => { typing.current = true; }}
+      onChange={(e) => {
+        const v = e.target.value;
+        setDraft(v);
+        pending.current = v;
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(flush, TRUCK_FIELD_SAVE_MS);
+      }}
+      onBlur={() => { typing.current = false; flush(); }}
+    />
+  );
+}
+
 export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [] }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
@@ -5925,7 +5982,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           full-width fields stacked made each truck a screen tall before its items. */}
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                         {[["Vehicle no.", "vehicle"], ["Driver", "driver"], ["Phone", "phone"]].map(([l, k]) => (
-                          <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className="block text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{l}</label><input value={t[k] || ""} onChange={e => setTruck(t.id, { [k]: e.target.value })} placeholder={k === "vehicle" ? "outside vehicle?" : ""} className="mt-1 w-full h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></div>
+                          <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className="block text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{l}</label><TruckTextBox value={t[k] || ""} onCommit={v => setTruck(t.id, { [k]: v })} placeholder={k === "vehicle" ? "outside vehicle?" : ""} className="mt-1 w-full h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></div>
                         ))}
                       </div>
                       {loadItems.length > 0 ? (
@@ -5952,12 +6009,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               </div>
                               {/* Normal load, capped at what the item still needs across all trucks. Once it is
                                   fully loaded, the amber box takes any extra (overload) on this truck. */}
-                              <input type="number" min="0" max={maxHere} value={onThis || ""} onChange={e => setTruckItem(t.id, k, e.target.value === "" ? "" : Math.min(maxHere, Math.max(0, Number(e.target.value) || 0)))} placeholder="0" aria-label={`${it.name} on this truck`} title={`On this truck (up to ${maxHere})`}
+                              <TruckTextBox type="number" min="0" max={maxHere} value={onThis || ""} onCommit={v => setTruckItem(t.id, k, v === "" ? "" : Math.min(maxHere, Math.max(0, Number(v) || 0)))} placeholder="0" aria-label={`${it.name} on this truck`} title={`On this truck (up to ${maxHere})`}
                                 className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400" />
                               {(totalLoaded >= (Number(it.qty) || 0) || extraHere > 0) && (
                                 <label className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-700" title="Extra pieces on this truck beyond what the item needs (overload)">
                                   +
-                                  <input type="number" min="0" value={extraHere || ""} onChange={e => setTruckExtra(t.id, k, e.target.value === "" ? "" : Math.max(0, Number(e.target.value) || 0))} placeholder="extra" aria-label={`${it.name} extra on this truck`}
+                                  <TruckTextBox type="number" min="0" value={extraHere || ""} onCommit={v => setTruckExtra(t.id, k, v === "" ? "" : Math.max(0, Number(v) || 0))} placeholder="extra" aria-label={`${it.name} extra on this truck`}
                                     className="w-14 h-8 rounded-lg bg-amber-50 ring-1 ring-amber-300 px-1.5 text-sm text-center font-semibold tabular-nums text-amber-800 placeholder:font-normal placeholder:text-[10px] placeholder:text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400" />
                                 </label>
                               )}
