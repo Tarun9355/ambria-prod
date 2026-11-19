@@ -119,7 +119,7 @@ describe("book: flower cards in the combined book (owner report 2026-11-14)", ()
   });
 });
 
-describe("book: the combined book carries no FLORAL kit cards (owner ask 2026-11-14)", () => {
+describe("book: the combined book carries a Floral kit's parts card, but no flower recipe (owner report 2026-11-19; recipes out since 2026-11-18)", () => {
   const inv3 = [...inventory, { id: "k1", name: "Wooden Console", category: "Florals", subItems: [{ itemId: "f1", qty: 2 }] },
     { id: "k2", name: "Tree", category: "Tenting", subItems: [{ itemId: "s1", qty: 3 }] }];
   const cat = (c) => ({ Florals: "Floral", Tenting: "Tenting", Fabric: "Fabric", Furniture: "Structure" })[c] || "";
@@ -131,15 +131,38 @@ describe("book: the combined book carries no FLORAL kit cards (owner ask 2026-11
     floralDetail: [{ realZones: [{ zone: "stage", el: "Chandelier Recipe", kitParent: "Wooden Console", lines: [{ name: "floral foam", qty: 2, unit: "pc" }] }],
       artZones: [{ zone: "stage", el: "Chandelier Recipe", kitParent: "Wooden Console", flower: 9, green: 7, qty: 1 }] }],
   };
-  it("a Floral kit: no 📦 card, and its recipe's bunches / foam do not come back as a loose card", () => {
+  it("a Floral kit: its 📦 parts card prints, and its recipe's bunches / foam still do not (not as a card, not as a loose card)", () => {
     const html = bookOf(selK);
-    expect(html).not.toContain("📦");
+    expect(html).toContain("📦");
+    expect(html).toContain("Wooden Console");
+    expect(html).toContain("Ivory Liza Drape"); // the kit's part
     expect(html).not.toContain("Chandelier Recipe");
     expect(html).not.toContain("floral foam");
+    expect(html).not.toContain("Artificial flowers");
   });
   it("another department's kit (a Tenting tree) keeps its parts card", () => {
     const selT = { ...sel, functionsDetail: [{ fnType: "Wedding", date: "2026-12-01", venue: "", zones: ["stage"], elements: { stage: [{ name: "Tree", invId: "k2", qty: 1 }] } }] };
     expect(bookOf(selT)).toContain("📦");
+  });
+  // an EDITED kit (Build's kitOverrides on the element) prints exactly what Build has now
+  const selE = (qty, overrides) => ({ ...sel, functionsDetail: [{ fnType: "Wedding", date: "2026-12-01", venue: "", zones: ["stage"],
+    elements: { stage: [{ name: "Wooden Console", invId: "k1", qty, kitOverrides: overrides }] } }] });
+  it("an edited kit: a part added in Build is on the card, at its per-kit count x the kits", () => {
+    const html = bookOf(selE(2, [{ itemId: "f1", qty: 3 }, { itemId: "s1", qty: 1 }]));
+    expect(html).toContain("Gold Console");
+    expect(html).toContain("Ivory Liza Drape");
+    expect(html).toMatch(/Ivory Liza Drape[\s\S]{0,200}?>6</); // 3 per kit x 2 kits
+    expect(html).toMatch(/Gold Console[\s\S]{0,200}?>2</); // 1 per kit x 2 kits
+  });
+  it("an edited kit: a part taken out in Build is not on the card (the master list still has it)", () => {
+    const html = bookOf(selE(1, [{ itemId: "s1", qty: 1 }]));
+    expect(html).toContain("Gold Console");
+    expect(html).not.toContain("Ivory Liza Drape");
+  });
+  it("a kit that was never edited keeps its master list", () => {
+    const html = bookOf({ ...sel, functionsDetail: [{ fnType: "Wedding", date: "2026-12-01", venue: "", zones: ["stage"], elements: { stage: [{ name: "Wooden Console", invId: "k1", qty: 1 }] } }] });
+    expect(html).toContain("Ivory Liza Drape");
+    expect(html).not.toContain("Gold Console");
   });
 });
 

@@ -1056,7 +1056,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           // (a recipe renamed in IMS since, "Flower Trail" -> "Flower Trail Rft", printed a second card under the old name)
           const altNames = [...new Set([el?.name, inv?.name, held?.name].map(n => String(n || "").trim()).filter(Boolean))];
           merged.set(key, { altNames, name: arranged ? `${el?.name || inv?.name || t("Item")} — ${t("arranged separately")}` : (invU?.name || decName || recipeName || el?.name || held?.name || t("Item")),
-            ...(arranged ? { shown: `${hn(el?.name || inv?.name) || t("Item")} — ${t("arranged separately")}` } : {}), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix || statusTxt) ? [...(choiceExtra || []), ...(floralMix ? [[t("Flowers"), floralMix]] : []), ...(statusTxt ? [[t("Status"), statusTxt]] : [])] : undefined, mix: floralMix, realPct, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, recipe, paint: addPaint(new Map(), paint) });
+            ...(arranged ? { shown: `${hn(el?.name || inv?.name) || t("Item")} — ${t("arranged separately")}` } : {}), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix || statusTxt) ? [...(choiceExtra || []), ...(floralMix ? [[t("Flowers"), floralMix]] : []), ...(statusTxt ? [[t("Status"), statusTxt]] : [])] : undefined, mix: floralMix, realPct, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, kitEdited: Array.isArray(el?.kitOverrides), recipe, paint: addPaint(new Map(), paint) });
         });
         // ── CUSTOM CEILING ── not a zone element: it sits on the zone's truss rows (customCeilingItemId + its count
         // customCeilingQty, else one per truss), which reach IMS with the layout on every Build save. A card of its own on
@@ -1493,14 +1493,11 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const parts = [...realParts.filter(f => f.qty > 0), ...art];
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts, it.mix, it.size) });
         }
-        // The combined "All departments" book carries no FLORAL kit cards (owner ask 2026-11-14: a console of pots and flowers) -
-        // that kit sits on its zone page as one item; any other department's kit (a Tenting tree, a Structure bar, a Furniture
-        // couch) keeps its parts card. A hidden kit's attached recipe's bunches / real lines are still taken here, so they do not
-        // come back as a loose card below.
-        if (it.kit > 0 && combined && it.deptTag === "Floral") {
-          takeArtAny(namesOf(it));
-          namesOf(it).filter(n => realTaker.has(n)).forEach(n => realTaker.take(n));
-        } else if (it.kit > 0) {
+        // A Floral kit (a console of pots, candles and books) prints its parts card in the combined "All departments" book too (owner report
+        // 2026-11-19: the Console Kit added in Build was missing from the downloaded PDF - the 2026-11-14 rule that hid Floral kits here is
+        // gone). What stays out of the combined book is the flower RECIPES (owner ask 2026-11-18): the kit's attached recipe's bunches /
+        // real lines are only taken when floralCards is on, which it is not there.
+        if (it.kit > 0) {
           const key = String(it.name || "").trim().toLowerCase();
           const kb = kitBlocksByName.get(key);
           // kb holds the whole EVENT's kits (its parts are totals for all of them) — the zone's page needs this zone's own
@@ -1514,7 +1511,13 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
             if (whole && !p.unit && Number.isInteger(t)) return wholeShares(t, holders.map(h => h.q))[at];
             return Math.round(t * zq / tq * 100) / 100;
           };
-          const parts = !kb ? [] : zq > 0 && tq > 0 && zq !== tq ? kb.parts.map(p => ({ ...p, qty: share(p) })).filter(p => p.qty > 0) : [...kb.parts];
+          // An EDITED kit (Build's "Edited kit": parts removed, added or re-counted on this element) prints exactly the parts Build has now
+          // (it.liveKit, this element's own list), each at its per-kit count x this zone's kits - not Deal Check's older snapshot of it, which
+          // still had a removed part and the old counts (owner report 2026-11-19).
+          const editedParts = it.kitEdited && (it.liveKit || []).length
+            ? it.liveKit.filter(p => combined || inBook(p.dept)).map(p => ({ name: p.name, qty: Math.round(p.per * (zq || 1) * 100) / 100, unit: p.unit, photo: p.photo || "", ...(p.size ? { size: p.size } : null), ...(p.mix ? { mix: p.mix } : null) }))
+            : null;
+          const parts = editedParts || (!kb ? [] : zq > 0 && tq > 0 && zq !== tq ? kb.parts.map(p => ({ ...p, qty: share(p) })).filter(p => p.qty > 0) : [...kb.parts]);
           // A part added to the kit in Build since Deal Check last ran (it.liveKit): listed too, at this zone's count. Only this
           // department's own parts in a single-department book, like the snapshot's; every part in the combined one.
           const partKey = (n) => String(n || "").trim().toLowerCase();
