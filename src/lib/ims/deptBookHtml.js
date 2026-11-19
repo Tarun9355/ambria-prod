@@ -25,6 +25,7 @@ import { elementChoices } from "../studio/elementPrefs";
 import { orderZoneKeys } from "./zoneOrder";
 import { calcZoneFabric, dcFabricMultOf, repeatCatFor, trussInvForMaterial, parseFlowerPalette, parseFabricPalette } from "../studio/pricing";
 import { resolveBeamSegment, resolvePillarHeight } from "./trussEngine";
+import { trussDiagramSvg } from "./trussDiagramSvg";
 import { fitUrl } from "../studio/thumb.js";
 import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiFlower } from "./flowerHelpers";
 import { swatchHexFor } from "../studio/colours";
@@ -785,9 +786,63 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         if (!pillars.length && !beams.length && !(battaRft > 0)) return;
         const zkey = `${fi}|${zk}`;
         if (!trussTableByZone.has(zkey)) trussTableByZone.set(zkey, []);
-        trussTableByZone.get(zkey).push({ label: ri > 0 ? t("Truss #{n}", { n: ri + 1 }) : "", pillars, beams, battaRft, battaBuf: Number(bBuf) || 0, material: row.trussMaterial || "" });
+        // matInv rides along so the plan can split each bay into the very pieces this cut list
+        // names — a 22 ft run drawn as the 12 + 10 it is actually built from, joint and all.
+        trussTableByZone.get(zkey).push({ label: ri > 0 ? t("Truss #{n}", { n: ri + 1 }) : "", pillars, beams, battaRft, battaBuf: Number(bBuf) || 0, material: row.trussMaterial || "", topo: pv.topology, matInv });
       });
     }
+
+    // ── A TRUSS'S CUT LIST ── its pillars, beams and batta side by side, as Planning's Truss plan
+    // shows them. Real resolved stock pieces, so a pillar made up with a ground spacer lists that
+    // piece as the beam it is, and a length no stock size can cut is listed anyway, marked.
+    //
+    // Printed under that truss's own plan on the Truss layouts page (owner ask, 2026-11-19): what to
+    // cut and where it stands are read together, and the zone's own page is left to the photo and
+    // the items that dress it. Hoisted out of zoneSection, which used to render it, so the one copy
+    // serves the page that does now.
+    const TK_LINE = 19, TK_BASE = 52;
+    const cutPx = (tt) => TK_BASE + Math.max(tt.battaRft > 0 && tt.battaBuf > 0 ? 2 : 1, tt.pillars.length, tt.beams.length) * TK_LINE;
+    const cutPieces = (groups) => groups.reduce((a, g) => a + (Number(g.n) || 0), 0);
+    const cutLines = (groups) => groups.map(g => `<div class="ztk-l${g.missing ? " ztk-miss" : ""}"><b>${esc(g.n)}</b><span>× ${esc(g.len)} ft${g.beam ? ` (${t("Beam")})` : ""}${g.missing ? ` ⚠ ${t("not in stock")}` : ""}</span></div>`).join("");
+    const cutCard = (icon, title, count, body) => `<div class="ztk-c"><div class="ztk-h"><span>${icon} ${title}</span>${count != null ? `<b>${esc(count)}</b>` : ""}</div>${body}</div>`;
+    // Owner ask (2026-11-07): Pillars/Beams are material-specific stock (iron/pole/aluminium aren't
+    // interchangeable), so the crew needs the material named on the card, not just "Pillars"/"Beams".
+    // hn() (not a new t() dictionary key) is the same material-translation path the structure strip
+    // and the zone header's own truss-dims chip already use, so there's exactly one place a material
+    // word's Hindi text lives. Batta stays unprefixed — there's no separate iron/pole/aluminium batta
+    // pool to tell apart (unlike pillars/beams, it's one RFT figure either way).
+    const cutMatOf = (tt) => (tt.material ? hn(String(tt.material)) : "");
+    // The real stock pieces one bay is built from, longest first, for the plan to draw with its
+    // joints — the same resolveBeamSegment, against the same material stock, that the cut list
+    // beside it is grouped from, so the two can never disagree about where a joint falls. A length
+    // no size can make resolves to nothing; the plan then draws that bay whole and the cut list is
+    // what marks the piece as not in stock.
+    const bayPiecesOf = (matInv) => (lengthFt) => {
+      const pcs = resolveBeamSegment(lengthFt, matInv).pieces || [];
+      return pcs.flatMap((p) => Array(Math.max(1, Number(p.qty) || 1)).fill(Number(p.size) || 0)).filter((n) => n > 0);
+    };
+    const cutHtml = (tt) => `<div class="ztk" style="height:${cutPx(tt)}px">
+        ${tt.pillars.length ? cutCard("🏛️", cutMatOf(tt) ? `${esc(cutMatOf(tt))} ${t("Pillars")}` : t("Pillars"), cutPieces(tt.pillars), cutLines(tt.pillars)) : ""}
+        ${tt.beams.length ? cutCard("🔗", cutMatOf(tt) ? `${esc(cutMatOf(tt))} ${t("Beams")}` : t("Beams"), cutPieces(tt.beams), cutLines(tt.beams)) : ""}
+        ${tt.battaRft > 0 ? cutCard("🎗️", t("Batta"), null, `<div class="ztk-l ztk-big"><b>${esc(tt.battaRft)}</b><span>RFT</span></div>${tt.battaBuf > 0 ? `<div class="ztk-s">${t("incl. {pct}% buffer", { pct: esc(tt.battaBuf) })}</div>` : ""}`) : ""}
+      </div>`;
+
+    // The zones the Truss layouts page carries, with their chips and cut lists on it — so their own
+    // pages drop the chip strips rather than print them twice (owner ask, 2026-11-19).
+    //
+    // A zone is on that page if it has ANY truss row at all — NOT if a plan could be drawn for one.
+    // Those were once two different tests and a zone fell between them: a truss whose topology draws
+    // nothing (a span no stock size can make, or dims not typed in yet — buildTopology returns no
+    // beams under ~3 ft) counted as "on the page" here and was then dropped when the page was built,
+    // so its chips AND its cut list vanished from the book with nothing said. Every row here has
+    // pieces or batta worth printing (the loop above drops the empty ones) and the page prints a cut
+    // list for each, drawable or not, so row-count is the honest test.
+    //
+    // A zone with no truss of its own — Food Stalls' curtains, the carpet zone — never reaches the
+    // page, so it keeps its strips: they are the only copy there is.
+    const zonesOnTrussPage = new Set();
+    if (showTrussTable) trussTableByZone.forEach((list, zkey) => { if (list.length) zonesOnTrussPage.add(zkey); });
+
     fns.forEach((fn, fi) => {
       const els = fn?.elements || {};
       const reuseSrc = reuseSourceOf(fi);
@@ -1235,17 +1290,16 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // adds up to exactly one sheet.
       const cont = part > 1; // a later page of a zone that is already named
       // The strip (structure, floral mix, palette) prints on the zone's first page only — nothing repeats (owner ask).
-      const strip = !cont && (pg.struct || []).length > 0;
+      // A zone whose frame is drawn on the Truss layouts page at the front has both its strips there
+      // already, above that plan, so it does not print them again here (owner ask, 2026-11-19). Every
+      // other zone — no truss of its own, or a book with no truss page at all — keeps them: that page
+      // never carried them, so this is their only copy.
+      const onTrussPage = zonesOnTrussPage.has(`${pg.fi}|${pg.zk}`);
+      const strip = !cont && !onTrussPage && (pg.struct || []).length > 0;
       // the fabric colours get a row of their own under it, so the truss strip never wraps past the height set aside for it
-      const fabStrip = !cont && (pg.fabric || []).length > 0;
-      // The truss breakdown (owner ask 2026-11-03), as Planning's Truss plan shows it: one card per truss of the zone, its Pillars,
-      // Beams and Batta side by side, under the truss and fabric strips, on the zone's first page. Pillar / beam cards
-      // list one size a line; every card of a truss is as tall as its longest list. The height comes out of the photo like
-      // the fabric row, so the page still adds up to one sheet.
-      const trussRows = !cont ? (pg.trussTable || []) : [];
-      const TK_LINE = 19, TK_BASE = 52, TK_LABEL = 20, TK_GAP = 10;
-      const trussBlockPx = (tt) => (tt.label ? TK_LABEL : 0) + TK_BASE + Math.max(tt.battaRft > 0 && tt.battaBuf > 0 ? 2 : 1, tt.pillars.length, tt.beams.length) * TK_LINE;
-      const trussPx = trussRows.length ? trussRows.reduce((h, tt) => h + trussBlockPx(tt) + TK_GAP, 0) + 2 : 0;
+      const fabStrip = !cont && !onTrussPage && (pg.fabric || []).length > 0;
+      // The truss breakdown that used to sit here is on the Truss layouts page at the front now
+      // (owner ask, 2026-11-19), under the plan of the very truss it cuts — see cutHtml above.
       // Build's note for the zone (owner ask 2026-11-03), on its first page under the strips: up to 8 lines of about 95
       // characters, its height out of the photo like the strips above, so the page still fits one sheet.
       const NOTE_LINE = 18, NOTE_MAX_LINES = 8;
@@ -1253,28 +1307,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       const noteLines = noteText ? Math.min(NOTE_MAX_LINES, noteText.split(/\r?\n/).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 95)), 0)) : 0;
       const notePx = noteLines ? 30 + noteLines * NOTE_LINE : 0;
       const noteBox = noteLines ? `<div class="znote" style="max-height:${notePx - 12}px"><b>📝 ${t("Note")}</b><span>${esc(noteText)}</span></div>` : "";
-      const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + (strip ? 44 : 0) + (fabStrip ? 44 : 0) + trussPx + notePx;
+      const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + (strip ? 44 : 0) + (fabStrip ? 44 : 0) + notePx;
       // the fabric row comes out of the photo's floor too, so it never makes a page taller than it was without it
-      const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(Math.max(160, 260 - (fabStrip ? 44 : 0) - trussPx - notePx), PAGE_PX - headPx - rows * (ROW_H + ARROW));
-      const pieces = (groups) => groups.reduce((a, g) => a + (Number(g.n) || 0), 0);
-      const sizeLines = (groups) => groups.map(g => `<div class="ztk-l${g.missing ? " ztk-miss" : ""}"><b>${esc(g.n)}</b><span>× ${esc(g.len)} ft${g.beam ? ` (${t("Beam")})` : ""}${g.missing ? ` ⚠ ${t("not in stock")}` : ""}</span></div>`).join("");
-      const tkCard = (icon, title, count, body) => `<div class="ztk-c"><div class="ztk-h"><span>${icon} ${title}</span>${count != null ? `<b>${esc(count)}</b>` : ""}</div>${body}</div>`;
-      // Owner ask (2026-11-07): Pillars/Beams are material-specific stock (iron/pole/aluminium
-      // aren't interchangeable), so the crew needs the material named on the card, not just "Pillars"/
-      // "Beams". hn() (not a new t() dictionary key) is the same material-translation path the
-      // structure strip and the zone header's own truss-dims chip (zDimsOf, above) already use, so
-      // there's exactly one place a material word's Hindi text lives, not three. Batta stays
-      // unprefixed — there's no separate iron/pole/aluminium batta pool to tell apart on this card
-      // (unlike pillars/beams, it's one RFT figure either way).
-      const tkMatOf = (tt) => (tt.material ? hn(String(tt.material)) : "");
-      const trussCard = trussRows.map(tt => `<div class="ztk-w">
-          ${tt.label ? `<div class="ztk-t">${esc(tt.label)}</div>` : ""}
-          <div class="ztk" style="height:${trussBlockPx(tt) - (tt.label ? TK_LABEL : 0)}px">
-            ${tt.pillars.length ? tkCard("🏛️", tkMatOf(tt) ? `${esc(tkMatOf(tt))} ${t("Pillars")}` : t("Pillars"), pieces(tt.pillars), sizeLines(tt.pillars)) : ""}
-            ${tt.beams.length ? tkCard("🔗", tkMatOf(tt) ? `${esc(tkMatOf(tt))} ${t("Beams")}` : t("Beams"), pieces(tt.beams), sizeLines(tt.beams)) : ""}
-            ${tt.battaRft > 0 ? tkCard("🎗️", t("Batta"), null, `<div class="ztk-l ztk-big"><b>${esc(tt.battaRft)}</b><span>RFT</span></div>${tt.battaBuf > 0 ? `<div class="ztk-s">${t("incl. {pct}% buffer", { pct: esc(tt.battaBuf) })}</div>` : ""}`) : ""}
-          </div>
-        </div>`).join("");
+      const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(Math.max(160, 260 - (fabStrip ? 44 : 0) - notePx), PAGE_PX - headPx - rows * (ROW_H + ARROW));
       const photoTop = bare ? 0 : ROW_H + ARROW;
       const botTop = photoTop + PHOTO_H + ARROW;
       const stageH = bare ? PHOTO_H : bot.length ? botTop + ROW_H : photoTop + PHOTO_H;
@@ -1295,7 +1330,6 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         </div>`}
         ${strip ? `<div class="zst">${pg.struct.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html != null ? c.html : esc(c.v)}</span>`).join("")}</div>` : ""}
         ${fabStrip ? `<div class="zst">${pg.fabric.map(c => `<span><i class="zl">${esc(c.k)}</i>${c.html}</span>`).join("")}</div>` : ""}
-        ${trussCard}
         ${noteBox}
         <div class="zs" style="height:${stageH}px">
           <div class="zphoto" style="top:${photoTop}px;height:${PHOTO_H}px;${bgCss(pg.photo)}" ${bgData(pg.photo)}>${pg.photo ? "" : `<span>${t("No zone photo")}</span>`}</div>
@@ -1535,7 +1569,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         const q = artList.reduce((t, a) => t + (Number(a.qty) || 0), 0);
         blocks.push({ h: detailH(parts), html: detailCard("🌸", name, q || "", "", parts, typeof rp === "number" ? mixText(rp) : (realEntry ? undefined : t("Artificial"))) });
       });
-      // The truss cut list (pillars / beams / batta) is on the zone's own page now, under the truss strip (trussCard) - not repeated here.
+      // The truss cut list (pillars / beams / batta) is on the Truss layouts page at the front, under
+      // the plan of the truss it cuts (cutHtml) - not repeated here.
       if (!blocks.length) return [];
       const dChunks = [];
       blocks.forEach(b => {
@@ -1597,6 +1632,141 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         <div class="lay-h"><b>${t("Layout")}</b>${(fns || []).length > 1 ? `<span> · ${esc(hn(fn.type) || t("Function {n}", { n: fi + 1 }))}${fn.date ? ` · ${esc(fn.date)}` : ""}</span>` : ""}</div>
         <div class="lay" style="${bgCss(fn.layoutUrl.trim(), 1100)}" ${bgData(fn.layoutUrl.trim(), 1100)}></div>
       </section>`).join("");
+    // ── TRUSS PLANS — EVERY ZONE'S FRAME, TOGETHER, AT THE FRONT ──
+    // Owner ask (2026-11-19, third pass): the plans first went on each zone's own page above that
+    // truss's pieces. They are read together, not a zone at a time — the crew stands the frames for
+    // the whole event in one pass before any zone gets dressed — so they are one page of their own
+    // up front and are off the zone pages entirely. It also gives each plan a full page's room
+    // rather than competing with the zone photo, its cut list and its fabric strip for one sheet.
+    //
+    // Walks zonePages, not trussPlanOf, so the plans come out in the SAME order as the book's zones
+    // and can carry the very "Zone 03 · Photo Op" heading the crew will turn to later. Every truss
+    // of a zone is drawn, its own "+ Add Truss" extras included, each under its own Truss #n.
+    const trussPlanPages = (() => {
+      if (!showTrussTable) return "";
+      // One block per ZONE, carrying that zone's own chips — what it is built of (truss type, floor,
+      // platform, carpet) and what it is dressed in (drape, liza, curtains, masking) — above its
+      // plan, so the page answers "what am I standing here" as well as "where do the pillars go"
+      // (owner ask, 2026-11-19, fourth pass). They are the SAME strips the zone's own page prints,
+      // read off zonePages rather than rebuilt, so the two can never drift apart.
+      //
+      // Each figure below is what the CSS below actually adds, and has to track it: get one too
+      // small and a page takes a block too many, which deptBookPdf then shrinks the whole sheet to
+      // fit. PLAN_BODY is the sheet (1020) less .zp's 14 + 6 padding and the page heading's 30.
+      const PLAN_BODY = 950;
+      const Z_HEAD = 31;                                   // .tp-t 30 + its bottom border
+      const Z_FRAME = 18;                                  // .tp-c 2 border + 16 margin-bottom
+      const S_PAD = 20, S_ROW = 30, S_GAP = 6;             // .tp-b padding, one chip row, the gap around rows
+      const P_PAD = 12, P_LABEL = 18, P_CUT = 10;          // .tp-s padding, the Truss #n line, .tp-k padding
+      // The zone's reference photo, thumbnail-size beside its plan (owner ask, 2026-11-19): the plan
+      // says where the frame stands, the photo says what it is being built into.
+      //
+      // The drawing row is a FLEX row — label gutter, drawing, thumbnail — and the drawing is told
+      // how much room is left. A first cut hung the label and the thumbnail over the drawing with
+      // `position:absolute`, on the reasoning that a centred plan leaves air either side; a plan as
+      // wide as the column leaves none, and they were painted straight over its figures (review,
+      // 2026-11-19). Laid out in flow, that cannot happen whatever the plan's width.
+      // The gutter is always reserved, so the label and the Qty always have a home and every row
+      // lines up down the page whether or not this truss has either.
+      const P_THUMB = 62, P_THUMB_W = 86, P_GUTTER = 58, P_GAP = 12;
+      // .tp-c's own width: the 706 px card less its 2 px border and .tp-s's 28 px of side padding.
+      const P_ROW_W = 676;
+      const drawWidth = (hasThumb) => P_ROW_W - (P_GUTTER + P_GAP) - (hasThumb ? P_THUMB_W + P_GAP : 0);
+      const PLAN_MAX_PX = 200;
+      // A chip strip WRAPS (.zst is flex-wrap), and counting every strip as one row is what made
+      // Photo Op's four fabric chips take two and push its block past the budget. The rows are
+      // estimated from the chips' text: 12 px padding a side, a 9 px letter-spaced label, a 12 px
+      // bold value, plus room for a colour swatch when the chip carries markup. Deliberately
+      // generous — over-counting costs a little white space, under-counting overfills the sheet.
+      const CHIP_PAD = 26, CHIP_CH = 7.2, CHIP_SWATCH = 18, STRIP_W = 678;
+      const chipPx = (c) => {
+        const val = c.html != null ? String(c.html).replace(/<[^>]*>/g, "") : String(c.v ?? "");
+        return CHIP_PAD + 7 + (String(c.k ?? "").length + val.length) * CHIP_CH + (c.html ? CHIP_SWATCH : 0);
+      };
+      const stripRows = (s) => s.reduce((a, c) => {
+        const px = chipPx(c);
+        if (a.w && a.w + S_GAP + px > STRIP_W) return { rows: a.rows + 1, w: px };
+        return { rows: a.rows, w: a.w ? a.w + S_GAP + px : px };
+      }, { rows: 1, w: 0 }).rows;
+      const stripsPx = (strips) => (strips.length
+        ? S_PAD + strips.reduce((h, s) => { const r = stripRows(s); return h + r * S_ROW + (r - 1) * S_GAP; }, 0) + (strips.length - 1) * S_GAP
+        : 0);
+      // The drawing row is as tall as the tallest thing in it — the plan, the thumbnail, or the
+      // label gutter — and is left out entirely when there is none of the three, so a truss with no
+      // drawable plan costs nothing above its cut list. `min-height` on .tp-s is set to this same
+      // figure, and .tp-s's 12 px of padding is P_PAD on top of it.
+      const gutterPx = (p) => (p.label ? P_LABEL : 0) + (p.diag && p.diag.qty > 1 ? 15 : 0);
+      const rowPx = (p) => Math.max(p.diag ? p.diag.heightPx : 0, p.thumb ? P_THUMB : 0, gutterPx(p));
+      const planPx = (p) => { const r = rowPx(p); return (r ? P_PAD + r : 0) + P_CUT + cutPx(p.tt); };
+
+      const blocks = [];
+      zonePages.forEach((pg, zi) => {
+        // EVERY truss of the zone, not only the ones a plan came out of: a truss whose plan could
+        // not be drawn still has a cut list, and that list lives nowhere else now. The drawing is
+        // sized to the room its own row leaves — only the zone's first truss carries the thumbnail.
+        const plans = (pg.trussTable || []).map((tt, i) => {
+          const thumb = !!pg.photo && i === 0;
+          return {
+            tt, label: tt.label, thumb,
+            diag: tt.topo ? trussDiagramSvg(tt.topo, { maxHeightPx: PLAN_MAX_PX, maxWidthPx: drawWidth(thumb), resolveBay: bayPiecesOf(tt.matInv) }) : null,
+          };
+        });
+        if (!plans.length) return;
+        const strips = [pg.struct || [], pg.fabric || []].filter((s) => s.length);
+        blocks.push({ no: zi + 1, title: pg.title, strips, plans, photo: pg.photo || "" });
+      });
+      if (!blocks.length) return "";
+      // Only the FIRST plan of a zone carries the thumbnail — the photo is the zone's, not any one
+      // truss's, and repeating it down a three-truss block says nothing three times.
+      const blockPx = (b) => Z_HEAD + stripsPx(b.strips) + b.plans.reduce((h, p) => h + planPx(p), 0) + Z_FRAME;
+
+      // Greedy fill, and a zone too tall for one sheet is CONTINUED on the next rather than pushed
+      // past the edge: a four-truss zone came to 1475 px against a 1020 px sheet, and deptBookPdf's
+      // answer to that is to scale the whole sheet to 69% — shrinking the plans and their cut lists
+      // alike (review, 2026-11-19). Its trusses are split instead, the heading repeated, the chips
+      // printed once on the first part.
+      const pages = [];
+      let cur = [], used = 0;
+      const flush = () => { if (cur.length) { pages.push(cur); cur = []; used = 0; } };
+      blocks.forEach((b) => {
+        let rest = b.plans, first = true;
+        while (rest.length) {
+          const head = Z_HEAD + (first ? stripsPx(b.strips) : 0) + Z_FRAME;
+          const room = PLAN_BODY - used - head;
+          let n = 0, h = 0;
+          while (n < rest.length && h + planPx(rest[n]) <= room) { h += planPx(rest[n]); n++; }
+          if (n === 0) {
+            // Nothing fits in what is left. Try a fresh sheet; if it does not fit even an empty one,
+            // take one truss anyway — one over-tall sheet the renderer scales beats never finishing.
+            if (used > 0) { flush(); continue; }
+            n = 1; h = planPx(rest[0]);
+          }
+          cur.push({ ...b, strips: first ? b.strips : [], cont: !first, plans: rest.slice(0, n) });
+          used += head + h;
+          rest = rest.slice(n);
+          first = false;
+          if (rest.length) flush();
+        }
+      });
+      flush();
+      const chip = (c) => `<span><i class="zl">${esc(c.k)}</i>${c.html != null ? c.html : esc(c.v)}</span>`;
+      return pages.map((list, i) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
+        <div class="lay-h"><b>${t("Truss layouts")}</b>${pages.length > 1 ? `<span> · ${t("Part {part} of {parts}", { part: i + 1, parts: pages.length })}</span>` : ""}</div>
+        ${list.map((b) => `<div class="tp-c">
+          <div class="tp-t"><b>${t("Zone {n}", { n: String(b.no).padStart(2, "0") })}</b><span>${esc(hn(b.title))}</span>${b.cont ? `<i>${t("continued")}</i>` : ""}</div>
+          ${b.strips.length ? `<div class="tp-b">${b.strips.map(s => `<div class="zst">${s.map(chip).join("")}</div>`).join("")}</div>` : ""}
+          ${b.plans.map((p) => {
+            const r = rowPx(p);
+            return `${r ? `<div class="tp-s" style="min-height:${r}px">
+            <div class="tp-lab">${p.label ? `<i>${esc(p.label)}</i>` : ""}${p.diag && p.diag.qty > 1 ? `<em>× ${esc(p.diag.qty)}</em>` : ""}</div>
+            <div class="tp-dr">${p.diag ? p.diag.svg : ""}</div>
+            ${p.thumb ? `<div class="tp-ph" ${bg(b.photo, 260)}></div>` : ""}
+          </div>` : ""}
+          <div class="tp-k">${cutHtml(p.tt)}</div>`;
+          }).join("")}
+        </div>`).join("")}
+      </section>`).join("");
+    })();
     const gensetPage = (() => {
       if (!(combined || inBook("Lighting"))) return "";
       const list = (fns.length ? fns : [{ type: sel?.eventType || "", date: selDateStr, venue: sel?.venue }]).map((fn, fi) => ({ fn, fi, g: gensetsForFn(fn, trVenues) })).filter(r => r.g);
@@ -1980,10 +2150,34 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
   /* Says WHAT is being measured. On its own "L 52 × W 14 × H 12 ft" could be the zone, the
      structure or a single prop; it is the zone's own span. */
   .zst{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
-  .ztk-w{margin:0 0 10px}
   .znote{box-sizing:border-box;margin:0 0 12px;padding:8px 14px;border:1px solid #F1D99A;border-radius:10px;background:#FFF9E8;font-size:12.5px;line-height:18px;color:#5A3E0A;white-space:pre-wrap;overflow:hidden}
   .znote b{display:inline;margin-right:8px;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9A6B1F}
-  .ztk-t{height:20px;font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263}
+  /* ── TRUSS PLANS PAGE ── every zone's frame, together, at the front of the book.
+     The px each rule adds is budgeted in trussPlanPages (Z_HEAD / S_* / P_*) — keep them in step. */
+  .tp-c{box-sizing:border-box;margin:0 0 16px;border:1px solid #DDD4C2;border-radius:14px;background:#FBF8F1;overflow:hidden}
+  .tp-t{display:flex;align-items:baseline;gap:9px;height:30px;padding:0 18px;background:#F3EEE3;border-bottom:1px solid #E7DFCF}
+  .tp-t b{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263}
+  .tp-t span{font-size:14px;font-weight:700;color:#1A1A1A}
+  /* A zone whose trusses ran past one sheet and carry on here. */
+  .tp-t i{font-style:normal;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#7A7263}
+  /* What the zone is built of and dressed in — the same chips its own page carries. */
+  .tp-b{padding:10px 14px}
+  .tp-b .zst{margin:0 0 6px}
+  .tp-b .zst:last-child{margin-bottom:0}
+  /* Label gutter, drawing, thumbnail — laid out in flow, never stacked, so a plan as wide as the
+     column cannot be painted over. The widths here are what trussPlanPages subtracts (P_GUTTER /
+     P_THUMB_W / P_GAP) to tell the drawing its room: keep them in step. */
+  .tp-s{display:flex;align-items:center;gap:12px;padding:6px 14px}
+  .tp-lab{flex:0 0 58px;display:flex;flex-direction:column;gap:3px}
+  .tp-lab i{font-style:normal;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#7A7263}
+  /* Truss Qty: how many of the drawn frame stand in the zone. */
+  .tp-lab em{font-style:normal;font-size:12px;font-weight:700;color:#1A1A1A}
+  .tp-dr{flex:1 1 auto;min-width:0;display:flex;justify-content:center;align-items:center}
+  .tp-dr svg{display:block}
+  /* The zone's reference photo, beside its plan rather than over it. */
+  .tp-ph{flex:0 0 86px;height:62px;border-radius:8px;border:1px solid #DDD4C2;background:#EFE9DC center/cover no-repeat}
+  /* That truss's cut list, directly under its own plan. */
+  .tp-k{padding:0 14px 10px}
   .ztk{display:flex;box-sizing:border-box;border:1px solid #DDD4C2;border-radius:12px;background:#FBF8F1;overflow:hidden}
   .ztk-c{flex:1;min-width:0;box-sizing:border-box;padding:10px 16px;overflow:hidden}
   .ztk-c + .ztk-c{border-left:1px solid #E7DFCF}
@@ -2152,6 +2346,7 @@ ${/* Money, the priced inventory table, the crew plan and logged spend are left 
      goes to the people setting up the event, who need what goes where, not what it costs. The
      zone layout pages below carry every item, with photo, qty and size. */ ""}
 ${layoutPages}
+${trussPlanPages}
 ${gensetPage}
 ${fixedVenuePages}
 ${zoneHtml.replace(/\u0001FNCARDS:(\d+)\u0001/g, (_, fi) => fnCards(Number(fi)))}

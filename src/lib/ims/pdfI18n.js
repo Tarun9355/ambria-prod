@@ -128,6 +128,8 @@ export const PDF_HI = {
   "Yes": "हाँ",
 
   // The truss cut-list block (pillars/beams/batta by real stock size)
+  "Truss layouts": "ट्रस लेआउट",
+  "continued": "जारी",
   "Truss #{n}": "ट्रस #{n}",
   "Pillar": "पिलर",
   "Beam": "बीम",
