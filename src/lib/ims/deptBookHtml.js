@@ -972,7 +972,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
             // under it are for that size (owner ask 2026-11-03: S / M / B wherever a flower piece is in the book).
             if (!elSize && pat.mode === "smb") elSize = SMB_LABEL.B; // only a recipe that comes in sizes; a flat one has none
           }
-          const key = (arranged ? "o:" + (el?.pid || ei) : invU ? "i:" + invU.id : "n:" + (decName || nm)) + (elSize ? "|" + elSize : "") + (floralMix ? "|" + floralMix : "");
+          const key = (arranged ? "o:" + (el?.pid || ei) : invU ? "i:" + invU.id : "n:" + (decName || nm)) + (elSize ? "|" + elSize : "") + (floralMix ? "|" + floralMix : "")
+            // two rows of the same kit edited differently in Build are two cards: each keeps ITS parts and count (merged, the second row's edit was lost)
+            + (Array.isArray(el?.kitOverrides) ? "|ko:" + JSON.stringify(el.kitOverrides) : "");
           const prev = merged.get(key);
           const qty = Number(el?.qty) || 1;
           // Paint the build asked for on this item, carried on its own card so the item's
@@ -1039,7 +1041,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const liveKit = !kitInv ? [] : (Array.isArray(el?.kitOverrides) ? el.kitOverrides : kitInv.subItems).map(si => {
             if (si?.patternId) {
               const pt = flowerPatterns.find(fp => fp?.id === si.patternId);
-              return pt ? { name: pt.name || t("Flower recipe"), per: Number(si.qty) || 0, unit: pt.unit || "", dept: "Floral", size: kitPartSize(pt, si), mix: kitPartMix(pt, si) } : null;
+              return pt ? { recipe: true, name: pt.name || t("Flower recipe"), per: Number(si.qty) || 0, unit: pt.unit || "", dept: "Floral", size: kitPartSize(pt, si), mix: kitPartMix(pt, si) } : null;
             }
             const ci = invById.get(String(si?.itemId));
             if (!ci) return null;
@@ -1056,7 +1058,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           // (a recipe renamed in IMS since, "Flower Trail" -> "Flower Trail Rft", printed a second card under the old name)
           const altNames = [...new Set([el?.name, inv?.name, held?.name].map(n => String(n || "").trim()).filter(Boolean))];
           merged.set(key, { altNames, name: arranged ? `${el?.name || inv?.name || t("Item")} — ${t("arranged separately")}` : (invU?.name || decName || recipeName || el?.name || held?.name || t("Item")),
-            ...(arranged ? { shown: `${hn(el?.name || inv?.name) || t("Item")} — ${t("arranged separately")}` } : {}), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix || statusTxt) ? [...(choiceExtra || []), ...(floralMix ? [[t("Flowers"), floralMix]] : []), ...(statusTxt ? [[t("Status"), statusTxt]] : [])] : undefined, mix: floralMix, realPct, size: elSize, kit: held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, kitEdited: Array.isArray(el?.kitOverrides), recipe, paint: addPaint(new Map(), paint) });
+            ...(arranged ? { shown: `${hn(el?.name || inv?.name) || t("Item")} — ${t("arranged separately")}` } : {}), qty, unit, deptTag, photo: arranged ? "" : (invPhoto(invU, invU === inv ? held : null) || (!invU && sizeData?.img) || ""), dims: arranged ? "" : invDims(invU), extra: (choiceExtra || floralMix || statusTxt) ? [...(choiceExtra || []), ...(floralMix ? [[t("Flowers"), floralMix]] : []), ...(statusTxt ? [[t("Status"), statusTxt]] : [])] : undefined, mix: floralMix, realPct, size: elSize, kit: (Array.isArray(el?.kitOverrides) && kitInv) ? liveKit.length : held?.isKit ? (Array.isArray(held.components) ? held.components.length : 0) + (Array.isArray(held.recipeParts) ? held.recipeParts.length : 0) : liveKit.length, liveKit, kitEdited: Array.isArray(el?.kitOverrides) && !!kitInv, recipe, paint: addPaint(new Map(), paint) });
         });
         // ── CUSTOM CEILING ── not a zone element: it sits on the zone's truss rows (customCeilingItemId + its count
         // customCeilingQty, else one per truss), which reach IMS with the layout on every Build save. A card of its own on
@@ -1390,7 +1392,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         // kit's parts list shows what each piece looks like, not just its name.
         kitBlocks.push({ name: it.name, ours: true, qty: Number(it.qty) || zoneQtyFor(it.name), photo: invPhoto(kInv, it), zones: zonesFor(it.name), parts: [...(Array.isArray(it.components) ? it.components : []).map(c => ({ name: c.name, qty: c.qty, photo: invPhoto(c.imsId ? invById.get(String(c.imsId)) : null, c) })),
           // The flower recipes inside the kit (not inventory, so not components): name and quantity, in the recipe's own unit.
-          ...(hasRecipeParts ? it.recipeParts : []).map(r => ({ name: r.name, qty: r.qty, unit: r.uom || "", photo: r.photo || "" }))] });
+          ...(hasRecipeParts ? it.recipeParts : []).map(r => ({ recipe: true, name: r.name, qty: r.qty, unit: r.uom || "", photo: r.photo || "" }))] });
       }
     });
     [...partsByKit.values()].forEach(parts => {
@@ -1514,8 +1516,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           // An EDITED kit (Build's "Edited kit": parts removed, added or re-counted on this element) prints exactly the parts Build has now
           // (it.liveKit, this element's own list), each at its per-kit count x this zone's kits - not Deal Check's older snapshot of it, which
           // still had a removed part and the old counts (owner report 2026-11-19).
-          const editedParts = it.kitEdited && (it.liveKit || []).length
-            ? it.liveKit.filter(p => combined || inBook(p.dept)).map(p => ({ name: p.name, qty: Math.round(p.per * (zq || 1) * 100) / 100, unit: p.unit, photo: p.photo || "", ...(p.size ? { size: p.size } : null), ...(p.mix ? { mix: p.mix } : null) }))
+          const editedParts = it.kitEdited
+            ? (it.liveKit || []).filter(p => (combined || inBook(p.dept)) && !(combined && p.recipe)).map(p => ({ ...(p.recipe ? { recipe: true } : null), name: p.name, qty: Math.round(p.per * (zq || 1) * 100) / 100, unit: p.unit, photo: p.photo || "", ...(p.size ? { size: p.size } : null), ...(p.mix ? { mix: p.mix } : null) }))
             : null;
           const parts = editedParts || (!kb ? [] : zq > 0 && tq > 0 && zq !== tq ? kb.parts.map(p => ({ ...p, qty: share(p) })).filter(p => p.qty > 0) : [...kb.parts]);
           // A part added to the kit in Build since Deal Check last ran (it.liveKit): listed too, at this zone's count. Only this
@@ -1523,10 +1525,12 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const partKey = (n) => String(n || "").trim().toLowerCase();
           const have = new Set(parts.map(p => partKey(p.name)));
           (it.liveKit || []).forEach(p => {
-            if (have.has(partKey(p.name)) || (!combined && !inBook(p.dept))) return;
+            if (have.has(partKey(p.name)) || (!combined && !inBook(p.dept)) || (combined && p.recipe)) return;
             have.add(partKey(p.name));
             parts.push({ name: p.name, qty: Math.round(p.per * (zq || 1) * 100) / 100, unit: p.unit, photo: p.photo || "" });
           });
+          // the combined book carries no flower recipes (owner ask 2026-11-18), a kit's recipe parts included
+          if (combined) for (let i = parts.length - 1; i >= 0; i--) if (parts[i].recipe) parts.splice(i, 1);
           // each flower part's S / M / B, from the kit as Build has it (Deal Check's snapshot lines carry no size)
           const sizeOf = new Map((it.liveKit || []).filter(p => p.size).map(p => [partKey(p.name), p.size]));
           // and each flower part's real / artificial split, the same way
