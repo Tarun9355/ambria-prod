@@ -102,6 +102,14 @@ describe("Dept Ops wiring for the Site-Supervisor-view-only role", () => {
     expect(src).toMatch(/if \(onsiteOnly \|\| !list\.length\) return null;/);
     expect(src).toMatch(/\]\.filter\(\(t\) => t && \(!onsiteOnly \|\| t\.k === "inv"\)\)/);
   });
+  it("that role sees the planning block (Inventory blocked tile) and the on-site cards (Receiving, Dismantle & routing, On-site crew) together", () => {
+    expect(src).toMatch(/\{\(opsView === "planning" \|\| onsiteOnly\) && dept !== PAINT && \(<>/);
+    expect(src).toMatch(/\{\(opsView === "onsite" \|\| onsiteOnly\) && dept !== PAINT && \(<>/);
+  });
+  it("each block's panel opens only for its own tiles, so no empty second panel shows for that role", () => {
+    expect(src).toContain('className={modal && (!onsiteOnly || modal === "inv") ? PANEL_WRAP : "hidden"}');
+    expect(src).toContain('className={modal && (!onsiteOnly || ["rcv", "route", "oscrew"].includes(modal)) ? PANEL_WRAP : "hidden"}');
+  });
   it("the department starts on the first one they can see again (no Tenting default)", () => {
     expect(src).toMatch(/const \[dept, setDept\] = useState\(roleDept \|\| deptOptions\[0\] \|\| "Floral"\);/);
   });

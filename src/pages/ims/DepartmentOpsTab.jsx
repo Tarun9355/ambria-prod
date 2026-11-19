@@ -822,7 +822,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // on an event synced before Studio sent each function's own gensets (lib/ims/gensetPlan). Read with truckCap below.
   const [trVenues, setTrVenues] = useState([]);
   const [opsViewRaw, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
-  // onsiteOnly (Planning sub-tab "Dept Ops: Site Supervisor view only"): the department bar stays, but each department shows only its Inventory blocked tile (no income, changes, fixed-venue stock or other tiles) and the Department Head / Site Supervisor switch is hidden
+  // onsiteOnly (Planning sub-tab "Dept Ops: Site Supervisor view only"): the department bar stays; each department shows its Inventory blocked tile (no income, changes, fixed-venue stock or other planning tiles) AND the on-site cards (Receiving, Dismantle & routing, On-site crew) together, with the Department Head / Site Supervisor switch hidden
   const opsView = opsViewRaw;
   // The mini calendar that used to sit in this rail is gone — the IMS Calendar tab is the one
   // calendar, and clicking an event there lands here with that event already selected. Its
@@ -4640,7 +4640,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
 
             {dept === PAINT && <PaintDeptView sel={sel} inventory={inventory} colourCatalogue={settings?.colourCatalogue} defaultPaintCost={Number(settings?.defaultPaintCostPerItem) || 400} zoneLabel={zoneLabelFor} onZoom={setZoomImg} />}
 
-            {opsView === "planning" && dept !== PAINT && (<>
+            {(opsView === "planning" || onsiteOnly) && dept !== PAINT && (<>
 
             {/* What stands permanently at each Fixed Venue for this department (read-only, from Settings → Fixed Venues). */}
             {!onsiteOnly && <FixedVenueStockCard fixedVenues={fvSettings.fixedVenues} inventory={inventory} dept={dept} catToDept={catToDept} settings={fvSettings} eventVenue={sel?.venue} onZoom={setZoomImg} />}
@@ -4858,7 +4858,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 income cards and the event header all stay in view while you read it.
                 Same mechanic as before: every block still lives here and hides itself unless it
                 is the open one (modalCls), so nothing had to be moved or re-parented. */}
-            <div data-ops-panel onClick={onPanelBackdrop} className={modal ? PANEL_WRAP : "hidden"}>
+            <div data-ops-panel onClick={onPanelBackdrop} className={modal && (!onsiteOnly || modal === "inv") ? PANEL_WRAP : "hidden"}>
               <div className={PANEL_CARD}>
                 {/* NOT sticky from sm up. It was, back when this panel was a dialog with its own
                     scroll — but inline the page scrolls instead, so a sticky bar just hovers over
@@ -6614,7 +6614,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
             </div>
             </>)}
 
-            {opsView === "onsite" && dept !== PAINT && (<>
+            {(opsView === "onsite" || onsiteOnly) && dept !== PAINT && (<>
             {/* The department chip row that used to sit here is gone. It switched department,
                 which is exactly what the Department picker in the left rail already does, under
                 the same permission rules — roleDept locks the rail to a badge only when the user
@@ -6673,7 +6673,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 income cards and the event header all stay in view while you read it.
                 Same mechanic as before: every block still lives here and hides itself unless it
                 is the open one (modalCls), so nothing had to be moved or re-parented. */}
-            <div data-ops-panel onClick={onPanelBackdrop} className={modal ? PANEL_WRAP : "hidden"}>
+            <div data-ops-panel onClick={onPanelBackdrop} className={modal && (!onsiteOnly || ["rcv", "route", "oscrew"].includes(modal)) ? PANEL_WRAP : "hidden"}>
               <div className={PANEL_CARD}>
                 {/* NOT sticky — see the Planning panel above: inline, a sticky bar just hovers
                     over the block beneath it and hides its subtitle. */}
