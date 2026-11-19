@@ -79,7 +79,22 @@ describe("Dept Ops wiring for the Site-Supervisor-view-only role", () => {
     expect(src).toMatch(/\{deptOptions\.includes\("Floral"\) && \(\s*<button type="button" onClick=\{downloadFloralPdf\}/);
   });
   it("Floral PDF from another department moves to Floral first and downloads that one department's book", () => {
-    expect(src).toMatch(/const downloadFloralPdf = \(\) => \{ if \(dept === "Floral"\) exportDeptPdf\(\["Floral"\]\); else \{ setFloralPdfWanted\(true\); setDept\("Floral"\); \} \};/);
+    expect(src).toMatch(/const downloadFloralPdf = \(\) => \{ if \(dept === "Floral"\) exportDeptPdf\(\["Floral"\]\); else \{ floralBackTo\.current = dept; setFloralPdfWanted\(true\); setDept\("Floral"\); \} \};/);
+    // and back to the department they were on afterwards
+    expect(src).toMatch(/finally\(\(\) => \{ const back = floralBackTo\.current; floralBackTo\.current = null; if \(back\) setDept\(back\); \}\)/);
     expect(src).toMatch(/if \(!floralPdfWanted \|\| dept !== "Floral" \|\| !sel \|\| exporting\) return;/);
+  });
+  it("the department bar (chips, EN | हिं, Download PDF, Sync) is not drawn for that role - nor its phone picker", () => {
+    const i = src.indexOf("no department bar - no chips");
+    expect(i).toBeGreaterThan(0);
+    expect(src.slice(i, i + 400)).toMatch(/\{!onsiteOnly && \(\s*<div className="w-fit max-w-full ml-auto/);
+    expect(src).toMatch(/<\/div>\n      <\/div>\n      <\/div>\n      \)\}\n      <\/div>\n\n      \{\/\* ── Department detail for the selected event/);
+    expect(src).toMatch(/\{pickerSlot && !onsiteOnly && createPortal\(/);
+  });
+  it("that role starts on Tenting when it can see it, everyone else on their first department", () => {
+    expect(src).toMatch(/useState\(roleDept \|\| \(onsiteOnly && deptOptions\.includes\("Tenting"\) \? "Tenting" : deptOptions\[0\] \|\| "Floral"\)\)/);
+  });
+  it("the language toggle sits in the PDF row on desktop (the phone keeps its own beside the icons)", () => {
+    expect(src).toMatch(/<PdfLangToggle value=\{pdfLang\} onChange=\{setPdfLang\} disabled=\{!!exporting\} display="hidden sm:inline-flex" \/>\n\s+<button type="button" onClick=\{downloadAllDeptsPdf\}/);
   });
 });

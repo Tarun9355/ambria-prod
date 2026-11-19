@@ -786,7 +786,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // the departments a PDF book is made for
   const bookDepts = deptOptions.filter((d) => d !== PAINT);
 
-  const [dept, setDept] = useState(roleDept || deptOptions[0] || "Floral");
+  // a Site-Supervisor-view-only person has no department bar and starts on Tenting (the on-site screen the owner asked for), else the first they can see
+  const [dept, setDept] = useState(roleDept || (onsiteOnly && deptOptions.includes("Tenting") ? "Tenting" : deptOptions[0] || "Floral"));
   // this tab's own PDF: its shared book's name when it has one ("Fabric & Tenting")
   const deptBookName = (SHARED_BOOKS.find(g => g.includes(dept)) || [dept]).join(" & ");
   const [exportNote, setExportNote] = useState("");
@@ -3719,13 +3720,14 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // Floral department's book (recipes and all), built from the Floral tab - so a click from another department moves to Floral first
   // and the download starts once that render is there.
   const [floralPdfWanted, setFloralPdfWanted] = useState(false);
+  const floralBackTo = useRef(null); // the department they were on, returned to once the Floral PDF is made
   useEffect(() => {
     if (!floralPdfWanted || dept !== "Floral" || !sel || exporting) return;
     setFloralPdfWanted(false);
-    exportDeptPdf(["Floral"]);
+    Promise.resolve(exportDeptPdf(["Floral"])).finally(() => { const back = floralBackTo.current; floralBackTo.current = null; if (back) setDept(back); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [floralPdfWanted, dept, sel, exporting]);
-  const downloadFloralPdf = () => { if (dept === "Floral") exportDeptPdf(["Floral"]); else { setFloralPdfWanted(true); setDept("Floral"); } };
+  const downloadFloralPdf = () => { if (dept === "Floral") exportDeptPdf(["Floral"]); else { floralBackTo.current = dept; setFloralPdfWanted(true); setDept("Floral"); } };
   const downloadAllDeptsPdf = () => { const all = deptsWithWork.length ? deptsWithWork : bookDepts; exportDeptPdf(all, { combined: all.length > 1 || all[0] !== dept }); };
 
   // Started from Studio's Deal Check ("All departments PDF"): IMS runs hidden in a frame, selects that event
@@ -3966,7 +3968,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
           row (see pickerSlot below) and this row is desktop-only; hidden rather than left empty,
           or its space-y gap would still open a blank band above the event. Without a slot it
           falls back to the old pulled-up placement. */}
-      {pickerSlot && createPortal(
+      {pickerSlot && !onsiteOnly && createPortal(
         <div data-hi-scope className="sm:hidden">
           {roleDept && !isAdmin
             ? <span className="inline-flex px-3 py-2 rounded-xl bg-blue-50 text-blue-700 text-[13px] font-semibold whitespace-nowrap">{DEPT_ICON[roleDept]} {roleDept}</span>
@@ -3992,6 +3994,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
           their heights cannot diverge — and ml-auto keeps this one on the right, clear of it.
           56 rather than the bare 48: this sits inside a `flex items-center` row that adds a few
           pixels of its own above the control, which the raw height calculation does not see. */}
+      {/* Site-Supervisor-view-only (owner ask 2026-11-19): no department bar - no chips, EN | हिं, Download PDF, Sync. Their PDFs and language sit under the event header. */}
+      {!onsiteOnly && (
       <div className="w-fit max-w-full ml-auto -mt-14 sm:mt-0 sm:ml-0 sm:bg-white sm:rounded-xl sm:shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] sm:px-3 sm:py-2">
       <div className="flex items-center gap-1.5">
         {/* Scrolls sideways rather than wrapping to a second row: eight departments at a phone
@@ -4064,6 +4068,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         </div>
       </div>
       </div>
+      )}
       </div>
 
       {/* ── Department detail for the selected event ──
@@ -4526,6 +4531,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 Hindi unless they switch the EN | हिं toggle. Labelled buttons, always on screen, phone and desktop alike. */}
             {onsiteOnly && dept !== PAINT && (
               <div className="flex flex-wrap items-center gap-2">
+                <PdfLangToggle value={pdfLang} onChange={setPdfLang} disabled={!!exporting} display="hidden sm:inline-flex" />
                 <button type="button" onClick={downloadAllDeptsPdf} disabled={!sel || !!exporting}
                   className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl text-sm font-semibold bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
                   {exporting === "download" ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" /> : <IconDownload />}
