@@ -11,9 +11,9 @@ describe("Changed in the last 48 hours - OK", () => {
   it("the OK button marks this department's changes seen, for department heads of that department only", () => {
     const i = src.indexOf("✓ OK");
     expect(i).toBeGreaterThan(0);
-    const block = src.slice(src.lastIndexOf("{isDeptHead && myDepts.includes(dept) && (", i), i);
-    expect(block).toContain("{isDeptHead && myDepts.includes(dept) && (");
-    expect(block).toContain("onClick={() => markChangesSeen([dept])}");
+    const block = src.slice(src.lastIndexOf("{isDeptHead && !onsiteOnly && myDepts.includes(dept) && (", i), i);
+    expect(block).toContain("{isDeptHead && !onsiteOnly && myDepts.includes(dept) && (");
+    expect(block).toContain("onClick={() => markChangesSeen([dept], Math.max(0, ...list.map((c) => Number(c.at) || 0)))}");
   });
   it("it sits in the banner's header, after the count", () => {
     const head = src.indexOf(">Changed in the last 48 hours</span>");

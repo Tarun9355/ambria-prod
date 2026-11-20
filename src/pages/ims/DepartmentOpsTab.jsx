@@ -1178,11 +1178,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // The department head's "OK" on the changes list (was: their PDF download, until 2026-11-20): this event's changes up to now are seen, for them, in each of their departments the
   // book covers. Not a plan edit - no updatedAt, no change stamp (recentChanges NOT_A_CHANGE), and saved whatever Planning-edit
   // permission says, as it only records that they read it.
-  const markChangesSeen = (depts) => {
+  // upTo: the newest change shown - stamped if it is ahead of this PC's clock (another PC's clock can run a minute fast), so OK clears it
+  const markChangesSeen = (depts, upTo = 0) => {
     if (!sel || !seenKey) return;
     const mine = (depts || []).filter((d) => myDepts.includes(d));
     if (!mine.length) return;
-    const at = Date.now();
+    const at = Math.max(Date.now(), Number(upTo) || 0);
     setEventOrders(prev => prev.map(e => {
       if (e.id !== sel.id) return e;
       const ops = { ...(e.deptOps || {}) };
@@ -4767,8 +4768,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     {/* OK (owner ask 2026-11-20): the department head says they have seen these - the list and the calendar's alert mark go,
                         for them (per person, markChangesSeen). Department heads only, and only for their own department; it used to happen
                         when they downloaded the PDF. Anything changed after shows again. */}
-                    {isDeptHead && myDepts.includes(dept) && (
-                      <button type="button" onClick={() => markChangesSeen([dept])}
+                    {isDeptHead && !onsiteOnly && myDepts.includes(dept) && (
+                      <button type="button" onClick={() => markChangesSeen([dept], Math.max(0, ...list.map((c) => Number(c.at) || 0)))}
                         title="Mark these changes as seen - the list and the alert on the calendar go away for you until something changes again"
                         className="ml-auto inline-flex items-center gap-1 h-8 px-3.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[12px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1">
                         ✓ OK
