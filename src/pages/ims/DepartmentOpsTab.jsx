@@ -1445,13 +1445,27 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       const rank = (it) => (it.foc ? 3 : it.shortQty > 0 ? 0 : it.prodOrBuy ? 1 : 2);
       const sorted = rows.sort((a, b) => rank(a) - rank(b));
       if (d !== "Floral" || !mappedStockRows.length) return sorted;
+      // The same item already on the list in its own right (used directly in Build) is ONE row (owner ask
+      // 2026-11-20: "ye dono same hai toh inko ek hi mai dikhao"): qty to load = both together, while ₹ stays
+      // the item's own line — billQty keeps rate and total on its own qty; the mapped part (its ₹ is in the
+      // artificial total) is spelled out in the row's How (mappedPart).
+      const standalone = [];
+      let merged = sorted;
+      mappedStockRows.forEach((m) => {
+        const k = merged.findIndex((r) => r.invId && String(r.invId) === String(m.invId) && !r.isKit && !r.fromKit && !r.stockOnly && !r.mappedPart);
+        if (k < 0) { standalone.push(m); return; }
+        const r = merged[k];
+        const own = Number(r.rentalQty ?? r.qty) || 0;
+        merged = merged.map((x, j) => j !== k ? x : { ...r, qty: (Number(r.qty) || 0) + m.qty, rentalQty: own + m.qty, billQty: own, mappedFor: m.mappedFor, mappedPart: { qty: m.qty, infoRate: m.infoRate, infoTotal: m.infoTotal, mappedFor: m.mappedFor } });
+      });
+      if (!standalone.length) return merged;
       // Right under the "Artificial flowers / greens" rows (owner ask 2026-11-20: "inko artificial ke niche hi
       // dikha de") — they are the artificial side too; at the end when this event has no such row.
       const isArtRow = (it) => /^artificial (flowers|greens)$/i.test(String(it.name || "").trim());
       let at = -1;
-      sorted.forEach((it, i) => { if (isArtRow(it)) at = i; });
-      if (at < 0) return [...sorted, ...mappedStockRows];
-      return [...sorted.slice(0, at + 1), ...mappedStockRows, ...sorted.slice(at + 1)];
+      merged.forEach((it, i) => { if (isArtRow(it)) at = i; });
+      if (at < 0) return [...merged, ...standalone];
+      return [...merged.slice(0, at + 1), ...standalone, ...merged.slice(at + 1)];
     }
     const out = [];
     Object.entries(blocks || {}).forEach(([itemId, arr]) => {
@@ -5254,7 +5268,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     // `rate` is the blended average actually realized — total ÷ rentalQty — since
                     // a Repeat-discounted reuse and a fresh unit can bill at different rates within
                     // the same merged line.
-                    const rentalQty = Number(it.rentalQty ?? it.qty) || 0;
+                    // billQty: a row carrying a Mapping flower's pieces too (mappedPart) bills on its own qty only
+                    const rentalQty = Number(it.billQty ?? it.rentalQty ?? it.qty) || 0;
                     const showRentalQty = rentalDiffers(it);
                     const avgRate = rentalQty > 0 ? Math.round((Number(it.total) || 0) / rentalQty) : (Number(it.unit) || 0);
                     // ── WHY THE TOTAL IS NOT ALWAYS RATE × QTY ──
@@ -5385,6 +5400,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             {/* with a column per date the single To load figure is left out: each date says what loads on it */}
                             {!showDates && (<StatCell label={showRentalQty ? "To load" : "Qty"} w={STAT_W.qty}>
                               <span className="text-sm font-semibold text-gray-700 tabular-nums">×{qtyShown(it.qty, it.qtyUnit)}{it.qtyUnit ? <span className="ml-0.5 text-xs font-normal text-gray-400">{it.qtyUnit}</span> : null}</span>
+                              {it.mappedPart && <div className="text-[10px] text-gray-400 tabular-nums mt-0.5" title={`${it.billQty} used in Build + ${it.mappedPart.qty} as the artificial version of ${it.mappedPart.mappedFor}`}>{it.billQty} + {it.mappedPart.qty} 🔗</div>}
                             </StatCell>)}
                             {/* Reserved whenever ANY row in this list needs it (anyRentalQty), not just
                                 this one (showRentalQty) — so every row's Rate/Total lands under the
@@ -5449,6 +5465,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               <span className="font-semibold text-gray-900">Line total{!c ? <span className="text-gray-400 font-normal"> · synced before the breakdown existed — sync this event to see every step</span> : null}</span>
                               <span className="tabular-nums font-bold text-gray-900">{fmt(it.total)}</span>
                             </div>
+                            {/* the same item's Mapping-flower pieces, merged into this row: loaded with it, costed in the artificial total */}
+                            {it.mappedPart && (
+                              <div className="py-1.5 text-[12px]">
+                                <div className="flex items-baseline justify-between gap-3">
+                                  <span className="text-blue-700 font-medium">🔗 + ×{it.mappedPart.qty} as the artificial version of {it.mappedPart.mappedFor}<span className="text-gray-400 font-normal"> · {fmt(it.mappedPart.infoRate)} a piece</span></span>
+                                  <span className="tabular-nums font-medium text-gray-500">{fmt(it.mappedPart.infoTotal)}</span>
+                                </div>
+                                <div className="text-[11px] text-gray-400 mt-0.5">Counted in Floral's artificial total, not in this line — to load: {it.billQty} + {it.mappedPart.qty} = ×{it.qty}</div>
+                              </div>
+                            )}
                           </div>
                         );
                       })()}
