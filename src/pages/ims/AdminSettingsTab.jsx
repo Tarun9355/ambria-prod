@@ -1036,20 +1036,20 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                       <p className="font-bold text-gray-800">🔗 Map "{flower?.name || "flower"}" → artificial inventory item</p>
                       <p className="text-xs text-gray-500 mt-0.5">Pick the specific artificial flower this real flower maps to in inventory.</p>
                     </div>
-                    <button onClick={() => setSMandiMapPicker(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">✕</button>
+                    <button onClick={() => setSMandiMapPicker(null)} aria-label="Close" className="text-gray-400 hover:text-gray-700 text-xl leading-none">✕</button>
                   </div>
                   <div className="p-4 border-b">
-                    <input autoFocus value={sMandiMapSearch} onChange={(e) => setSMandiMapSearch(e.target.value)} placeholder="Search inventory by name or sub-category…" className="w-full border rounded-lg px-3 py-2 text-sm" />
+                    <input autoFocus value={sMandiMapSearch} onChange={(e) => setSMandiMapSearch(e.target.value)} aria-label="Search inventory" placeholder="Search inventory by name or sub-category…" className="w-full border rounded-lg px-3 py-2 text-sm" />
                     {subChips.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
-                        <button type="button" onClick={() => setSMandiMapSub("")}
+                        <button type="button" aria-pressed={!sMandiMapSub} onClick={() => setSMandiMapSub("")}
                           className={"px-2.5 py-1 rounded-full text-xs border transition-colors " + (!sMandiMapSub ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-300 hover:border-blue-400")}>
                           All <span className={!sMandiMapSub ? "text-blue-100" : "text-gray-400"}>{searched.length}</span>
                         </button>
                         {subChips.map(([k, c]) => {
                           const on = sMandiMapSub === k;
                           return (
-                            <button type="button" key={k} onClick={() => setSMandiMapSub(on ? "" : k)} title={c.floral ? "Florals sub-category" : undefined}
+                            <button type="button" key={k} aria-pressed={on} onClick={() => setSMandiMapSub(on ? "" : k)} title={c.floral ? "Florals sub-category" : undefined}
                               className={"px-2.5 py-1 rounded-full text-xs border transition-colors " + (on ? "bg-blue-600 text-white border-blue-600" : c.floral ? "bg-pink-50 text-pink-700 border-pink-200 hover:border-pink-400" : "bg-white text-gray-600 border-gray-300 hover:border-blue-400")}>
                               {c.floral ? "🌸 " : ""}{k} <span className={on ? "text-blue-100" : "text-gray-400"}>{c.n}</span>
                             </button>
@@ -1436,7 +1436,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                                 1 {p.unit || "unit"} =
                                 <DraftInput type="number" min="0" step="0.01" value={p.artificialMapPcsPerUnit ?? ""} placeholder="1"
                                   onCommit={(raw) => { const v = parseFloat(raw); updateRow("mandi_flowers", p.id, mandiFlowerPatchToRow({ artificialMapPcsPerUnit: v > 0 ? v : null })).catch(() => {}); }}
-                                  title={`How many pieces of "${mapped.name}" replace 1 ${p.unit || "unit"} of ${p.name}. Blank = 1.`}
+                                  title={`How many pieces of "${mapped.name}" replace 1 ${p.unit || "unit"} of ${p.name}. Blank = 1.`} aria-label={`Pieces of ${mapped.name} per ${p.unit || "unit"} of ${p.name}`}
                                   className="w-16 border rounded px-1.5 py-0.5 text-xs text-center" />
                                 <span>{mapped.unit ? String(mapped.unit).toLowerCase() : "pcs"}</span>
                               </span>

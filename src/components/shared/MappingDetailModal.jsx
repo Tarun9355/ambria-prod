@@ -6,6 +6,7 @@
 // flower: the mandi catalogue row · item: the inventory item (null = the mapped item is gone)
 // artCost (optional): what 1 unit of the flower costs as artificial · need (optional): this event's
 // { qty, unit, cost } · onChange (optional): shows "Change mapping".
+import { useEffect } from "react";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { variantDisplayPhoto } from "../../lib/ims/mandiVariants";
 import { mapPcsPerUnit } from "../../lib/ims/flowerHelpers";
@@ -23,7 +24,7 @@ function DetailRow({ k, v }) {
 
 function BigPhoto({ src, alt, icon }) {
   return src
-    ? <img src={fitUrl(src, 480)} alt={alt} className="w-full h-56 object-cover rounded-xl border border-gray-200 cursor-zoom-in" onClick={() => window.open(src, "_blank", "noopener")} title="Open full size" />
+    ? <a href={src} target="_blank" rel="noopener noreferrer" title="Open full size" className="block rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"><img src={fitUrl(src, 480)} alt={alt} className="w-full h-56 object-cover rounded-xl border border-gray-200 cursor-zoom-in" /></a>
     : <div className="w-full h-56 rounded-xl border border-dashed border-gray-300 bg-gray-50 flex items-center justify-center text-4xl text-gray-300">{icon}</div>;
 }
 
@@ -32,13 +33,15 @@ export const itemPhotoOf = (item) => (item ? ((Array.isArray(item.photoUrls) && 
 export default function MappingDetailModal({ flower, item, artCost = null, need = null, onClose, onChange }) {
   const variants = Array.isArray(flower?.colorVariants) ? flower.colorVariants : [];
   const fPhoto = variants.length ? variantDisplayPhoto(variants[0], variants, flower?.photoUrl) : (flower?.photoUrl || null);
+  // Escape closes it, like the app's other dialogs
+  useEffect(() => { const onKey = (e) => { if (e.key === "Escape") onClose?.(); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [onClose]);
   const iPhotos = item ? [...(Array.isArray(item.photoUrls) ? item.photoUrls : []), ...(item.img && !(item.photoUrls || []).includes(item.img) ? [item.img] : [])] : [];
   return (
     <div onClick={onClose} className="fixed inset-0 z-[9200] bg-black/60 flex items-center justify-center p-5 ui-overlay-in">
-      <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-[min(760px,100%)] max-h-[88vh] flex flex-col overflow-hidden shadow-2xl ui-pop-in">
+      <div role="dialog" aria-modal="true" aria-label={`Mapping — ${flower?.name || "flower"}`} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-[min(760px,100%)] max-h-[88vh] flex flex-col overflow-hidden shadow-2xl ui-pop-in">
         <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
           <p className="font-bold text-gray-800">🔗 Mapping — {flower?.name || "flower"}</p>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">✕</button>
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-700 text-xl leading-none">✕</button>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto p-5">
           {need && (
@@ -75,7 +78,7 @@ export default function MappingDetailModal({ flower, item, artCost = null, need 
                   <BigPhoto src={iPhotos[0]} alt={item.name} icon="📦" />
                   {iPhotos.length > 1 && (
                     <div className="mt-2 flex gap-1.5 flex-wrap">
-                      {iPhotos.slice(1, 6).map((u) => <img key={u} src={thumbUrl(u, 48)} alt="" onClick={() => window.open(u, "_blank", "noopener")} className="w-12 h-12 rounded object-cover border border-gray-200 cursor-zoom-in" />)}
+                      {iPhotos.slice(1, 6).map((u, ui) => <a key={u} href={u} target="_blank" rel="noopener noreferrer" title="Open full size" className="rounded focus-visible:outline-2 focus-visible:outline-blue-500"><img src={thumbUrl(u, 48)} alt={`${item.name} — photo ${ui + 2}`} className="w-12 h-12 rounded object-cover border border-gray-200 cursor-zoom-in" /></a>)}
                     </div>
                   )}
                   <div className="mt-3 font-semibold text-gray-900">{item.name}</div>
