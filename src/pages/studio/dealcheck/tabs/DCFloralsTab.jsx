@@ -867,7 +867,7 @@ export default function DCFloralsTab({ ctx }) {
                                                 {mandiLines.map((rl, ri) => (
                                                   <tr key={ri}>
                                                     <td style={{padding:"3px 2px",color:"#1A1A2E"}}>{rl.name}{rl.realOnly && <span title="Real Only — 100% always" style={{marginLeft:4,fontSize:11,color:"#F59E0B"}}>🔒</span>}</td>
-                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{rl.perPattern} {rl.unit}{rl.realOnly && <span style={{marginLeft:3,fontSize:10,color:"#F59E0B"}}>×100%</span>}</td>
+                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}} title={String(rl.perPattern)}>{Number((Number(rl.perPattern) || 0).toFixed(3))} {rl.unit}{rl.realOnly && <span style={{marginLeft:3,fontSize:10,color:"#F59E0B"}}>×100%</span>}</td>
                                                     <td style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>
                                                       {rl.reuseCredit > 0 && <span title={`${rl.reuseCredit.toFixed(2)} ${rl.unit} reused from an earlier function`} style={{textDecoration:"line-through",opacity:0.4,marginRight:4}}>{rl.qtyFull.toFixed(2)}</span>}
                                                       {rl.qty.toFixed(2)} {rl.unit}
