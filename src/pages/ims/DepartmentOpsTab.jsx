@@ -1175,7 +1175,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     });
     return m;
   }, [amendRequests, eventOrders, lockNow, seenKey]);
-  // The PDF downloaded by a department head: this event's changes up to now are seen, for them, in each of their departments the
+  // The department head's "OK" on the changes list (was: their PDF download, until 2026-11-20): this event's changes up to now are seen, for them, in each of their departments the
   // book covers. Not a plan edit - no updatedAt, no change stamp (recentChanges NOT_A_CHANGE), and saved whatever Planning-edit
   // permission says, as it only records that they read it.
   const markChangesSeen = (depts) => {
@@ -3707,8 +3707,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       buildHtml, lang: pdfLang, multi, dept, depts, group: shared, sel, selDateStr, view,
       onNote: setExportNote, onFile,
     });
-    // a department head's download: the changes so far are seen (markChangesSeen) - not a View, and not an admin's download
-    if (!view && ok) markChangesSeen(inThisBook);
+    // (a department head's changes are no longer marked seen by a download - the "OK" on the changes list does that, owner ask 2026-11-20)
     if (view && ok && url) {
       if (deckCacheRef.current) URL.revokeObjectURL(deckCacheRef.current.url);
       deckCacheRef.current = { key: cacheKey, url, name };
@@ -4765,6 +4764,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     <span aria-hidden="true" className="w-6 h-6 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-[13px]">⚠</span>
                     <span className="text-[14px] font-semibold text-amber-900">Changed in the last 48 hours</span>
                     <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 tabular-nums">{list.length}</span>
+                    {/* OK (owner ask 2026-11-20): the department head says they have seen these - the list and the calendar's alert mark go,
+                        for them (per person, markChangesSeen). Department heads only, and only for their own department; it used to happen
+                        when they downloaded the PDF. Anything changed after shows again. */}
+                    {isDeptHead && myDepts.includes(dept) && (
+                      <button type="button" onClick={() => markChangesSeen([dept])}
+                        title="Mark these changes as seen - the list and the alert on the calendar go away for you until something changes again"
+                        className="ml-auto inline-flex items-center gap-1 h-8 px-3.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[12px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-1">
+                        ✓ OK
+                      </button>
+                    )}
                   </div>
                   {/* every entry of the 48 hours, no "show all" - the list scrolls; anything older is in the Activity log. An entry opens
                       the block it changed (goToChange). */}
