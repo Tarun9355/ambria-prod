@@ -1277,8 +1277,10 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                         return (
                           <button onClick={(e) => { e.stopPropagation(); setSMandiMapSearch(""); setSMandiMapPicker({ flowerId: p.id }); }}
                             title={mapped ? `Mapped to inventory item: ${mapped.name} — click to change` : "Pick the artificial inventory item this flower maps to"}
-                            className={"text-xs px-2 py-1 rounded font-medium border w-full truncate " + (mapped ? "bg-blue-50 text-blue-700 border-blue-300" : "bg-white text-gray-500 border-dashed border-gray-300 hover:border-blue-400")}>
-                            {mapped ? `🔗 ${mapped.name}` : "🔍 Map flower"}
+                            className={"text-xs px-1.5 py-1 rounded font-medium border w-full flex items-center justify-center gap-1 " + (mapped ? "bg-blue-50 text-blue-700 border-blue-300" : "bg-white text-gray-500 border-dashed border-gray-300 hover:border-blue-400")}>
+                            {/* The column is 70px — far too narrow for an item's name ("Whi…"). The chip
+                                shows the item's photo; the full name sits on its own line under the row. */}
+                            {mapped ? (() => { const ph = mapped.img || mapped.photoUrls?.[0]; return <>{ph ? <img src={thumbUrl(ph, 20)} alt="" className="w-5 h-5 rounded object-cover shrink-0" /> : "🔗"}<span>Mapped</span></>; })() : "🔍 Map"}
                           </button>
                         );
                       })() : type !== "real_only" ? (
@@ -1353,6 +1355,29 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                           deleteRow("mandi_flowers", p.id).catch(() => {});
                         }} className="text-red-400 hover:text-red-600 text-base">×</button>
                     </div>
+                    {/* A Mapping flower's artificial item, in full — photo and whole name (the Type
+                        column's chip had room for "Whi…" only, so nobody could tell what it mapped to). */}
+                    {type === "mapping" && (() => {
+                      const mapped = p.artificialMapItemId ? (inventory || []).find((i) => i.id === p.artificialMapItemId) : null;
+                      const ph = mapped ? (mapped.img || mapped.photoUrls?.[0]) : null;
+                      return (
+                        <div className="px-4 pb-2 -mt-1 pl-[88px] flex items-center gap-2 text-xs">
+                          {mapped ? (
+                            <>
+                              <span className="text-gray-500">🔗 Artificial version:</span>
+                              {ph ? <img src={thumbUrl(ph, 40)} loading="lazy" decoding="async" alt={mapped.name} className="w-10 h-10 rounded object-cover border border-blue-200" /> : <span className="w-10 h-10 rounded border border-dashed border-gray-300 flex items-center justify-center text-gray-300">📦</span>}
+                              <span className="font-semibold text-blue-700">{mapped.name}</span>
+                              {(mapped.subCat || mapped.subcategory) && <span className="text-gray-400">· {mapped.subCat || mapped.subcategory}</span>}
+                              <button onClick={(e) => { e.stopPropagation(); setSMandiMapSearch(""); setSMandiMapPicker({ flowerId: p.id }); }} className="ml-1 text-blue-500 hover:text-blue-700 underline">change</button>
+                            </>
+                          ) : (
+                            <button onClick={(e) => { e.stopPropagation(); setSMandiMapSearch(""); setSMandiMapPicker({ flowerId: p.id }); }} className="text-red-500 font-semibold hover:underline">
+                              ⚠ Not mapped yet — pick the artificial inventory item (until then Studio prices its artificial part at ₹0)
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {/* Expanded variants */}
                     {expanded && (
                       <div className="px-6 pb-4 bg-gray-50/40">
