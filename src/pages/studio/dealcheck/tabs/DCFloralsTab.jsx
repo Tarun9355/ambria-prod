@@ -839,10 +839,22 @@ export default function DCFloralsTab({ ctx }) {
                                         </div>
                                       )}
 
-                                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,fontSize:12}}>
+                                      {/* Two full-width tables (real, then artificial) in the Per-Element
+                                          table's own style — was two cramped half-width tables side by side,
+                                          where numbers wrapped onto two lines (owner ask, 2026-11-20). The
+                                          real table spells out its own working: per pattern × patterns ×
+                                          real % = total qty, × rate = cost. */}
+                                      {(() => { const TH = {padding:"6px 8px",fontWeight:600,color:"#1A1A2E",letterSpacing:0.4,whiteSpace:"nowrap",textAlign:"right"};
+                                                const TD = {padding:"6px 8px",color:"#1A1A2E",textAlign:"right",whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"};
+                                                const ROW = {borderBottom:`1px solid ${border}33`};
+                                                const BOX = {background:"#FFFFFF",border:`1px solid ${border}`,borderRadius:10,overflowX:"auto"};
+                                                const n3 = (v) => Number((Number(v) || 0).toFixed(3));
+                                                const rs = (v) => `₹${Math.round(v || 0).toLocaleString("en-IN")}`;
+                                        return (
+                                      <div style={{display:"flex",flexDirection:"column",gap:12,fontSize:13}}>
                                         {/* Real side */}
                                         <div>
-                                          <div style={{color:"#10B981",fontWeight:600,marginBottom:5}}>● Real flowers ({eb.realPct}% blend × {eb.qty} pattern{eb.qty===1?"":"s"}{(eb.realLines||[]).some(rl=>rl.realOnly&&!rl.invItem) ? " + 🔒 100% items":""})</div>
+                                          <div style={{color:"#10B981",fontWeight:600,marginBottom:6}}>● Real flowers ({eb.realPct}% blend × {eb.qty} pattern{eb.qty===1?"":"s"}{(eb.realLines||[]).some(rl=>rl.realOnly&&!rl.invItem) ? " + 🔒 100% items":""})</div>
                                           {/* realLines is flowers only now — inventory ingredients are
                                               costed on the artificial side, so nothing needs filtering
                                               out of this table and its rows add up to its subtotal. */}
@@ -857,45 +869,54 @@ export default function DCFloralsTab({ ctx }) {
                                                 : eb.hasPattern ? "Recipe has no flowers." : "No IMS pattern found — Real ₹0."}
                                             </div>
                                           ) : (
+                                            <div style={BOX}>
                                             <table style={{width:"100%",borderCollapse:"collapse"}}>
                                               <thead><tr style={{borderBottom:`1px solid ${border}`}}>
-                                                <th style={{textAlign:"left",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Flower</th>
-                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Per pattern</th>
-                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Total qty</th>
-                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Cost</th>
+                                                <th style={{...TH,textAlign:"left"}}>Flower</th>
+                                                <th style={TH}>Per pattern</th>
+                                                <th style={TH}>× Patterns</th>
+                                                <th style={TH}>× Real</th>
+                                                <th style={TH}>= Total qty</th>
+                                                <th style={TH}>Rate</th>
+                                                <th style={TH}>Cost</th>
                                               </tr></thead>
                                               <tbody>
                                                 {mandiLines.map((rl, ri) => (
-                                                  <tr key={ri}>
-                                                    <td style={{padding:"3px 2px",color:"#1A1A2E"}}>{rl.name}{rl.realOnly && <span title="Real Only — 100% always" style={{marginLeft:4,fontSize:11,color:"#F59E0B"}}>🔒</span>}</td>
-                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}} title={String(rl.perPattern)}>{Number((Number(rl.perPattern) || 0).toFixed(3))} {rl.unit}{rl.realOnly && <span style={{marginLeft:3,fontSize:10,color:"#F59E0B"}}>×100%</span>}</td>
-                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>
-                                                      {rl.reuseCredit > 0 && <span title={`${rl.reuseCredit.toFixed(2)} ${rl.unit} reused from an earlier function`} style={{textDecoration:"line-through",opacity:0.4,marginRight:4}}>{rl.qtyFull.toFixed(2)}</span>}
+                                                  <tr key={ri} style={ROW}>
+                                                    <td style={{...TD,textAlign:"left",whiteSpace:"normal"}}>{rl.name}{rl.realOnly && <span title="Real Only — 100% always" style={{marginLeft:4,fontSize:11,color:"#F59E0B"}}>🔒</span>}</td>
+                                                    <td style={TD} title={String(rl.perPattern)}>{n3(rl.perPattern)} {rl.unit}</td>
+                                                    <td style={TD}>{eb.qty}</td>
+                                                    <td style={{...TD,color:rl.realOnly?"#F59E0B":"#1A1A2E"}}>{rl.realOnly ? 100 : eb.realPct}%</td>
+                                                    <td style={{...TD,fontWeight:600}}>
+                                                      {rl.reuseCredit > 0 && <span title={`${rl.reuseCredit.toFixed(2)} ${rl.unit} reused from an earlier function`} style={{textDecoration:"line-through",opacity:0.4,marginRight:4,fontWeight:400}}>{rl.qtyFull.toFixed(2)}</span>}
                                                       {rl.qty.toFixed(2)} {rl.unit}
                                                     </td>
-                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#10B981",fontVariantNumeric:"tabular-nums"}}>₹{Math.round(rl.lineCost).toLocaleString("en-IN")}</td>
+                                                    <td style={TD}>{rs(rl.unitPrice)}/{rl.unit}</td>
+                                                    <td style={{...TD,color:"#10B981"}}>{rs(rl.lineCost)}</td>
                                                   </tr>
                                                 ))}
-                                                <tr style={{borderTop:`1px solid ${border}`}}>
-                                                  <td colSpan={3} style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E"}}>Real subtotal:</td>
-                                                  <td style={{textAlign:"right",padding:"3px 2px",color:"#10B981",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(eb.realCost).toLocaleString("en-IN")}</td>
+                                                <tr>
+                                                  <td colSpan={6} style={{...TD,fontWeight:600}}>Real subtotal</td>
+                                                  <td style={{...TD,color:"#10B981",fontWeight:700}}>{rs(eb.realCost)}</td>
                                                 </tr>
                                               </tbody>
                                             </table>
+                                            </div>
                                           )); })()}
                                         </div>
                                         {/* Artificial side */}
                                         <div>
-                                          <div style={{color:"#EC4899",fontWeight:600,marginBottom:5}}>● Artificial bunches ({100-eb.realPct}% × {eb.qty} pattern{eb.qty===1?"":"s"})</div>
+                                          <div style={{color:"#EC4899",fontWeight:600,marginBottom:6}}>● Artificial bunches ({100-eb.realPct}% × {eb.qty} pattern{eb.qty===1?"":"s"})</div>
                                           {eb.artCost <= 0 ? (
                                             <div style={{color:"#1A1A2E",fontStyle:"italic"}}>{(!eb.artLines || eb.artLines.length === 0) ? "No artificial (100% real, no recipe, or bunches/unit not set on flowers)." : "Set Art Bunches/Unit on flowers in IMS Mandi tab."}</div>
                                           ) : (
+                                            <div style={BOX}>
                                             <table style={{width:"100%",borderCollapse:"collapse"}}>
                                               <thead><tr style={{borderBottom:`1px solid ${border}`}}>
-                                                <th style={{textAlign:"left",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Flower</th>
-                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Real replaced</th>
-                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Bunches</th>
-                                                <th style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontWeight:500}}>Cost</th>
+                                                <th style={{...TH,textAlign:"left"}}>Flower</th>
+                                                <th style={TH}>Real replaced</th>
+                                                <th style={TH}>Bunches</th>
+                                                <th style={TH}>Cost</th>
                                               </tr></thead>
                                               <tbody>
                                                 {/* invItem is checked BEFORE realOnly. Inventory lines
@@ -906,19 +927,20 @@ export default function DCFloralsTab({ ctx }) {
                                                     total beneath them. It has no bunches and replaces
                                                     no real units, so those two columns stay blank. */}
                                                 {(eb.artLines || []).map((al, ai) => (
-                                                  <tr key={ai}>
-                                                    <td style={{padding:"3px 2px",color:al.invItem?"#3B82F6":(al.realOnly?textS:"#000")}}>{al.name}<span style={{fontSize:11,marginLeft:4,color:al.invItem?"#3B82F6":(al.realOnly?"#F59E0B":(al.isGreen?"#10B981":"#EC4899"))}}>{al.invItem?"📦":(al.realOnly?"🔒":(al.isGreen?"🌿":"🌹"))}</span></td>
-                                                    <td style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>{al.invItem ? <span style={{fontSize:11,fontStyle:"italic",color:textS}}>{al.qty} {al.unit}</span> : al.realOnly ? <span style={{fontSize:11,fontStyle:"italic"}}>skipped</span> : `${al.realUnitsReplaced.toFixed(2)} ${al.unit}`}</td>
-                                                    <td style={{textAlign:"right",padding:"3px 2px",color:al.realOnly?textS:(al.missingRatio?"#F59E0B":"#000"),fontVariantNumeric:"tabular-nums"}}>{al.realOnly ? "—" : (al.missingRatio?"⚠ ratio?":al.bunches.toFixed(1))}</td>
-                                                    <td style={{textAlign:"right",padding:"3px 2px",color:al.invItem?"#3B82F6":(al.realOnly?textS:(al.isGreen?"#10B981":"#EC4899")),fontVariantNumeric:"tabular-nums"}}>{al.invItem ? `₹${Math.round(al.lineCost).toLocaleString("en-IN")}` : al.realOnly ? "—" : `₹${Math.round(al.lineCost).toLocaleString("en-IN")}`}</td>
+                                                  <tr key={ai} style={ROW}>
+                                                    <td style={{...TD,textAlign:"left",whiteSpace:"normal",color:al.invItem?"#3B82F6":(al.realOnly?textS:"#1A1A2E")}}>{al.name}<span style={{fontSize:11,marginLeft:4,color:al.invItem?"#3B82F6":(al.realOnly?"#F59E0B":(al.isGreen?"#10B981":"#EC4899"))}}>{al.invItem?"📦":(al.realOnly?"🔒":(al.isGreen?"🌿":"🌹"))}</span></td>
+                                                    <td style={TD}>{al.invItem ? <span style={{fontSize:11,fontStyle:"italic",color:textS}}>{al.qty} {al.unit}</span> : al.realOnly ? <span style={{fontSize:11,fontStyle:"italic"}}>skipped</span> : `${al.realUnitsReplaced.toFixed(2)} ${al.unit}`}</td>
+                                                    <td style={{...TD,color:al.realOnly?textS:(al.missingRatio?"#F59E0B":"#1A1A2E")}}>{al.realOnly ? "—" : (al.missingRatio?"⚠ ratio?":al.bunches.toFixed(1))}</td>
+                                                    <td style={{...TD,color:al.invItem?"#3B82F6":(al.realOnly?textS:(al.isGreen?"#10B981":"#EC4899"))}}>{al.realOnly && !al.invItem ? "—" : rs(al.lineCost)}</td>
                                                   </tr>
                                                 ))}
-                                                <tr style={{borderTop:`1px solid ${border}`}}>
-                                                  <td colSpan={3} style={{textAlign:"right",padding:"3px 2px",color:"#1A1A2E"}}>Art subtotal:</td>
-                                                  <td style={{textAlign:"right",padding:"3px 2px",color:"#EC4899",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>₹{Math.round(eb.artCost).toLocaleString("en-IN")}</td>
+                                                <tr>
+                                                  <td colSpan={3} style={{...TD,fontWeight:600}}>Art subtotal</td>
+                                                  <td style={{...TD,color:"#EC4899",fontWeight:700}}>{rs(eb.artCost)}</td>
                                                 </tr>
                                               </tbody>
                                             </table>
+                                            </div>
                                           )}
                                           {eb.artCost > 0 && (
                                             <div style={{marginTop:5,fontSize:11,color:"#1A1A2E",fontStyle:"italic"}}>
@@ -928,6 +950,7 @@ export default function DCFloralsTab({ ctx }) {
                                           )}
                                         </div>
                                       </div>
+                                        ); })()}
 
                                       <div style={{marginTop:10,paddingTop:8,borderTop:`1px dashed ${border}`,display:"flex",justifyContent:"space-between",fontSize:13}}>
                                         <span style={{color:"#1A1A2E"}}>Total ({eb.zoneKey} × {eb.qty})</span>
