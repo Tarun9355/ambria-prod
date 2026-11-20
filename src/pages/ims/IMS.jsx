@@ -77,6 +77,23 @@ const TABS = [
 // Labels arrive as "📊 Dashboard" (and "✅ Approvals (3)" when there are pending ones), so the
 // leading glyph is split off to sit in its own column: with the icons aligned, the rail can be
 // read down the labels alone, which a strip of emoji-prefixed pills could not do.
+// The rail while IMS is still loading. Which tabs a person gets depends on their role / Tab Access settings, which arrive with the
+// rest of the data - the rail used to show a guess (a role's built-in default, e.g. Attendance + Site) and then swap to the real
+// list a moment later (owner report 2026-11-20: "sidebar mai hmesha kuch dikhata hai fir load hone ke baad change ho jata hai").
+// Plain placeholder rows until the real list is known, so nothing wrong is ever shown.
+function NavSkeleton() {
+  return (
+    <nav aria-busy="true" aria-label="Loading menu" className="flex flex-col gap-1">
+      {["w-3/4", "w-3/5", "w-2/3", "w-1/2"].map((w, i) => (
+        <div key={i} className="flex items-center gap-3 px-3 h-10 rounded-xl">
+          <span className="w-5 h-5 rounded-md bg-gray-100 animate-pulse motion-reduce:animate-none" />
+          <span className={"h-3 rounded-full bg-gray-100 animate-pulse motion-reduce:animate-none " + w} />
+        </div>
+      ))}
+    </nav>
+  );
+}
+
 // A tab may carry `children` (Attendance's sub-views): collapsed by default, shown indented under
 // it while expanded[tab.id] is set (IMS.jsx owns that, so the rail and the phone drawer agree) or
 // while one of them is the open view. Picking one calls onSub(tabId, childId). The parent row reads
@@ -2957,7 +2974,7 @@ export default function IMS() {
                   right on hover (hover:translate-x-0.5), which counts toward scrollable overflow.
                   Two pixels of transform were enough to put a full scrollbar on screen. */}
               <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-              <IMSNav tabs={allowedTabs} active={activeTab} onChange={pickTab} activeSub={navSub} onSub={pickSub} expanded={navExpanded} />
+              {loading ? <NavSkeleton /> : <IMSNav tabs={allowedTabs} active={activeTab} onChange={pickTab} activeSub={navSub} onSub={pickSub} expanded={navExpanded} />}
             </div>
             {accountBlock}
           </div>
@@ -2991,7 +3008,7 @@ export default function IMS() {
               <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
                 {/* Tapping Attendance keeps the drawer open — it unfolds its sub-items, and
                     closing on that tap hid them before they could be picked. */}
-                <IMSNav tabs={allowedTabs} active={activeTab} onChange={(id) => { pickTab(id); if (!(id === "attendance" && attSubs.length)) setNavOpen(false); }} activeSub={navSub} onSub={(id, sub) => { pickSub(id, sub); setNavOpen(false); }} expanded={navExpanded} />
+                {loading ? <NavSkeleton /> : <IMSNav tabs={allowedTabs} active={activeTab} onChange={(id) => { pickTab(id); if (!(id === "attendance" && attSubs.length)) setNavOpen(false); }} activeSub={navSub} onSub={(id, sub) => { pickSub(id, sub); setNavOpen(false); }} expanded={navExpanded} />}
               </div>
               {accountBlock}
             </div>
