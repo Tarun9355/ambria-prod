@@ -351,6 +351,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
   const [addColourErr, setAddColourErr] = useState("");
   const [fabricSearch, setFabricSearch] = useState({}); // per fabric table: { lizaStock: "ivo", ... }
   const [sMandiMapPicker, setSMandiMapPicker] = useState(null); // { flowerId } — inventory picker for a "Mapping" flower
+  const [sMandiMapSub, setSMandiMapSub] = useState(""); // the Map picker's sub-category chip ("" = all)
   const [sMandiMapDetail, setSMandiMapDetail] = useState(null); // { flowerId } — the real flower ↔ its mapped artificial item, in full
   const [sMandiMapSearch, setSMandiMapSearch] = useState("");
 
@@ -996,7 +997,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
             return (
               <MappingDetailModal flower={flower} item={item} artCost={flower ? artUnitCost(flower).cost : null}
                 onClose={() => setSMandiMapDetail(null)}
-                onChange={() => { setSMandiMapDetail(null); setSMandiMapSearch(""); setSMandiMapPicker({ flowerId: sMandiMapDetail.flowerId }); }} />
+                onChange={() => { setSMandiMapDetail(null); setSMandiMapSearch(""); setSMandiMapSub(""); setSMandiMapPicker({ flowerId: sMandiMapDetail.flowerId }); }} />
             );
           })()}
 
@@ -1007,8 +1008,17 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
             // Florals-category items first (what a real flower's artificial version is), then the rest
             // — the list used to open on cushions and fabric, the first 60 of all inventory.
             const isFloralItem = (it) => String(it.cat || it.category || "").toLowerCase() === "florals";
-            const results = (inventory || [])
-              .filter((it) => !q || String(it.name || "").toLowerCase().includes(q) || String(it.subCat || it.subcategory || "").toLowerCase().includes(q))
+            const subOf = (it) => String(it.subCat || it.subcategory || "").trim();
+            const searched = (inventory || [])
+              .filter((it) => !q || String(it.name || "").toLowerCase().includes(q) || subOf(it).toLowerCase().includes(q));
+            // Sub-category chips (owner ask 2026-11-20) — built from what the search leaves, Florals' own
+            // first, each with its count; the open chip stays listed even when the search empties it.
+            const subCounts = new Map();
+            searched.forEach((it) => { const k = subOf(it); if (!k) return; const c = subCounts.get(k) || { n: 0, floral: false }; c.n += 1; c.floral = c.floral || isFloralItem(it); subCounts.set(k, c); });
+            if (sMandiMapSub && !subCounts.has(sMandiMapSub)) subCounts.set(sMandiMapSub, { n: 0, floral: false });
+            const subChips = [...subCounts.entries()].sort((a, b) => (b[1].floral - a[1].floral) || a[0].localeCompare(b[0]));
+            const results = searched
+              .filter((it) => !sMandiMapSub || subOf(it) === sMandiMapSub)
               .sort((a, b) => (isFloralItem(b) - isFloralItem(a)) || String(a.name || "").localeCompare(String(b.name || "")))
               .slice(0, 120);
             const pick = (it) => {
@@ -1029,6 +1039,23 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                   </div>
                   <div className="p-4 border-b">
                     <input autoFocus value={sMandiMapSearch} onChange={(e) => setSMandiMapSearch(e.target.value)} placeholder="Search inventory by name or sub-category…" className="w-full border rounded-lg px-3 py-2 text-sm" />
+                    {subChips.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                        <button type="button" onClick={() => setSMandiMapSub("")}
+                          className={"px-2.5 py-1 rounded-full text-xs border transition-colors " + (!sMandiMapSub ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-300 hover:border-blue-400")}>
+                          All <span className={!sMandiMapSub ? "text-blue-100" : "text-gray-400"}>{searched.length}</span>
+                        </button>
+                        {subChips.map(([k, c]) => {
+                          const on = sMandiMapSub === k;
+                          return (
+                            <button type="button" key={k} onClick={() => setSMandiMapSub(on ? "" : k)} title={c.floral ? "Florals sub-category" : undefined}
+                              className={"px-2.5 py-1 rounded-full text-xs border transition-colors " + (on ? "bg-blue-600 text-white border-blue-600" : c.floral ? "bg-pink-50 text-pink-700 border-pink-200 hover:border-pink-400" : "bg-white text-gray-600 border-gray-300 hover:border-blue-400")}>
+                              {c.floral ? "🌸 " : ""}{k} <span className={on ? "text-blue-100" : "text-gray-400"}>{c.n}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                     {flower?.artificialMapItemId && <button onClick={() => pick(null)} className="mt-2 text-xs text-red-500 hover:text-red-700">✕ Clear current mapping</button>}
                   </div>
                   {/* The scroll box and the grid are two elements: as one, the grid was squeezed to the
@@ -1305,7 +1332,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                       {type === "mapping" ? (() => {
                         const mapped = p.artificialMapItemId ? (inventory || []).find((i) => i.id === p.artificialMapItemId) : null;
                         return (
-                          <button onClick={(e) => { e.stopPropagation(); if (mapped) setSMandiMapDetail({ flowerId: p.id }); else { setSMandiMapSearch(""); setSMandiMapPicker({ flowerId: p.id }); } }}
+                          <button onClick={(e) => { e.stopPropagation(); if (mapped) setSMandiMapDetail({ flowerId: p.id }); else { setSMandiMapSearch(""); setSMandiMapSub(""); setSMandiMapPicker({ flowerId: p.id }); } }}
                             title={mapped ? `Mapped to: ${mapped.name} — click for the full details` : "Pick the artificial inventory item this flower maps to"}
                             className={"text-xs px-1.5 py-1 rounded font-medium border w-full flex items-center justify-center gap-1 " + (mapped ? "bg-blue-50 text-blue-700 border-blue-300" : "bg-white text-gray-500 border-dashed border-gray-300 hover:border-blue-400")}>
                             {/* The column is 70px — far too narrow for an item's name ("Whi…"). The chip
@@ -1400,10 +1427,10 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                                 <span className="font-semibold text-blue-700">{mapped.name}</span>
                               </button>
                               {(mapped.subCat || mapped.subcategory) && <span className="text-gray-400">· {mapped.subCat || mapped.subcategory}</span>}
-                              <button onClick={(e) => { e.stopPropagation(); setSMandiMapSearch(""); setSMandiMapPicker({ flowerId: p.id }); }} className="ml-1 text-blue-500 hover:text-blue-700 underline">change</button>
+                              <button onClick={(e) => { e.stopPropagation(); setSMandiMapSearch(""); setSMandiMapSub(""); setSMandiMapPicker({ flowerId: p.id }); }} className="ml-1 text-blue-500 hover:text-blue-700 underline">change</button>
                             </>
                           ) : (
-                            <button onClick={(e) => { e.stopPropagation(); setSMandiMapSearch(""); setSMandiMapPicker({ flowerId: p.id }); }} className="text-red-500 font-semibold hover:underline">
+                            <button onClick={(e) => { e.stopPropagation(); setSMandiMapSearch(""); setSMandiMapSub(""); setSMandiMapPicker({ flowerId: p.id }); }} className="text-red-500 font-semibold hover:underline">
                               ⚠ Not mapped yet — pick the artificial inventory item (until then Studio prices its artificial part at ₹0)
                             </button>
                           )}
