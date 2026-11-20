@@ -51,6 +51,7 @@ import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
 import { kvGet } from "../../lib/ims/kv";
+import { withLivePlan } from "../../lib/ims/mandiLivePlan";
 
 // ── THE SUMMARY TILE ROW ──
 // auto-FIT, not auto-fill. The difference only shows when there are fewer tiles than columns
@@ -687,7 +688,9 @@ function deriveMandiView(deptData, fp) {
   // legacy/orphan spend that, in practice, already covered it).
   const anyUnknownRealSpend = (legacyMandiLines?.length > 0) || mandiLinesArchived.length > 0 || orphanFnTabs.length > 0;
   const fallbackRowsFor = (t) => (t.fnIdx != null && anyUnknownRealSpend ? [] : seedRowsFromFlowers(t.flowers));
-  const mandiRowsOfTab = (t) => { const stored = rawStoredFor(t); return Array.isArray(stored) ? stored : fallbackRowsFor(t); };
+  // Logged rows keep what was bought; the planned side is re-read from Deal Check's current plan
+  // (withLivePlan, lib/ims/mandiLivePlan.js). Archived/orphan tabs have no live plan and stay as stored.
+  const mandiRowsOfTab = (t) => { const stored = rawStoredFor(t); return Array.isArray(stored) ? withLivePlan(stored, seedRowsFromFlowers(t.flowers)) : fallbackRowsFor(t); };
   // The ONE figure billing (the Actuals card/PDF, Studio's P&L via realMandi) must ever use — every
   // tab summed, never just whichever one happens to be open on screen.
   const mandiGrandReal = mandiTabs.reduce((s, t) => s + mandiRealTotalOf(mandiRowsOfTab(t)), 0);
@@ -1941,13 +1944,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // key their own aggregation (same flower name ordered in two different colours is two separate
   // rows there, not one) — matching by name alone here would re-collapse them right back down to a
   // single colour on every render, the same bug just moved one file over.
-  const mandiKey = (r) => `${r.name}¦${r.colorVariant?.label || (Array.isArray(r.colorPrefs) ? r.colorPrefs.map(p => p.label).join("/") : "") || ""}`;
-  const seedColourByName = {};
-  seedMandi.forEach(r => { const k = mandiKey(r); if (!seedColourByName[k]) seedColourByName[k] = { colorVariant: r.colorVariant, colorPrefs: r.colorPrefs }; });
+  // The planned qty/₹ follow Deal Check the same way (owner report, 2026-11-20: "16 kg planned"
+  // under a "how" box saying 43.07 kg, because the planned side froze when shopping was first logged)
+  // — withLivePlan (lib/ims/mandiLivePlan.js) refreshes plan + colour and never touches qty/price/swaps.
   const activeStoredLines = activeMandiTab ? rawStoredFor(activeMandiTab) : undefined;
-  const mandiRows = Array.isArray(activeStoredLines)
-    ? activeStoredLines.map(r => seedColourByName[mandiKey(r)] ? { ...r, ...seedColourByName[mandiKey(r)] } : r)
-    : seedMandi;
+  const mandiRows = Array.isArray(activeStoredLines) ? withLivePlan(activeStoredLines, seedMandi) : seedMandi;
   // Real shopping hasn't been logged until someone actually edits a row — until then, mandiRows is
   // just this tab's own seedMandi (the plan's own quantities/prices mirrored in as a starting
   // point), so the "Real shopping" numbers can look fully filled in even though nobody has been to
