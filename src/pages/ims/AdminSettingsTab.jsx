@@ -990,9 +990,13 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
           {sMandiMapPicker && (() => {
             const flower = (settings.mandiCatalogue || []).find((f) => f.id === sMandiMapPicker.flowerId);
             const q = sMandiMapSearch.trim().toLowerCase();
+            // Florals-category items first (what a real flower's artificial version is), then the rest
+            // — the list used to open on cushions and fabric, the first 60 of all inventory.
+            const isFloralItem = (it) => String(it.cat || it.category || "").toLowerCase() === "florals";
             const results = (inventory || [])
               .filter((it) => !q || String(it.name || "").toLowerCase().includes(q) || String(it.subCat || it.subcategory || "").toLowerCase().includes(q))
-              .slice(0, 60);
+              .sort((a, b) => (isFloralItem(b) - isFloralItem(a)) || String(a.name || "").localeCompare(String(b.name || "")))
+              .slice(0, 120);
             const pick = (it) => {
               const price = it ? (Number(it.price ?? it.rentalCost) || 0) : 0;   // client-facing rental → Studio artificial price
               const cost = it ? (Number(it.cost) || price) : 0;                    // purchase cost → Deal Check sourcing cost
@@ -1013,22 +1017,34 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                     <input autoFocus value={sMandiMapSearch} onChange={(e) => setSMandiMapSearch(e.target.value)} placeholder="Search inventory by name or sub-category…" className="w-full border rounded-lg px-3 py-2 text-sm" />
                     {flower?.artificialMapItemId && <button onClick={() => pick(null)} className="mt-2 text-xs text-red-500 hover:text-red-700">✕ Clear current mapping</button>}
                   </div>
-                  <div className="p-4 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {/* The scroll box and the grid are two elements: as one, the grid was squeezed to the
+                      modal's height and every tile collapsed into a thin strip with no name. */}
+                  <div className="flex-1 min-h-0 overflow-y-auto p-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 auto-rows-max">
                     {(inventory || []).length === 0 ? <div className="col-span-full text-center text-gray-400 text-sm py-8 italic">Inventory not loaded.</div>
                      : results.length === 0 ? <div className="col-span-full text-center text-gray-400 text-sm py-8 italic">No inventory items match “{sMandiMapSearch}”.</div>
                      : results.map((it) => {
                         const photo = (Array.isArray(it.photoUrls) && it.photoUrls[0]) || it.img || "";
                         const isCur = it.id === flower?.artificialMapItemId;
+                        const price = Number(it.price ?? it.rentalCost) || 0;
                         return (
-                          <div key={it.id} onClick={() => pick(it)} className={"cursor-pointer rounded-xl overflow-hidden border-2 " + (isCur ? "border-blue-500" : "border-gray-200 hover:border-blue-300")}>
-                            {photo ? <img src={fitUrl(photo, 200)} loading="lazy" decoding="async" alt="" className="w-full h-24 object-cover" /> : <div className="w-full h-24 bg-gray-100 flex items-center justify-center text-2xl text-gray-300">🌸</div>}
-                            <div className="px-2 py-1.5">
-                              <div className="text-xs font-semibold text-gray-800 truncate">{it.name}</div>
-                              <div className="text-[10px] text-gray-400 truncate">{it.subCat || it.subcategory || ""}</div>
+                          <button type="button" key={it.id} onClick={() => pick(it)} title={it.name}
+                            className={"text-left rounded-xl overflow-hidden border-2 bg-white flex flex-col transition-colors " + (isCur ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-200 hover:border-blue-300")}>
+                            <div className="relative w-full h-28 shrink-0 bg-gray-100">
+                              {photo ? <img src={fitUrl(photo, 240)} loading="lazy" decoding="async" alt={it.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-2xl text-gray-300">🌸</div>}
+                              {isCur && <span className="absolute top-1.5 left-1.5 text-[10px] font-semibold bg-blue-600 text-white rounded px-1.5 py-0.5">✓ Current</span>}
                             </div>
-                          </div>
+                            <div className="px-2.5 py-2">
+                              <div className="text-xs font-semibold text-gray-800 leading-snug line-clamp-2">{it.name}</div>
+                              <div className="mt-0.5 flex items-center justify-between gap-2 text-[10px] text-gray-400">
+                                <span className="truncate">{it.subCat || it.subcategory || it.cat || ""}</span>
+                                {price > 0 && <span className="shrink-0 tabular-nums text-gray-500">₹{price.toLocaleString("en-IN")}</span>}
+                              </div>
+                            </div>
+                          </button>
                         );
                       })}
+                  </div>
                   </div>
                 </div>
               </div>
