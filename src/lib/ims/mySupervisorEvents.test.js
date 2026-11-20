@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { samePerson, supervisorIdsOfUser, isMyEvent } from "./mySupervisorEvents";
+import { samePerson, supervisorIdsOfUser, isMyEvent, fixedAtVenue } from "./mySupervisorEvents";
 
 const roster = [
   { id: "S1", name: "Raja", phone: "98100 11111", active: true },
@@ -63,8 +63,9 @@ describe("isMyEvent", () => {
 // ── wiring in Dept Ops (source) ──
 const src = readFileSync(resolve(__dirname, "../../pages/ims/DepartmentOpsTab.jsx"), "utf8").replace(/\r\n/g, "\n");
 describe("Dept Ops wiring for the Site-Supervisor-view-only role", () => {
-  it("the event list is narrowed to my events only for that role and only while the button is on", () => {
-    expect(src).toMatch(/\.filter\(\(\{ eo \}\) => !\(onsiteOnly && myOnly\) \|\| isMyEvent\(eo, authUser, supervisors\)\)/);
+  it("the calendar is narrowed to my functions only for that role and only while the button is on: my event, or a function at a venue I am fixed at", () => {
+    expect(src).toContain("if (onsiteOnly && myOnly && !isMyEvent(eo, authUser, supervisors)");
+    expect(src).toContain("&& !fixedAtVenue(authUser, fnForDate(eo, d)?.venue || eo.venue || \"\", settings, venuePlaces, supervisors, inhouseVenues.inhouse)) return;");
   });
   it("the My events button is drawn only for onsiteOnly", () => {
     const i = src.indexOf("My events ✓");
@@ -118,5 +119,39 @@ describe("Dept Ops wiring for the Site-Supervisor-view-only role", () => {
   });
   it("that role is never offered Paint (its view prints paint costs), everyone else keeps it as before", () => {
     expect(src).toContain("...(!onsiteOnly && (isAdmin || !myDepts || myDepts.includes(PAINT)) ? [PAINT] : [])]");
+  });
+});
+// ── fixed venues: "My events" shows the functions at the venues a supervisor is fixed at ──
+describe("fixedAtVenue", () => {
+  const places = [{ id: "P1", name: "Exotica" }, { id: "P2", name: "Manaktala" }, { id: "V1", name: "Aura" }];
+  const inhouse = [{ id: "V1", name: "Aura", propertyId: "P1" }];
+  const sups = [
+    { id: "S1", name: "Raja", phone: "9810011111", active: true, fixedVenues: ["P1"] },
+    { id: "S2", name: "Sunil Kumar", phone: "9810022222", active: true, fixedVenues: ["P2"] },
+    { id: "S3", name: "Pappu", phone: "9810033333", active: false, fixedVenues: ["P1"] },
+    { id: "S4", name: "NoVenue", phone: "9810044444", active: true, fixedVenues: [] },
+  ];
+  const settings = {};
+  const at = (user, venue) => fixedAtVenue(user, venue, settings, places, sups, inhouse);
+  const raja = { name: "Raja", phone: "9810011111" };
+  it("is true at the venue (or any of its sub-venues) the supervisor is fixed at, false elsewhere", () => {
+    expect(at(raja, "Exotica")).toBe(true);
+    expect(at(raja, "Ambria Exotica")).toBe(true);
+    expect(at(raja, "Aura")).toBe(true); // a sub-venue counts under its property
+    expect(at(raja, "Manaktala")).toBe(false);
+  });
+  it("another supervisor's venue is not mine; an inactive supervisor and one with no venue never match", () => {
+    expect(at({ name: "Sunil Kumar", phone: "9810022222" }, "Manaktala")).toBe(true);
+    expect(at({ name: "Sunil Kumar", phone: "9810022222" }, "Exotica")).toBe(false);
+    expect(at({ name: "Pappu", phone: "9810033333" }, "Exotica")).toBe(false);
+    expect(at({ name: "NoVenue", phone: "9810044444" }, "Exotica")).toBe(false);
+  });
+  it("a login that is not on the roster, an empty venue and bad input are false, never a throw", () => {
+    expect(at({ name: "Nobody", phone: "9000000000" }, "Exotica")).toBe(false);
+    expect(at(raja, "")).toBe(false);
+    expect(at(raja, null)).toBe(false);
+    expect(at(null, "Exotica")).toBe(false);
+    expect(fixedAtVenue(raja, "Exotica", settings, [], sups, inhouse)).toBe(false);
+    expect(fixedAtVenue(raja, "Exotica", settings, places, null, inhouse)).toBe(false);
   });
 });

@@ -36,39 +36,24 @@ describe("component shape", () => {
   });
 });
 
-describe("events memo", () => {
-  const memo = slice("const events = useMemo(() => {", "// Open the picker on a month");
-  it("filters by isMyEvent only when onsiteOnly AND myOnly", () => {
-    expect(memo).toContain(".filter(({ eo }) => !(onsiteOnly && myOnly) || isMyEvent(eo, authUser, supervisors))");
+describe("My events filter (calendar buckets, per function date)", () => {
+  const memo = slice("const pickByDate = useMemo(() => {", "// Arriving from the Calendar tab");
+  it("the events list itself is not narrowed by My events any more (the calendar buckets are, per date)", () => {
+    const ev = slice("const events = useMemo(() => {", "// Open the picker on a month");
+    expect(ev).not.toContain("isMyEvent");
+    expect(ev).toContain("}, [allEvents, search]);");
   });
-  it("the live-status filter still runs first, then my events, then the search box", () => {
-    const a = memo.indexOf("isLiveEvent(eo)"), b = memo.indexOf("isMyEvent("), c = memo.indexOf("const q") >= 0 ? memo.indexOf("!q ||") : -1;
-    expect(a).toBeGreaterThan(-1);
-    expect(a).toBeLessThan(b);
-    expect(b).toBeLessThan(c);
+  it("a date stays when its event is mine (picked Site Supervisor) OR its function's venue is one the supervisor is fixed at - only for onsiteOnly AND myOnly", () => {
+    expect(memo).toContain("if (onsiteOnly && myOnly && !isMyEvent(eo, authUser, supervisors)");
+    expect(memo).toContain("&& !fixedAtVenue(authUser, fnForDate(eo, d)?.venue || eo.venue || \"\", settings, venuePlaces, supervisors, inhouseVenues.inhouse)) return;");
   });
-  it("deps include every value the filter reads (no stale My events after a roster / login change)", () => {
+  it("the venue is looked up per DATE (the function held that day), like the venue legend filter right above it", () => {
+    expect(memo.indexOf("venueFilter")).toBeLessThan(memo.indexOf("fixedAtVenue("));
+    expect(memo).toContain("fnForDate(eo, d)?.venue");
+  });
+  it("deps include everything the filter reads (no stale My events after a roster, venue or login change)", () => {
     const deps = /\}, \[([^\]]+)\]\);\s*$/.exec(memo.trimEnd())[1].split(",").map((s) => s.trim());
-    for (const d of ["allEvents", "search", "onsiteOnly", "myOnly", "authUser", "supervisors"]) expect(deps).toContain(d);
-  });
-  it("the logic itself, run on the sliced filter chain with the real isMyEvent", async () => {
-    const { isMyEvent } = await import("../../lib/ims/mySupervisorEvents.js");
-    const run = (props) => {
-      // eslint-disable-next-line no-new-func
-      const fn = new Function("allEvents", "search", "onsiteOnly", "myOnly", "authUser", "supervisors", "isMyEvent", "isLiveEvent", "useMemo", `
-        const useMemoImpl = (f) => f();
-        const events = useMemo(() => {\n${memo.slice(memo.indexOf("const q"), memo.lastIndexOf("}, ["))}\n}, []);
-        return events;`);
-      return fn(props.allEvents, props.search || "", props.onsiteOnly, props.myOnly, props.authUser, props.supervisors, isMyEvent, (eo) => !["pending", "cancelled", "review"].includes(eo.status), (f) => f());
-    };
-    const roster = [{ id: "S1", name: "Raja", phone: "9810011111" }, { id: "S2", name: "Sunil", phone: "9810022222" }];
-    const mk = (id, sid, status = "confirmed") => ({ eo: { id, status, clientName: id, siteSupervisorId: sid, venue: "" }, date: "2026-11-02" });
-    const all = [mk("a", "S1"), mk("b", "S2"), mk("c", null), mk("d", "S1", "cancelled")];
-    const me = { name: "Raja", phone: "9810011111" };
-    expect(run({ allEvents: all, onsiteOnly: true, myOnly: true, authUser: me, supervisors: roster }).map((e) => e.eo.id)).toEqual(["a"]);
-    expect(run({ allEvents: all, onsiteOnly: true, myOnly: false, authUser: me, supervisors: roster }).map((e) => e.eo.id)).toEqual(["a", "b", "c"]);
-    expect(run({ allEvents: all, onsiteOnly: false, myOnly: true, authUser: me, supervisors: roster }).map((e) => e.eo.id)).toEqual(["a", "b", "c"]);
-    expect(run({ allEvents: all, onsiteOnly: true, myOnly: true, authUser: me, supervisors: roster, search: "zzz" })).toEqual([]);
+    for (const d of ["events", "pickMonth", "venueFilter", "settings", "onsiteOnly", "myOnly", "authUser", "supervisors", "venuePlaces"]) expect(deps).toContain(d);
   });
 });
 

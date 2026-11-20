@@ -5,6 +5,8 @@
 // them, so a person is the same when their phone numbers are the same (last 10 digits, when both have one), else when their names
 // are the same (case and spacing ignored).
 
+import { siteSupervisorsFor } from "./fixedVenues";
+
 const digits = (s) => String(s == null ? "" : s).replace(/\D/g, "").slice(-10);
 const nameKey = (s) => String(s == null ? "" : s).toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -19,6 +21,15 @@ export function samePerson(a, b) {
 // the roster rows (ids) that are this login
 export function supervisorIdsOfUser(user, supervisors) {
   return (Array.isArray(supervisors) ? supervisors : []).filter((s) => s && s.id != null && samePerson(user, s)).map((s) => s.id);
+}
+
+// is this login fixed at this venue (Admin → Settings → 👷 Supervisors: the venues a supervisor is fixed at)? Same venue match the PDF cover's
+// "Site supervisor" uses (lib/ims/fixedVenues siteSupervisorsFor): a sub-venue counts under its property, "Ambria " is ignored.
+// places: the properties and in-house venues together [{ id, name }]; inhouse: the sub-venues [{ id, name, propertyId }].
+export function fixedAtVenue(user, venueName, settings, places, supervisors, inhouse = []) {
+  const v = String(venueName || "").trim();
+  if (!v) return false;
+  return siteSupervisorsFor(settings, [v], places, supervisors, inhouse).some((s) => samePerson(user, s));
 }
 
 // is this event order one of this login's? Its picked supervisor's id is one of theirs, or - when that supervisor has since left the

@@ -121,7 +121,7 @@ describe("calendar (no event picked) - My events button", () => {
   });
   it("on the roster but no event this month: the other empty message", () => {
     const html = render(base({ eventOrders: [ev("E2", "SunilsParty", 4, { siteSupervisorId: "S2" })] }), { [F.myOnly]: true });
-    expect(html).toContain("No events with you as the Site Supervisor this month");
+    expect(html).toContain("No functions at your venues this month");
     expect(html).toContain("Show every event");
     expect(html).not.toContain("ask the admin to add you");
   });

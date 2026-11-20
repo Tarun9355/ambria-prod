@@ -46,7 +46,7 @@ import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
 import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeLogs } from "../../lib/ims/recentChanges";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
-import { isMyEvent, supervisorIdsOfUser } from "../../lib/ims/mySupervisorEvents";
+import { isMyEvent, supervisorIdsOfUser, fixedAtVenue } from "../../lib/ims/mySupervisorEvents";
 import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
@@ -792,6 +792,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const [exportNote, setExportNote] = useState("");
   // Ambria's properties and in-house venues (venues table) - to find the supervisors fixed at the event's venue for the PDF cover
   const inhouseVenues = useInhouseVenues(true);
+  // the properties and in-house venues together - what a supervisor's "fixed at" venues are looked up in
+  const venuePlaces = useMemo(() => [...inhouseVenues.properties, ...inhouseVenues.inhouse], [inhouseVenues.properties, inhouseVenues.inhouse]);
   const [search, setSearch] = useState("");
   const [leadEntry, setLeadEntry] = useState(null); // LMS entry no of the lead we arrived from
   // Month shown by the event picker below. Starts on the current month and is nudged, once, to a
@@ -1082,13 +1084,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return allEvents
       // Ops plans only for SOLD/finalised events — hide pending, cancelled and review deals.
       .filter(({ eo }) => isLiveEvent(eo))
-      .filter(({ eo }) => !(onsiteOnly && myOnly) || isMyEvent(eo, authUser, supervisors))
       // Every function's own venue, not just functionsDetail[0]'s — a multi-venue deal must be
       // findable by searching ANY of its venues, not only its first function's.
       .filter(({ eo }) => !q || (eo.clientName || "").toLowerCase().includes(q)
         || [eo.venue, ...(Array.isArray(eo.functionsDetail) ? eo.functionsDetail.map((f) => f?.venue) : [])].some((v) => (v || "").toLowerCase().includes(q)))
       .sort((a, b) => (a.date || "9999").localeCompare(b.date || "9999"));
-  }, [allEvents, search, onsiteOnly, myOnly, authUser, supervisors]);
+  }, [allEvents, search]);
 
   // Open the picker on a month that actually has events — nearest upcoming, else the most recent
   // past one. Sold events cluster in a few months; landing on "today" usually meant an empty grid
@@ -1120,11 +1121,15 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
           const code = venueCalendarColor(settings, fnForDate(eo, d)?.venue || eo.venue || "").code;
           if (code !== venueFilter) return;
         }
+        // "👷 My events" (Site-Supervisor-view-only role): a function on this date held at a venue the supervisor is fixed at, or an
+        // event they are the picked Site Supervisor of (the header's dropdown) on every one of its dates
+        if (onsiteOnly && myOnly && !isMyEvent(eo, authUser, supervisors)
+          && !fixedAtVenue(authUser, fnForDate(eo, d)?.venue || eo.venue || "", settings, venuePlaces, supervisors, inhouseVenues.inhouse)) return;
         (out[d] = out[d] || []).push(eo);
       });
     });
     return out;
-  }, [events, pickMonth, venueFilter, settings]);
+  }, [events, pickMonth, venueFilter, settings, onsiteOnly, myOnly, authUser, supervisors, venuePlaces, inhouseVenues.inhouse]);
 
   // Arriving from the Calendar tab: it hands over the event_order id that was clicked and this
   // selects it. Cleared straight after via onFocusHandled, so the hand-off is a one-shot — left
@@ -4160,7 +4165,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     <div className="flex items-center gap-2 shrink-0 flex-wrap">
                       {onsiteOnly && (
                         <button type="button" onClick={() => { setMyOnly(v => !v); setPickDay(null); }} aria-pressed={myOnly}
-                          title={myOnly ? "Showing only the events you are the Site Supervisor of - tap to show every event" : "Show only the events you are the Site Supervisor of"}
+                          title={myOnly ? "Showing only the functions at your venues (and events you are the Site Supervisor of) - tap to show every event" : "Show only the functions at the venues you are fixed at (and events you are the Site Supervisor of)"}
                           className={"px-3.5 h-9 rounded-full text-xs font-semibold inline-flex items-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 "
                             + (myOnly ? "bg-blue-600 text-white hover:bg-blue-700" : "bg-gray-900 text-white hover:bg-gray-700")}>
                           <span aria-hidden="true">👷</span>{myOnly ? "My events ✓" : "My events"}
@@ -4336,7 +4341,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         <>
                           {mySupervisorIds.length === 0
                             ? "Your login is not on the Site Supervisor list (Admin → Settings → Supervisors) with this name / phone number - ask the admin to add you."
-                            : "No events with you as the Site Supervisor this month - page to another month."}{" "}
+                            : "No functions at your venues this month, and none you are the Site Supervisor of - page to another month."}{" "}
                           <button onClick={() => setMyOnly(false)} className="font-semibold text-blue-600 hover:text-blue-800">Show every event</button>
                         </>
                       ) : venueFilter ? (
