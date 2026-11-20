@@ -5,7 +5,18 @@
 // is applied to that, so an edit only ever changes what it is about. The screen's copy is used only if that read fails.
 //   readFresh(id) -> the row's color_variants as stored now; write(id, patch) -> the save; change(list) -> the new list;
 //   parentPrice(list) -> the flower's current_price from its variants (when the edit can change it).
-export async function saveVariantsFresh({ flowerId, fallback, change, readFresh, write, parentPrice }) {
+// Saves of the same flower from this tab are queued one after another (a photo upload finishing while a rename saves both read the
+// same list otherwise, and the second write dropped the first one's change). Across tabs / people a few-ms window remains.
+const queues = new Map();
+export function saveVariantsFresh(args) {
+  const key = String(args?.flowerId ?? "");
+  const prev = queues.get(key) || Promise.resolve();
+  const run = prev.catch(() => {}).then(() => saveOnce(args));
+  queues.set(key, run);
+  run.finally(() => { if (queues.get(key) === run) queues.delete(key); }).catch(() => {});
+  return run;
+}
+async function saveOnce({ flowerId, fallback, change, readFresh, write, parentPrice }) {
   let fresh = null;
   try { fresh = await readFresh(flowerId); } catch { fresh = null; }
   const base = Array.isArray(fresh) ? fresh : (Array.isArray(fallback) ? fallback : []);

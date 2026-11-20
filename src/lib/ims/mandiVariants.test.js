@@ -67,7 +67,7 @@ describe("AdminSettingsTab wiring", () => {
   });
   it("price edits and deletes recalculate the flower's price; the rest do not", () => {
     expect(src.split("cv), true);").length - 1).toBe(1);
-    expect(src).toContain("saveVariants((list) => list.filter((cv) => cv.variantId !== v.variantId), true);");
+    expect(src).toContain("saveVariants((list) => { const rest = list.filter((cv) => cv.variantId !== v.variantId); return rest.length ? rest : list; }, true);");
   });
   it("the photo column falls back to any variant's photo", () => {
     expect(src).toContain("const displayUrl = hasVariants ? variantDisplayPhoto(cheapestVariant, variants, p.photoUrl) : (p.photoUrl || null);");

@@ -1413,8 +1413,13 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                                   {(type === "flower" || type === "real_only") && (() => {
                                     const vPalette = Array.isArray(v.palette) ? v.palette : [];
                                     const togglePalette = (c) => {
-                                      const next = vPalette.includes(c) ? vPalette.filter((x) => x !== c) : [...vPalette, c];
-                                      saveVariants((list) => list.map((cv) => cv.variantId === v.variantId ? { ...cv, palette: next } : cv));
+                                      // the toggle is applied to the STORED palette (two quick chips, or another person's change, are both kept)
+                                      const on = vPalette.includes(c);
+                                      saveVariants((list) => list.map((cv) => {
+                                        if (cv.variantId !== v.variantId) return cv;
+                                        const cur = Array.isArray(cv.palette) ? cv.palette : [];
+                                        return { ...cv, palette: on ? cur.filter((x) => x !== c) : (cur.includes(c) ? cur : [...cur, c]) };
+                                      }));
                                     };
                                     return (
                                       <td className="px-2 py-1.5">
@@ -1449,7 +1454,8 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                                     <button onClick={async () => {
                                       if (variantCount === 1) { alert(`Cannot delete the last variant of "${p.name}". Delete the whole flower instead.`); return; }
                                       if (await confirm({ title: `Delete variant "${v.name}"?`, body: `Removes this colour variant from "${p.name}". The flower's price becomes its cheapest remaining variant.` })) {
-                                        saveVariants((list) => list.filter((cv) => cv.variantId !== v.variantId), true);
+                                        // never the last one: checked on the stored list too (others may have been deleted elsewhere meanwhile)
+                                        saveVariants((list) => { const rest = list.filter((cv) => cv.variantId !== v.variantId); return rest.length ? rest : list; }, true);
                                       }
                                     }} className="text-red-300 hover:text-red-500">×</button>
                                   </td>
