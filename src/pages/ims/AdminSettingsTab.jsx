@@ -9,6 +9,7 @@ import ClickablePhoto from "../../components/shared/ClickablePhoto.jsx";
 import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { saveVariantsFresh, variantDisplayPhoto } from "../../lib/ims/mandiVariants";
+import MappingDetailModal from "../../components/shared/MappingDetailModal.jsx";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel, genMandiFlowerId, mandiFlowerToRow, mandiFlowerPatchToRow, genFlowerPatternId, flowerPatternToRow, mirrorFlowerPick } from "../../lib/ims/flowerHelpers";
 import { labourTypePatchToRow } from "../../lib/ims/labourTypes";
 import { priceForInvItem, phone10, flowerPaletteItemsOf } from "../../lib/ims/helpers";
@@ -992,72 +993,10 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
           {sMandiMapDetail && (() => {
             const flower = (settings.mandiCatalogue || []).find((f) => f.id === sMandiMapDetail.flowerId);
             const item = flower?.artificialMapItemId ? (inventory || []).find((i) => i.id === flower.artificialMapItemId) : null;
-            const close = () => setSMandiMapDetail(null);
-            const fVariants = Array.isArray(flower?.colorVariants) ? flower.colorVariants : [];
-            const fPhoto = fVariants.length ? variantDisplayPhoto(fVariants[0], fVariants, flower?.photoUrl) : (flower?.photoUrl || null);
-            const iPhotos = item ? [...(Array.isArray(item.photoUrls) ? item.photoUrls : []), ...(item.img && !(item.photoUrls || []).includes(item.img) ? [item.img] : [])] : [];
-            const rs = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN")}`;
-            const art = flower ? artUnitCost(flower) : { cost: null };
-            const Row = ({ k, v }) => (v === "" || v == null ? null : <div className="flex justify-between gap-3 py-1 border-b border-gray-100 last:border-0"><span className="text-gray-500">{k}</span><span className="font-medium text-gray-800 text-right">{v}</span></div>);
-            const Photo = ({ src, alt, icon }) => (src
-              ? <img src={fitUrl(src, 480)} alt={alt} className="w-full h-56 object-cover rounded-xl border border-gray-200 cursor-zoom-in" onClick={() => window.open(src, "_blank", "noopener")} title="Open full size" />
-              : <div className="w-full h-56 rounded-xl border border-dashed border-gray-300 bg-gray-50 flex items-center justify-center text-4xl text-gray-300">{icon}</div>);
             return (
-              <div onClick={close} className="fixed inset-0 z-[9200] bg-black/60 flex items-center justify-center p-5 ui-overlay-in">
-                <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-[min(760px,100%)] max-h-[88vh] flex flex-col overflow-hidden shadow-2xl ui-pop-in">
-                  <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
-                    <p className="font-bold text-gray-800">🔗 Mapping — {flower?.name || "flower"}</p>
-                    <button onClick={close} className="text-gray-400 hover:text-gray-700 text-xl leading-none">✕</button>
-                  </div>
-                  <div className="flex-1 min-h-0 overflow-y-auto p-5">
-                    <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-4 items-start">
-                      <div>
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-pink-600 mb-2">🌸 Real flower (mandi)</div>
-                        <Photo src={fPhoto} alt={flower?.name} icon="🌸" />
-                        <div className="mt-3 font-semibold text-gray-900">{flower?.name}</div>
-                        <div className="mt-2 text-xs">
-                          <Row k="Category" v={flower?.flowerCat} />
-                          <Row k="Unit" v={flower?.unit} />
-                          <Row k="Pieces / unit" v={Number(flower?.gattharSize) > 0 ? flower.gattharSize : ""} />
-                          <Row k="Mandi price" v={flower ? `${rs(flower.currentPrice)} / ${flower.unit || "unit"}` : ""} />
-                          <Row k="Colours" v={fVariants.length ? fVariants.map((v) => v.name).filter(Boolean).join(", ") : ""} />
-                          <Row k="Artificial cost" v={art.cost != null ? `${rs(Math.round(art.cost * 100) / 100)} / ${flower?.unit || "unit"}` : "not priced"} />
-                        </div>
-                      </div>
-                      <div className="hidden sm:flex items-center justify-center self-center text-2xl text-blue-400">→</div>
-                      <div>
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-600 mb-2">📦 Artificial item (inventory)</div>
-                        {item ? (
-                          <>
-                            <Photo src={iPhotos[0]} alt={item.name} icon="📦" />
-                            {iPhotos.length > 1 && (
-                              <div className="mt-2 flex gap-1.5 flex-wrap">
-                                {iPhotos.slice(1, 6).map((u) => <img key={u} src={thumbUrl(u, 48)} alt="" onClick={() => window.open(u, "_blank", "noopener")} className="w-12 h-12 rounded object-cover border border-gray-200 cursor-zoom-in" />)}
-                              </div>
-                            )}
-                            <div className="mt-3 font-semibold text-gray-900">{item.name}</div>
-                            <div className="mt-2 text-xs">
-                              <Row k="Code" v={item.code} />
-                              <Row k="Category" v={[item.cat, item.subCat].filter(Boolean).join(" · ")} />
-                              <Row k="Rental price" v={`${rs(item.price)} / ${item.unit || "piece"}`} />
-                              <Row k="Cost" v={Number(item.cost) > 0 ? rs(item.cost) : ""} />
-                              <Row k="In stock" v={`${Number(item.qty) || 0} ${item.unit || ""}`.trim()} />
-                              <Row k="Location" v={item.location} />
-                              <Row k="Size" v={item.size || item.dims_LxWxH || ""} />
-                            </div>
-                          </>
-                        ) : (
-                          <div className="text-sm text-red-500 font-semibold">⚠ The mapped item is no longer in inventory — pick another.</div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="px-5 py-3 border-t border-gray-200 flex justify-end gap-2">
-                    <button onClick={close} className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Close</button>
-                    <button onClick={() => { close(); setSMandiMapSearch(""); setSMandiMapPicker({ flowerId: sMandiMapDetail.flowerId }); }} className="px-3 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700">🔗 Change mapping</button>
-                  </div>
-                </div>
-              </div>
+              <MappingDetailModal flower={flower} item={item} artCost={flower ? artUnitCost(flower).cost : null}
+                onClose={() => setSMandiMapDetail(null)}
+                onChange={() => { setSMandiMapDetail(null); setSMandiMapSearch(""); setSMandiMapPicker({ flowerId: sMandiMapDetail.flowerId }); }} />
             );
           })()}
 

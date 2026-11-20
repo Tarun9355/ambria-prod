@@ -57,6 +57,19 @@ describe("buildLiveFloralPlan — IMS runs Deal Check's own engine on the deal's
     expect(how.groups[0].rows[0]).toMatchObject({ elQty: 144, per: 0.37, realFrac: 0.5 });
   });
 
+  it("a Mapping flower's artificial part comes out as a mapped substitute, qty from Build, with the item's id", () => {
+    const mappedLadi = { ...ladi, flowerType: "mapping", artificialMapItemId: "inv_art_ladi", artificialMapName: "Old name", artificialMapCost: 10 };
+    const s = { ...settingsWith("gl"), mandiCatalogue: [hanging, mappedLadi, tussel] };
+    const live = buildLiveFloralPlan(detail(), { settings: s });
+    const m = live.floralDetail[0].art.mapped;
+    expect(m).toHaveLength(1);
+    expect(m[0]).toMatchObject({ mappedItemId: "inv_art_ladi", realFlowerName: "guldavari ladi", unit: "kg" });
+    expect(m[0].qty).toBeCloseTo(26.4, 1); // 0.3667 × 144 × 50% artificial
+    expect(m[0].cost).toBe(264); // × ₹10 saved when mapped — the rate Deal Check uses too
+    const bigger = buildLiveFloralPlan(detail({ elements: { vedi: [{ name: "Guldavari + Tussel SQFT", patternId: "FP1", qty: 288, size: "M" }] } }), { settings: s });
+    expect(bigger.floralDetail[0].art.mapped[0].qty).toBeCloseTo(52.8, 1); // Build's qty doubled → doubled at once
+  });
+
   it("maps a stored function the way the engine reads one", () => {
     const fn = fnFromDetail(detail()[0], 0);
     expect(fn).toMatchObject({ fnIdx: 0, fnType: "Wedding", fnDate: "2026-12-05", fnVenue: "Vedi Farm", fnShift: "dinner", floralRatio: 50, enabledEls: { vedi: true } });

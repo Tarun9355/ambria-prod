@@ -53,6 +53,7 @@ import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
 import { kvGet } from "../../lib/ims/kv";
 import { withLivePlan, isDismissMarker, dismissMarker } from "../../lib/ims/mandiLivePlan";
 import { buildLiveFloralPlan } from "../../lib/ims/liveFloralPlan";
+import MappingDetailModal, { itemPhotoOf } from "../../components/shared/MappingDetailModal.jsx";
 
 // ── THE SUMMARY TILE ROW ──
 // auto-FIT, not auto-fill. The difference only shows when there are fewer tiles than columns
@@ -322,12 +323,20 @@ function invCalcSummary(rows) {
 // Read from `floralDetail`, the per-function figures Deal Check pushes with the department snapshot (see
 // calcFnFloralDetail in StudioApp). Same sections as the tab: header, mandi list (with how each flower's quantity
 // builds up), artificial bunches, direct-from-inventory pieces, elements not costed as florals, per-element table.
-function FloralDetailView({ detail }) {
+// liveDetail (optional): IMS's own live run (lib/ims/liveFloralPlan.js) — when given, the Mapped
+// substitutes come from it (qty follows Build at once) and show the inventory item as it is now.
+function FloralDetailView({ detail, liveDetail = null, inventory = [], mandiCatalogue = [] }) {
   const keys = Object.keys(detail || {});
   const [fk, setFk] = useState(keys[0]);
   const [open, setOpen] = useState({});
+  const [mapOpen, setMapOpen] = useState(null); // one Mapped-substitutes row, shown in full
   const f = detail?.[fk] || detail?.[keys[0]];
   if (!f) return null;
+  const fKey = detail?.[fk] ? fk : keys[0];
+  const mappedRows = liveDetail ? (liveDetail[fKey]?.art?.mapped || []) : ((f.art || {}).mapped || []);
+  const invById = (id) => (id ? (inventory || []).find((i) => i.id === id) : null);
+  const flowerOf = (m) => (mandiCatalogue || []).find((c) => (m.realFlowerId && c.id === m.realFlowerId) || c.name === m.realFlowerName) || null;
+  const mappedItemOf = (m) => invById(m.mappedItemId) || invById(flowerOf(m)?.artificialMapItemId);
   const rupee = (n) => "₹" + Math.round(Math.abs(Number(n) || 0)).toLocaleString("en-IN");
   const realPct = f.total > 0 ? Math.round((f.real / f.total) * 100) : 0;
   const toggle = (k) => setOpen(o => ({ ...o, [k]: !o[k] }));
@@ -433,14 +442,30 @@ function FloralDetailView({ detail }) {
           {side("🌹 Flower bunches", "pink", A.flower || { bunches: 0, bunchesFull: 0, kg: 0, rate: 0, cost: 0, costFull: 0 })}
           {side("🌿 Green bunches", "green", A.green || { bunches: 0, bunchesFull: 0, kg: 0, rate: 0, cost: 0, costFull: 0 })}
         </div>
-        {(A.mapped || []).length > 0 && (
+        {mappedRows.length > 0 && (
           <div className="mt-2.5 rounded-md px-2.5 py-2 bg-blue-50 border border-blue-100">
-            <div className="text-[12px] font-semibold text-blue-600 mb-1">🔗 Mapped substitutes</div>
-            {A.mapped.map((m, i) => (
-              <div key={i} className="flex justify-between text-[12px] py-0.5 text-[#1A1A2E]"><span>{m.realFlowerName} → {m.mappedName || "no item mapped"} × {m.qty} {m.unit}</span><span className="text-blue-600 font-semibold tabular-nums">{rupee(m.cost)}</span></div>
-            ))}
+            <div className="text-[12px] font-semibold text-blue-600 mb-1.5">🔗 Mapped substitutes{liveDetail ? <span className="ml-1.5 font-normal text-blue-400">· live from Build</span> : null}</div>
+            {mappedRows.map((m, i) => {
+              const item = mappedItemOf(m);
+              const ph = itemPhotoOf(item);
+              return (
+                <button type="button" key={i} onClick={() => setMapOpen(m)} title="Full details"
+                  className="w-full flex items-center gap-2.5 text-left text-[12px] py-1 text-[#1A1A2E] rounded hover:bg-blue-100/60">
+                  {ph ? <img src={thumbUrl(ph, 36)} alt="" className="w-9 h-9 rounded object-cover border border-blue-200 shrink-0" /> : <span className="w-9 h-9 rounded border border-dashed border-blue-200 flex items-center justify-center shrink-0">📦</span>}
+                  <span className="flex-1 min-w-0">
+                    <span className="block font-semibold truncate">{item?.name || m.mappedName || "no item mapped"}</span>
+                    <span className="block text-[11px] text-gray-500">for {m.realFlowerName} · {m.qty} {m.unit}</span>
+                  </span>
+                  <span className="text-blue-600 font-semibold tabular-nums">{rupee(m.cost)}</span>
+                </button>
+              );
+            })}
           </div>
         )}
+        {mapOpen && (() => {
+          const fl = flowerOf(mapOpen);
+          return <MappingDetailModal flower={fl || { name: mapOpen.realFlowerName, unit: mapOpen.unit }} item={mappedItemOf(mapOpen)} need={{ qty: mapOpen.qty, unit: mapOpen.unit, cost: mapOpen.cost }} onClose={() => setMapOpen(null)} />;
+        })()}
         <div className="flex justify-between items-center mt-2.5 pt-2 border-t border-gray-200">
           <span className="text-[13px] font-medium text-[#1A1A2E]">Total Artificial</span>
           <span className="text-[15px] font-bold text-pink-600 tabular-nums">{rupee(A.total ?? f.artificial)}</span>
@@ -500,7 +525,7 @@ function FloralDetailView({ detail }) {
   );
 }
 
-function DeptIncomeModal({ eo, depts, startDept, onClose }) {
+function DeptIncomeModal({ eo, depts, startDept, onClose, liveFloralDetail = null, inventory = [], mandiCatalogue = [] }) {
   const d = startDept; // only the department this panel is for
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
@@ -563,7 +588,7 @@ function DeptIncomeModal({ eo, depts, startDept, onClose }) {
             </div>
           )}
           {d === "Floral" && (eo?.floralDetail
-            ? <FloralDetailView detail={eo.floralDetail} />
+            ? <FloralDetailView detail={eo.floralDetail} liveDetail={liveFloralDetail} inventory={inventory} mandiCatalogue={mandiCatalogue} />
             : <div className="mt-3.5 rounded-lg bg-slate-50 px-3 py-2.5 text-[12px] text-gray-500 flex items-center gap-3 flex-wrap">
               <span className="flex-1 min-w-[200px]">Deal Check's Florals tab (mandi list, artificial bunches, per-element breakdown) is not saved for this event yet. It is pulled in by running Deal Check for this one event.</span>
               <PlanningSyncButton eventOrders={[eo]} onlyOrder={eo} force label="🔄 Load Deal Check details" />
@@ -1920,10 +1945,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // pushed (sel.floralPlan) stays for everything the live run doesn't produce (artificial stock,
   // income, season) and is the whole plan when the stored layout can't support a live run.
   const liveFloral = useMemo(() => {
-    if (dept !== "Floral" || !sel) return null;
+    if ((dept !== "Floral" && !dcModalOpen) || !sel) return null;
     try { return buildLiveFloralPlan(sel.functionsDetail, { settings: settings || {}, rcItems, rateCardCategories, inventory }); }
     catch (e) { console.warn("[DeptOps] live floral plan failed — showing Deal Check's last pushed plan", e); return null; }
-  }, [dept, sel, settings, rcItems, rateCardCategories, inventory]);
+  }, [dept, dcModalOpen, sel, settings, rcItems, rateCardCategories, inventory]);
   const storedFp = sel?.floralPlan || {};
   const fp = liveFloral
     ? { ...storedFp, byFn: liveFloral.byFn, flowers: [...liveFloral.flowers, ...(Array.isArray(storedFp.flowers) ? storedFp.flowers.filter(f => f.artificial) : [])] }
@@ -7264,7 +7289,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         </div>
       )}
       {confirmDialog}
-      {dcModalOpen && sel && <DeptIncomeModal eo={sel} depts={bookDepts} startDept={dept} onClose={() => setDcModalOpen(false)} />}
+      {dcModalOpen && sel && <DeptIncomeModal eo={sel} depts={bookDepts} startDept={dept} onClose={() => setDcModalOpen(false)} liveFloralDetail={liveFloral?.floralDetail || null} inventory={inventory} mandiCatalogue={settings?.mandiCatalogue || []} />}
       <Modal open={reopenPrompt} onClose={() => { setReopenPrompt(false); setReopenReason(""); }} title="Reopen actuals for editing">
         <p className="text-sm text-gray-600 mb-3">Opens expenses, mandi spend and on-site crew for this event back up for 24 hours. Say why — this is logged.</p>
         <textarea value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} autoFocus rows={3} placeholder="e.g. driver bata entered twice, correcting it"

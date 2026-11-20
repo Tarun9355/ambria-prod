@@ -688,7 +688,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
             const realUnitsReplaced = Math.max(0, realUnitsReplacedFull - artReuseCredit);
             const mapCost = Number(parent?.artificialMapCost) || 0;
             const lineCost = realUnitsReplaced * mapCost;
-            artLines.push({ flowerId: parentId, name: parent?.name || fl.flowerId, realUnitsReplaced, unit: parent?.unit || "?", bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: mapCost, lineCost, missingRatio: mapCost <= 0, realOnly: false, isMapped: true, mappedName: parent?.artificialMapName || null });
+            artLines.push({ flowerId: parentId, name: parent?.name || fl.flowerId, realUnitsReplaced, unit: parent?.unit || "?", bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: mapCost, lineCost, missingRatio: mapCost <= 0, realOnly: false, isMapped: true, mappedName: parent?.artificialMapName || null, mappedItemId: parent?.artificialMapItemId || null });
             return;
           }
           const bunchesPerUnit = Number(parent?.artificialBunchesPerUnit) || 0;

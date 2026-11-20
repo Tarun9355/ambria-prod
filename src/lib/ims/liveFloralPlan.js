@@ -96,7 +96,18 @@ export function buildLiveFloralPlan(functionsDetail, { settings = {}, rcItems = 
       name: f.name, unit: f.unit, need: rnd(f.totalQty), buyQty: Math.ceil(f.totalQty), rate: rnd(f.unitPrice),
       contributors: (f.contributors || []).map((c) => ({ el: c.elName, zone: c.zoneKey, elQty: c.elQty, per: rnd(c.perPattern, 1000), qty: rnd(c.contribution), size: c.size, realFrac: c.realFrac })),
     }));
-    if (mandi.length) floralDetail[fn.fnIdx] = { fnType: fn.fnType, fnDate: fn.fnDate, mandi };
+    // Mapped substitutes (a real flower whose artificial version is one specific inventory item) — the
+    // same aggregation as StudioApp's calcFnFloralDetail art.mapped, plus the item's id so IMS can show
+    // the item as it stands in inventory now (photo, current name), not the name saved when it was mapped.
+    const mappedAgg = {};
+    (r.elementBreakdown || []).forEach((e) => (e.artLines || []).forEach((al) => {
+      if (!al.isMapped) return;
+      const key = al.mappedItemId || al.mappedName || al.name;
+      if (!mappedAgg[key]) mappedAgg[key] = { mappedItemId: al.mappedItemId || null, mappedName: al.mappedName || "", realFlowerName: al.name, realFlowerId: al.flowerId || null, unit: al.unit, qty: 0, cost: 0 };
+      mappedAgg[key].qty += al.realUnitsReplaced || 0; mappedAgg[key].cost += al.lineCost || 0;
+    }));
+    const mapped = Object.values(mappedAgg).map((m) => ({ ...m, qty: rnd(m.qty, 10), cost: Math.round(m.cost) }));
+    if (mandi.length || mapped.length) floralDetail[fn.fnIdx] = { fnType: fn.fnType, fnDate: fn.fnDate, mandi, art: { mapped } };
   });
   const flowers = Object.values(agg).map((f) => ({ ...f, rate: f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0 })).sort((a, b) => b.cost - a.cost);
   return { byFn, flowers, floralDetail };
