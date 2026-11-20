@@ -178,6 +178,7 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   // item popup: with a date picked, its "Blocked for Functions" lists that day only unless this is on (back off for each item opened)
   const [selAllDates, setSelAllDates] = useState(false);
   const [availOnly, setAvailOnly] = useState("all"); // when a date is set: "all" | "blocked" | "free" on that date
+  const [availOpen, setAvailOpen] = useState(false); // phone only: the Availability panel folds behind one button until opened (or a date is set)
   // Which of the 3 date-pricing tiers is TODAY, per the live config — same resolver the Calendar
   // and Block modal use (markedDates override > auto-synced LMS category > Filler), so the Price
   // column's highlight can never drift from what Date Pricing Config actually says is active now.
@@ -1041,60 +1042,81 @@ Rules:
   return (
     <div className="space-y-4">
       {confirmDialog}
-      {/* Toolbar — smart search + chip filters */}
+      {/* Toolbar — smart search + chip filters.
+          Phone layout (owner ask 2026-11-20, "use ui laws"): one job per row, in the order they are used —
+          find (search, with the count inside it), act (Add / Move as two equal buttons, Add the primary),
+          narrow (the filter toggles, then the date, then category and type). Fewer things at once (Hick):
+          the date panel folds behind one button, category chips scroll on one line instead of four, the
+          four types are one segmented control. Every phone tap target is ≥ 40px tall (Fitts). md and up
+          keep the desktop layout: one wrapping row, every chip visible. */}
       <div className="space-y-2.5">
-        {/* Row 1: search box + result count + Add */}
-        <div className="flex flex-wrap gap-2 items-center">
-          <div className="relative w-72 max-w-full">
+        {/* Row 1: search box + result count + filter toggles + actions */}
+        <div className="flex flex-col gap-2.5 md:flex-row md:flex-wrap md:items-center md:gap-2">
+          <div className="relative w-full md:w-72 md:max-w-full">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+            {/* text-base on a phone: iOS zooms the page into any input under 16px */}
             <input value={search} onChange={(e) => { setSearch(e.target.value); setInvPage(0); }}
-              placeholder="Search name, code, location, notes…"
-              className="w-full border rounded-lg pl-9 pr-8 py-2 text-sm focus:border-indigo-400 outline-none" />
+              placeholder="Search name, code, location, notes…" aria-label="Search inventory"
+              className="w-full border border-gray-300 rounded-xl pl-9 pr-24 md:pr-8 py-2.5 md:py-2 text-base md:text-sm bg-white focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 outline-none" />
+            <span className="md:hidden absolute right-9 top-1/2 -translate-y-1/2 text-[11px] text-gray-400 font-medium tabular-nums pointer-events-none">{filtered.length}/{visibleInventory.length}</span>
             {search && (
-              <button onClick={() => { setSearch(""); setInvPage(0); }} title="Clear search"
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 text-sm">✕</button>
+              <button onClick={() => { setSearch(""); setInvPage(0); }} title="Clear search" aria-label="Clear search"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 text-sm">✕</button>
             )}
           </div>
-          <span className="text-xs text-gray-500 font-medium">{filtered.length} of {visibleInventory.length}</span>
-          {(search || filterCat !== "All" || filterSubCat !== "All" || filterType !== "All" || filterNeedsReview || filterToCheck) && (
-            <button onClick={() => { setSearch(""); setFilterCat("All"); setFilterSubCat("All"); setFilterType("All"); setFilterNeedsReview(false); setFilterToCheck(false); setSubChipSearch(""); setInvPage(0); }}
-              className="text-xs text-indigo-600 hover:underline">Clear all filters</button>
-          )}
-          {invReviewsReady && (
-            <button onClick={() => { setFilterToCheck(!filterToCheck); setInvPage(0); }}
-              title="Items added or edited, newest first - they leave this list once an Admin marks them checked"
-              className={"px-3 py-1.5 rounded-full text-sm font-medium transition-all border-2 " + (filterToCheck ? "bg-emerald-600 text-white border-emerald-700" : toCheckCount ? "bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50")}>
-              🆕 New / edited ({toCheckCount})
-            </button>
-          )}
-          {needsReviewCount > 0 && (
-            <button onClick={() => { setFilterNeedsReview(!filterNeedsReview); setInvPage(0); }}
-              className={"px-3 py-1.5 rounded-full text-sm font-medium transition-all border-2 " + (filterNeedsReview ? "bg-amber-500 text-white border-amber-600" : "bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100")}>
-              🏷️ Needs Review ({needsReviewCount})
-            </button>
-          )}
-          {normaliseTargets.length > 0 && (
-            <button onClick={normaliseCategories} title="Permanently rewrite old spellings (e.g. Flower → Florals) to the current Studio categories"
-              className="px-3 py-1.5 rounded-full text-sm font-medium transition-all border-2 bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100">
-              ✨ Normalise categories ({normaliseTargets.length})
-            </button>
-          )}
-          <div className="ml-auto flex gap-2">
+          <span className="hidden md:inline text-xs text-gray-500 font-medium">{filtered.length} of {visibleInventory.length}</span>
+          {/* Actions — on a phone, two equal buttons under the search (Add is the primary); desktop: pushed right */}
+          <div className="grid grid-cols-2 gap-2 md:flex md:order-last md:ml-auto">
             <button onClick={() => { setMoveFromSub(""); setMoveToSub(""); setMoveSubcatModal(true); }}
-              className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg text-sm whitespace-nowrap">🔀 Move Sub-Category</button>
-            {canAdd && <button onClick={() => { setPhotoModal(false); setBulkModal(false); setImportModal(false); { const fc = filterCat !== "All" ? addCatLabels.find((c) => normCat(c) === normCat(filterCat)) : null; setForm({ name: "", cat: fc || defaultAddCat, subCat: fc && filterSubCat !== "All" ? filterSubCat : "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" }); } setPhotoImg(null); setPhotoReady(false); setPhotoError(""); setAddModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap">+ Add Item</button>}
+              className="bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-3 md:px-4 py-2.5 md:py-2 rounded-xl md:rounded-lg text-sm font-medium whitespace-nowrap">🔀 Move Sub-Category</button>
+            {canAdd && <button onClick={() => { setPhotoModal(false); setBulkModal(false); setImportModal(false); { const fc = filterCat !== "All" ? addCatLabels.find((c) => normCat(c) === normCat(filterCat)) : null; setForm({ name: "", cat: fc || defaultAddCat, subCat: fc && filterSubCat !== "All" ? filterSubCat : "", type: "Budgeted", itemClass: "discrete", qty: "", unit: "Piece", loc: "Production House", price: "", cost: "", breakagePct: 0, dimL: "", dimW: "", dimH: "", dimUnit: "Feet", printL: "", printW: "", printUnit: "Feet", baseColour: "", paintCost: "", notes: "", img: "" }); } setPhotoImg(null); setPhotoReady(false); setPhotoError(""); setAddModal(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 md:py-2 rounded-xl md:rounded-lg text-sm font-semibold whitespace-nowrap shadow-sm">+ Add Item</button>}
+          </div>
+          {/* Filter toggles — one scrolling line on a phone; inline with the search on desktop (md:contents) */}
+          <div className="flex gap-2 items-center overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:contents">
+            {invReviewsReady && (
+              <button onClick={() => { setFilterToCheck(!filterToCheck); setInvPage(0); }} aria-pressed={filterToCheck}
+                title="Items added or edited, newest first - they leave this list once an Admin marks them checked"
+                className={"shrink-0 px-3 py-2 md:py-1.5 rounded-full text-sm font-medium transition-all border-2 whitespace-nowrap " + (filterToCheck ? "bg-emerald-600 text-white border-emerald-700" : toCheckCount ? "bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50")}>
+                🆕 New / edited ({toCheckCount})
+              </button>
+            )}
+            {needsReviewCount > 0 && (
+              <button onClick={() => { setFilterNeedsReview(!filterNeedsReview); setInvPage(0); }} aria-pressed={filterNeedsReview}
+                className={"shrink-0 px-3 py-2 md:py-1.5 rounded-full text-sm font-medium transition-all border-2 whitespace-nowrap " + (filterNeedsReview ? "bg-amber-500 text-white border-amber-600" : "bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100")}>
+                🏷️ Needs Review ({needsReviewCount})
+              </button>
+            )}
+            {normaliseTargets.length > 0 && (
+              <button onClick={normaliseCategories} title="Permanently rewrite old spellings (e.g. Flower → Florals) to the current Studio categories"
+                className="shrink-0 px-3 py-2 md:py-1.5 rounded-full text-sm font-medium transition-all border-2 bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 whitespace-nowrap">
+                ✨ Normalise categories ({normaliseTargets.length})
+              </button>
+            )}
+            {(search || filterCat !== "All" || filterSubCat !== "All" || filterType !== "All" || filterNeedsReview || filterToCheck) && (
+              <button onClick={() => { setSearch(""); setFilterCat("All"); setFilterSubCat("All"); setFilterType("All"); setFilterNeedsReview(false); setFilterToCheck(false); setSubChipSearch(""); setInvPage(0); }}
+                className="shrink-0 px-2 py-2 md:py-0 text-xs font-medium text-indigo-600 hover:underline whitespace-nowrap">Clear all filters</button>
+            )}
           </div>
         </div>
 
-        {/* Row 1.5: Availability as of a date — see what's blocked / free for a specific day */}
-        <div className="flex flex-wrap items-center gap-2 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2">
-          <span className="text-xs font-semibold text-sky-800">📅 Availability on date</span>
-          <input type="date" value={availDate} onChange={(e) => { setAvailDate(e.target.value); setInvPage(0); }} className="border border-sky-300 rounded-lg px-2 py-1 text-sm" />
+        {/* Row 1.5: Availability as of a date — see what's blocked / free for a specific day.
+            Phone: folded behind one button (it is used now and then, and the open panel took a fifth of the
+            screen); open while a date is set. Desktop: always open, as before. */}
+        {!availDate && (
+          <button type="button" onClick={() => setAvailOpen((o) => !o)} aria-expanded={availOpen}
+            className={"md:hidden w-full flex items-center justify-between gap-2 bg-sky-50 border border-sky-200 px-3 py-2.5 text-sm font-semibold text-sky-800 " + (availOpen ? "rounded-t-xl border-b-0" : "rounded-xl")}>
+            <span>📅 Availability on date</span>
+            <span aria-hidden="true" className={"text-sky-500 text-xs transition-transform " + (availOpen ? "rotate-90" : "")}>▸</span>
+          </button>
+        )}
+        <div className={(availDate || availOpen ? "flex" : "hidden") + " md:flex flex-wrap items-center gap-2 bg-sky-50 border border-sky-200 px-3 py-2.5 md:py-2 md:rounded-lg md:mt-0 " + (availOpen && !availDate ? "rounded-b-xl border-t-0 -mt-2.5 md:border-t" : "rounded-xl")}>
+          <span className={(availDate ? "" : "hidden md:inline ") + "text-xs font-semibold text-sky-800"}>📅 Availability on date</span>
+          <input type="date" value={availDate} onChange={(e) => { setAvailDate(e.target.value); setInvPage(0); }} aria-label="Availability on date" className="border border-sky-300 rounded-lg px-2 py-1.5 md:py-1 text-base md:text-sm bg-white" />
           {availDate ? (<>
             <div className="flex gap-1">
               {[["all", "All"], ["blocked", "🔒 Blocked"], ["free", "✅ Fully free"]].map(([k, l]) => (
-                <button key={k} onClick={() => { setAvailOnly(k); setInvPage(0); }}
-                  className={"px-2.5 py-1 rounded-full text-xs font-medium transition-all " + (availOnly === k ? "bg-sky-600 text-white" : "bg-white text-sky-700 border border-sky-200 hover:bg-sky-100")}>{l}</button>
+                <button key={k} onClick={() => { setAvailOnly(k); setInvPage(0); }} aria-pressed={availOnly === k}
+                  className={"px-2.5 py-1.5 md:py-1 rounded-full text-xs font-medium transition-all " + (availOnly === k ? "bg-sky-600 text-white" : "bg-white text-sky-700 border border-sky-200 hover:bg-sky-100")}>{l}</button>
               ))}
             </div>
             <span className="text-[11px] text-sky-700">Avail & Blkd columns now show <b>this date only</b> — {inventory.reduce((s, i) => s + (blockedOf(i) > 0 ? 1 : 0), 0)} item(s) blocked</span>
@@ -1104,28 +1126,37 @@ Rules:
           )}
         </div>
 
-        {/* Row 2: Category chips (replaces the dropdown) */}
-        <div className="flex flex-wrap gap-1.5 items-center">
-          <button onClick={() => { setFilterCat("All"); setFilterSubCat("All"); setSubChipSearch(""); setInvPage(0); }}
-            className={"px-2.5 py-1 rounded-full text-xs font-semibold transition-all " + (filterCat === "All" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+        {/* Row 2: Category chips (replaces the dropdown). Phone: one line that scrolls sideways, its right edge
+            fading so the cut-off chip reads as "more this way" — four wrapped lines of chips before the first item. */}
+        <div role="group" aria-label="Category" className="flex flex-nowrap md:flex-wrap gap-1.5 items-center overflow-x-auto md:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [mask-image:linear-gradient(to_right,black_85%,transparent)] md:[mask-image:none] pr-6 md:pr-0">
+          <button onClick={() => { setFilterCat("All"); setFilterSubCat("All"); setSubChipSearch(""); setInvPage(0); }} aria-pressed={filterCat === "All"}
+            className={"shrink-0 whitespace-nowrap px-3 md:px-2.5 py-2 md:py-1 rounded-full text-xs font-semibold transition-all " + (filterCat === "All" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
             All ({visibleInventory.length})
           </button>
           {catChips.map((c) => (
-            <button key={c} onClick={() => { setFilterCat(c); setFilterSubCat("All"); setSubChipSearch(""); setInvPage(0); }}
-              className={"px-2.5 py-1 rounded-full text-xs font-medium transition-all " + (filterCat === c ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
+            <button key={c} onClick={() => { setFilterCat(c); setFilterSubCat("All"); setSubChipSearch(""); setInvPage(0); }} aria-pressed={filterCat === c}
+              className={"shrink-0 whitespace-nowrap px-3 md:px-2.5 py-2 md:py-1 rounded-full text-xs font-medium transition-all " + (filterCat === c ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
               {c} <span className="opacity-60">({catCounts[c]})</span>
             </button>
           ))}
         </div>
 
-        {/* Row 3: Type chips */}
-        <div className="flex flex-wrap gap-1.5">
-          {INV_TYPES.map((t) => (
-            <button key={t} onClick={() => { setFilterType(t); setInvPage(0); }}
-              className={"px-3 py-1 rounded-full text-xs font-medium transition-all " + (filterType === t ? "bg-violet-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
-              {t === "Premium" ? "★ " : t === "In-house" ? "🏠 " : t === "Budgeted" ? "$ " : ""}{t} ({t === "All" ? inventory.length : inventory.filter((i) => i.type === t).length})
-            </button>
-          ))}
+        {/* Row 3: Type. Phone: one segmented control, four equal parts, the count under each name (a choice of
+            one-of-four reads as a switch, not four more chips). Desktop: chips, as before. */}
+        <div role="group" aria-label="Type" className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-gray-100 md:flex md:flex-wrap md:gap-1.5 md:p-0 md:bg-transparent md:rounded-none">
+          {INV_TYPES.map((t) => {
+            const on = filterType === t;
+            const n = t === "All" ? inventory.length : inventory.filter((i) => i.type === t).length;
+            const icon = t === "Premium" ? "★ " : t === "In-house" ? "🏠 " : t === "Budgeted" ? "$ " : "";
+            return (
+              <button key={t} onClick={() => { setFilterType(t); setInvPage(0); }} aria-pressed={on}
+                className={"min-w-0 rounded-lg md:rounded-full px-1 md:px-3 py-1.5 md:py-1 text-xs font-medium transition-all flex flex-col items-center md:inline-block "
+                  + (on ? "bg-white text-violet-700 shadow-sm md:bg-violet-600 md:text-white md:shadow-none" : "text-gray-600 md:bg-gray-100 md:hover:bg-gray-200")}>
+                <span className="truncate max-w-full">{icon}{t}</span>
+                <span className={"text-[10px] md:text-xs tabular-nums md:ml-1 " + (on ? "" : "text-gray-400 md:text-gray-600")}><span className="hidden md:inline">(</span>{n}<span className="hidden md:inline">)</span></span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
