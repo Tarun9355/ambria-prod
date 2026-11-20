@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { shownValue } from "../../lib/ims/draftValue";
 
 // ─── Shared UI primitives (faithful copies of the reference IMS app) ──────────
 
@@ -344,18 +345,34 @@ export function Input(props) {
 // edited it shows `value`.
 export function DraftInput({ value, onCommit, delay = 250, ...rest }) {
   const [draft, setDraft] = useState(null);
+  // the text just committed, shown until the saved value arrives in `value` (lib/ims/draftValue) - not the old value flashing back
+  const [held, setHeld] = useState(null);
   const timer = useRef(null);
+  const holdTimer = useRef(null);
+  const mounted = useRef(true);
+  const valueRef = useRef(value);
+  valueRef.current = value;
   const pending = useRef(null);
   const commitRef = useRef(onCommit);
   commitRef.current = onCommit;
   const flush = () => {
     clearTimeout(timer.current);
-    if (pending.current !== null) { const raw = pending.current; pending.current = null; commitRef.current(raw); }
+    if (pending.current !== null) {
+      const raw = pending.current; pending.current = null; commitRef.current(raw);
+      if (mounted.current) {
+        setHeld({ raw, base: valueRef.current });
+        // a save that never lands (it failed) must not leave the typed text on screen for ever: the field goes back to the real value
+        clearTimeout(holdTimer.current);
+        holdTimer.current = setTimeout(() => { if (mounted.current) setHeld(null); }, 8000);
+      }
+    }
   };
-  useEffect(() => flush, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { mounted.current = true; return () => { flush(); mounted.current = false; clearTimeout(holdTimer.current); }; }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // the saved value has arrived: the prop is the truth again
+  useEffect(() => { if (held && String(value ?? "") !== String(held.base ?? "")) setHeld(null); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <input {...rest}
-      value={draft !== null ? draft : (value ?? "")}
+      value={shownValue({ draft, held, value })}
       onChange={(e) => {
         const raw = e.target.value;
         setDraft(raw);

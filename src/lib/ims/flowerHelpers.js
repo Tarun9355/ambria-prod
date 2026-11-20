@@ -25,8 +25,16 @@ export function rowToMandiFlower(r) {
   };
 }
 
+// In a FIXED order: by id, which never changes. A select with no ORDER BY hands rows back in physical order, and an UPDATE writes a new
+// tuple (usually at the end of the table), so the flower someone had just edited jumped to the bottom of the list on the realtime
+// refetch that follows every save - the row under their cursor moved away, the input lost focus mid-typing and the new value showed up
+// only afterwards (owner report 2026-11-20, Flowers section). Ids are "F" + a base-36 timestamp for flowers added in the app, so this is
+// also the order they were added in.
 export function assembleMandiCatalogueFromRows(rows) {
-  return (Array.isArray(rows) ? rows : []).map(rowToMandiFlower);
+  return (Array.isArray(rows) ? rows : [])
+    .slice()
+    .sort((a, b) => String(a?.id ?? "").localeCompare(String(b?.id ?? ""), undefined, { numeric: true }))
+    .map(rowToMandiFlower);
 }
 
 // Legacy-shaped partial patch (as every mandi-catalogue editor call site already builds it) -> the
