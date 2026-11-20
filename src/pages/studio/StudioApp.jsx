@@ -56,6 +56,7 @@ import { autoFillDecision, bookedSyncAction } from "../../lib/studio/dealCheckAu
 import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows, effectiveColorPrefRows, floralPlanByFn } from "../../lib/studio/floralCost";
+import { mappedPiecesByItem } from "../../lib/ims/liveFloralPlan";
 import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements, tentingZoneUsage, fabricBangaliZone } from "../../lib/studio/manpowerCount";
 import { rowToClient } from "../../lib/studio/clientRow";
 import { DELETED_CATALOGUE_TABLE, EMPTY_DELETED_CATALOGUE, assembleDeletedCatalogue, withDeletedRates, withDeletedInventory, deletedKitParts } from "../../lib/studio/deletedCatalogue";
@@ -115,7 +116,7 @@ import { callClaudeStreaming } from "../../lib/ai";
 import { heavyExtraLabour, eventTimingMultFor, SETTINGS_DEFAULTS, SIT_MULT_DEFAULTS, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
 import { resolveDateCategory, getEffectivePricing, assembleMarkedDatesFromRows } from "../../lib/inventory/helpers";
 import { itemImsSubcat, lookupBySubcat, priceForInvItem, itemDimsText, walkKitUnits, kitDescendantIds } from "../../lib/ims/helpers";
-import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, walkKitFloralParts, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows } from "../../lib/ims/flowerHelpers";
+import { matchFlowerPattern, floralPatternUnitRates, sizeClassToPatternKey, normalizeSizeClass, kitFloralCompDelta, walkKitFloralParts, assembleMandiCatalogueFromRows, assembleFlowerPatternsFromRows, mapPcsPerUnit } from "../../lib/ims/flowerHelpers";
 import { assembleLabourTiersFromRows, assembleDihariSchemesFromRows, assembleDefaultWindowsByPhaseFromRows } from "../../lib/ims/labourTypes";
 import { assembleVenueMinLabourFromRows, assembleVenueDumpingFromRows } from "../../lib/ims/venueLabourConfig";
 import { rowToRcItem, rcItemToRow, rcIsSMB, getFloralMode, oosCostPctFor, canFulfillShortfall } from "../../lib/rateCard";
@@ -6212,7 +6213,7 @@ export default function StudioApp() {
         // Falls back to the snapshot only if the mapped item can no longer be found.
         const invItem = (imsInventory || []).find(i => i.id === parent?.artificialMapItemId);
         const liveRate = invItem ? priceForInvItem(invItem, rcFactorByKey, imsInventory) : (Number(parent?.artificialMapPrice) || Number(parent?.artificialMapCost) || 0);
-        mappedFinal += (Number(fl.qty) || 0) * liveRate;
+        mappedFinal += (Number(fl.qty) || 0) * mapPcsPerUnit(parent) * liveRate; // pieces per unit, migration 071 (unset = 1)
         return;
       }
       const bpu = Number(parent?.artificialBunchesPerUnit) || 0;
@@ -7414,6 +7415,10 @@ export default function StudioApp() {
   // it directly: both are declared earlier in the file, so a direct reference would be a TDZ
   // ReferenceError on first render.
   useLayoutEffect(() => { calcFnFloralSourcingCostRef.current = calcFnFloralSourcingCost; });
+  // The mapped artificial items one function needs, in pieces (lib/ims/liveFloralPlan mappedPiecesByItem — the same
+  // count IMS shows on Floral's Inventory blocked list), for the sold-deal reconcile below, which is declared far later.
+  const mappedPiecesForFnRef = useRef(null);
+  useLayoutEffect(() => { mappedPiecesForFnRef.current = (fn) => mappedPiecesByItem(computeFnFloralCost(fn, collectAllFunctionData(), floralOptsFor(fn)).elementBreakdown); });
 
   // Crew counts per manpower type for the whole booking, WITH a plain-English "basis" so the dept
   // head sees how the system derived each number (e.g. "6 = 12 arrangements ÷ 2 per flowerist").
@@ -14698,6 +14703,22 @@ export default function StudioApp() {
       focByFn[fnIdx] = focByItem;
       partParentsByFn[fnIdx] = partParents;
       directByFn[fnIdx] = direct;
+    });
+
+    // Mapping flowers (owner ask 2026-11-20): a real flower whose artificial version is one specific inventory
+    // item now reserves that item like any other — its pieces (the artificial share of the recipe qty × the
+    // flower's pieces-per-unit, migration 071, rounded up) join this function's card requirement, so they are
+    // Studio-owned ("studio-incremental") entries the planner creates, resizes and releases with the build.
+    // The floral engine already skips FOC elements. A failed costing reserves nothing extra rather than guessing.
+    fnsToProcess.forEach((fn, i) => {
+      const fnIdx = fn.fnIdx ?? i;
+      let pcs = {};
+      try { pcs = mappedPiecesForFnRef.current?.(fn) || {}; } catch (e) { console.warn("[reconcile] mapped-flower pieces failed for function", fnIdx, e?.message || e); }
+      Object.entries(pcs).forEach(([itemId, n]) => {
+        if (!(inventoryList || []).some((x) => x.id === itemId)) return;
+        requiredByFn[fnIdx][itemId] = (requiredByFn[fnIdx][itemId] || 0) + n;
+        directByFn[fnIdx].add(itemId);
+      });
     });
 
     // Deal Check manual items (finding C, bug 6 audit, 2026-11-14): this is NEW reservation behavior,

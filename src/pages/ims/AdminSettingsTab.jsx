@@ -10,7 +10,7 @@ import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/ca
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { saveVariantsFresh, variantDisplayPhoto } from "../../lib/ims/mandiVariants";
 import MappingDetailModal from "../../components/shared/MappingDetailModal.jsx";
-import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel, genMandiFlowerId, mandiFlowerToRow, mandiFlowerPatchToRow, genFlowerPatternId, flowerPatternToRow, mirrorFlowerPick } from "../../lib/ims/flowerHelpers";
+import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel, genMandiFlowerId, mandiFlowerToRow, mandiFlowerPatchToRow, genFlowerPatternId, flowerPatternToRow, mirrorFlowerPick, mapPcsPerUnit } from "../../lib/ims/flowerHelpers";
 import { labourTypePatchToRow } from "../../lib/ims/labourTypes";
 import { priceForInvItem, phone10, flowerPaletteItemsOf } from "../../lib/ims/helpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor, hasIMSPerm } from "../../lib/ims/constants";
@@ -543,7 +543,8 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
       // item's raw pre-factor price captured once when it was mapped, and goes stale the moment
       // either number changes afterward. Falls back to the snapshot only if the item's gone.
       const mappedItem = p.artificialMapItemId ? (inventory || []).find((i) => i.id === p.artificialMapItemId) : null;
-      const c = mappedItem ? priceForInvItem(mappedItem, adminFactorByKey, inventory) : (Number(p.artificialMapCost) || Number(p.artificialMapPrice) || 0);
+      const perPiece = mappedItem ? priceForInvItem(mappedItem, adminFactorByKey, inventory) : (Number(p.artificialMapCost) || Number(p.artificialMapPrice) || 0);
+      const c = perPiece * mapPcsPerUnit(p); // per unit of the real flower = per piece × pieces per unit (migration 071, unset = 1)
       return { cost: c > 0 ? c : null, kind: t };
     }
     const bpu = Number(p.artificialBunchesPerUnit) || 0;
@@ -1428,6 +1429,17 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                               </button>
                               {(mapped.subCat || mapped.subcategory) && <span className="text-gray-400">· {mapped.subCat || mapped.subcategory}</span>}
                               <button onClick={(e) => { e.stopPropagation(); setSMandiMapSearch(""); setSMandiMapSub(""); setSMandiMapPicker({ flowerId: p.id }); }} className="ml-1 text-blue-500 hover:text-blue-700 underline">change</button>
+                              {/* How many pieces of the item stand in for 1 unit of the real flower — what Floral's
+                                  Inventory blocked list, the truck list and the stock reservation count in, and what
+                                  every artificial price multiplies by (migration 071). Blank = 1, as before. */}
+                              <span className="ml-3 flex items-center gap-1.5 text-gray-600" onClick={(e) => e.stopPropagation()}>
+                                1 {p.unit || "unit"} =
+                                <DraftInput type="number" min="0" step="0.01" value={p.artificialMapPcsPerUnit ?? ""} placeholder="1"
+                                  onCommit={(raw) => { const v = parseFloat(raw); updateRow("mandi_flowers", p.id, mandiFlowerPatchToRow({ artificialMapPcsPerUnit: v > 0 ? v : null })).catch(() => {}); }}
+                                  title={`How many pieces of "${mapped.name}" replace 1 ${p.unit || "unit"} of ${p.name}. Blank = 1.`}
+                                  className="w-16 border rounded px-1.5 py-0.5 text-xs text-center" />
+                                <span>{mapped.unit ? String(mapped.unit).toLowerCase() : "pcs"}</span>
+                              </span>
                             </>
                           ) : (
                             <button onClick={(e) => { e.stopPropagation(); setSMandiMapSearch(""); setSMandiMapSub(""); setSMandiMapPicker({ flowerId: p.id }); }} className="text-red-500 font-semibold hover:underline">

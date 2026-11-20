@@ -1325,6 +1325,36 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const logPageNow = Math.min(logPage, logPages - 1);
   const goLogPage = (p) => { setLogPage(Math.max(0, Math.min(logPages - 1, p))); if (logListRef.current) logListRef.current.scrollTop = 0; };
 
+  // ── LIVE Floral plan (owner ask, 2026-11-20) ── IMS works the plan out itself with Deal Check's own
+  // engine from the deal's layout + live recipes/mandi/rate card (lib/ims/liveFloralPlan.js), so a
+  // recipe or Build edit reaches the mandi list at once, with nobody opening Deal Check. Declared up
+  // here because Floral's Inventory blocked list (blockedGroupedOf, below) adds the mapped artificial
+  // items from it — for any open department, since the shared books read Floral's list too.
+  const liveFloral = useMemo(() => {
+    if (!sel) return null;
+    try { return buildLiveFloralPlan(sel.functionsDetail, { settings: settings || {}, rcItems, rateCardCategories, inventory }); }
+    catch (e) { console.warn("[DeptOps] live floral plan failed — showing Deal Check's last pushed plan", e); return null; }
+  }, [sel, settings, rcItems, rateCardCategories, inventory]);
+  // Mapping flowers' artificial items, whole event, one row each (pieces summed across functions):
+  // Floral's Inventory blocked list and truck list show them — stock to pull and load, at no extra ₹
+  // here (their cost is already inside the artificial total), so stockOnly like the artificial rows.
+  const mappedStockRows = useMemo(() => {
+    const byItem = new Map();
+    Object.values(liveFloral?.floralDetail || {}).forEach((fd) => (fd?.art?.mapped || []).forEach((m) => {
+      if (!m.mappedItemId || !(m.pcs > 0)) return;
+      const cur = byItem.get(m.mappedItemId) || { pcs: 0, forNames: new Set() };
+      cur.pcs += m.pcs; cur.forNames.add(m.realFlowerName);
+      byItem.set(m.mappedItemId, cur);
+    }));
+    const out = [];
+    byItem.forEach((v, id) => {
+      const item = (inventory || []).find(i => String(i.id) === String(id));
+      if (!item) return;
+      out.push({ id: "mapped:" + id, invId: id, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty: v.pcs, rentalQty: v.pcs, unit: 0, total: 0, sub: item.subCat || item.subcategory || "", qtyUnit: "", stockOnly: true, mappedFor: [...v.forNames].filter(Boolean).join(", ") });
+    });
+    return out;
+  }, [liveFloral, inventory]);
+
   // ── Department income snapshot (pushed from Deal Check → matches Studio exactly) ──
   const deptIncome = (sel?.deptIncome && sel.deptIncome[dept]) || null;
   const deptInvSnap = (sel?.deptInventory && Array.isArray(sel.deptInventory[dept])) ? sel.deptInventory[dept] : null;
@@ -1388,6 +1418,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       // chase or load for it) — the order requested for this list. Stable within each group:
       // Array.prototype.sort is stable, so ties keep the snapshot's own order (whichever function/
       // zone order dcCostRollup built them in).
+      // Floral: plus the Mapping flowers' artificial items (mappedStockRows, live) — Deal Check's snapshot
+      // never had them. Not on the no-snapshot path below: that one reads the blocks ledger, where Studio's
+      // reconcile already reserves them, so they show there on their own.
+      if (d === "Floral") rows.push(...mappedStockRows);
       const rank = (it) => (it.foc ? 3 : it.shortQty > 0 ? 0 : it.prodOrBuy ? 1 : 2);
       return rows.sort((a, b) => rank(a) - rank(b));
     }
@@ -1406,7 +1440,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return out.sort((a, b) => b.total - a.total);
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const blockedItemsGrouped = useMemo(() => blockedGroupedOf(dept, swapInfo), [sel, blocks, inventory, dept, swapInfo]);
+  const blockedItemsGrouped = useMemo(() => blockedGroupedOf(dept, swapInfo), [sel, blocks, inventory, dept, swapInfo, mappedStockRows]);
   // What this department is short of (owner ask 2026-11-15): named in red on the Inventory blocked tile and atop its panel.
   const invShortItems = useMemo(() => blockedItemsGrouped.filter(it => Number(it.shortQty) > 0), [blockedItemsGrouped]);
   const shortNames = (list, max) => list.slice(0, max).map(it => `${it.name} ×${it.shortQty}`).join(", ") + (list.length > max ? ` +${list.length - max} more` : "");
@@ -1939,16 +1973,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // Loveleen, a 2-venue deal: "I don't want the flower quantities combined, separate them into
   // tabs, 1 per function" — two functions never share flowers physically anyway, no reuse credit
   // either, dealAvailability.js's own bug 7/8 fix) ──
-  // LIVE (owner ask, 2026-11-20): IMS works the plan out itself with Deal Check's own engine from
-  // the deal's layout + live recipes/mandi/rate card (lib/ims/liveFloralPlan.js), so a recipe edit
-  // or a Build edit reaches this list at once, with nobody opening Deal Check. What Deal Check last
-  // pushed (sel.floralPlan) stays for everything the live run doesn't produce (artificial stock,
-  // income, season) and is the whole plan when the stored layout can't support a live run.
-  const liveFloral = useMemo(() => {
-    if ((dept !== "Floral" && !dcModalOpen) || !sel) return null;
-    try { return buildLiveFloralPlan(sel.functionsDetail, { settings: settings || {}, rcItems, rateCardCategories, inventory }); }
-    catch (e) { console.warn("[DeptOps] live floral plan failed — showing Deal Check's last pushed plan", e); return null; }
-  }, [dept, dcModalOpen, sel, settings, rcItems, rateCardCategories, inventory]);
+  // LIVE (owner ask, 2026-11-20): liveFloral (declared above the Inventory blocked list) — IMS's own
+  // run of Deal Check's engine. What Deal Check last pushed (sel.floralPlan) stays for everything the
+  // live run doesn't produce (artificial stock, income, season) and is the whole plan when the stored
+  // layout can't support a live run.
   const storedFp = sel?.floralPlan || {};
   const fp = liveFloral
     ? { ...storedFp, byFn: liveFloral.byFn, flowers: [...liveFloral.flowers, ...(Array.isArray(storedFp.flowers) ? storedFp.flowers.filter(f => f.artificial) : [])] }
@@ -5236,6 +5264,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                   : <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>)}
                                 {it.prodOrBuy && <span className={"text-[10px] px-1.5 py-0.5 rounded font-bold " + (it.prodOrBuy === "buying" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700")}>{it.prodOrBuy === "buying" ? "🛒 BUYING" : "🏭 PRODUCTION"}</span>}
                                 {it.isSwapped && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-bold">🔁 SWAPPED</span>}
+                                {it.mappedFor && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold" title="A Mapping flower's artificial version — the pieces come from the recipe's artificial share × the flower's pieces-per-unit (Flowers → Mandi Prices)">🔗 ARTIFICIAL FOR {String(it.mappedFor).toUpperCase()}</span>}
                                 {/* already at the venue - not loaded (atVenueOf): set to Repeat in Build, or standing stock of the fixed venue */}
                                 {(() => {
                                   const a = atVenueOf(it.src || it);

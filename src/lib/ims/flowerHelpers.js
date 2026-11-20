@@ -5,6 +5,10 @@
 // the source of truth now, one row per flower — these translate between that row shape and the
 // plain-object array every function in this file already expects (resolveMandiFlower,
 // computePatternSizeCost, …), so none of that cost-calc logic had to change.
+// A Mapping flower's conversion: pieces of its mapped artificial inventory item per 1 unit of the real
+// flower. Unset (or not a positive number) = 1 — what pricing assumed before the field existed.
+export const mapPcsPerUnit = (flower) => { const n = Number(flower?.artificialMapPcsPerUnit); return n > 0 ? n : 1; };
+
 export const genMandiFlowerId = () => "F" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
 
 export function rowToMandiFlower(r) {
@@ -17,6 +21,8 @@ export function rowToMandiFlower(r) {
     artificialMapName: r.artificial_map_name || null,
     artificialMapPrice: r.artificial_map_price != null ? Number(r.artificial_map_price) : null,
     artificialMapCost: r.artificial_map_cost != null ? Number(r.artificial_map_cost) : null,
+    // pieces of the mapped item per 1 unit of this flower (migration 071) — null reads as 1, see mapPcsPerUnit
+    artificialMapPcsPerUnit: r.artificial_map_pcs_per_unit != null ? Number(r.artificial_map_pcs_per_unit) : null,
     markup: r.markup != null ? Number(r.markup) : null,
     currentPrice: Number(r.current_price) || 0,
     priceHistory: Array.isArray(r.price_history) ? r.price_history : [],
@@ -52,6 +58,7 @@ export function mandiFlowerPatchToRow(patch) {
   if ("artificialMapName" in patch) row.artificial_map_name = patch.artificialMapName;
   if ("artificialMapPrice" in patch) row.artificial_map_price = patch.artificialMapPrice;
   if ("artificialMapCost" in patch) row.artificial_map_cost = patch.artificialMapCost;
+  if ("artificialMapPcsPerUnit" in patch) row.artificial_map_pcs_per_unit = patch.artificialMapPcsPerUnit;
   if ("markup" in patch) row.markup = patch.markup;
   if ("currentPrice" in patch) row.current_price = patch.currentPrice;
   if ("priceHistory" in patch) row.price_history = patch.priceHistory;
@@ -279,7 +286,7 @@ export const floralPatternUnitRates = (pattern, sizeKey, mandiCatalogue, setting
       // found (e.g. deleted from inventory since).
       const invItem = (inventory || []).find((i) => i.id === parent?.artificialMapItemId);
       const rawRate = invItem ? (Number(invItem.price ?? invItem.rentalCost) || 0) : (Number(parent?.artificialMapPrice) || Number(parent?.artificialMapCost) || 0);
-      mappedFinal += (Number(fl?.qty) || 0) * rawRate * Math.max(markup, artMarkup);
+      mappedFinal += (Number(fl?.qty) || 0) * mapPcsPerUnit(parent) * rawRate * Math.max(markup, artMarkup);
       return;
     }
     const bpu = Number(parent?.artificialBunchesPerUnit) || 0;

@@ -58,7 +58,7 @@
 // "flower" rows (IMS Admin UI) — greens/real-only/mapping items have no palette picker at all,
 // so they're simply never reuse-eligible under this mechanism.
 
-import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass, convertFlowerQty, walkKitFloralParts } from "../ims/flowerHelpers";
+import { matchFlowerPattern, sizeClassToPatternKey, normalizeSizeClass, convertFlowerQty, walkKitFloralParts, mapPcsPerUnit } from "../ims/flowerHelpers";
 import { repeatCatFor, parseFlowerPalette, fuzzyColourMatch } from "./pricing";
 import { shiftToTiming } from "./manpowerCount";
 import { venueKey } from "../venueKey.js";
@@ -687,8 +687,11 @@ export function computeFnFloralCost(fn, allFns, opts) {
             const realUnitsReplacedFull = (fl.qty || 0) * elQty * artFrac;
             const realUnitsReplaced = Math.max(0, realUnitsReplacedFull - artReuseCredit);
             const mapCost = Number(parent?.artificialMapCost) || 0;
-            const lineCost = realUnitsReplaced * mapCost;
-            artLines.push({ flowerId: parentId, name: parent?.name || fl.flowerId, realUnitsReplaced, unit: parent?.unit || "?", bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: mapCost, lineCost, missingRatio: mapCost <= 0, realOnly: false, isMapped: true, mappedName: parent?.artificialMapName || null, mappedItemId: parent?.artificialMapItemId || null });
+            // pieces of the mapped item standing in for the real flower (migration 071; unset = 1 per unit)
+            const pcsPerUnit = mapPcsPerUnit(parent);
+            const mappedPcs = realUnitsReplaced * pcsPerUnit;
+            const lineCost = mappedPcs * mapCost;
+            artLines.push({ flowerId: parentId, name: parent?.name || fl.flowerId, realUnitsReplaced, unit: parent?.unit || "?", bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: mapCost, lineCost, missingRatio: mapCost <= 0, realOnly: false, isMapped: true, mappedName: parent?.artificialMapName || null, mappedItemId: parent?.artificialMapItemId || null, pcsPerUnit, mappedPcs });
             return;
           }
           const bunchesPerUnit = Number(parent?.artificialBunchesPerUnit) || 0;

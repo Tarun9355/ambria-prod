@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildLiveFloralPlan, fnFromDetail, floralModesOf } from "./liveFloralPlan";
+import { buildLiveFloralPlan, fnFromDetail, floralModesOf, mappedPiecesByItem } from "./liveFloralPlan";
+import { mapPcsPerUnit, floralPatternUnitRates } from "./flowerHelpers";
 import { computeFnFloralCost, buildMandiBreakdown } from "../studio/floralCost";
 import { resolveMandiFlower } from "./flowerHelpers";
 import { mandiHow } from "./floralHow";
@@ -68,6 +69,35 @@ describe("buildLiveFloralPlan — IMS runs Deal Check's own engine on the deal's
     expect(m[0].cost).toBe(264); // × ₹10 saved when mapped — the rate Deal Check uses too
     const bigger = buildLiveFloralPlan(detail({ elements: { vedi: [{ name: "Guldavari + Tussel SQFT", patternId: "FP1", qty: 288, size: "M" }] } }), { settings: s });
     expect(bigger.floralDetail[0].art.mapped[0].qty).toBeCloseTo(52.8, 1); // Build's qty doubled → doubled at once
+  });
+
+  it("pieces per unit: 26.4 kg × 3 pcs/kg = 79.2 → 80 whole pieces to block and load; cost follows the pieces", () => {
+    const mappedLadi = { ...ladi, flowerType: "mapping", artificialMapItemId: "inv_art_ladi", artificialMapCost: 10, artificialMapPcsPerUnit: 3 };
+    const s = { ...settingsWith("gl"), mandiCatalogue: [hanging, mappedLadi, tussel] };
+    const live = buildLiveFloralPlan(detail(), { settings: s });
+    const m = live.floralDetail[0].art.mapped[0];
+    expect(m.pcsExact).toBeCloseTo(79.2, 1);
+    expect(m.pcs).toBe(80);
+    expect(m.cost).toBe(792); // 79.2 pieces × ₹10 a piece
+    const fn = fnFromDetail(detail()[0], 0);
+    const eb = computeFnFloralCost(fn, [fn], { flowerPatterns: s.flowerPatterns, mandiCatalogue: s.mandiCatalogue, mandiMults: {}, seasonMap: {}, floralRatio: 70, rcItems: [], rcFloralModeByKey: {}, resolveMandiFlower, imsInventory: [], dcInventoryCache: [] }).elementBreakdown;
+    expect(mappedPiecesByItem(eb)).toEqual({ inv_art_ladi: 80 }); // what Studio's reconcile reserves in `blocks`
+  });
+
+  it("pieces per unit unset = 1, exactly what pricing assumed before (no price moves on its own)", () => {
+    expect(mapPcsPerUnit({})).toBe(1);
+    expect(mapPcsPerUnit({ artificialMapPcsPerUnit: null })).toBe(1);
+    expect(mapPcsPerUnit({ artificialMapPcsPerUnit: 0 })).toBe(1);
+    expect(mapPcsPerUnit({ artificialMapPcsPerUnit: 2.5 })).toBe(2.5);
+  });
+
+  it("the guest-facing recipe rate multiplies a mapped item's price by its pieces per unit", () => {
+    const mapped = (pcs) => ({ id: "gl", name: "guldavari ladi", unit: "kg", flowerType: "mapping", artificialMapItemId: "it1", ...(pcs ? { artificialMapPcsPerUnit: pcs } : {}) });
+    const pattern = { id: "P", studioMarkup: 1, sizes: { medium: { flowers: [{ flowerId: "gl", qty: 2 }] } } };
+    const inv = [{ id: "it1", price: 50 }];
+    const st = { defaultStudioMarkup: 1 };
+    expect(floralPatternUnitRates(pattern, "medium", [mapped()], st, inv).artRate).toBe(100); // 2 kg × 1 pc × ₹50
+    expect(floralPatternUnitRates(pattern, "medium", [mapped(3)], st, inv).artRate).toBe(300); // 2 kg × 3 pcs × ₹50
   });
 
   it("maps a stored function the way the engine reads one", () => {

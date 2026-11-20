@@ -149,6 +149,14 @@ No redeploy needed — this column is only read/written by the client (`src/lib/
 ## Appended automatically as the build proceeds
 (New tables/migrations for later phases are added below as they're created.)
 
+## Mapping flower pieces-per-unit (migration 071) — ⬜ RUN BEFORE DEPLOYING THE APP THAT USES IT
+`supabase/migrations/071_mandi_map_pcs_per_unit.sql` — one nullable column on `mandi_flowers`:
+```sql
+ALTER TABLE public.mandi_flowers ADD COLUMN IF NOT EXISTS artificial_map_pcs_per_unit NUMERIC;
+```
+Flowers → Mandi Prices' "1 kg = ___ pcs" box (on a Mapping flower) writes it. Until it is run, that box can't
+save (everything else works, and an unset value means 1 — the same as before). No backfill needed.
+
 ## LMS relink moved server-side (migration 056) — ⬜ pending
 The LMS lead→contract auto-relink (fixes "Sangeeta"-style cases: a booked deal stuck pointing at its
 old LMS lead number so Ambria Ops' real on-site expenses never show up in Dept Ops' Actuals tab) used

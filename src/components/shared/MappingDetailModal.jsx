@@ -8,6 +8,7 @@
 // { qty, unit, cost } · onChange (optional): shows "Change mapping".
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
 import { variantDisplayPhoto } from "../../lib/ims/mandiVariants";
+import { mapPcsPerUnit } from "../../lib/ims/flowerHelpers";
 
 const rs = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN")}`;
 
@@ -42,7 +43,7 @@ export default function MappingDetailModal({ flower, item, artCost = null, need 
         <div className="flex-1 min-h-0 overflow-y-auto p-5">
           {need && (
             <div className="mb-4 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2 text-sm text-blue-800">
-              This event: <b>{need.qty} {need.unit}</b> of {flower?.name || "this flower"} goes artificial{need.cost > 0 ? <> · <b>{rs(need.cost)}</b></> : null}
+              This event: <b>{need.qty} {need.unit}</b> of {flower?.name || "this flower"} goes artificial{need.pcs > 0 ? <> → <b>{need.pcs} {item?.unit ? String(item.unit).toLowerCase() : "pcs"}</b> of the item</> : null}{need.cost > 0 ? <> · <b>{rs(need.cost)}</b></> : null}
             </div>
           )}
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-4 items-start">
@@ -61,7 +62,8 @@ export default function MappingDetailModal({ flower, item, artCost = null, need 
                       item's live price × its sub-category factor; Deal Check and Planning cost the
                       artificial part at the item's cost as saved when it was mapped (artificialMapCost). */}
                   <DetailRow k="Art ₹/Unit (Mandi tab, live)" v={artCost != null ? `${rs(Math.round(artCost * 100) / 100)} / ${flower.unit || "unit"}` : ""} />
-                  <DetailRow k="Deal Check & Planning cost" v={Number(flower.artificialMapCost) > 0 ? `${rs(flower.artificialMapCost)} / ${flower.unit || "unit"} (saved when mapped)` : "₹0 — not set"} />
+                  <DetailRow k="Pieces per unit" v={`1 ${flower.unit || "unit"} = ${mapPcsPerUnit(flower)} ${item?.unit ? String(item.unit).toLowerCase() : "pcs"}${Number(flower.artificialMapPcsPerUnit) > 0 ? "" : " (not set — 1)"}`} />
+                  <DetailRow k="Deal Check & Planning cost" v={Number(flower.artificialMapCost) > 0 ? `${rs(Math.round(flower.artificialMapCost * mapPcsPerUnit(flower) * 100) / 100)} / ${flower.unit || "unit"} (item cost saved when mapped × pieces)` : "₹0 — not set"} />
                 </div>
               )}
             </div>

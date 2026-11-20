@@ -103,12 +103,29 @@ export function buildLiveFloralPlan(functionsDetail, { settings = {}, rcItems = 
     (r.elementBreakdown || []).forEach((e) => (e.artLines || []).forEach((al) => {
       if (!al.isMapped) return;
       const key = al.mappedItemId || al.mappedName || al.name;
-      if (!mappedAgg[key]) mappedAgg[key] = { mappedItemId: al.mappedItemId || null, mappedName: al.mappedName || "", realFlowerName: al.name, realFlowerId: al.flowerId || null, unit: al.unit, qty: 0, cost: 0 };
+      if (!mappedAgg[key]) mappedAgg[key] = { mappedItemId: al.mappedItemId || null, mappedName: al.mappedName || "", realFlowerName: al.name, realFlowerId: al.flowerId || null, unit: al.unit, qty: 0, pcsExact: 0, cost: 0 };
       mappedAgg[key].qty += al.realUnitsReplaced || 0; mappedAgg[key].cost += al.lineCost || 0;
+      mappedAgg[key].pcsExact += al.mappedPcs != null ? al.mappedPcs : (al.realUnitsReplaced || 0);
     }));
-    const mapped = Object.values(mappedAgg).map((m) => ({ ...m, qty: rnd(m.qty, 10), cost: Math.round(m.cost) }));
+    // pcs: whole pieces of the item to pull from stock — rounded UP (a part piece is still a piece to load)
+    const mapped = Object.values(mappedAgg).map((m) => ({ ...m, qty: rnd(m.qty, 10), pcs: Math.ceil(m.pcsExact - 1e-9), pcsExact: rnd(m.pcsExact, 100), cost: Math.round(m.cost) }));
     if (mandi.length || mapped.length) floralDetail[fn.fnIdx] = { fnType: fn.fnType, fnDate: fn.fnDate, mandi, art: { mapped } };
   });
   const flowers = Object.values(agg).map((f) => ({ ...f, rate: f.qty > 0 ? Math.round((f.cost / f.qty) * 100) / 100 : 0 })).sort((a, b) => b.cost - a.cost);
   return { byFn, flowers, floralDetail };
+}
+
+// The mapped artificial items one function needs, in whole pieces of each item: { [itemId]: pcs }.
+// Shared by IMS (the Floral Inventory blocked list) and Studio's sold-deal reconcile (the `blocks`
+// reservation), so the two can never count a mapped item differently. elementBreakdown is the floral
+// engine's own (computeFnFloralCost).
+export function mappedPiecesByItem(elementBreakdown) {
+  const exact = {};
+  (Array.isArray(elementBreakdown) ? elementBreakdown : []).forEach((e) => (e?.artLines || []).forEach((al) => {
+    if (!al?.isMapped || !al.mappedItemId) return;
+    exact[al.mappedItemId] = (exact[al.mappedItemId] || 0) + (al.mappedPcs != null ? al.mappedPcs : (al.realUnitsReplaced || 0));
+  }));
+  const out = {};
+  Object.entries(exact).forEach(([id, n]) => { const pcs = Math.ceil(n - 1e-9); if (pcs > 0) out[id] = pcs; });
+  return out;
 }
