@@ -33,6 +33,28 @@ export const STORAGE_FOLDERS = {
   COLOUR_REF: "colour-ref",
 };
 
+// Some files reach the page with no type at all (certain Android / Windows pickers, .jfif): the Edge Function rejects an untyped file,
+// so the type is taken from the extension when the browser gave none.
+const EXT_TYPE = { jpg: "image/jpeg", jpeg: "image/jpeg", jfif: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", avif: "image/avif", heic: "image/heic", heif: "image/heif", bmp: "image/bmp" };
+const withType = (file) => {
+  if (!(file instanceof Blob) || file.type) return file;
+  const t = EXT_TYPE[String(file.name || "").split(".").pop().toLowerCase()];
+  return t ? new File([file], file.name, { type: t }) : file;
+};
+// What the person is told, in words they can act on - the Edge Function's own messages ("Type not allowed: image/heic") and a dead
+// connection / a 5xx used to reach the alert as they were.
+const friendlyUploadError = (status, msg) => {
+  const m = /^Type not allowed: (.+)$/.exec(String(msg || ""));
+  if (m) {
+    if (/heic|heif/i.test(m[1])) return "This photo is in HEIC format (an iPhone photo), which cannot be uploaded. Pick a JPG or PNG instead - on iPhone: Settings > Camera > Formats > Most Compatible.";
+    return `This file type (${m[1] === "application/octet-stream" ? "unknown" : m[1]}) cannot be uploaded - use a JPG, PNG or WebP photo.`;
+  }
+  if (/^Too large/.test(String(msg || ""))) return "This file is too large (over 50 MB) - pick a smaller one.";
+  if (status === 0) return "Could not reach the server - check the internet connection and try again.";
+  if (status >= 500) return `The server did not answer properly (${status}) - wait a minute and try again.`;
+  return msg || `Upload failed (${status})`;
+};
+
 /**
  * Upload a File/Blob (or a `data:` URL string) and return its public URL.
  * Throws on failure so call sites can surface a message rather than silently storing "".
@@ -49,6 +71,7 @@ export async function uploadToStorage(fileOrDataUrl, folder = STORAGE_FOLDERS.CL
     file = new File([blob], "upload", { type: blob.type || "image/jpeg" });
   }
   if (!(file instanceof Blob)) throw new Error("Nothing to upload");
+  file = withType(file);
   // A Blob (e.g. a recorded voice note) has no filename; FormData needs one to send it as a file.
   if (!(file instanceof File)) file = new File([file], "upload", { type: file.type || "application/octet-stream" });
 
@@ -59,13 +82,16 @@ export async function uploadToStorage(fileOrDataUrl, folder = STORAGE_FOLDERS.CL
   // filenames and a re-upload of the same file lands on the same key instead of a second copy.
   if (opts.keepName) fd.append("name", opts.keepName === true ? file.name : opts.keepName);
 
-  const r = await fetch(FN_URL, {
-    method: "POST",
-    headers: { apikey: ANON, Authorization: `Bearer ${ANON}` },
-    body: fd,
-  });
+  let r;
+  try {
+    r = await fetch(FN_URL, {
+      method: "POST",
+      headers: { apikey: ANON, Authorization: `Bearer ${ANON}` },
+      body: fd,
+    });
+  } catch { throw new Error(friendlyUploadError(0, "")); } // no connection / blocked / the server did not answer at all
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || data.error) throw new Error(data.error || `Upload failed (${r.status})`);
+  if (!r.ok || data.error) throw new Error(friendlyUploadError(r.status, data.error || `Upload failed (${r.status})`));
   if (!data.url) throw new Error("Upload returned no URL");
   return opts.detail ? data : data.url;
 }
@@ -175,15 +201,19 @@ export function compressPunchPhoto(file) {
   });
 }
 
+const SERVER_IMAGE = /^image\/(jpeg|png|webp|avif|gif|svg\+xml)$/;
 export function compressImageForUpload(file, maxW = 2000, quality = 0.8) {
   return new Promise((resolve) => {
-    if (!file || !file.type?.startsWith("image/") || file.size < 200000) { resolve(file); return; }
+    file = withType(file);
+    // a format the server refuses (HEIC on a browser that can decode it - Safari, BMP...) is always re-encoded as JPEG, whatever its size
+    const convert = !!file && !!file.type?.startsWith("image/") && !SERVER_IMAGE.test(file.type);
+    if (!file || !file.type?.startsWith("image/") || (!convert && file.size < 200000)) { resolve(file); return; }
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
       URL.revokeObjectURL(url);
       let w = img.width, h = img.height;
-      if (w <= maxW && file.size < 500000) { resolve(file); return; }
+      if (!convert && w <= maxW && file.size < 500000) { resolve(file); return; }
       if (w > maxW) { h = Math.round((h * maxW) / w); w = maxW; }
       const c = document.createElement("canvas");
       c.width = w; c.height = h;

@@ -1917,15 +1917,10 @@ Rules:
                   {canImages && <input ref={editPhotoInputRef} type="file" accept="image/*" onChange={handleEditPhoto} className="hidden" />}
                   {canImages && <button onClick={() => editPhotoInputRef.current?.click()} disabled={editPhotoUploading}
                     className={"text-xs px-3 py-2 rounded-lg font-medium " + (editPhotoUploading ? "bg-gray-200 text-gray-400" : "bg-indigo-100 text-indigo-700 hover:bg-indigo-200")}>
-                    {editPhotoUploading ? "Uploading…" : "📤 Upload new photo"}
+                    {editPhotoUploading ? "Uploading…" : editForm.img ? "🔄 Change photo" : "📤 Upload photo"}
                   </button>}
-                  {editForm.img && (
-                    <button onClick={() => setEditForm((f) => ({ ...f, img: "" }))}
-                      className="text-xs px-3 py-1.5 rounded-lg text-red-600 hover:bg-red-50 text-left">
-                      Remove photo
-                    </button>
-                  )}
-                  <p className="text-xs text-gray-400">Auto-uploads to Storage on pick. Replaces existing URL.</p>
+                  {/* "Remove photo" is gone (owner ask 2026-11-20): one button, which says Change once there is a photo */}
+                  <p className="text-xs text-gray-400">{editForm.img ? "Pick a new photo - it uploads on pick and replaces the current one." : "Pick a photo - it uploads on pick."}</p>
                 </div>
               </div>
 
