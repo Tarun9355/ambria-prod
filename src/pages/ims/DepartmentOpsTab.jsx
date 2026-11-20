@@ -454,7 +454,7 @@ function FloralDetailView({ detail, liveDetail = null, inventory = [], mandiCata
                   {ph ? <img src={thumbUrl(ph, 36)} alt="" className="w-9 h-9 rounded object-cover border border-blue-200 shrink-0" /> : <span className="w-9 h-9 rounded border border-dashed border-blue-200 flex items-center justify-center shrink-0">📦</span>}
                   <span className="flex-1 min-w-0">
                     <span className="block font-semibold truncate">{item?.name || m.mappedName || "no item mapped"}</span>
-                    <span className="block text-[11px] text-gray-500">for {m.realFlowerName} · {m.qty} {m.unit}</span>
+                    <span className="block text-[11px] text-gray-500"><span>Artificial for:</span> {m.realFlowerName} · {m.qty} {m.unit}</span>
                   </span>
                   <span className="text-blue-600 font-semibold tabular-nums">{rupee(m.cost)}</span>
                 </button>
@@ -5274,7 +5274,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                   : <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>)}
                                 {it.prodOrBuy && <span className={"text-[10px] px-1.5 py-0.5 rounded font-bold " + (it.prodOrBuy === "buying" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700")}>{it.prodOrBuy === "buying" ? "🛒 BUYING" : "🏭 PRODUCTION"}</span>}
                                 {it.isSwapped && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-bold">🔁 SWAPPED</span>}
-                                {it.mappedFor && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold" title="A Mapping flower's artificial version — the pieces come from the recipe's artificial share × the flower's pieces-per-unit (Flowers → Mandi Prices)">🔗 ARTIFICIAL FOR {String(it.mappedFor).toUpperCase()}</span>}
+                                {it.mappedFor && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold" title="A Mapping flower's artificial version — the pieces come from the recipe's artificial share × the flower's pieces-per-unit (Flowers → Mandi Prices)">
+                                  {/* label and flower name are two text nodes so Hindi mode translates the label
+                                      ("असली फूल की जगह:") and only spells the name — one node was spelled whole ("आर्टिफ़िशियल फ़ॉर …") */}
+                                  <span className="uppercase">🔗 Artificial for:</span> <span className="uppercase">{it.mappedFor}</span>
+                                </span>}
                                 {/* already at the venue - not loaded (atVenueOf): set to Repeat in Build, or standing stock of the fixed venue */}
                                 {(() => {
                                   const a = atVenueOf(it.src || it);

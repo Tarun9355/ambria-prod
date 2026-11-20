@@ -319,6 +319,22 @@ Day-wise plan ¦ दिन के हिसाब से प्लान
 All ¦ सभी
 Direct from inventory ¦ सीधे इन्वेंटरी से
 Mapped substitutes ¦ जुड़े विकल्प
+Artificial for ¦ असली फूल की जगह
+New in the plan — not bought yet ¦ प्लान में नया — अभी ख़रीदा नहीं
+in artificial total ¦ आर्टिफ़िशियल कुल में
+live from Build ¦ बिल्ड से लाइव
+Real flower (mandi) ¦ असली फूल (मंडी)
+Artificial item (inventory) ¦ आर्टिफ़िशियल सामान (इन्वेंटरी)
+Pieces per unit ¦ एक यूनिट में पीस
+Deal Check & Planning cost ¦ डील चेक और प्लानिंग की लागत
+Art ₹/Unit (Mandi tab, live) ¦ आर्टिफ़िशियल ₹/यूनिट (मंडी टैब, लाइव)
+Mandi price ¦ मंडी रेट
+Rental price ¦ किराया
+In stock ¦ स्टॉक में
+Colours ¦ रंग
+Pieces / unit ¦ पीस / यूनिट
+Full details ¦ पूरी जानकारी
+Open full size ¦ पूरा बड़ा खोलें
 Not in the mandi — swapped with ¦ मंडी में नहीं — बदला गया —
 Bought instead of ¦ इसकी जगह खरीदा —
 Which truck is carrying this to ¦ कौन सा ट्रक इसे ले जा रहा है —
