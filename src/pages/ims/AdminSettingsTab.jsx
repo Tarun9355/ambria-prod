@@ -8,7 +8,7 @@ import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm, DraftInput } from "
 import ClickablePhoto from "../../components/shared/ClickablePhoto.jsx";
 import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
-import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel, genMandiFlowerId, mandiFlowerToRow, mandiFlowerPatchToRow, genFlowerPatternId, flowerPatternToRow } from "../../lib/ims/flowerHelpers";
+import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel, genMandiFlowerId, mandiFlowerToRow, mandiFlowerPatchToRow, genFlowerPatternId, flowerPatternToRow, mirrorFlowerPick } from "../../lib/ims/flowerHelpers";
 import { labourTypePatchToRow } from "../../lib/ims/labourTypes";
 import { priceForInvItem, phone10, flowerPaletteItemsOf } from "../../lib/ims/helpers";
 import { MANPOWER_TYPES, SIT_MULT_DEFAULTS, SIT_MULT_TYPES, DUMPING_LEVELS, EVENT_TIMINGS, eventTimingMultFor, hasIMSPerm } from "../../lib/ims/constants";
@@ -1615,6 +1615,8 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
               </div>
               {sizeData.flowers.map((fl, fi) => {
                 const setRow = (patch) => mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, flowers: sizeData.flowers.map((x, i) => (i === fi ? { ...x, ...patch } : x)) } } }));
+                // choosing a flower here puts it in the recipe's other sizes too, quantity empty (lib/ims/flowerHelpers mirrorFlowerPick)
+                const pickFlower = (cand, fromPatch) => mutatePattern(studioItem, (p) => ({ ...p, sizes: mirrorFlowerPick({ sizes: p.sizes, mode: p.mode, fromSize: sz, fromIndex: fi, fromPatch, cand }) }));
                 if (fl.invItemId) {
                   // Inventory-sourced ingredient (added via "Artificial included?") — plain qty in the
                   // item's own unit, no gatthar/piece conversion (that math only applies to mandi flowers).
@@ -1623,7 +1625,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                     <div key={fi} className="flex items-center gap-1.5 mb-1.5">
                       <FlowerPicker value={fl.invItemId} valueSource="inventory" catalogue={settings.mandiCatalogue || []}
                         inventory={inventory}
-                        onChange={(cand) => setRow(cand.source === "inventory" ? { invItemId: cand.id, flowerId: undefined } : { flowerId: cand.id, invItemId: undefined })} />
+                        onChange={(cand) => pickFlower(cand, cand.source === "inventory" ? { invItemId: cand.id, flowerId: undefined } : { flowerId: cand.id, invItemId: undefined })} />
                       <DraftInput type="number" min="0" step="1" value={fl.qty || ""} placeholder="qty"
                         onCommit={(raw) => setRow({ qty: parseFloat(raw) || 0 })}
                         className="w-14 border rounded px-1 py-1 text-xs text-center" />
@@ -1642,7 +1644,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                   <div key={fi} className="flex items-center gap-1.5 mb-1.5">
                     <FlowerPicker value={fl.flowerId} valueSource="mandi" catalogue={settings.mandiCatalogue || []}
                       inventory={pat?.artificialIncluded ? inventory : undefined}
-                      onChange={(cand) => setRow(cand.source === "inventory" ? { invItemId: cand.id, flowerId: undefined, qty: 0, gsSnap: undefined } : { flowerId: cand.id, invItemId: undefined, gsSnap: undefined })} />
+                      onChange={(cand) => pickFlower(cand, cand.source === "inventory" ? { invItemId: cand.id, flowerId: undefined, qty: 0, gsSnap: undefined } : { flowerId: cand.id, invItemId: undefined, gsSnap: undefined })} />
                     {(() => {
                       // gsSnap freezes this ROW's pieces/mandi-unit ratio at the moment its quantity
                       // was last typed in pieces here — a pcs/unit correction made later in the Mandi

@@ -441,3 +441,38 @@ export function convertFlowerQty(qty, from, to) {
   if (!(pf > 0) || !(pt > 0)) return { qty: q, converted: false, same: false };
   return { qty: Math.round((q * pf / pt) * 10000) / 10000, converted: true, same: false };
 }
+
+// ── PICK A FLOWER ONCE, IT IS IN EVERY SIZE (owner ask 2026-11-20) ──
+// In a Small / Medium / Big recipe the same flowers go into every size, only the numbers differ. Choosing a flower name in one size's
+// column now puts it in the other sizes too, with an empty quantity for the person to type:
+//   - the other size already has it: nothing to add;
+//   - the flower in this row was CHANGED and the other size has the old one: that row is switched to the new flower, its quantity kept;
+//   - the other size has an empty row (a "+ flower" nobody picked yet): that row is filled;
+//   - otherwise the flower is added as a new row with quantity 0.
+// A flat (one-size) recipe has no other size, so nothing is mirrored. Pure: returns the recipe's new `sizes`.
+//   fromPatch: the change the picking size's own row gets (what the picker always applied); cand: { id, source: "inventory" | mandi }.
+const rowKey = (r) => (r?.invItemId ? "i:" + r.invItemId : r?.flowerId ? "f:" + r.flowerId : "");
+export function mirrorFlowerPick({ sizes, mode, fromSize, fromIndex, fromPatch, cand }) {
+  const base = sizes && typeof sizes === "object" ? sizes : {};
+  const names = mode === "smb" ? ["small", "medium", "big"] : Object.keys(base);
+  const fromData = base[fromSize] || { flowers: [], totalPieces: 0 };
+  const oldKey = rowKey((fromData.flowers || [])[fromIndex]);
+  const newKey = cand?.source === "inventory" ? "i:" + cand.id : "f:" + cand?.id;
+  const next = { ...base };
+  next[fromSize] = { ...fromData, flowers: (fromData.flowers || []).map((x, i) => (i === fromIndex ? { ...x, ...fromPatch } : x)) };
+  if (!cand?.id || newKey === oldKey) return next;
+  names.forEach((name) => {
+    if (name === fromSize) return;
+    const data = base[name] || { flowers: [], totalPieces: 0 };
+    const rows = Array.isArray(data.flowers) ? data.flowers : [];
+    if (rows.some((r) => rowKey(r) === newKey)) return; // already in this size
+    const fresh = cand.source === "inventory" ? { invItemId: cand.id, qty: 0 } : { flowerId: cand.id, qty: 0 };
+    let at = oldKey ? rows.findIndex((r) => rowKey(r) === oldKey) : -1;
+    if (at < 0) at = rows.findIndex((r) => !rowKey(r));
+    const flowers = at >= 0
+      ? rows.map((r, i) => (i === at ? (oldKey && rowKey(r) === oldKey ? { ...r, flowerId: cand.source === "inventory" ? undefined : cand.id, invItemId: cand.source === "inventory" ? cand.id : undefined, gsSnap: undefined } : { ...r, ...fresh, gsSnap: undefined }) : r))
+      : [...rows, fresh];
+    next[name] = { ...data, flowers };
+  });
+  return next;
+}
