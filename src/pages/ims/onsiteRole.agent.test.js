@@ -86,7 +86,7 @@ describe("what the role is NOT shown - each surface is gated on onsiteOnly in th
     expect(src).toContain("{!onsiteOnly && <FixedVenueStockCard");
     expect(src).toContain("{onsiteOnly ? null : deptIncome ? (() => {");
     expect(src).toContain("if (onsiteOnly || !list.length) return null;");
-    expect(src).toContain('.filter((t) => t && (!onsiteOnly || t.k === "inv"));');
+    expect(src).toContain('.filter((t) => t && (!onsiteOnly || t.k === "inv" || t.k === "mp"));');
   });
   it("every planning-tile key in the tile array other than inv is dropped by that filter (fabreq, carpet, truss, mp, actuals, truck, dism)", () => {
     const tiles = slice("const tiles = [\n                dept === \"Fabric\"", "].filter((t) => t && (!onsiteOnly");
@@ -98,8 +98,8 @@ describe("what the role is NOT shown - each surface is gated on onsiteOnly in th
     expect(src).toContain('{(opsView === "onsite" || onsiteOnly) && dept !== PAINT && (<>');
   });
   it("panel wrappers: planning only for modal === inv, on-site only for rcv / route / oscrew", () => {
-    expect(src).toContain('className={modal && (!onsiteOnly || modal === "inv") ? PANEL_WRAP : "hidden"}');
-    expect(src).toContain('className={modal && (!onsiteOnly || ["rcv", "route", "oscrew"].includes(modal)) ? PANEL_WRAP : "hidden"}');
+    expect(src).toContain('className={modal && (!onsiteOnly || modal === "inv" || modal === "mp") ? PANEL_WRAP : "hidden"}');
+    expect(src).toContain('className={modal && (!onsiteOnly || ["rcv", "route"].includes(modal)) ? PANEL_WRAP : "hidden"}');
   });
   it("the two on-site-only keys the role may open are the on-site tile keys (rcv, route, oscrew)", () => {
     const tiles = slice('const short = sourceRows.filter(r => r.shortfall > 0).length;', "].filter(Boolean);");

@@ -4802,7 +4802,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 { k: "actuals", icon: "🧾", title: "Actuals", sub: hasActuals ? "real spend logged" : "nothing logged yet", value: hasActuals ? fmt(actualCost) : null },
                 { k: "truck", icon: "🚚", title: "Truck planning", sub: trucks.length ? n(trucks.length, "truck") + (fullTrucks ? ` · ${fullTrucks} full` : "") : "no trucks yet" },
                 SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && { k: "dism", icon: "🔁", title: "Dismantle plan", sub: "where each item goes after" },
-              ].filter((t) => t && (!onsiteOnly || t.k === "inv")); // Site-Supervisor-view-only: Inventory blocked only
+              ].filter((t) => t && (!onsiteOnly || t.k === "inv" || t.k === "mp")); // Site-Supervisor-view-only: Inventory blocked and the Manpower plan (the Department Head's own panel) only
               return (
                 <div className={GRID}>
                   {tiles.map(t => (
@@ -4858,7 +4858,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 income cards and the event header all stay in view while you read it.
                 Same mechanic as before: every block still lives here and hides itself unless it
                 is the open one (modalCls), so nothing had to be moved or re-parented. */}
-            <div data-ops-panel onClick={onPanelBackdrop} className={modal && (!onsiteOnly || modal === "inv") ? PANEL_WRAP : "hidden"}>
+            <div data-ops-panel onClick={onPanelBackdrop} className={modal && (!onsiteOnly || modal === "inv" || modal === "mp") ? PANEL_WRAP : "hidden"}>
               <div className={PANEL_CARD}>
                 {/* NOT sticky from sm up. It was, back when this panel was a dialog with its own
                     scroll — but inline the page scrolls instead, so a sticky bar just hovers over
@@ -6629,7 +6629,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
               const tiles = [
                 sourceRows.length > 0 && { k: "rcv", icon: "📥", title: "Receiving", sub: short > 0 ? `⚠️ ${n(short, "item")} short` : "✓ all sourced", tone: short > 0 ? "bg-red-50" : "bg-sky-50", alert: short > 0 },
                 { k: "route", icon: "🔁", title: "Dismantle & routing", sub: blockedItems.length ? n(blockedItems.filter(it => unroutedQty(it) > 0).length, "item") + " left to route" : "nothing to route" },
-                mpRows.length > 0 && { k: "oscrew", icon: "👷", title: "On-site crew", sub: mpEdited ? "actual logged" : "as planned", value: fmt(mpCost) },
+                // the Site-Supervisor-view-only role gets the Department Head's own Manpower plan tile + panel instead (same crew data, same activity log)
+                !onsiteOnly && mpRows.length > 0 && { k: "oscrew", icon: "👷", title: "On-site crew", sub: mpEdited ? "actual logged" : "as planned", value: fmt(mpCost) },
               ].filter(Boolean);
               return (
                 <div className={GRID}>
@@ -6673,7 +6674,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 income cards and the event header all stay in view while you read it.
                 Same mechanic as before: every block still lives here and hides itself unless it
                 is the open one (modalCls), so nothing had to be moved or re-parented. */}
-            <div data-ops-panel onClick={onPanelBackdrop} className={modal && (!onsiteOnly || ["rcv", "route", "oscrew"].includes(modal)) ? PANEL_WRAP : "hidden"}>
+            <div data-ops-panel onClick={onPanelBackdrop} className={modal && (!onsiteOnly || ["rcv", "route"].includes(modal)) ? PANEL_WRAP : "hidden"}>
               <div className={PANEL_CARD}>
                 {/* NOT sticky — see the Planning panel above: inline, a sticky bar just hovers
                     over the block beneath it and hides its subtitle. */}

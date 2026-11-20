@@ -176,8 +176,11 @@ describe("event opened - onsiteOnly", () => {
     expect(html).toContain("Inventory blocked");
     expect(html).toContain("Dismantle &amp; routing");
     // tile titles only (a hidden panel block carries its own heading text, e.g. the Manpower plan block, in the DOM)
-    for (const t of ["Manpower plan", "Actuals", "Truck planning", "Carpet plan", "Truss plan", "Fabric plan", "Dismantle plan"]) expect(html).not.toContain(`leading-snug">${t}<`);
+    for (const t of ["Actuals", "Truck planning", "Carpet plan", "Truss plan", "Fabric plan", "Dismantle plan"]) expect(html).not.toContain(`leading-snug">${t}<`);
     expect(html).toContain('leading-snug">Inventory blocked<');
+    // the Department Head's own Manpower plan tile is there (owner ask 2026-11-20), the on-site crew tile is not
+    expect(html).toContain('leading-snug">Manpower plan<');
+    expect(html).not.toContain('leading-snug">On-site crew<');
     for (const t of ["Total income", "Changed in the last 48 hours", "Fixed at venue", "Production requests"]) expect(html).not.toContain(t);
   });
   it("no Department Head view tiles AND the on-site tiles together (Inventory before Dismantle & routing)", () => {
@@ -219,10 +222,10 @@ describe("event opened - everyone else is unchanged", () => {
 describe("panels open only for their own tiles", () => {
   const wrapStates = (html) => (html.match(/<div data-ops-panel[^>]*>/g) || []).map((w) => w.includes("fixed inset-0"));
   const open = (modal, onsiteOnly = true) => wrapStates(render(sel({ onsiteOnly }), { ...F_SEL, [F.modal]: modal }));
-  it("onsiteOnly: inv -> planning panel only; rcv / route / oscrew -> on-site panel only; any other -> none", () => {
-    expect(open("inv")).toEqual([true, false]);
-    for (const m of ["rcv", "route", "oscrew"]) expect(open(m)).toEqual([false, true]);
-    for (const m of ["mp", "actuals", "truck", "carpet", "truss", "fabreq", "fabshort", "dism", "bogus"]) expect(open(m)).toEqual([false, false]);
+  it("onsiteOnly: inv / mp -> planning panel only; rcv / route -> on-site panel only; any other (oscrew included) -> none", () => {
+    for (const m of ["inv", "mp"]) expect(open(m)).toEqual([true, false]);
+    for (const m of ["rcv", "route"]) expect(open(m)).toEqual([false, true]);
+    for (const m of ["oscrew", "actuals", "truck", "carpet", "truss", "fabreq", "fabshort", "dism", "bogus"]) expect(open(m)).toEqual([false, false]);
   });
   it("everyone else: Department Head view opens its panel for any key (unchanged wrapper rule)", () => {
     expect(wrapStates(render(sel({ onsiteOnly: false }), { ...F_SEL, [F.modal]: "mp" }))[0]).toBe(true);
@@ -262,7 +265,7 @@ describe("PDF buttons states", () => {
     const s = html({ [F.dept]: "Floral" });
     expect(s).toContain("Floral PDF");
     expect(s).toContain("Inventory blocked");
-    expect(s).not.toContain('leading-snug">Manpower plan<');
+    expect(s).toContain('leading-snug">Manpower plan<');
   });
   it("RISK (documented): in the Paint view both PDF buttons are hidden (dept !== PAINT gate)", () => {
     const s = html({ [F.dept]: "Paint" });
@@ -336,7 +339,6 @@ describe("money / planning data the role must not see (fixture with income, a re
     expect(html).not.toContain("9,87,654");
     expect(html).not.toContain("Changed in the last 48 hours");
     expect(html).not.toContain("Sales discount");
-    expect(html).not.toContain("Updated"); // the "⚠ Updated 1 m ago" badge rides only on planning tiles that are hidden
   });
 });
 

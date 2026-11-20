@@ -100,15 +100,17 @@ describe("Dept Ops wiring for the Site-Supervisor-view-only role", () => {
     expect(src).toMatch(/\{!onsiteOnly && <FixedVenueStockCard/);
     expect(src).toMatch(/\{onsiteOnly \? null : deptIncome \? \(\(\) => \{/);
     expect(src).toMatch(/if \(onsiteOnly \|\| !list\.length\) return null;/);
-    expect(src).toMatch(/\]\.filter\(\(t\) => t && \(!onsiteOnly \|\| t\.k === "inv"\)\)/);
+    expect(src).toMatch(/\]\.filter\(\(t\) => t && \(!onsiteOnly \|\| t\.k === "inv" \|\| t\.k === "mp"\)\)/);
   });
-  it("that role sees the planning block (Inventory blocked tile) and the on-site cards (Receiving, Dismantle & routing, On-site crew) together", () => {
+  it("that role sees the planning block (Inventory blocked + the Department Head's own Manpower plan tile) and the on-site cards (Receiving, Dismantle & routing) together", () => {
     expect(src).toMatch(/\{\(opsView === "planning" \|\| onsiteOnly\) && dept !== PAINT && \(<>/);
     expect(src).toMatch(/\{\(opsView === "onsite" \|\| onsiteOnly\) && dept !== PAINT && \(<>/);
   });
   it("each block's panel opens only for its own tiles, so no empty second panel shows for that role", () => {
-    expect(src).toContain('className={modal && (!onsiteOnly || modal === "inv") ? PANEL_WRAP : "hidden"}');
-    expect(src).toContain('className={modal && (!onsiteOnly || ["rcv", "route", "oscrew"].includes(modal)) ? PANEL_WRAP : "hidden"}');
+    expect(src).toContain('className={modal && (!onsiteOnly || modal === "inv" || modal === "mp") ? PANEL_WRAP : "hidden"}');
+    expect(src).toContain('className={modal && (!onsiteOnly || ["rcv", "route"].includes(modal)) ? PANEL_WRAP : "hidden"}');
+    // the on-site crew tile is the Department Head's Manpower plan for that role, not a second crew screen
+    expect(src).toContain('!onsiteOnly && mpRows.length > 0 && { k: "oscrew"');
   });
   it("the department starts on the first one they can see again (no Tenting default)", () => {
     expect(src).toMatch(/const \[dept, setDept\] = useState\(roleDept \|\| deptOptions\[0\] \|\| "Floral"\);/);
