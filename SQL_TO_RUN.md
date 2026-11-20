@@ -149,7 +149,7 @@ No redeploy needed — this column is only read/written by the client (`src/lib/
 ## Appended automatically as the build proceeds
 (New tables/migrations for later phases are added below as they're created.)
 
-## Mapping flower pieces-per-unit (migration 071) — ⬜ RUN BEFORE DEPLOYING THE APP THAT USES IT
+## Mapping flower pieces-per-unit (migration 071) — ✅ run 2026-11-20
 `supabase/migrations/071_mandi_map_pcs_per_unit.sql` — one nullable column on `mandi_flowers`:
 ```sql
 ALTER TABLE public.mandi_flowers ADD COLUMN IF NOT EXISTS artificial_map_pcs_per_unit NUMERIC;

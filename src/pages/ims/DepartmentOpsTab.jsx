@@ -1342,15 +1342,18 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     const byItem = new Map();
     Object.values(liveFloral?.floralDetail || {}).forEach((fd) => (fd?.art?.mapped || []).forEach((m) => {
       if (!m.mappedItemId || !(m.pcs > 0)) return;
-      const cur = byItem.get(m.mappedItemId) || { pcs: 0, forNames: new Set() };
-      cur.pcs += m.pcs; cur.forNames.add(m.realFlowerName);
+      const cur = byItem.get(m.mappedItemId) || { pcs: 0, pcsExact: 0, cost: 0, forNames: new Set() };
+      cur.pcs += m.pcs; cur.pcsExact += Number(m.pcsExact) || m.pcs; cur.cost += Number(m.cost) || 0; cur.forNames.add(m.realFlowerName);
       byItem.set(m.mappedItemId, cur);
     }));
     const out = [];
     byItem.forEach((v, id) => {
       const item = (inventory || []).find(i => String(i.id) === String(id));
       if (!item) return;
-      out.push({ id: "mapped:" + id, invId: id, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty: v.pcs, rentalQty: v.pcs, unit: 0, total: 0, sub: item.subCat || item.subcategory || "", qtyUnit: "", stockOnly: true, mappedFor: [...v.forNames].filter(Boolean).join(", ") });
+      out.push({ id: "mapped:" + id, invId: id, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty: v.pcs, rentalQty: v.pcs, unit: 0, total: 0, sub: item.subCat || item.subcategory || "", qtyUnit: "", stockOnly: true, mappedFor: [...v.forNames].filter(Boolean).join(", "),
+        // shown on the row for reference (owner ask 2026-11-20: "price kyu ni aara") but NOT in total/unit, so the
+        // blocked total (rentalIncome) never counts it — it is already inside Floral's artificial total
+        infoRate: v.pcsExact > 0 ? Math.round((v.cost / v.pcsExact) * 100) / 100 : 0, infoTotal: Math.round(v.cost) });
     });
     return out;
   }, [liveFloral, inventory]);
@@ -5361,12 +5364,19 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               </StatCell>
                             )}
                             <StatCell label="Rate" w={STAT_W.rate}>
-                              {it.stockOnly
+                              {it.stockOnly && it.infoRate > 0
+                                ? <span className="text-sm text-gray-500 tabular-nums" title="The mapped item's cost per piece, as Deal Check costs it (saved when it was mapped)">{fmt(it.infoRate)}</span>
+                                : it.stockOnly
                                 ? <span className="text-sm text-gray-300 tabular-nums" title="Stock/quantity only — this line has no rate of its own.">—</span>
                                 : <span className="text-sm text-gray-600 tabular-nums" title={showRentalQty ? "Averaged across functions — a reused unit's repeat-discounted rate blends with a fresh unit's full rate." : undefined}>{fmt(avgRate)}{it.qtyUnit ? <span className="text-xs text-gray-400">/{it.qtyUnit}</span> : null}</span>}
                             </StatCell>
                             <StatCell label="Total" w={STAT_W.total}>
-                              {it.stockOnly
+                              {it.stockOnly && it.infoTotal > 0
+                                ? <div title="Already counted in Floral's Artificial total — shown here for reference, not added to this list's total">
+                                    <div className="text-sm font-bold text-gray-500 tabular-nums">{fmt(it.infoTotal)}</div>
+                                    <div className="text-[10px] text-gray-400 mt-0.5">in artificial total</div>
+                                  </div>
+                                : it.stockOnly
                                 ? <span className="text-sm text-gray-300 tabular-nums" title="Costed under Floral's own breakdown, not tracked here — this row exists for the quantity only.">—</span>
                                 : <>
                                     <div className="text-sm font-bold text-gray-900 tabular-nums">{fmt(it.total)}</div>
