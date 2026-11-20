@@ -179,6 +179,24 @@ export default function InventoryTab({ inventory, setInventory, functions, setFu
   const [selAllDates, setSelAllDates] = useState(false);
   const [availOnly, setAvailOnly] = useState("all"); // when a date is set: "all" | "blocked" | "free" on that date
   const [availOpen, setAvailOpen] = useState(false); // phone only: the Availability panel folds behind one button until opened (or a date is set)
+  // Phone: the category chips scroll sideways on one line. A fade alone didn't say "scroll" (owner: "ye pta kese
+  // chlega scroll krna hai?"), so the row shows "+N ›" for the chips still out of view at the right (and "‹" once
+  // scrolled), each a button that scrolls it. catScroll is what is hidden on each side right now.
+  const catRowRef = useRef(null);
+  const [catScroll, setCatScroll] = useState({ left: false, rightCount: 0 });
+  const measureCatRow = () => {
+    const el = catRowRef.current;
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    const rightCount = [...el.children].filter((c) => c.getBoundingClientRect().right > box.right + 1).length;
+    setCatScroll((p) => (p.left === el.scrollLeft > 2 && p.rightCount === rightCount ? p : { left: el.scrollLeft > 2, rightCount }));
+  };
+  useEffect(() => {
+    measureCatRow();
+    window.addEventListener("resize", measureCatRow);
+    return () => window.removeEventListener("resize", measureCatRow);
+  }); // every render: the chips (and their counts) change with the filters
+  const scrollCatRow = (dir) => catRowRef.current?.scrollBy({ left: dir * Math.max(160, (catRowRef.current?.clientWidth || 300) * 0.7), behavior: "smooth" });
   // Which of the 3 date-pricing tiers is TODAY, per the live config — same resolver the Calendar
   // and Block modal use (markedDates override > auto-synced LMS category > Filler), so the Price
   // column's highlight can never drift from what Date Pricing Config actually says is active now.
@@ -1126,9 +1144,22 @@ Rules:
           )}
         </div>
 
-        {/* Row 2: Category chips (replaces the dropdown). Phone: one line that scrolls sideways, its right edge
-            fading so the cut-off chip reads as "more this way" — four wrapped lines of chips before the first item. */}
-        <div role="group" aria-label="Category" className="flex flex-nowrap md:flex-wrap gap-1.5 items-center overflow-x-auto md:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [mask-image:linear-gradient(to_right,black_85%,transparent)] md:[mask-image:none] pr-6 md:pr-0">
+        {/* Row 2: Category chips (replaces the dropdown). Phone: one line that scrolls sideways instead of four
+            wrapped lines before the first item, with "+N ›" / "‹" buttons on its edges saying there is more (catScroll). */}
+        <div className="relative">
+        {catScroll.left && (
+          <button type="button" onClick={() => scrollCatRow(-1)} aria-label="Show earlier categories"
+            className="md:hidden absolute left-0 top-0 bottom-0 z-10 pr-4 pl-0.5 flex items-center bg-gradient-to-r from-gray-50 via-gray-50 to-transparent">
+            <span className="w-8 h-8 rounded-full bg-white border border-gray-200 shadow-sm flex items-center justify-center text-gray-600 text-base leading-none">‹</span>
+          </button>
+        )}
+        {catScroll.rightCount > 0 && (
+          <button type="button" onClick={() => scrollCatRow(1)} aria-label={`${catScroll.rightCount} more categories`}
+            className="md:hidden absolute right-0 top-0 bottom-0 z-10 pl-6 pr-0.5 flex items-center bg-gradient-to-l from-gray-50 via-gray-50 to-transparent">
+            <span className="h-8 pl-2.5 pr-2 rounded-full bg-white border border-indigo-200 shadow-sm flex items-center gap-1 text-xs font-semibold text-indigo-600 whitespace-nowrap">+{catScroll.rightCount} <span className="text-base leading-none">›</span></span>
+          </button>
+        )}
+        <div ref={catRowRef} onScroll={measureCatRow} role="group" aria-label="Category" className="flex flex-nowrap md:flex-wrap gap-1.5 items-center overflow-x-auto md:overflow-visible [scrollbar-width:none] [&::-webkit-scrollbar]:hidden scroll-smooth">
           <button onClick={() => { setFilterCat("All"); setFilterSubCat("All"); setSubChipSearch(""); setInvPage(0); }} aria-pressed={filterCat === "All"}
             className={"shrink-0 whitespace-nowrap px-3 md:px-2.5 py-2 md:py-1 rounded-full text-xs font-semibold transition-all " + (filterCat === "All" ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
             All ({visibleInventory.length})
@@ -1139,6 +1170,7 @@ Rules:
               {c} <span className="opacity-60">({catCounts[c]})</span>
             </button>
           ))}
+        </div>
         </div>
 
         {/* Row 3: Type. Phone: one segmented control, four equal parts, the count under each name (a choice of
