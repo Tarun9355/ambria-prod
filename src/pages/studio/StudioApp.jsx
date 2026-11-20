@@ -4564,6 +4564,19 @@ export default function StudioApp() {
   }, [showMsg]);
   // Persist the Deal Check department breakdown onto the client's SOLD event-order row (table), so
   // IMS Dept Ops shows the SAME numbers (income, inventory-with-photos, manpower) Studio computed.
+  // The two floral inputs IMS's live mandi plan (lib/ims/liveFloralPlan.js) needs that used to reach
+  // event_orders.functionsDetail at booking only. floralOverrides is Build's own per-function state
+  // (always current in fd). The colour picks are Deal Check state, only trustworthy once Deal Check
+  // has restored it for THIS client — before that they may be another client's leftovers, so they
+  // are left out (IMS keeps the last ones written) rather than sent wrong.
+  const dcFloralColorPrefsRef = useRef({});
+  useEffect(() => { dcFloralColorPrefsRef.current = dcFloralColorPrefs; }, [dcFloralColorPrefs]);
+  const floralLiveFieldsOf = (fd, withColourPicks) => {
+    const out = {};
+    if (fd?.floralOverrides && typeof fd.floralOverrides === "object") out.floralOverrides = { note: fd.floralOverrides.note || "", rows: Array.isArray(fd.floralOverrides.rows) ? fd.floralOverrides.rows : [] };
+    if (withColourPicks && activeClientId && dcStateReadyForClientRef.current === activeClientId) out.floralColorPrefs = dcFloralColorPrefsRef.current?.[fd.fnIdx] || {};
+    return out;
+  };
   const persistDeptSnapshot = useCallback(async (snap) => {
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
     if (!eo) return;
@@ -4635,6 +4648,11 @@ export default function StudioApp() {
           layoutUrl: fd.fnLayoutUrl || "",
           // and the real/artificial floral slider (floralRatio = the artificial share), likewise set at booking only until now.
           ...(typeof fd.floralRatio === "number" ? { floralRatio: fd.floralRatio } : {}),
+          // IMS works the Floral mandi plan out itself now (lib/ims/liveFloralPlan.js), so the two floral
+          // inputs that were set at booking only follow too: Build's per-function flower overrides
+          // (swaps/colour) and Deal Check's colour picks — the latter only when Deal Check's own state is
+          // loaded for THIS client (dcStateReadyForClientRef), never another client's leftovers.
+          ...floralLiveFieldsOf(fd, true),
         });
       });
     } catch { /* layout refresh is best-effort — the money snapshot still goes */ }
@@ -4792,6 +4810,11 @@ export default function StudioApp() {
           fabricPaletteLive: true,
           // the function's layout image, so the Dept Book's layout page follows an upload / remove at once
           layoutUrl: fd.fnLayoutUrl || "",
+          // IMS's live Floral mandi plan (lib/ims/liveFloralPlan.js) reads these — so a Build edit to the
+          // slider, the Flower Palette or a flower override re-plans IMS with no Deal Check open.
+          flowerPalette: fd.fnFlowerPalette || "",
+          ...(typeof fd.floralRatio === "number" ? { floralRatio: fd.floralRatio } : {}),
+          ...floralLiveFieldsOf(fd, false),
         });
       });
     } catch { return; }

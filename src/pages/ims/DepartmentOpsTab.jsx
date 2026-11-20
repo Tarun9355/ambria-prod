@@ -52,6 +52,7 @@ import { logWrite } from "../../lib/studio/userActions";
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
 import { kvGet } from "../../lib/ims/kv";
 import { withLivePlan, isDismissMarker, dismissMarker } from "../../lib/ims/mandiLivePlan";
+import { buildLiveFloralPlan } from "../../lib/ims/liveFloralPlan";
 
 // ── THE SUMMARY TILE ROW ──
 // auto-FIT, not auto-fill. The difference only shows when there are fewer tiles than columns
@@ -756,7 +757,7 @@ function TruckTextBox({ value, onCommit, clean, ...rest }) {
   );
 }
 
-export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [] }) {
+export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [], rcItems = [] }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   // A labour usage row belongs to the department Deal Check charged it to (ur.dept — the item's own
@@ -1913,7 +1914,22 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // Loveleen, a 2-venue deal: "I don't want the flower quantities combined, separate them into
   // tabs, 1 per function" — two functions never share flowers physically anyway, no reuse credit
   // either, dealAvailability.js's own bug 7/8 fix) ──
-  const fp = sel?.floralPlan || {};
+  // LIVE (owner ask, 2026-11-20): IMS works the plan out itself with Deal Check's own engine from
+  // the deal's layout + live recipes/mandi/rate card (lib/ims/liveFloralPlan.js), so a recipe edit
+  // or a Build edit reaches this list at once, with nobody opening Deal Check. What Deal Check last
+  // pushed (sel.floralPlan) stays for everything the live run doesn't produce (artificial stock,
+  // income, season) and is the whole plan when the stored layout can't support a live run.
+  const liveFloral = useMemo(() => {
+    if (dept !== "Floral" || !sel) return null;
+    try { return buildLiveFloralPlan(sel.functionsDetail, { settings: settings || {}, rcItems, rateCardCategories, inventory }); }
+    catch (e) { console.warn("[DeptOps] live floral plan failed — showing Deal Check's last pushed plan", e); return null; }
+  }, [dept, sel, settings, rcItems, rateCardCategories, inventory]);
+  const storedFp = sel?.floralPlan || {};
+  const fp = liveFloral
+    ? { ...storedFp, byFn: liveFloral.byFn, flowers: [...liveFloral.flowers, ...(Array.isArray(storedFp.flowers) ? storedFp.flowers.filter(f => f.artificial) : [])] }
+    : storedFp;
+  // The "how" box under each flower reads the same run, so its lines always add up to the plan shown.
+  const floralHowDetail = liveFloral ? liveFloral.floralDetail : sel?.floralDetail;
   // fp.byFn (floralPlanByFn, lib/studio/floralCost.js) is new — an already-booked deal whose
   // floralPlan was captured before this feature shipped has no byFn at all. Already-logged real
   // shopping (deptData.mandiLines, the old flat array) is preserved exactly as-is under its own
@@ -5750,7 +5766,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                     {r.swapFor && <div className="text-[10px] font-semibold text-amber-700">🔁 Bought instead of {r.swapFor}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
                                     {r.projQty > 0 && (() => {
                                       // How the planned quantity builds up - Deal Check's own per-arrangement figures (floralDetail), in the flower's mandi unit.
-                                      const how = mandiHow(sel?.floralDetail, r.name);
+                                      const how = mandiHow(floralHowDetail, r.name);
                                       const open = how && mandiHowOpen === r.name;
                                       return (
                                         <>
