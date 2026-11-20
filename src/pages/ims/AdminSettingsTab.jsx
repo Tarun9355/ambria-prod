@@ -1624,8 +1624,8 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                       <FlowerPicker value={fl.invItemId} valueSource="inventory" catalogue={settings.mandiCatalogue || []}
                         inventory={inventory}
                         onChange={(cand) => setRow(cand.source === "inventory" ? { invItemId: cand.id, flowerId: undefined } : { flowerId: cand.id, invItemId: undefined })} />
-                      <input type="number" min="0" step="1" value={fl.qty || ""} placeholder="qty"
-                        onChange={(e) => setRow({ qty: parseFloat(e.target.value) || 0 })}
+                      <DraftInput type="number" min="0" step="1" value={fl.qty || ""} placeholder="qty"
+                        onCommit={(raw) => setRow({ qty: parseFloat(raw) || 0 })}
                         className="w-14 border rounded px-1 py-1 text-xs text-center" />
                       <select value={fl.unitLabel ?? invItem?.unit ?? "pcs"} onChange={(e) => setRow({ unitLabel: e.target.value })}
                         title="Unit label — cosmetic only, doesn't change the qty or cost math"
@@ -1661,8 +1661,8 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                         const pieces = (Number(fl.qty) || 0) * effGS;
                         return (
                           <>
-                            <input type="number" min="0" step="1" value={fmtN(pieces)} placeholder="pcs"
-                              onChange={(e) => { const p = parseFloat(e.target.value) || 0; setQty(effGS > 0 ? p / effGS : 0); }}
+                            <DraftInput type="number" min="0" step="1" value={fmtN(pieces)} placeholder="pcs"
+                              onCommit={(raw) => { const p = parseFloat(raw) || 0; setQty(effGS > 0 ? p / effGS : 0); }}
                               className="w-14 border rounded px-1 py-1 text-xs text-center" title={`Stored: ${(Number(fl.qty) || 0).toFixed(3)} ${flower?.unit || ""}${fl.gsSnap != null && liveGS > 0 && Number(fl.gsSnap) !== liveGS ? ` — pcs/unit was ${fl.gsSnap} when last set here; catalogue now says ${liveGS}` : ""}`} />
                             <select value={fl.unitLabel ?? "pcs"} onChange={(e) => setRow({ unitLabel: e.target.value })}
                               title={(effGS > 1 ? `${effGS} pcs/${flower?.unit} — ` : "per-piece flower — ") + "unit label is cosmetic only, doesn't change the qty or cost math"}
@@ -1677,8 +1677,8 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                       return (
                         <>
                           <span className="text-[10px] text-gray-400 whitespace-nowrap">1 {flower?.unit || "unit"} →</span>
-                          <input type="number" min="0" step="1" value={fmtN(patternsPerUnit)} placeholder="N"
-                            onChange={(e) => { const n = parseFloat(e.target.value) || 0; setQty(n > 0 ? 1 / n : 0); }}
+                          <DraftInput type="number" min="0" step="1" value={fmtN(patternsPerUnit)} placeholder="N"
+                            onCommit={(raw) => { const n = parseFloat(raw) || 0; setQty(n > 0 ? 1 / n : 0); }}
                             className="w-12 border rounded px-1 py-1 text-xs text-center" title={`Stored: ${stored.toFixed(3)} ${flower?.unit || ""}/pattern`} />
                           <select value={fl.unitLabel ?? "made"} onChange={(e) => setRow({ unitLabel: e.target.value })}
                             title="Unit label — cosmetic only, doesn't change the qty or cost math"
@@ -1700,8 +1700,8 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
               <div className="mt-2">
                 <label className="text-[10px] text-gray-500" title="Units one flowerist completes per dihari (8-hr shift) for this size. Used by Planning → Manpower (Tier 1) to compute flowerist headcount from the function's flower orders.">👷 1 flowerist / dihari</label>
                 <div className="mt-1 flex items-center gap-1">
-                  <input type="number" min="0" step="0.1" value={sizeData.unitsPerFlowerist ?? ""}
-                    onChange={(e) => { const v = e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0); mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, unitsPerFlowerist: v } } })); }}
+                  <DraftInput type="number" min="0" step="0.1" value={sizeData.unitsPerFlowerist ?? ""}
+                    onCommit={(raw) => { const v = raw === "" ? undefined : (parseFloat(raw) || 0); mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, unitsPerFlowerist: v } } })); }}
                     placeholder="—"
                     className="flex-1 border rounded px-2 py-1 text-xs font-semibold text-blue-700 text-center" />
                   <span className="text-[9px] text-gray-400 w-12 truncate">{studioUnitLabel(pat?.unit ?? studioItem.unit) || "/unit"}</span>
@@ -1713,7 +1713,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                 <label className="text-[10px] text-gray-500" title="Fixed extra cost for this size (pot / base / frame), added after markup: studio rate = flower cost × markup + extra.">➕ Extra cost (pot / base)</label>
                 <div className="mt-1 flex items-center gap-1">
                   <span className="text-[9px] text-gray-400">₹</span>
-                  <input type="number" min="0" value={sizeData.extraCost ?? ""} onChange={(e) => { const v = e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0); mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, extraCost: v } } })); }} placeholder="0" className="flex-1 border rounded px-2 py-1 text-xs font-semibold text-amber-700 text-center" />
+                  <DraftInput type="number" min="0" value={sizeData.extraCost ?? ""} onCommit={(raw) => { const v = raw === "" ? undefined : (parseFloat(raw) || 0); mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, extraCost: v } } })); }} placeholder="0" className="flex-1 border rounded px-2 py-1 text-xs font-semibold text-amber-700 text-center" />
                 </div>
               </div>
               {(() => {
@@ -1969,8 +1969,8 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                         </select>
                         <div className="flex items-center gap-1 bg-emerald-50 border border-emerald-200 rounded-lg px-2 py-1">
                           <span className="text-[9px] text-emerald-800 font-semibold">Markup:</span>
-                          <input type="number" min="0" step="0.1" value={pat?.studioMarkup ?? ""}
-                            onChange={(e) => { const v = e.target.value === "" ? undefined : (parseFloat(e.target.value) || 0); mutatePattern(studioItem, (p) => { const np = { ...p }; if (v === undefined) delete np.studioMarkup; else np.studioMarkup = v; return np; }); }}
+                          <DraftInput type="number" min="0" step="0.1" value={pat?.studioMarkup ?? ""}
+                            onCommit={(raw) => { const v = raw === "" ? undefined : (parseFloat(raw) || 0); mutatePattern(studioItem, (p) => { const np = { ...p }; if (v === undefined) delete np.studioMarkup; else np.studioMarkup = v; return np; }); }}
                             placeholder={String(settings.defaultStudioMarkup ?? 3)} className="w-12 border border-emerald-300 rounded px-1 py-0.5 text-[11px] font-bold text-center text-emerald-900" />
                           <span className="text-[9px] text-emerald-700">×</span>
                         </div>

@@ -169,8 +169,13 @@ export function rowToFlowerPattern(r) {
   };
 }
 
+// In a FIXED order, by id (see assembleMandiCatalogueFromRows: an UPDATE moves a row to the end of an unordered select, so the recipe
+// just edited jumped away under the cursor on the refetch after every save). Ids are "FP" + a timestamp, so also creation order.
 export function assembleFlowerPatternsFromRows(rows) {
-  return (Array.isArray(rows) ? rows : []).map(rowToFlowerPattern);
+  return (Array.isArray(rows) ? rows : [])
+    .slice()
+    .sort((a, b) => String(a?.id ?? "").localeCompare(String(b?.id ?? ""), undefined, { numeric: true }))
+    .map(rowToFlowerPattern);
 }
 
 // Full-object -> row, for writing back whatever a recipe-editing mutator function produced (it
