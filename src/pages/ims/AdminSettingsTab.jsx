@@ -8,6 +8,7 @@ import { Tabs, AddInlineItem, FlowerPicker, Btn, useConfirm, DraftInput } from "
 import ClickablePhoto from "../../components/shared/ClickablePhoto.jsx";
 import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/canva";
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
+import { saveVariantsFresh, variantDisplayPhoto } from "../../lib/ims/mandiVariants";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel, genMandiFlowerId, mandiFlowerToRow, mandiFlowerPatchToRow, genFlowerPatternId, flowerPatternToRow, mirrorFlowerPick } from "../../lib/ims/flowerHelpers";
 import { labourTypePatchToRow } from "../../lib/ims/labourTypes";
 import { priceForInvItem, phone10, flowerPaletteItemsOf } from "../../lib/ims/helpers";
@@ -1179,6 +1180,13 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                   for (const cv of variantList) { const cp = Number(cv.currentPrice) || 0; if (cp > 0 && (lo === null || cp < lo)) lo = cp; }
                   return lo ?? 0;
                 };
+                // every variant edit goes through here: the list is read fresh from the database and only this change applied to it
+                // (lib/ims/mandiVariants) - a stale copy on this screen can no longer write a variant photo / price / name away
+                const saveVariants = (change, priced = false) => saveVariantsFresh({
+                  flowerId: p.id, fallback: p.colorVariants, change, parentPrice: priced ? recalcParentLowest : null,
+                  readFresh: async (id) => { const { data, error } = await supabase.from("mandi_flowers").select("color_variants").eq("id", id).single(); if (error) throw error; return data?.color_variants; },
+                  write: (id, patch) => updateRow("mandi_flowers", id, patch),
+                }).catch(() => {});
                 return (
                   <div key={p.id} className="bg-white">
                     <div className="px-4 py-3 hover:bg-gray-50 cursor-pointer"
@@ -1194,7 +1202,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                           const pool = priced.length ? priced : variants;
                           cheapestVariant = pool.reduce((min, v) => { if (!min) return v; return (Number(v.currentPrice) || 0) < (Number(min.currentPrice) || 0) ? v : min; }, null);
                         }
-                        const displayUrl = hasVariants ? (cheapestVariant?.photoUrl || null) : (p.photoUrl || null);
+                        const displayUrl = hasVariants ? variantDisplayPhoto(cheapestVariant, variants, p.photoUrl) : (p.photoUrl || null);
                         const parentUploadKey = `parent:${p.id}`;
                         const parentUploading = !!sMandiUploading[parentUploadKey];
                         if (hasVariants) {
@@ -1375,7 +1383,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                                 try {
                                   const compressed = await compressImageForUpload(file);
                                   const url = await uploadToStorage(compressed, STORAGE_FOLDERS.MANDI);
-                                  updateRow("mandi_flowers", p.id, { color_variants: (p.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, photoUrl: url } : cv) }).catch(() => {});
+                                  saveVariants((list) => list.map((cv) => cv.variantId === v.variantId ? { ...cv, photoUrl: url } : cv));
                                 } catch (err) { alert("Photo upload failed: " + (err?.message || err)); }
                                 finally { setSMandiUploading((prev) => { const np = { ...prev }; delete np[uploadKey]; return np; }); }
                               };
@@ -1399,14 +1407,14 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                                   </td>
                                   <td className="px-2 py-1.5">
                                     <DraftInput value={v.name}
-                                      onCommit={(nv) => { updateRow("mandi_flowers", p.id, { color_variants: (p.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, name: nv } : cv) }).catch(() => {}); }}
+                                      onCommit={(nv) => { saveVariants((list) => list.map((cv) => cv.variantId === v.variantId ? { ...cv, name: nv } : cv)); }}
                                       className="border rounded px-2 py-1 text-xs w-44" />
                                   </td>
                                   {(type === "flower" || type === "real_only") && (() => {
                                     const vPalette = Array.isArray(v.palette) ? v.palette : [];
                                     const togglePalette = (c) => {
                                       const next = vPalette.includes(c) ? vPalette.filter((x) => x !== c) : [...vPalette, c];
-                                      updateRow("mandi_flowers", p.id, { color_variants: (p.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, palette: next } : cv) }).catch(() => {});
+                                      saveVariants((list) => list.map((cv) => cv.variantId === v.variantId ? { ...cv, palette: next } : cv));
                                     };
                                     return (
                                       <td className="px-2 py-1.5">
@@ -1431,8 +1439,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                                       <span className="text-gray-500">₹</span>
                                       <DraftInput type="number" min="0" value={v.currentPrice}
                                         onCommit={(raw) => { const nv = parseFloat(raw) || 0;
-                                          const newVariants = (p.colorVariants || []).map((cv) => cv.variantId === v.variantId ? { ...cv, priceHistory: withPrevPrice(cv.priceHistory, cv.currentPrice), currentPrice: nv } : cv);
-                                          updateRow("mandi_flowers", p.id, { color_variants: newVariants, current_price: recalcParentLowest(newVariants) }).catch(() => {});
+                                          saveVariants((list) => list.map((cv) => cv.variantId === v.variantId ? { ...cv, priceHistory: withPrevPrice(cv.priceHistory, cv.currentPrice), currentPrice: nv } : cv), true);
                                         }}
                                         className="border rounded px-2 py-1 text-xs text-center w-16 font-semibold" />
                                     </div>
@@ -1442,8 +1449,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                                     <button onClick={async () => {
                                       if (variantCount === 1) { alert(`Cannot delete the last variant of "${p.name}". Delete the whole flower instead.`); return; }
                                       if (await confirm({ title: `Delete variant "${v.name}"?`, body: `Removes this colour variant from "${p.name}". The flower's price becomes its cheapest remaining variant.` })) {
-                                        const newVariants = (p.colorVariants || []).filter((cv) => cv.variantId !== v.variantId);
-                                        updateRow("mandi_flowers", p.id, { color_variants: newVariants, current_price: recalcParentLowest(newVariants) }).catch(() => {});
+                                        saveVariants((list) => list.filter((cv) => cv.variantId !== v.variantId), true);
                                       }
                                     }} className="text-red-300 hover:text-red-500">×</button>
                                   </td>
@@ -1454,7 +1460,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                         </table>
                         <button onClick={() => {
                           const newVId = "V" + Date.now();
-                          updateRow("mandi_flowers", p.id, { color_variants: [...(p.colorVariants || []), { variantId: newVId, name: p.name + " New", photoUrl: null, currentPrice: 0, priceHistory: [] }] }).catch(() => {});
+                          saveVariants((list) => [...list, { variantId: newVId, name: p.name + " New", photoUrl: null, currentPrice: 0, priceHistory: [] }]);
                         }} className="mt-2 text-xs px-3 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded border border-indigo-200">+ Add Variant</button>
                       </div>
                     )}
