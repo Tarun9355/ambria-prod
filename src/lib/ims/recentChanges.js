@@ -13,7 +13,7 @@ export const CHANGE_WINDOW_MS = 48 * 60 * 60 * 1000;
 const KEY_SECTION = {
   expenses: "actuals", mandiLines: "actuals", realMandi: "actuals", discount: "actuals",
   mandiLinesByFn: "actuals", mandiLinesByFnMeta: "actuals", mandiLinesArchived: "actuals", // the Mandi list, one tab per function
-  mp: "mp", mpOverrides: "mp", mpExtra: "mp", mpDay: "mp", mpWin: "mp", mpWinCount: "mp", mpWinBasis: "mp",
+  mp: "mp", mpOverrides: "mp", mpExtra: "mp", mpDay: "mp", mpWin: "mp", mpWinCount: "mp", mpWinBasis: "mp", mpWinSplit: "mp",
   trussPlan: "truss", trussFabric: "truss",
   carpetChoice: "carpet",
   itemChoice: "fabreq", shortAlloc: "inv",

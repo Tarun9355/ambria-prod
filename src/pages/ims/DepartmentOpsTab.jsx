@@ -1597,7 +1597,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     }
     // Only mpSeen is written — not saveDept, which also stamps "updated by" on the department's
     // sheet: looking at a plan is not an edit of it.
-    if (!mpSeen?.sig || mpSeen.sig !== mpSnapSig) {
+    // not for the Site-Supervisor-view-only role: mpSeen is ONE value per department on the event, so their looking would clear the
+    // Department Head's red "Changed since you last looked" before the Head ever opened it
+    if (!onsiteOnly && (!mpSeen?.sig || mpSeen.sig !== mpSnapSig)) {
       const seen = { sig: mpSnapSig, cost: mpSnapCost, items: mpItemsNow, at: Date.now() };
       setEventOrders(prev => prev.map(e => e.id !== sel.id ? e : ({ ...e, deptOps: { ...(e.deptOps || {}), [dept]: { ...((e.deptOps || {})[dept] || {}), mpSeen: seen } } })));
     }
@@ -3422,7 +3424,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       const splitKey = `${r.type}|${d.date}|${id}`; const sp = effSplit(r, d, id); return (
                       <span key={id} className="inline-flex items-center gap-1 rounded-md bg-gray-50 ring-1 ring-gray-200 pl-1.5 pr-0.5 py-0.5">
                         <span className="text-[12.5px] text-gray-500 whitespace-nowrap">{lbl}</span>
-                        <input type="number" min="0" value={effShift(r, d, id)} onChange={e => setShiftCount(r.type, d.date, id, e.target.value, ids)} className="w-11 rounded bg-white ring-1 ring-gray-200 px-1 py-0 text-[13.5px] font-semibold text-center text-gray-900" />
+                        <input type="number" min="0" value={effShift(r, d, id)} onChange={e => setShiftCount(r.type, d.date, id, e.target.value, ids)} disabled={!canEditPlanning || lock.locked} className="w-11 rounded bg-white ring-1 ring-gray-200 px-1 py-0 text-[13.5px] font-semibold text-center text-gray-900" />
                         <button onClick={() => setSplitOpen(o => ({ ...o, [splitKey]: !o[splitKey] }))}
                           title={sp.vendor > 0 ? `${sp.inHouse} in-house · ${sp.vendor} vendor${sp.vendorName ? ` (${sp.vendorName})` : ""} — click to edit` : "Split this shift's crew between in-house staff and a vendor"}
                           className={"text-[10.5px] font-semibold rounded px-1 py-0 leading-none whitespace-nowrap " + (splitOpen[splitKey] ? "bg-indigo-600 text-white" : sp.vendor > 0 ? "bg-indigo-100 text-indigo-700" : "text-gray-300 hover:text-indigo-500")}>
@@ -4425,7 +4427,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       first thing seen. Opens the same panel the tile did. */}
                   <div className="flex items-center gap-2 min-w-0">
                     <div className="min-w-0 text-[16px] sm:text-[20px] font-semibold tracking-[-0.01em] text-gray-900 leading-tight sm:leading-snug truncate">{dept} — {sel.clientName || "Event"}</div>
-                    {dept === "Fabric" && upcomingFabricShort.length > 0 && (
+                    {!onsiteOnly && dept === "Fabric" && upcomingFabricShort.length > 0 && (
                       <button type="button" onClick={() => setModal(m => m === "fabshort" ? null : "fabshort")} aria-pressed={modal === "fabshort"}
                         title={modal === "fabshort" ? "Close the fabric shortfalls" : "Upcoming events short on fabric — order ahead"}
                         className={"shrink-0 inline-flex items-center gap-1 whitespace-nowrap rounded-full ring-1 text-[11px] sm:text-[12px] font-semibold px-2.5 py-0.5 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 " + (modal === "fabshort" ? "bg-red-600 ring-red-600 text-white hover:bg-red-700" : "bg-red-50 ring-red-200 text-red-700 hover:bg-red-100")}>
@@ -4740,8 +4742,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
             {/* ── CHANGED IN THE LAST 48 HOURS ── (owner ask 2026-11-15) what changed on this event, where and by whom - this
                 department's own lines first and clickable (they open their block); other departments' for context. */}
             {(() => {
-              const list = deptChangesOf(sel.id);
-              if (onsiteOnly || !list.length) return null;
+              // the Site-Supervisor-view-only role sees the entries of the two blocks it has (Inventory blocked, Manpower plan) - a crew edit shows here
+              const list = deptChangesOf(sel.id).filter((c) => !onsiteOnly || c.section === "inv" || c.section === "mp");
+              if (!list.length) return null;
               return (
                 <div className="rounded-xl bg-white ring-1 ring-amber-300 shadow-[0_1px_2px_rgba(16,24,40,0.05)] overflow-hidden" role="status">
                   {/* the Activity log's own look (owner ask 2026-11-15) - an amber head so it still reads as a warning */}
@@ -5499,9 +5502,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         ) : r.shared && !dayWise(r) ? (
                           <span className="shrink-0 text-[10px] text-gray-400">split allocation</span>
                         ) : dayWise(r) ? (
-                          <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">₹/day</span><input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-20 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 ring-gray-200 bg-white" /></div>
+                          <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">₹/day</span><input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} disabled={!canEditPlanning} className="w-20 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 ring-gray-200 bg-white" /></div>
                         ) : (
-                          <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} className={"w-16 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 " + (overridden ? "ring-amber-400 bg-amber-50 font-bold" : "ring-gray-200 bg-white")} /></div>
+                          <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} disabled={!canEditPlanning} className={"w-16 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 " + (overridden ? "ring-amber-400 bg-amber-50 font-bold" : "ring-gray-200 bg-white")} /></div>
                         )}
                       </div>
                       {/* Second line: the rate that is editable, and the line total it produces.
@@ -5511,7 +5514,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       {!dayWise(r) && !(r.shared && !dayWise(r)) && r.type !== "Supervisors" && (
                         <div className="flex items-center gap-2">
                           <span className="shrink-0 text-[11px] text-gray-400">₹/day</span>
-                          <input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} className="w-24 rounded-lg ring-1 ring-gray-200 bg-white px-2 py-1.5 text-sm text-center font-semibold" />
+                          <input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} disabled={!canEditPlanning} className="w-24 rounded-lg ring-1 ring-gray-200 bg-white px-2 py-1.5 text-sm text-center font-semibold" />
                           <div className="ml-auto shrink-0 rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-bold text-gray-900 tabular-nums">{fmt(lineCost(r))}</div>
                         </div>
                       )}
@@ -5557,7 +5560,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   says what it does without a word of explanation — and gives it a target the
                   width of the rows it joins instead of the width of three words. */}
               <div className="px-2.5 pb-2.5">
-                <button onClick={addMp} className="w-full rounded-xl border-2 border-dashed border-blue-200 hover:border-blue-300 hover:bg-blue-50/50 text-blue-600 text-[13px] font-semibold py-2.5 flex items-center justify-center gap-1.5 transition-colors">
+                <button onClick={addMp} disabled={!canEditPlanning} className="w-full rounded-xl border-2 border-dashed border-blue-200 hover:border-blue-300 hover:bg-blue-50/50 text-blue-600 text-[13px] font-semibold py-2.5 flex items-center justify-center gap-1.5 transition-colors">
                   <span aria-hidden="true" className="text-base leading-none">+</span> Add crew type
                 </button>
               </div>
@@ -7055,7 +7058,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                       {ids.map((id, si) => { const wd = winDefs.find(w => w.id === id); const lbl = wd ? wd.label : `dihari ${si + 1}`; return (
                                         <span key={id} className="inline-flex items-center gap-1 ring-1 ring-gray-200 rounded-lg px-1.5 py-0.5 bg-white">
                                           <span className="text-gray-400">{lbl}</span>
-                                          <input type="number" min="0" value={effShift(r, d, id)} onChange={e => setShiftCount(r.type, d.date, id, e.target.value, ids)} className="w-11 border border-gray-200 rounded px-1 py-0.5 text-center" />
+                                          <input type="number" min="0" value={effShift(r, d, id)} onChange={e => setShiftCount(r.type, d.date, id, e.target.value, ids)} disabled={!canEditPlanning || lock.locked} className="w-11 border border-gray-200 rounded px-1 py-0.5 text-center" />
                                           {ids.length > 1 && <button onClick={() => removeDihari(r.type, d.date, id, ids)} className="text-red-300 hover:text-red-500" title="remove this dihari">×</button>}
                                         </span>
                                       ); })}

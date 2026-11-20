@@ -181,7 +181,7 @@ describe("event opened - onsiteOnly", () => {
     // the Department Head's own Manpower plan tile is there (owner ask 2026-11-20), the on-site crew tile is not
     expect(html).toContain('leading-snug">Manpower plan<');
     expect(html).not.toContain('leading-snug">On-site crew<');
-    for (const t of ["Total income", "Changed in the last 48 hours", "Fixed at venue", "Production requests"]) expect(html).not.toContain(t);
+    for (const t of ["Total income", "Fixed at venue", "Production requests"]) expect(html).not.toContain(t);
   });
   it("no Department Head view tiles AND the on-site tiles together (Inventory before Dismantle & routing)", () => {
     expect(html.indexOf("Inventory blocked")).toBeLessThan(html.indexOf("Dismantle &amp; routing"));
@@ -337,7 +337,9 @@ describe("money / planning data the role must not see (fixture with income, a re
     expect(html).not.toContain("Total income");
     expect(html).not.toContain("987,654");
     expect(html).not.toContain("9,87,654");
-    expect(html).not.toContain("Changed in the last 48 hours");
+    // the changes list shows the role only the entries of the blocks it has (Manpower plan, Inventory blocked) - never Actuals
+    expect(html).toContain("Manpower plan updated");
+    expect(html).not.toContain("Actuals updated");
     expect(html).not.toContain("Sales discount");
   });
 });
@@ -366,10 +368,10 @@ describe("RISKS (documented behaviour, not a spec violation of the listed tiles)
 });
 
 describe("RISK: the Activity-log bell (header actionIcons) is not gated for the role", () => {
-  it("with a logged amendment for the department the bell ('Activity log - N recent changes') still renders for onsiteOnly, although the banner is gone", () => {
+  it("with a logged amendment for the department the bell ('Activity log - N recent changes') still renders for onsiteOnly, and a logged inventory change is listed in the changes list too", () => {
     const amend = [{ id: "A1", eventOrderId: "E1", department: "Furniture", status: "logged", requestedAt: Date.now() - 60000, requestedBy: "Sales", items: [{ name: "Chair", change: "added", qty: 2 }] }];
     const html = render(base({ amendRequests: amend }), F_SEL);
-    expect(html).not.toContain("Changed in the last 48 hours");
+    expect(html).toContain("Changed in the last 48 hours");
     expect(html).toContain("Activity log");
     expect(render(base({ onsiteOnly: false, amendRequests: amend }), F_SEL)).toContain("Activity log");
   });

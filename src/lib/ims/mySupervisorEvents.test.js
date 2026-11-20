@@ -99,7 +99,8 @@ describe("Dept Ops wiring for the Site-Supervisor-view-only role", () => {
     expect(src).toMatch(/\{opsView === "planning" && !onsiteOnly && <ProductionRequestsCard/);
     expect(src).toMatch(/\{!onsiteOnly && <FixedVenueStockCard/);
     expect(src).toMatch(/\{onsiteOnly \? null : deptIncome \? \(\(\) => \{/);
-    expect(src).toMatch(/if \(onsiteOnly \|\| !list\.length\) return null;/);
+    expect(src).toContain('const list = deptChangesOf(sel.id).filter((c) => !onsiteOnly || c.section === "inv" || c.section === "mp");');
+    expect(src).toMatch(/if \(!list\.length\) return null;/);
     expect(src).toMatch(/\]\.filter\(\(t\) => t && \(!onsiteOnly \|\| t\.k === "inv" \|\| t\.k === "mp"\)\)/);
   });
   it("that role sees the planning block (Inventory blocked + the Department Head's own Manpower plan tile) and the on-site cards (Receiving, Dismantle & routing) together", () => {

@@ -85,7 +85,7 @@ describe("what the role is NOT shown - each surface is gated on onsiteOnly in th
     expect(src).toContain('{opsView === "planning" && !onsiteOnly && <ProductionRequestsCard');
     expect(src).toContain("{!onsiteOnly && <FixedVenueStockCard");
     expect(src).toContain("{onsiteOnly ? null : deptIncome ? (() => {");
-    expect(src).toContain("if (onsiteOnly || !list.length) return null;");
+    expect(src).toContain('const list = deptChangesOf(sel.id).filter((c) => !onsiteOnly || c.section === "inv" || c.section === "mp");');
     expect(src).toContain('.filter((t) => t && (!onsiteOnly || t.k === "inv" || t.k === "mp"));');
   });
   it("every planning-tile key in the tile array other than inv is dropped by that filter (fabreq, carpet, truss, mp, actuals, truck, dism)", () => {
