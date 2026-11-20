@@ -1424,9 +1424,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       // Floral: plus the Mapping flowers' artificial items (mappedStockRows, live) — Deal Check's snapshot
       // never had them. Not on the no-snapshot path below: that one reads the blocks ledger, where Studio's
       // reconcile already reserves them, so they show there on their own.
-      if (d === "Floral") rows.push(...mappedStockRows);
       const rank = (it) => (it.foc ? 3 : it.shortQty > 0 ? 0 : it.prodOrBuy ? 1 : 2);
-      return rows.sort((a, b) => rank(a) - rank(b));
+      const sorted = rows.sort((a, b) => rank(a) - rank(b));
+      if (d !== "Floral" || !mappedStockRows.length) return sorted;
+      // Right under the "Artificial flowers / greens" rows (owner ask 2026-11-20: "inko artificial ke niche hi
+      // dikha de") — they are the artificial side too; at the end when this event has no such row.
+      const isArtRow = (it) => /^artificial (flowers|greens)$/i.test(String(it.name || "").trim());
+      let at = -1;
+      sorted.forEach((it, i) => { if (isArtRow(it)) at = i; });
+      if (at < 0) return [...sorted, ...mappedStockRows];
+      return [...sorted.slice(0, at + 1), ...mappedStockRows, ...sorted.slice(at + 1)];
     }
     const out = [];
     Object.entries(blocks || {}).forEach(([itemId, arr]) => {
