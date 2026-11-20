@@ -1,4 +1,5 @@
 import { userTabOn } from "../../lib/ims/tabAccess";
+import { reloadAllocTable } from "../../lib/ims/allocReload";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/AuthContext";
@@ -2629,8 +2630,11 @@ export default function IMS() {
   // Truss allocations — object keyed by date. allocateForDate returns the whole map;
   // we persist only the dates whose entry actually changed (CLAUDE.md rule #1).
   const setTrussAlloc = useCallback((updater) => {
+    // a table that failed to load at page open is read again now and the change applied once it is in - the "haven't loaded" message
+    // is only for one that still cannot be read (lib/ims/allocReload); nothing is ever written on top of an unloaded table
     if (loadOkRef.current.truss_allocations !== true) {
-      setError("Truss allocations haven't loaded — reload the page before changing them. Nothing was saved.");
+      reloadAllocTable({ loadOkRef, key: "truss_allocations", fetchRows: () => fetchAll("truss_allocations"), toMap: (rows) => Object.fromEntries(rows.map((r) => [r.date, rowToAlloc(r)])), ref: trussAllocRef, setState: setTrussAllocState })
+        .then((ok) => { if (ok) setTrussAlloc(updater); else setError("Truss allocations haven't loaded — reload the page before changing them. Nothing was saved."); });
       return;
     }
     const prev = trussAllocRef.current;
@@ -2650,8 +2654,11 @@ export default function IMS() {
   // Platform allocations — same shape/persistence rule as setTrussAlloc above, targeting the
   // platform_allocations table (migration 052).
   const setPlatformAlloc = useCallback((updater) => {
+    // a table that failed to load at page open is read again now and the change applied once it is in - the "haven't loaded" message
+    // is only for one that still cannot be read (lib/ims/allocReload); nothing is ever written on top of an unloaded table
     if (loadOkRef.current.platform_allocations !== true) {
-      setError("Platform allocations haven't loaded — reload the page before changing them. Nothing was saved.");
+      reloadAllocTable({ loadOkRef, key: "platform_allocations", fetchRows: () => fetchAll("platform_allocations"), toMap: (rows) => Object.fromEntries(rows.map((r) => [r.date, rowToAlloc(r)])), ref: platformAllocRef, setState: setPlatformAllocState })
+        .then((ok) => { if (ok) setPlatformAlloc(updater); else setError("Platform allocations haven't loaded — reload the page before changing them. Nothing was saved."); });
       return;
     }
     const prev = platformAllocRef.current;
@@ -2671,8 +2678,11 @@ export default function IMS() {
   // Batta allocations — same shape/persistence rule as setTrussAlloc/setPlatformAlloc above,
   // targeting the batta_allocations table (migration 052).
   const setBattaAlloc = useCallback((updater) => {
+    // a table that failed to load at page open is read again now and the change applied once it is in - the "haven't loaded" message
+    // is only for one that still cannot be read (lib/ims/allocReload); nothing is ever written on top of an unloaded table
     if (loadOkRef.current.batta_allocations !== true) {
-      setError("Batta allocations haven't loaded — reload the page before changing them. Nothing was saved.");
+      reloadAllocTable({ loadOkRef, key: "batta_allocations", fetchRows: () => fetchAll("batta_allocations"), toMap: (rows) => Object.fromEntries(rows.map((r) => [r.date, rowToAlloc(r)])), ref: battaAllocRef, setState: setBattaAllocState })
+        .then((ok) => { if (ok) setBattaAlloc(updater); else setError("Batta allocations haven't loaded — reload the page before changing them. Nothing was saved."); });
       return;
     }
     const prev = battaAllocRef.current;
