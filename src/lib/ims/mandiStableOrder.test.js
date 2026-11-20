@@ -45,9 +45,11 @@ describe("shownValue - what an input shows while its save is on the way", () => 
     expect(shownValue({ draft: null, held: { raw: "300", base: 200 }, value: 200 })).toBe("300");
     expect(shownValue({ draft: null, held: { raw: "300", base: "200" }, value: 200 })).toBe("300"); // number vs string
   });
-  it("once the prop has changed the prop is the truth again (also a normalised one)", () => {
-    expect(shownValue({ draft: null, held: { raw: "300.0", base: 200 }, value: 300 })).toBe(300);
-    expect(shownValue({ draft: null, held: { raw: "abc", base: 200 }, value: 0 })).toBe(0);
+  it("while held, the committed text is shown even if an earlier save's echo changed the prop (two quick edits of one box)", () => {
+    expect(shownValue({ draft: null, held: { raw: "55", base: "" }, value: "5" })).toBe("55");
+  });
+  it("once the hold is released (DraftInput: the prop reached the committed text, or 8 s) the prop is shown", () => {
+    expect(shownValue({ draft: null, held: null, value: 300 })).toBe(300);
   });
   it("with nothing held it shows the prop, empty for null / undefined", () => {
     expect(shownValue({ draft: null, held: null, value: 12 })).toBe(12);

@@ -42,7 +42,7 @@ describe("the recipe editor's number boxes are draft inputs", () => {
   });
   it("the conversions are unchanged: raw text -> number (blank means unset for the optional ones)", () => {
     expect(area).toContain("onCommit={(raw) => setRow({ qty: parseFloat(raw) || 0 })}");
-    expect(area).toContain("const p = parseFloat(raw) || 0; setQty(effGS > 0 ? p / effGS : 0);");
+    expect(area).toContain("const p = parseFloat(raw) || 0; const div = flower?.unit === \"piece\" ? 1 : (liveGS > 0 ? liveGS : effGS); setQty(div > 0 ? p / div : 0);");
     expect(area).toContain("const n = parseFloat(raw) || 0; setQty(n > 0 ? 1 / n : 0);");
     expect(area).toContain('const v = raw === "" ? undefined : (parseFloat(raw) || 0); mutatePattern(studioItem, (p) => ({ ...p, sizes: { ...p.sizes, [sz]: { ...sizeData, unitsPerFlowerist: v } } }));');
     expect(area).toContain('extraCost: v } } }));');

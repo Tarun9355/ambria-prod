@@ -1664,7 +1664,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                         return (
                           <>
                             <DraftInput type="number" min="0" step="1" value={fmtN(pieces)} placeholder="pcs"
-                              onCommit={(raw) => { const p = parseFloat(raw) || 0; setQty(effGS > 0 ? p / effGS : 0); }}
+                              onCommit={(raw) => { const p = parseFloat(raw) || 0; const div = flower?.unit === "piece" ? 1 : (liveGS > 0 ? liveGS : effGS); setQty(div > 0 ? p / div : 0); }}
                               className="w-14 border rounded px-1 py-1 text-xs text-center" title={`Stored: ${(Number(fl.qty) || 0).toFixed(3)} ${flower?.unit || ""}${fl.gsSnap != null && liveGS > 0 && Number(fl.gsSnap) !== liveGS ? ` — pcs/unit was ${fl.gsSnap} when last set here; catalogue now says ${liveGS}` : ""}`} />
                             <select value={fl.unitLabel ?? "pcs"} onChange={(e) => setRow({ unitLabel: e.target.value })}
                               title={(effGS > 1 ? `${effGS} pcs/${flower?.unit} — ` : "per-piece flower — ") + "unit label is cosmetic only, doesn't change the qty or cost math"}

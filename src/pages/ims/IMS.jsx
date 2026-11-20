@@ -1118,7 +1118,10 @@ export default function IMS() {
     const mandi = s.mandiCatalogue || [];
     const rateFor = (pat, markup, sizeKey) => {
       const sd = pat.sizes?.[sizeKey];
-      const c = sd ? computePatternSizeCost(sd, mandi, itemsRef.current) : null;
+      // a size whose flower rows have no quantity yet (a flower picked in another size is mirrored here with qty 0) has no rate:
+      // it must not write ₹0 into the shared rate card before anyone typed its numbers
+      if (!sd || !(Array.isArray(sd.flowers) && sd.flowers.some((f) => (Number(f?.qty) || 0) > 0))) return null;
+      const c = computePatternSizeCost(sd, mandi, itemsRef.current);
       return c == null ? null : Math.round(c * markup);
     };
     // Full-artificial rate for a size: the recipe's totalPieces (whole arrangement) → kg via

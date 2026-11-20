@@ -368,8 +368,14 @@ export function DraftInput({ value, onCommit, delay = 250, ...rest }) {
     }
   };
   useEffect(() => { mounted.current = true; return () => { flush(); mounted.current = false; clearTimeout(holdTimer.current); }; }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // the saved value has arrived: the prop is the truth again
-  useEffect(() => { if (held && String(value ?? "") !== String(held.base ?? "")) setHeld(null); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the LAST committed value has arrived (an earlier save's echo of the same box does not end the hold): the prop is the truth again.
+  // Compared as text, and as numbers when both are numbers ("40.0" typed, 40 saved). Anything else ends with the 8 s fallback.
+  useEffect(() => {
+    if (!held) return;
+    const v = String(value ?? ""), r = String(held.raw ?? "");
+    const same = v === r || (v.trim() !== "" && r.trim() !== "" && !isNaN(Number(v)) && !isNaN(Number(r)) && Number(v) === Number(r));
+    if (same) setHeld(null);
+  }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <input {...rest}
       value={shownValue({ draft, held, value })}
