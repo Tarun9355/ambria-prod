@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { withLivePlan } from "./mandiLivePlan";
+import { withLivePlan, dismissMarker } from "./mandiLivePlan";
 
 const seed = (name, projQty, projCost, colour) => ({ name, unit: "kg", projQty, projCost, qty: projQty, price: projQty ? projCost / projQty : 0, colorVariant: colour ? { label: colour } : null, colorPrefs: null });
 
@@ -51,6 +51,33 @@ describe("withLivePlan — the planned side follows Deal Check, what was bought 
     const out = withLivePlan(stored, [seed("gypso", 12, 960), seed("baby breath", 3, 270)]);
     expect(out[0]).toMatchObject({ projQty: 12, qty: 0, swappedTo: "baby breath" });
     expect(out[1]).toBe(stored[1]);
+  });
+
+  it("the reported case: recipe moved from ladi to hanging after shopping began — ladi becomes 'extra', hanging is added at qty 0", () => {
+    const stored = [{ name: "guldavari ladi", unit: "kg", projQty: 16, projCost: 1600, qty: 16, price: 100 }];
+    const out = withLivePlan(stored, [seed("guldavari hanging", 44, 11000)]);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ name: "guldavari ladi", projQty: 0, qty: 16 });
+    expect(out[1]).toMatchObject({ name: "guldavari hanging", projQty: 44, projCost: 11000, qty: 0, newInPlan: true });
+  });
+
+  it("a planned flower removed on purpose stays removed; markers never show", () => {
+    const removed = { name: "gypso", unit: "kg", projQty: 10, projCost: 800, qty: 10, price: 80 };
+    const stored = [{ name: "rose", projQty: 6, projCost: 60, qty: 6, price: 10 }, dismissMarker(removed)];
+    const out = withLivePlan(stored, [seed("rose", 6, 60), seed("gypso", 12, 960)]);
+    expect(out.map(r => r.name)).toEqual(["rose"]);
+  });
+
+  it("a swap replacement does not stand in for a planned flower of the same name", () => {
+    const stored = [{ name: "b", projQty: 0, projCost: 0, qty: 3, price: 5, swapFor: "a" }];
+    const out = withLivePlan(stored, [seed("b", 2, 10)]);
+    expect(out).toHaveLength(2);
+    expect(out[1]).toMatchObject({ name: "b", qty: 0, newInPlan: true });
+  });
+
+  it("markers are dropped even when there is no live plan", () => {
+    const stored = [{ name: "rose", projQty: 1, projCost: 1, qty: 1, price: 1 }, dismissMarker({ name: "gypso" })];
+    expect(withLivePlan(stored, []).map(r => r.name)).toEqual(["rose"]);
   });
 
   it("no live plan to read: the stored rows come back exactly as they were", () => {

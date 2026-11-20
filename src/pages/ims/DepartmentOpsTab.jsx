@@ -51,7 +51,7 @@ import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
 import { kvGet } from "../../lib/ims/kv";
-import { withLivePlan } from "../../lib/ims/mandiLivePlan";
+import { withLivePlan, isDismissMarker, dismissMarker } from "../../lib/ims/mandiLivePlan";
 
 // ── THE SUMMARY TILE ROW ──
 // auto-FIT, not auto-fill. The difference only shows when there are fewer tiles than columns
@@ -1966,11 +1966,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // the POST-save state via deriveMandiView itself, never hand-adjusted here, so the saved figure can
   // never disagree with what the very next render would independently derive (see deriveMandiView's
   // own header comment for the three regression-review rounds this closes out).
-  const saveMandi = (next) => {
+  // keepMarkers: mandiRows never carries the hidden "removed from the plan on purpose" markers
+  // (lib/ims/mandiLivePlan.js), so every save puts this tab's existing ones back on — except a
+  // Reset to system plan, which starts over from the plan and so forgets them.
+  const saveMandi = (rows, { keepMarkers = true } = {}) => {
     // Archived tabs are a permanent, read-only record (no live fnIdx of their own to write back to —
     // saving one would otherwise create a bogus mandiLinesByFn["undefined"] entry) — editing one is a
     // deliberate no-op rather than silently corrupting state.
     if (activeMandiTab?.archived) return;
+    const markers = keepMarkers && Array.isArray(activeStoredLines) ? activeStoredLines.filter(isDismissMarker) : [];
+    const next = [...rows.filter(r => !isDismissMarker(r)), ...rows.filter(isDismissMarker), ...markers];
     const isLegacy = activeMandiTabKey === "legacy";
     const isOrphan = !!activeMandiTab?.orphaned;
     const liveFn = (!isLegacy && !isOrphan && activeMandiTab) ? liveFnByIdx.get(String(activeMandiTab.fnIdx)) : null;
@@ -2004,7 +2009,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const delMandi = async (i) => {
     const row = mandiRows[i]; if (!row) return;
     if (!(await confirm({ title: `Remove "${row.name}" from this shopping list?`, body: "This only removes it from this event's real-shopping list — the Mandi Prices catalogue itself is untouched." }))) return;
-    saveMandi(mandiRows.filter((_, j) => j !== i).map(r => (row.swapFor && r.name === row.swapFor && r.swappedTo) ? { ...r, swappedTo: undefined, swapNote: undefined, qty: Number(r.projQty) || 0 } : r));
+    const kept = mandiRows.filter((_, j) => j !== i).map(r => (row.swapFor && r.name === row.swapFor && r.swappedTo) ? { ...r, swappedTo: undefined, swapNote: undefined, qty: Number(r.projQty) || 0 } : r);
+    // A planned flower removed on purpose leaves a hidden marker, or the live plan would add it straight back.
+    saveMandi(Number(row.projQty) > 0 && !row.swapFor ? [...kept, dismissMarker(row)] : kept);
   };
   // ── 🔁 SWAP: NOT IN THE MANDI TODAY ──
   // The shopper puts 0 against a flower (or taps 🔁) and records what was bought instead. The
@@ -2071,7 +2078,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   };
   const addMandi = (cat) => { saveMandi([...mandiRows, { name: cat.name, unit: cat.unit || "", projQty: 0, projCost: 0, qty: 1, price: Number(cat.currentPrice) || 0 }]); setMandiQuery(""); };
   // Reset the real shopping list back to the system's original mandi plan (from Deal Check).
-  const resetMandi = () => saveMandi(seedMandi.map(r => ({ ...r })));
+  const resetMandi = () => saveMandi(seedMandi.map(r => ({ ...r })), { keepMarkers: false });
   const mandiSuggest = useMemo(() => {
     const q = mandiQuery.toLowerCase().trim();
     if (!q) return [];
@@ -5738,6 +5745,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                     {Array.isArray(r.colorPrefs) && r.colorPrefs.length > 1 && (
                                       <div className="text-[10px] text-gray-400">if not at the mandi: {r.colorPrefs.slice(1).map(p => p.label).join(", ")}</div>
                                     )}
+                                    {r.newInPlan && !(Number(r.qty) > 0) && !r.swappedTo && <div className="text-[10px] font-semibold text-blue-600" title="Deal Check's plan has this flower but it was not on this list when shopping started — enter what was bought">🆕 New in the plan — not bought yet</div>}
                                     {r.swappedTo && <div className="text-[10px] font-semibold text-amber-700">🔁 Not in the mandi — swapped with {r.swappedTo}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
                                     {r.swapFor && <div className="text-[10px] font-semibold text-amber-700">🔁 Bought instead of {r.swapFor}{r.swapNote ? ` · ${r.swapNote}` : ""}</div>}
                                     {r.projQty > 0 && (() => {

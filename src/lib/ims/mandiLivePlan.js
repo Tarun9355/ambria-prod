@@ -12,16 +12,32 @@
 // name alone, but only when the plan holds that flower in exactly one colour (otherwise which
 // colour the row was would be a guess). A planned row the plan no longer holds at all is now
 // unplanned (projQty 0, so it reads "extra"). Swap replacement rows (swapFor) are never planned.
-// With no live plan to read (seed empty) the stored rows are returned exactly as they were.
+// With no live plan to read (seed empty) the stored rows are returned as they were.
+//
+// A flower the plan has but the logged list does not (Deal Check grew, or a recipe swapped one
+// flower for another, after shopping began — owner report 2026-11-20: a recipe moved from guldavari
+// ladi to guldavari hanging and hanging never reached Planning) is ADDED, at qty 0 and marked
+// `newInPlan`: it shows, with its planned qty, but counts as nothing bought until someone enters it.
+// A planned row the shopper deliberately removed is kept in the stored list as a hidden marker
+// (`dismissedFromPlan`, see dismissMarker) so it is not added straight back; markers never display
+// and never count (qty 0). They live inside the tab's own rows so a function removal, which moves a
+// tab's rows to a new index, moves them too.
 
 const nameKey = (n) => String(n || "").trim().toLowerCase();
 const colourOf = (r) => r?.colorVariant?.label || (Array.isArray(r?.colorPrefs) ? r.colorPrefs.map((p) => p.label).join("/") : "") || "";
 export const mandiRowKey = (r) => `${nameKey(r?.name)}¦${colourOf(r)}`;
 
+export const isDismissMarker = (r) => !!r?.dismissedFromPlan;
+
+// The hidden marker left behind when a planned row is removed from the list on purpose.
+export const dismissMarker = (r) => ({ name: r.name, unit: r.unit || "", colorVariant: r.colorVariant || null, colorPrefs: r.colorPrefs || null, dismissedFromPlan: true, qty: 0, price: 0, projQty: 0, projCost: 0 });
+
 export function withLivePlan(storedRows, seedRows) {
-  const stored = Array.isArray(storedRows) ? storedRows : [];
+  const all = Array.isArray(storedRows) ? storedRows : [];
+  const stored = all.filter((r) => !isDismissMarker(r));
   const seed = Array.isArray(seedRows) ? seedRows : [];
-  if (!seed.length) return stored;
+  if (!seed.length) return stored.length === all.length ? all : stored;
+  const dismissed = new Set(all.filter(isDismissMarker).map(mandiRowKey));
   const byKey = new Map();
   const byName = new Map();
   seed.forEach((s) => {
@@ -29,15 +45,21 @@ export function withLivePlan(storedRows, seedRows) {
     const n = nameKey(s.name);
     byName.set(n, byName.has(n) ? null : s); // null = more than one colour planned, no name-only match
   });
-  return stored.map((r) => {
+  const covered = new Set(); // seed rows some logged row already stands for
+  const refreshed = stored.map((r) => {
     if (!r || r.swapFor) return r;
     const exact = byKey.get(mandiRowKey(r));
     const s = exact || byName.get(nameKey(r.name)) || null;
     if (!s) return (Number(r.projQty) || 0) > 0 || (Number(r.projCost) || 0) > 0 ? { ...r, projQty: 0, projCost: 0 } : r;
+    covered.add(s);
     const next = { ...r, projQty: Number(s.projQty) || 0, projCost: Number(s.projCost) || 0 };
     // Colour follows Deal Check too (it did before this helper, for an exact match only).
     next.colorVariant = s.colorVariant || null;
     next.colorPrefs = s.colorPrefs || null;
     return next;
   });
+  const added = seed
+    .filter((s) => !covered.has(s) && !dismissed.has(mandiRowKey(s)))
+    .map((s) => ({ ...s, qty: 0, newInPlan: true }));
+  return added.length ? [...refreshed, ...added] : refreshed;
 }
