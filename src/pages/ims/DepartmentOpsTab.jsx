@@ -52,7 +52,8 @@ import { logWrite } from "../../lib/studio/userActions";
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
 import { kvGet } from "../../lib/ims/kv";
 import { withLivePlan, isDismissMarker, dismissMarker } from "../../lib/ims/mandiLivePlan";
-import { buildLiveFloralPlan } from "../../lib/ims/liveFloralPlan";
+import { buildLiveFloralPlan, fnFromDetail } from "../../lib/ims/liveFloralPlan";
+import { reqByDateFrom } from "../../lib/studio/soldBlocksPlan";
 import MappingDetailModal, { itemPhotoOf } from "../../components/shared/MappingDetailModal.jsx";
 
 // ── THE SUMMARY TILE ROW ──
@@ -528,7 +529,9 @@ function FloralDetailView({ detail, liveDetail = null, inventory = [], mandiCata
 function DeptIncomeModal({ eo, depts, startDept, onClose, liveFloralDetail = null, inventory = [], mandiCatalogue = [] }) {
   const d = startDept; // only the department this panel is for
   useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    // A dialog opened on top of this one (the mapping details, data-nested-dialog) owns Escape — it closes that
+    // one alone, not this whole panel too (test-agent finding B2, 2026-11-20).
+    const onKey = (e) => { if (e.key === "Escape") { if (document.querySelector("[data-nested-dialog]")) return; e.stopPropagation(); onClose(); } };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose]);
@@ -716,7 +719,9 @@ function deriveMandiView(deptData, fp) {
   const fallbackRowsFor = (t) => (t.fnIdx != null && anyUnknownRealSpend ? [] : seedRowsFromFlowers(t.flowers));
   // Logged rows keep what was bought; the planned side is re-read from Deal Check's current plan
   // (withLivePlan, lib/ims/mandiLivePlan.js). Archived/orphan tabs have no live plan and stay as stored.
-  const mandiRowsOfTab = (t) => { const stored = rawStoredFor(t); return Array.isArray(stored) ? withLivePlan(stored, seedRowsFromFlowers(t.flowers)) : fallbackRowsFor(t); };
+  // the old flat "Already logged" list beside per-function tabs is never appended to (withLivePlan's append note)
+  const appendFor = (t) => !(t.key === "legacy" && fpByFn.length > 0);
+  const mandiRowsOfTab = (t) => { const stored = rawStoredFor(t); return Array.isArray(stored) ? withLivePlan(stored, seedRowsFromFlowers(t.flowers), { append: appendFor(t) }) : fallbackRowsFor(t); };
   // The ONE figure billing (the Actuals card/PDF, Studio's P&L via realMandi) must ever use — every
   // tab summed, never just whichever one happens to be open on screen.
   const mandiGrandReal = mandiTabs.reduce((s, t) => s + mandiRealTotalOf(mandiRowsOfTab(t)), 0);
@@ -1335,28 +1340,41 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     try { return buildLiveFloralPlan(sel.functionsDetail, { settings: settings || {}, rcItems, rateCardCategories, inventory }); }
     catch (e) { console.warn("[DeptOps] live floral plan failed — showing Deal Check's last pushed plan", e); return null; }
   }, [sel, settings, rcItems, rateCardCategories, inventory]);
-  // Mapping flowers' artificial items, whole event, one row each (pieces summed across functions):
-  // Floral's Inventory blocked list and truck list show them — stock to pull and load, at no extra ₹
-  // here (their cost is already inside the artificial total), so stockOnly like the artificial rows.
+  // Mapping flowers' artificial items, whole event, one row each: Floral's Inventory blocked list and
+  // truck list show them — stock to pull and load, at no extra ₹ here (their cost is already inside the
+  // artificial total), so stockOnly like the artificial rows.
+  // Pieces are counted the way Studio's reconcile RESERVES them (reqByDateFrom, lib/studio/soldBlocksPlan):
+  // functions on the same date at the same venue share one set (max), different venues / dates add up —
+  // the peak date is the row's qty. A plain sum showed 160 to load for two same-day functions needing 80
+  // each while the ledger held 80 (test-agent finding R2, 2026-11-20).
   const mappedStockRows = useMemo(() => {
     const byItem = new Map();
-    Object.values(liveFloral?.floralDetail || {}).forEach((fd) => (fd?.art?.mapped || []).forEach((m) => {
+    const reqByFnIdx = {};
+    Object.entries(liveFloral?.floralDetail || {}).forEach(([fnKey, fd]) => (fd?.art?.mapped || []).forEach((m) => {
       if (!m.mappedItemId || !(m.pcs > 0)) return;
       const cur = byItem.get(m.mappedItemId) || { pcs: 0, pcsExact: 0, cost: 0, forNames: new Set() };
-      cur.pcs += m.pcs; cur.pcsExact += Number(m.pcsExact) || m.pcs; cur.cost += Number(m.cost) || 0; cur.forNames.add(m.realFlowerName);
+      cur.pcs += m.pcs; cur.pcsExact += Number(m.pcsExact) || m.pcs; cur.cost += Number(m.cost) || 0;
+      String(m.realFlowerName || "").split(", ").forEach(n => n && cur.forNames.add(n));
       byItem.set(m.mappedItemId, cur);
+      const slot = reqByFnIdx[fnKey] || (reqByFnIdx[fnKey] = {});
+      slot[m.mappedItemId] = (slot[m.mappedItemId] || 0) + m.pcs;
     }));
+    const fnsForReq = (Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).map((f, i) => fnFromDetail(f, i)).filter(Boolean);
+    const byDate = reqByDateFrom(fnsForReq, reqByFnIdx);
+    const peak = {};
+    Object.values(byDate).forEach((slot) => Object.entries(slot).forEach(([id, q]) => { peak[id] = Math.max(peak[id] || 0, q); }));
     const out = [];
     byItem.forEach((v, id) => {
       const item = (inventory || []).find(i => String(i.id) === String(id));
       if (!item) return;
-      out.push({ id: "mapped:" + id, invId: id, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty: v.pcs, rentalQty: v.pcs, unit: 0, total: 0, sub: item.subCat || item.subcategory || "", qtyUnit: "", stockOnly: true, mappedFor: [...v.forNames].filter(Boolean).join(", "),
+      const qty = peak[id] > 0 ? peak[id] : v.pcs; // a function with no date can't be bucketed — its own count stands
+      out.push({ id: "mapped:" + id, invId: id, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, rentalQty: qty, unit: 0, total: 0, sub: item.subCat || item.subcategory || "", qtyUnit: "", stockOnly: true, mappedFor: [...v.forNames].filter(Boolean).join(", "),
         // shown on the row for reference (owner ask 2026-11-20: "price kyu ni aara") but NOT in total/unit, so the
         // blocked total (rentalIncome) never counts it — it is already inside Floral's artificial total
         infoRate: v.pcsExact > 0 ? Math.round((v.cost / v.pcsExact) * 100) / 100 : 0, infoTotal: Math.round(v.cost) });
     });
     return out;
-  }, [liveFloral, inventory]);
+  }, [liveFloral, inventory, sel]);
 
   // ── Department income snapshot (pushed from Deal Check → matches Studio exactly) ──
   const deptIncome = (sel?.deptIncome && sel.deptIncome[dept]) || null;
@@ -1445,6 +1463,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       if (!item) return;
       if (catToDept(item.cat || item.category) !== d) return;
       const unit = Number(item.price ?? item.rentalCost) || 0;
+      // A Mapping flower's artificial item reserved by Studio's reconcile: its ₹ is already inside Floral's
+      // artificial total (artStockTotal), so here it is stock only, tagged like on the snapshot path —
+      // priced at rental it was counted twice in the blocked total (test-agent finding R6, 2026-11-20).
+      const mappedRow = d === "Floral" ? mappedStockRows.find(r => String(r.invId) === String(itemId)) : null;
+      if (mappedRow) { out.push({ ...mappedRow, qty, rentalQty: qty }); return; }
       out.push({ id: itemId, invId: itemId, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, unit, total: unit * qty, sub: item.subCat || item.subcategory || "" });
     });
     return out.sort((a, b) => b.total - a.total);
@@ -2027,7 +2050,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // under a "how" box saying 43.07 kg, because the planned side froze when shopping was first logged)
   // — withLivePlan (lib/ims/mandiLivePlan.js) refreshes plan + colour and never touches qty/price/swaps.
   const activeStoredLines = activeMandiTab ? rawStoredFor(activeMandiTab) : undefined;
-  const mandiRows = Array.isArray(activeStoredLines) ? withLivePlan(activeStoredLines, seedMandi) : seedMandi;
+  const mandiRows = Array.isArray(activeStoredLines) ? withLivePlan(activeStoredLines, seedMandi, { append: !(activeMandiTab?.key === "legacy" && Array.isArray(fp?.byFn) && fp.byFn.length > 0) }) : seedMandi;
   // Real shopping hasn't been logged until someone actually edits a row — until then, mandiRows is
   // just this tab's own seedMandi (the plan's own quantities/prices mirrored in as a starting
   // point), so the "Real shopping" numbers can look fully filled in even though nobody has been to

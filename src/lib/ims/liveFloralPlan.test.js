@@ -15,6 +15,8 @@ const recipe = (flowerId) => ({ id: "FP1", name: "Guldavari + Tussel SQFT", mode
   medium: { flowers: [{ flowerId, qty: 1.1 / 3 }, { flowerId: "rt", qty: 0.4 }] },
 } });
 const settingsWith = (flowerId) => ({ flowerPatterns: [recipe(flowerId)], mandiCatalogue: [hanging, ladi, tussel], seasonMap: {}, mandiPriceMultipliers: {} });
+// rate card + inventory present, as when IMS has loaded them — buildLiveFloralPlan waits for them (finding B3)
+const LOADED = { rcItems: [{ id: "rc0", name: "unrelated", cat: "lighting" }], inventory: [{ id: "inv0", name: "unrelated" }] };
 const detail = (over = {}) => ([{
   fnIdx: 0, type: "Wedding", date: "2026-12-05", venue: "Vedi Farm", shift: "dinner", flowerPalette: "", floralRatio: 50,
   zones: {}, enabledEls: { vedi: true },
@@ -25,7 +27,7 @@ const detail = (over = {}) => ([{
 
 describe("buildLiveFloralPlan — IMS runs Deal Check's own engine on the deal's stored layout", () => {
   it("the reported case: 0.3667 kg × 144 × 50% = 26.4 kg → 27 whole kg of guldavari hanging", () => {
-    const live = buildLiveFloralPlan(detail(), { settings: settingsWith("gh") });
+    const live = buildLiveFloralPlan(detail(), { ...LOADED, settings: settingsWith("gh") });
     expect(live.byFn).toHaveLength(1);
     const g = live.byFn[0].flowers.find(f => f.name === "guldavari hanging");
     expect(g.qty).toBe(27);
@@ -33,8 +35,8 @@ describe("buildLiveFloralPlan — IMS runs Deal Check's own engine on the deal's
   });
 
   it("a recipe edit shows at once: switching the recipe's flower to ladi re-plans with ladi, no Deal Check involved", () => {
-    const before = buildLiveFloralPlan(detail(), { settings: settingsWith("gh") });
-    const after = buildLiveFloralPlan(detail(), { settings: settingsWith("gl") });
+    const before = buildLiveFloralPlan(detail(), { ...LOADED, settings: settingsWith("gh") });
+    const after = buildLiveFloralPlan(detail(), { ...LOADED, settings: settingsWith("gl") });
     expect(before.byFn[0].flowers.map(f => f.name)).toContain("guldavari hanging");
     expect(after.byFn[0].flowers.map(f => f.name)).toContain("guldavari ladi");
     expect(after.byFn[0].flowers.map(f => f.name)).not.toContain("guldavari hanging");
@@ -42,7 +44,7 @@ describe("buildLiveFloralPlan — IMS runs Deal Check's own engine on the deal's
 
   it("matches the engine run directly on the same function (no second pricing path)", () => {
     const s = settingsWith("gh");
-    const live = buildLiveFloralPlan(detail(), { settings: s });
+    const live = buildLiveFloralPlan(detail(), { ...LOADED, settings: s });
     const fn = fnFromDetail(detail()[0], 0);
     const direct = buildMandiBreakdown(computeFnFloralCost(fn, [fn], {
       flowerPatterns: s.flowerPatterns, mandiCatalogue: s.mandiCatalogue, mandiMults: {}, seasonMap: {}, floralRatio: 70,
@@ -52,7 +54,7 @@ describe("buildLiveFloralPlan — IMS runs Deal Check's own engine on the deal's
   });
 
   it("feeds the 'how' box: per-pattern 0.367, × 144, × 50% real", () => {
-    const live = buildLiveFloralPlan(detail(), { settings: settingsWith("gh") });
+    const live = buildLiveFloralPlan(detail(), { ...LOADED, settings: settingsWith("gh") });
     const how = mandiHow(live.floralDetail, "guldavari hanging");
     expect(how.need).toBeCloseTo(26.4, 2);
     expect(how.groups[0].rows[0]).toMatchObject({ elQty: 144, per: 0.37, realFrac: 0.5 });
@@ -61,20 +63,20 @@ describe("buildLiveFloralPlan — IMS runs Deal Check's own engine on the deal's
   it("a Mapping flower's artificial part comes out as a mapped substitute, qty from Build, with the item's id", () => {
     const mappedLadi = { ...ladi, flowerType: "mapping", artificialMapItemId: "inv_art_ladi", artificialMapName: "Old name", artificialMapCost: 10 };
     const s = { ...settingsWith("gl"), mandiCatalogue: [hanging, mappedLadi, tussel] };
-    const live = buildLiveFloralPlan(detail(), { settings: s });
+    const live = buildLiveFloralPlan(detail(), { ...LOADED, settings: s });
     const m = live.floralDetail[0].art.mapped;
     expect(m).toHaveLength(1);
     expect(m[0]).toMatchObject({ mappedItemId: "inv_art_ladi", realFlowerName: "guldavari ladi", unit: "kg" });
     expect(m[0].qty).toBeCloseTo(26.4, 1); // 0.3667 × 144 × 50% artificial
     expect(m[0].cost).toBe(264); // × ₹10 saved when mapped — the rate Deal Check uses too
-    const bigger = buildLiveFloralPlan(detail({ elements: { vedi: [{ name: "Guldavari + Tussel SQFT", patternId: "FP1", qty: 288, size: "M" }] } }), { settings: s });
+    const bigger = buildLiveFloralPlan(detail({ elements: { vedi: [{ name: "Guldavari + Tussel SQFT", patternId: "FP1", qty: 288, size: "M" }] } }), { ...LOADED, settings: s });
     expect(bigger.floralDetail[0].art.mapped[0].qty).toBeCloseTo(52.8, 1); // Build's qty doubled → doubled at once
   });
 
   it("pieces per unit: 26.4 kg × 3 pcs/kg = 79.2 → 80 whole pieces to block and load; cost follows the pieces", () => {
     const mappedLadi = { ...ladi, flowerType: "mapping", artificialMapItemId: "inv_art_ladi", artificialMapCost: 10, artificialMapPcsPerUnit: 3 };
     const s = { ...settingsWith("gl"), mandiCatalogue: [hanging, mappedLadi, tussel] };
-    const live = buildLiveFloralPlan(detail(), { settings: s });
+    const live = buildLiveFloralPlan(detail(), { ...LOADED, settings: s });
     const m = live.floralDetail[0].art.mapped[0];
     expect(m.pcsExact).toBeCloseTo(79.2, 1);
     expect(m.pcs).toBe(80);
@@ -108,7 +110,7 @@ describe("buildLiveFloralPlan — IMS runs Deal Check's own engine on the deal's
   });
 
   it("returns null when the stored layout has no elements (an old booking) — the caller keeps Deal Check's plan", () => {
-    expect(buildLiveFloralPlan(detail({ elements: {} }), { settings: settingsWith("gh") })).toBeNull();
+    expect(buildLiveFloralPlan(detail({ elements: {} }), { ...LOADED, settings: settingsWith("gh") })).toBeNull();
     expect(buildLiveFloralPlan(undefined, {})).toBeNull();
   });
 

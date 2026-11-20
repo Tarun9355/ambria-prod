@@ -4571,7 +4571,9 @@ export default function StudioApp() {
   // has restored it for THIS client — before that they may be another client's leftovers, so they
   // are left out (IMS keeps the last ones written) rather than sent wrong.
   const dcFloralColorPrefsRef = useRef({});
-  useEffect(() => { dcFloralColorPrefsRef.current = dcFloralColorPrefs; }, [dcFloralColorPrefs]);
+  // a layout effect, so the ref has the restored picks in the same commit openDealCheck marks the client ready
+  // in — a plain effect left a moment where "ready" read the previous client's picks (test-agent finding R8)
+  useLayoutEffect(() => { dcFloralColorPrefsRef.current = dcFloralColorPrefs; }, [dcFloralColorPrefs]);
   const floralLiveFieldsOf = (fd, withColourPicks) => {
     const out = {};
     if (fd?.floralOverrides && typeof fd.floralOverrides === "object") out.floralOverrides = { note: fd.floralOverrides.note || "", rows: Array.isArray(fd.floralOverrides.rows) ? fd.floralOverrides.rows : [] };
@@ -4653,6 +4655,7 @@ export default function StudioApp() {
           // inputs that were set at booking only follow too: Build's per-function flower overrides
           // (swaps/colour) and Deal Check's colour picks — the latter only when Deal Check's own state is
           // loaded for THIS client (dcStateReadyForClientRef), never another client's leftovers.
+          ...(fd.fnShift ? { shift: fd.fnShift } : {}),
           ...floralLiveFieldsOf(fd, true),
         });
       });
@@ -4815,6 +4818,9 @@ export default function StudioApp() {
           // slider, the Flower Palette or a flower override re-plans IMS with no Deal Check open.
           flowerPalette: fd.fnFlowerPalette || "",
           ...(typeof fd.floralRatio === "number" ? { floralRatio: fd.floralRatio } : {}),
+          // the shift orders same-day functions for flower reuse in that plan (test-agent finding R5) — not an
+          // identity field, so it follows Build directly; date/venue/type stay persistDeptSnapshot's, behind its guard
+          ...(fd.fnShift ? { shift: fd.fnShift } : {}),
           ...floralLiveFieldsOf(fd, false),
         });
       });
@@ -14710,6 +14716,10 @@ export default function StudioApp() {
     // flower's pieces-per-unit, migration 071, rounded up) join this function's card requirement, so they are
     // Studio-owned ("studio-incremental") entries the planner creates, resizes and releases with the build.
     // The floral engine already skips FOC elements. A failed costing reserves nothing extra rather than guessing.
+    // cardOnlyReqCount is taken BEFORE they are added: the empty-build glitch guard below must judge the CARD list
+    // alone — a stale/empty card list with a Mapping flower still in zoneElements would otherwise slip past the
+    // guard and release every other Studio-owned reservation (test-agent finding R1, 2026-11-20).
+    const cardOnlyReqCount = Object.values(requiredByFn).reduce((s, m) => s + Object.keys(m || {}).length, 0);
     fnsToProcess.forEach((fn, i) => {
       const fnIdx = fn.fnIdx ?? i;
       let pcs = {};
@@ -14860,7 +14870,8 @@ export default function StudioApp() {
       // it as "has requirement" so the freeze below doesn't wrongly trigger on it.
       const totalFocReq = Object.values(focReq).reduce((s, m) => s + Object.keys(m).length, 0);
       const ownedCardOnProcessed = [...rowsById.values()].some((arr) => (arr || []).some((b) => b?.eventId === eo.id && b?.source === SRC_STUDIO_CARD && processedDates.has(b.date)));
-      if (totalCardReq === 0 && totalFocReq === 0 && ownedCardOnProcessed) {
+      // cardOnlyReqCount (the cards alone, without Mapping-flower pieces) — see where it is taken, above
+      if ((totalCardReq === 0 || cardOnlyReqCount === 0) && totalFocReq === 0 && ownedCardOnProcessed) {
         console.warn("[reconcile] build resolved to ZERO required items but event", eo.id, "holds Studio-owned reservations on a processed date — refusing to touch blocks, functions.items or notifications this run (empty-build glitch guard).");
         return;
       }

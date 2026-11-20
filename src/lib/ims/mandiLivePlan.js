@@ -32,7 +32,10 @@ export const isDismissMarker = (r) => !!r?.dismissedFromPlan;
 // The hidden marker left behind when a planned row is removed from the list on purpose.
 export const dismissMarker = (r) => ({ name: r.name, unit: r.unit || "", colorVariant: r.colorVariant || null, colorPrefs: r.colorPrefs || null, dismissedFromPlan: true, qty: 0, price: 0, projQty: 0, projCost: 0 });
 
-export function withLivePlan(storedRows, seedRows) {
+// opts.append (default true): add the plan's missing flowers. Off for the old flat "Already logged" list
+// when per-function tabs exist — it is checked against the WHOLE-event plan, so appending would pull every
+// other function's flowers into it as "New in the plan" too (test-agent finding R4, 2026-11-20).
+export function withLivePlan(storedRows, seedRows, { append = true } = {}) {
   const all = Array.isArray(storedRows) ? storedRows : [];
   const stored = all.filter((r) => !isDismissMarker(r));
   const seed = Array.isArray(seedRows) ? seedRows : [];
@@ -45,20 +48,34 @@ export function withLivePlan(storedRows, seedRows) {
     const n = nameKey(s.name);
     byName.set(n, byName.has(n) ? null : s); // null = more than one colour planned, no name-only match
   });
+  // Each planned row stands behind ONE logged row only (test-agent finding B1, 2026-11-20): two logged
+  // lines of one flower — two vendors, two old colours, or a shopper's own extra line — used to each take
+  // the full planned qty, doubling the tab's planned total. Exact name+colour matches claim first (in
+  // list order), then a name-only fallback may take a plan row nobody claimed; a row left without one
+  // is unplanned ("extra").
   const covered = new Set(); // seed rows some logged row already stands for
-  const refreshed = stored.map((r) => {
+  const claim = stored.map((r) => {
+    if (!r || r.swapFor) return null;
+    const s = byKey.get(mandiRowKey(r));
+    if (s && !covered.has(s)) { covered.add(s); return s; }
+    return null;
+  });
+  stored.forEach((r, i) => {
+    if (!r || r.swapFor || claim[i]) return;
+    const s = byName.get(nameKey(r.name));
+    if (s && !covered.has(s)) { covered.add(s); claim[i] = s; }
+  });
+  const refreshed = stored.map((r, i) => {
     if (!r || r.swapFor) return r;
-    const exact = byKey.get(mandiRowKey(r));
-    const s = exact || byName.get(nameKey(r.name)) || null;
+    const s = claim[i];
     if (!s) return (Number(r.projQty) || 0) > 0 || (Number(r.projCost) || 0) > 0 ? { ...r, projQty: 0, projCost: 0 } : r;
-    covered.add(s);
     const next = { ...r, projQty: Number(s.projQty) || 0, projCost: Number(s.projCost) || 0 };
     // Colour follows Deal Check too (it did before this helper, for an exact match only).
     next.colorVariant = s.colorVariant || null;
     next.colorPrefs = s.colorPrefs || null;
     return next;
   });
-  const added = seed
+  const added = (append ? seed : [])
     .filter((s) => !covered.has(s) && !dismissed.has(mandiRowKey(s)))
     .map((s) => ({ ...s, qty: 0, newInPlan: true }));
   return added.length ? [...refreshed, ...added] : refreshed;

@@ -37,7 +37,7 @@ export default function MappingDetailModal({ flower, item, artCost = null, need 
   useEffect(() => { const onKey = (e) => { if (e.key === "Escape") onClose?.(); }; window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey); }, [onClose]);
   const iPhotos = item ? [...(Array.isArray(item.photoUrls) ? item.photoUrls : []), ...(item.img && !(item.photoUrls || []).includes(item.img) ? [item.img] : [])] : [];
   return (
-    <div onClick={onClose} className="fixed inset-0 z-[9200] bg-black/60 flex items-center justify-center p-5 ui-overlay-in">
+    <div onClick={onClose} data-nested-dialog="" className="fixed inset-0 z-[9200] bg-black/60 flex items-center justify-center p-5 ui-overlay-in">
       <div role="dialog" aria-modal="true" aria-label={`Mapping — ${flower?.name || "flower"}`} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-[min(760px,100%)] max-h-[88vh] flex flex-col overflow-hidden shadow-2xl ui-pop-in">
         <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
           <p className="font-bold text-gray-800">🔗 Mapping — {flower?.name || "flower"}</p>

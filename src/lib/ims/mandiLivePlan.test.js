@@ -75,6 +75,13 @@ describe("withLivePlan — the planned side follows Deal Check, what was bought 
     expect(out[1]).toMatchObject({ name: "b", qty: 0, newInPlan: true });
   });
 
+  it("append: false (the old flat list beside per-function tabs) refreshes the plan but adds nothing", () => {
+    const stored = [{ name: "rose", projQty: 1, projCost: 10, qty: 1, price: 10 }];
+    const out = withLivePlan(stored, [seed("rose", 6, 60), seed("gypso", 12, 960)], { append: false });
+    expect(out.map(r => r.name)).toEqual(["rose"]);
+    expect(out[0].projQty).toBe(6);
+  });
+
   it("markers are dropped even when there is no live plan", () => {
     const stored = [{ name: "rose", projQty: 1, projCost: 1, qty: 1, price: 1 }, dismissMarker({ name: "gypso" })];
     expect(withLivePlan(stored, []).map(r => r.name)).toEqual(["rose"]);

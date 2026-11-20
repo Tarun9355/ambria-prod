@@ -58,6 +58,12 @@ export function buildLiveFloralPlan(functionsDetail, { settings = {}, rcItems = 
   const defaultRatio = typeof settings.floralRatio === "number" ? settings.floralRatio : 70;
   const fns = details.map((f, i) => fnFromDetail(f, i, defaultRatio)).filter(Boolean);
   if (!fns.length || !fns.some(hasElements)) return null;
+  // Not until IMS has its own inputs loaded (test-agent finding B3, 2026-11-20): IMS keeps running on empty
+  // recipe / mandi / rate-card / inventory lists when a boot fetch fails, and a run on those produced an
+  // EMPTY plan that replaced Deal Check's real one — every logged function tab turned "Unmatched". null
+  // keeps the plan Deal Check last pushed until the lists are there.
+  const has = (v) => Array.isArray(v) && v.length > 0;
+  if (!has(settings.flowerPatterns) || !has(settings.mandiCatalogue) || !has(rcItems) || !has(inventory)) return null;
   const colorPrefsByFnIdx = {};
   details.forEach((f, i) => { if (f && f.floralColorPrefs && typeof f.floralColorPrefs === "object") colorPrefsByFnIdx[f.fnIdx ?? i] = f.floralColorPrefs; });
   const base = {
@@ -105,6 +111,8 @@ export function buildLiveFloralPlan(functionsDetail, { settings = {}, rcItems = 
       const key = al.mappedItemId || al.mappedName || al.name;
       if (!mappedAgg[key]) mappedAgg[key] = { mappedItemId: al.mappedItemId || null, mappedName: al.mappedName || "", realFlowerName: al.name, realFlowerId: al.flowerId || null, unit: al.unit, qty: 0, pcsExact: 0, cost: 0 };
       mappedAgg[key].qty += al.realUnitsReplaced || 0; mappedAgg[key].cost += al.lineCost || 0;
+      // one item can stand in for several real flowers — name them all (test-agent finding B4)
+      if (al.name && !mappedAgg[key].realFlowerName.split(", ").includes(al.name)) mappedAgg[key].realFlowerName += ", " + al.name;
       mappedAgg[key].pcsExact += al.mappedPcs != null ? al.mappedPcs : (al.realUnitsReplaced || 0);
     }));
     // pcs: whole pieces of the item to pull from stock — rounded UP (a part piece is still a piece to load)

@@ -1025,7 +1025,10 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
             const pick = (it) => {
               const price = it ? (Number(it.price ?? it.rentalCost) || 0) : 0;   // client-facing rental → Studio artificial price
               const cost = it ? (Number(it.cost) || price) : 0;                    // purchase cost → Deal Check sourcing cost
-              updateRow("mandi_flowers", sMandiMapPicker.flowerId, mandiFlowerPatchToRow({ artificialMapItemId: it ? it.id : null, artificialMapName: it ? it.name : null, artificialMapPrice: price, artificialMapCost: cost })).catch(() => {});
+              // pieces-per-unit belongs to the item it was set for — a different item (or no item) starts again at 1
+              // (blank), re-picking the same item keeps it (test-agent finding R7, 2026-11-20)
+              const keepPcs = !!it && it.id === flower?.artificialMapItemId;
+              updateRow("mandi_flowers", sMandiMapPicker.flowerId, mandiFlowerPatchToRow({ artificialMapItemId: it ? it.id : null, artificialMapName: it ? it.name : null, artificialMapPrice: price, artificialMapCost: cost, ...(keepPcs ? {} : { artificialMapPcsPerUnit: null }) })).catch(() => {});
               setSMandiMapPicker(null);
             };
             return (
