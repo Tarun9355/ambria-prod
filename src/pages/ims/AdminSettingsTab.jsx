@@ -1891,17 +1891,20 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
             )}
 
             {sortedSubs.length > 0 && (
-              <input value={recipeSubSearch} onChange={(e) => setRecipeSubSearch(e.target.value)} placeholder="🔍 Search sub-categories…"
+              <input value={recipeSubSearch} onChange={(e) => setRecipeSubSearch(e.target.value)} placeholder="🔍 Search sub-categories or recipes…"
                 className="w-full border rounded-lg px-3 py-2 text-sm mb-1" />
             )}
 
             {(() => {
               const q = recipeSubSearch.trim().toLowerCase();
-              const visibleSubs = q ? sortedSubs.filter((sub) => sub.toLowerCase().includes(q)) : sortedSubs;
-              if (q && visibleSubs.length === 0) return <div className="text-center py-6 text-gray-400 text-xs italic">No sub-categories match "{recipeSubSearch}"</div>;
+              // the search finds a sub-category by its name, or a recipe by its own name (then only the matching recipes show, opened)
+              const itemHit = (it) => !!q && String(it?.name || "").toLowerCase().includes(q);
+              const visibleSubs = q ? sortedSubs.filter((sub) => sub.toLowerCase().includes(q) || (groupedBySub[sub] || []).some(itemHit)) : sortedSubs;
+              if (q && visibleSubs.length === 0) return <div className="text-center py-6 text-gray-400 text-xs italic">No sub-categories or recipes match "{recipeSubSearch}"</div>;
               return visibleSubs.map((sub) => {
-              const subOpen = !!recipeSubOpen[sub];
-              const toggleOpen = () => setRecipeSubOpen((s) => ({ ...s, [sub]: !s[sub] }));
+              const byItem = !!q && !sub.toLowerCase().includes(q);
+              const subOpen = recipeSubOpen[sub] ?? byItem;
+              const toggleOpen = () => setRecipeSubOpen((s) => ({ ...s, [sub]: !(s[sub] ?? byItem) }));
               const isEmpty = groupedBySub[sub].length === 0;
               const isTracked = sub === "(uncategorized)" || recipeSubsTrimmed.has(sub);
               return (
@@ -1936,12 +1939,12 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                     <button onClick={() => addRecipeItem(sub)} className="text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold">✓ Add</button>
                   </div>
                 )}
-                {groupedBySub[sub].map((studioItem) => {
+                {groupedBySub[sub].filter((it) => !byItem || itemHit(it)).map((studioItem) => {
                   const pat = (settings.flowerPatterns || []).find((p) => (p.name || "").toLowerCase().trim() === (studioItem.name || "").toLowerCase().trim());
                   const m = pat?.mode === "smb" ? "smb" : pat?.mode === "flat" ? "flat" : (studioItem.inhouseMode === "smb" ? "smb" : "flat");
                   const hasRecipe = !!pat && Object.values(pat.sizes || {}).some((sd) => (sd?.flowers || []).length > 0);
-                  const itemOpen = !!recipeItemOpen[studioItem.id];
-                  const toggleItemOpen = () => setRecipeItemOpen((s) => ({ ...s, [studioItem.id]: !s[studioItem.id] }));
+                  const itemOpen = recipeItemOpen[studioItem.id] ?? byItem;
+                  const toggleItemOpen = () => setRecipeItemOpen((s) => ({ ...s, [studioItem.id]: !(s[studioItem.id] ?? byItem) }));
                   return (
                     <div key={studioItem.id} className="bg-white border rounded-xl overflow-hidden">
                       <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 border-b flex-wrap">
