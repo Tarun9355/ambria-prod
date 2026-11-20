@@ -4452,6 +4452,13 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       (same access as everything else here, no extra gate). Denormalized onto the
                       event order (siteSupervisorId/Name/Phone) rather than just an id, so Studio
                       can show who's assigned without fetching the supervisor roster itself. */}
+                  {/* the Site-Supervisor-view-only role never picks the event's supervisor: no dropdown (owner ask 2026-11-20), the name only when there is one */}
+                  {onsiteOnly ? (sel.siteSupervisorName ? (
+                    <div className="mt-1 flex items-center gap-1.5 text-xs">
+                      <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
+                      <span className="font-medium text-gray-700 truncate">{sel.siteSupervisorName}</span>
+                    </div>
+                  ) : null) : (
                   <div className="mt-1 flex items-center gap-1.5 text-xs">
                     <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
                     <select
@@ -4472,6 +4479,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       ))}
                     </select>
                   </div>
+                  )}
                   {/* Deal value — read-only mirror of Studio's negotiated amount (client_ledger),
                       written whenever Deal Check syncs. It stays frozen once booked by owner decision;
                       "pending" is the live build's drift since booking, shown here so ops sees the same

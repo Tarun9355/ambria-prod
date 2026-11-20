@@ -152,7 +152,6 @@ describe("event opened - onsiteOnly", () => {
   const html = render(sel(), F_SEL);
   it("renders the event header without the Department Head | Site Supervisor switch", () => {
     expect(html).toContain("Furniture — MineWedding");
-    expect(html).toContain("Site Supervisor");
     expect(html).not.toContain(">Department Head<");
     expect(html).not.toMatch(/aria-pressed="(true|false)"[^>]*>(?:(?!<\/button>)[^])*Department Head/);
   });
@@ -354,11 +353,17 @@ describe("RISKS (documented behaviour, not a spec violation of the listed tiles)
     const html = render(base({ eventOrders: [ev("E1", "MineWedding", 3, { siteSupervisorId: "S1", dealValue: { amount: 1234567, pending: 0 } })] }), F_SEL);
     expect(html).toContain("Deal value");
   });
-  it("the Site Supervisor dropdown is shown to the role, disabled only when Planning edit is off", () => {
-    // authUser has no roleTabs in settings {} -> default role config allows edit; with edit off it is disabled
-    const off = render(base({ settings: { roleTabs: { "PDF Viewer": { tabs: ["planning"], subTabs: { planning: ["deptops_onsite"] }, ved: { planning: { edit: false, del: false } } } } } }), F_SEL);
-    expect(off).toMatch(/<select[^>]*disabled=""/);
-    expect(off).toContain("View only");
+  it("the role never gets the Site Supervisor dropdown (owner ask 2026-11-20): no select, no 'unassigned'; the assigned name is shown as plain text; everyone else keeps the dropdown", () => {
+    const withSup = (onsiteOnly) => render(base({ onsiteOnly, eventOrders: [ev("E1", "MineWedding", 3, { siteSupervisorId: "S1", siteSupervisorName: "Raju" })] }), F_SEL);
+    const role = withSup(true);
+    expect(role).not.toContain("— unassigned —");
+    expect(role).not.toMatch(/<select[^>]*>\s*<option value="">— unassigned/);
+    expect(role).toContain("Site Supervisor");
+    expect(role).toContain("Raju");
+    const none = render(base({ onsiteOnly: true, eventOrders: [ev("E1", "MineWedding", 3, {})] }), F_SEL);
+    expect(none).not.toContain("— unassigned —");
+    expect(none).not.toContain("👷 Site Supervisor");
+    expect(withSup(false)).toContain("— unassigned —"); // control: the Department Head still picks the supervisor
   });
   it("Paint department: the planning panel (PaintDeptView with its ₹ paint costs) is not gated on onsiteOnly", () => {
     const paintSrc = SRC.match(/\{dept === PAINT && <PaintDeptView[^\n]*/)[0];
