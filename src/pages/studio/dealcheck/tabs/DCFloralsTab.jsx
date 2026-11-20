@@ -828,6 +828,7 @@ export default function DCFloralsTab({ ctx }) {
                                   <td colSpan={7} style={{padding:"4px 4px 10px"}}>
                                     <div style={{padding:"10px 12px",background:"rgba(124,58,237,0.06)",border:"1px dashed rgba(167,139,250,0.35)",borderRadius:7}}>
                                       <div style={{fontSize:11,color:"#7C3AED",fontWeight:600,letterSpacing:0.4,textTransform:"uppercase",marginBottom:8}}>How ₹{Math.round(eb.total).toLocaleString("en-IN")} for {eb.name} · {eb.zoneKey} × {eb.qty} derived</div>
+                                      {eb.recipeName && <div style={{fontSize:11,color:textS,marginTop:-4,marginBottom:8}}>Recipe used: <b style={{color:textP}}>{eb.recipeName}</b>{eb.recipeSize && eb.recipeSize !== "flat" ? ` · ${eb.recipeSize[0].toUpperCase()}${eb.recipeSize.slice(1)} size` : ""} — per-pattern amounts below are in the mandi unit (kg, piece…), the recipe screen shows pieces</div>}
                                       {/* Stated once here since it applies to every flower in this element, but
                                           the actual amount reused varies per flower (80% of THAT exact flower's
                                           own quantity in the function it's carried over from) — see each flower's

@@ -592,9 +592,12 @@ export function computeFnFloralCost(fn, allFns, opts) {
         return;
       }
       const sizes = pattern.sizes || {};
-      let comp = sizes[sizeKey] || sizes.medium;
-      if (!comp && sizeKey === "big" && sizes.large) comp = sizes.large;
-      if (!comp && Object.keys(sizes).length > 0) comp = sizes[Object.keys(sizes)[0]];
+      // usedSizeKey: which column of the recipe actually priced this (shown in Deal Check's "how" box
+      // so nobody has to guess which recipe/size the per-pattern numbers came from — 2026-11-20).
+      let usedSizeKey = sizes[sizeKey] ? sizeKey : sizes.medium ? "medium" : null;
+      let comp = usedSizeKey ? sizes[usedSizeKey] : null;
+      if (!comp && sizeKey === "big" && sizes.large) { comp = sizes.large; usedSizeKey = "large"; }
+      if (!comp && Object.keys(sizes).length > 0) { usedSizeKey = Object.keys(sizes)[0]; comp = sizes[usedSizeKey]; }
       if (comp) patternExtraCost = (Number(comp.extraCost) || 0) * elQty;
       if (patternExtraCost > 0) { fixedExtras += patternExtraCost; if (resolveRcRate) realIncome += patternExtraCost; }
       const season = seasonMap[fn.fnDate] || "non_saya";
@@ -710,6 +713,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
       elementBreakdown.push({
         name: el.name, zoneKey: zk, qty: elQty, realPct, realCost, artCost, total: realCost + artCost,
         hasPattern: !!pattern, realLines, size: sizeKey, artLines,
+        recipeName: pattern?.name || "", recipeSize: usedSizeKey || "",
         artBunchesFlower: artLines.filter(l => !l.isGreen).reduce((s, l) => s + (l.bunches || 0), 0),
         artBunchesGreen: artLines.filter(l => l.isGreen).reduce((s, l) => s + (l.bunches || 0), 0),
         artBunchesFlowerFull, artBunchesGreenFull,
