@@ -117,9 +117,10 @@ function crewIcon(type) {
 // shared row for a header to sit above) but is hidden from sm up, where the inventory-blocked list
 // now has ONE sticky header row instead — repeating it on every card there was the exact "confusing"
 // the header replaces.
+// Phone: one cell of a 3-across grid, label above, read left to right; from sm up a fixed-width right-aligned column under the header.
 const StatCell = ({ label, w, children }) => (
-  <div className={"flex-1 sm:flex-none text-right " + w}>
-    <div className="sm:hidden text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 leading-none">{label}</div>
+  <div className={"min-w-0 text-left sm:flex-none sm:text-right " + w}>
+    <div className="sm:hidden text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 leading-none whitespace-nowrap">{label}</div>
     <div className="mt-1 sm:mt-0">{children}</div>
   </div>
 );
@@ -5359,7 +5360,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           and sit inline beside the name from sm up — one rule instead of two
                           layouts. */}
                       <div className="p-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
-                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
                             {(choiceView.get(it.id)?.name ? choiceView.get(it.id).photo : it.photo) ? <img src={thumbUrl(choiceView.get(it.id)?.name ? choiceView.get(it.id).photo : it.photo, 48)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(choiceView.get(it.id)?.name ? choiceView.get(it.id).photo : it.photo)} className="w-12 h-12 rounded-lg object-cover border cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-lg shrink-0">📦</div>}
                             <div className="min-w-0">
                               <div className="text-sm font-semibold text-gray-900 truncate">{choiceView.get(it.id)?.name || it.name}</div>
@@ -5495,7 +5496,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           </div>
                           {/* Divided from the name and from each other, so three right-aligned
                               figures read as three columns rather than one run of digits. */}
-                          <div className="w-full sm:w-auto flex items-start gap-0 divide-x divide-gray-100 sm:border-l sm:border-gray-100 sm:pl-1">
+                          {/* Phone: up to six figures in one line ran together (₹3,000₹12,000, "Rental qty" wrapping) - a tinted 3-across
+                              grid instead, two short rows; from sm up the same divided columns as before. */}
+                          <div className="w-full grid grid-cols-3 gap-x-3 gap-y-2.5 rounded-lg bg-gray-50 px-3 py-2.5 sm:w-auto sm:flex sm:items-start sm:gap-0 sm:rounded-none sm:bg-transparent sm:p-0 sm:pl-1 sm:divide-x sm:divide-gray-100 sm:border-l sm:border-gray-100">
                             {/* one column per event date (see dateCols): what loads on that day */}
                             {showDates && dateCols.map(c => { const q = qtyOnDate(c, it); return (
                               <StatCell key={c.date} label={c.label} w={STAT_W.qty}>
