@@ -320,6 +320,12 @@ All ¦ सभी
 Direct from inventory ¦ सीधे इन्वेंटरी से
 Mapped substitutes ¦ जुड़े विकल्प
 Artificial for ¦ असली फूल की जगह
+pick colour ¦ रंग चुनें
+Colour to buy for ¦ किस रंग का ख़रीदना है:
+Deal Check picked ¦ डील चेक ने चुना
+changed by ¦ बदला
+Back to Deal Check's colour ¦ डील चेक वाला रंग वापस
+No colours set for this flower in Flowers → Mandi Prices. ¦ इस फूल के रंग फ़्लावर्स → मंडी प्राइसेज़ में सेट नहीं हैं।
 New in the plan — not bought yet ¦ प्लान में नया — अभी ख़रीदा नहीं
 in artificial total ¦ आर्टिफ़िशियल कुल में
 live from Build ¦ बिल्ड से लाइव

@@ -1054,7 +1054,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // of its own (e.g. Rajnigandh, Dandela) still shows a picture instead of a blank box. Shared by
   // the shopping-list print sheet and its on-screen row.
   const mandiPhotoOf = (r) => {
-    if (r.colorVariant?.photoUrl) return r.colorVariant.photoUrl;
+    const shown = r.colorOverride || r.colorVariant; // the dept head's colour change wins (see shownColourOf)
+    if (shown?.photoUrl) return shown.photoUrl;
     const c = mandiCatalogue.find(x => String(x.name || "").trim().toLowerCase() === String(r.name || "").trim().toLowerCase());
     if (c?.photoUrl) return c.photoUrl;
     const variantPhoto = (c?.colorVariants || []).find(v => v.photoUrl)?.photoUrl;
@@ -1063,6 +1064,17 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return (Array.isArray(mapped?.photoUrls) && mapped.photoUrls[0]) || mapped?.img || "";
   };
   const flowerPatterns = useMemo(() => (Array.isArray(settings?.flowerPatterns) ? settings.flowerPatterns : []), [settings]);
+  // ── A mandi row's colour, changeable here (owner ask 2026-11-20) ── The colour Deal Check picked stays the
+  // row's colorVariant (the live plan refreshes it, and rows match the plan on it); a dept head's change is
+  // kept beside it as colorOverride { variantId, label, photoUrl, rate, fromLabel, by, at } — what to buy for
+  // this event — and Deal Check's Florals tab shows "was X → changed to Y by <name>". Clearing it goes
+  // back to Deal Check's colour.
+  const shownColourOf = (r) => r?.colorOverride || r?.colorVariant || null;
+  const coloursOfFlower = (name) => {
+    const c = mandiCatalogue.find(x => String(x.name || "").trim().toLowerCase() === String(name || "").trim().toLowerCase());
+    return (Array.isArray(c?.colorVariants) ? c.colorVariants : []).filter(v => v && (v.name || v.label));
+  };
+  const [colourPickRow, setColourPickRow] = useState(null); // index of the mandi row whose colour picker is open
 
   const eventDate = (eo) => eo?.functionsDetail?.[0]?.date || eo?.date || eo?.eventDate || "";
   // The event's venue with its property — "Valencia › Poolside", not a bare "Poolside".
@@ -2171,7 +2183,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     const photoOf = mandiPhotoOf;
     const rows = mandiRows.map((r, i) => {
       const sub = [
-        r.colorVariant?.label ? `🎨 ${esc(r.colorVariant.label)}` : "",
+        r.colorOverride?.label ? `🎨 ${esc(r.colorOverride.label)} (was ${esc(r.colorOverride.fromLabel || "Deal Check's colour")})` : r.colorVariant?.label ? `🎨 ${esc(r.colorVariant.label)}` : "",
         Array.isArray(r.colorPrefs) && r.colorPrefs.length > 1 ? `if not at the mandi: ${esc(r.colorPrefs.slice(1).map(p => p.label).join(", "))}` : "",
         r.swappedTo ? `🔁 Not in the mandi — swapped with ${esc(r.swappedTo)}${r.swapNote ? " · " + esc(r.swapNote) : ""}` : "",
         r.swapFor ? `🔁 Bought instead of ${esc(r.swapFor)}${r.swapNote ? " · " + esc(r.swapNote) : ""}` : "",
@@ -5885,9 +5897,58 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                         numbers instead of reaching them. */}
                                     <div className="flex items-center gap-2 min-w-0">
                                       {(() => { const photo = mandiPhotoOf(r); return photo && <img src={thumbUrl(photo, 28)} loading="lazy" decoding="async" alt={r.colorVariant?.label || r.name || ""} onClick={() => setZoomImg(photo)} className="w-7 h-7 rounded object-cover border border-gray-200 shrink-0 cursor-zoom-in" title={r.colorVariant?.label || r.name || ""} />; })()}
-                                      <span className="text-xs font-medium text-gray-800 truncate">{r.name}{r.colorVariant?.label && <span className="ml-1.5 font-normal text-[10px] text-purple-600">🎨 {r.colorVariant.label}</span>}</span>
+                                      <span className="text-xs font-medium text-gray-800 truncate">{r.name}</span>
+                                      {/* the colour — a button: the dept head can change what colour is bought (colourPickRow) */}
+                                      {(shownColourOf(r) || coloursOfFlower(r.name).length > 0) && (
+                                        <button type="button" onClick={() => setColourPickRow(colourPickRow === i ? null : i)} aria-expanded={colourPickRow === i}
+                                          title={r.colorOverride ? `Changed from ${r.colorOverride.fromLabel || "Deal Check's colour"}${r.colorOverride.by ? ` by ${r.colorOverride.by}` : ""} — click to change` : "Click to change the colour to buy"}
+                                          className={"shrink-0 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] border transition-colors " + (r.colorOverride ? "bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100" : "bg-purple-50 border-purple-200 text-purple-700 hover:bg-purple-100")}>
+                                          🎨 {shownColourOf(r)?.label || "pick colour"} <span aria-hidden="true" className="text-[8px] opacity-70">▾</span>
+                                        </button>
+                                      )}
                                       <span aria-hidden="true" className="flex-1 min-w-2 border-b border-dotted border-gray-300 mb-[3px]" />
                                     </div>
+                                    {r.colorOverride && (
+                                      <div className="text-[10px] text-amber-700">
+                                        🔁 was <span className="line-through">{r.colorOverride.fromLabel || "Deal Check's colour"}</span> → {r.colorOverride.label}{r.colorOverride.by ? <> · changed by {r.colorOverride.by}</> : null}
+                                      </div>
+                                    )}
+                                    {colourPickRow === i && (() => {
+                                      const opts = coloursOfFlower(r.name);
+                                      const curId = shownColourOf(r)?.variantId;
+                                      const pick = (v) => {
+                                        const planLabel = r.colorVariant?.label || "";
+                                        const label = v.name || v.label || "";
+                                        // picking Deal Check's own colour again is the same as going back to it
+                                        if (planLabel && label.trim().toLowerCase() === planLabel.trim().toLowerCase()) setMandi(i, "colorOverride", null);
+                                        else setMandi(i, "colorOverride", { variantId: v.variantId || null, label, photoUrl: v.photoUrl || null, rate: Number(v.currentPrice) || Number(v.rate) || 0, fromLabel: planLabel, by: authUser?.name || authUser?.username || "", at: Date.now() });
+                                        setColourPickRow(null);
+                                      };
+                                      return (
+                                        <div className="mt-1.5 rounded-lg border border-purple-200 bg-white p-2 shadow-sm">
+                                          <div className="text-[10px] font-semibold text-purple-700 mb-1.5">Colour to buy for {r.name}{r.colorVariant?.label ? <span className="font-normal text-gray-500"> · Deal Check picked {r.colorVariant.label}</span> : null}</div>
+                                          {opts.length === 0
+                                            ? <div className="text-[11px] text-gray-400">No colours set for this flower in Flowers → Mandi Prices.</div>
+                                            : <div className="flex flex-wrap gap-1.5">
+                                                {opts.map((v) => {
+                                                  const on = (v.variantId && v.variantId === curId) || (!curId && (v.name || "").trim().toLowerCase() === String(shownColourOf(r)?.label || "").trim().toLowerCase());
+                                                  return (
+                                                    <button type="button" key={v.variantId || v.name} onClick={() => pick(v)} aria-pressed={on}
+                                                      className={"inline-flex items-center gap-1.5 rounded-full border pl-0.5 pr-2 py-0.5 text-[11px] transition-colors " + (on ? "border-purple-500 bg-purple-50 text-purple-800 font-semibold" : "border-gray-200 text-gray-700 hover:border-purple-300")}>
+                                                      {v.photoUrl ? <img src={thumbUrl(v.photoUrl, 20)} alt="" className="w-5 h-5 rounded-full object-cover" /> : <span className="w-5 h-5 rounded-full bg-gray-100" />}
+                                                      {v.name || v.label}{Number(v.currentPrice) > 0 ? <span className="text-gray-400">₹{Number(v.currentPrice).toLocaleString("en-IN")}</span> : null}
+                                                    </button>
+                                                  );
+                                                })}
+                                              </div>}
+                                          {r.colorOverride && (
+                                            <button type="button" onClick={() => { setMandi(i, "colorOverride", null); setColourPickRow(null); }} className="mt-1.5 text-[11px] text-purple-600 hover:underline">
+                                              ↺ Back to Deal Check's colour{r.colorVariant?.label ? ` (${r.colorVariant.label})` : ""}
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
                                     {Array.isArray(r.colorPrefs) && r.colorPrefs.length > 1 && (
                                       <div className="text-[10px] text-gray-400">if not at the mandi: {r.colorPrefs.slice(1).map(p => p.label).join(", ")}</div>
                                     )}

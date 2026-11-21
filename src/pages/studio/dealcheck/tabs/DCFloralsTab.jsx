@@ -45,6 +45,8 @@ export default function DCFloralsTab({ ctx }) {
     // swap modal state
     dcSwapModal, setDcSwapModal, dcSwapSearch, setDcSwapSearch,
     dcSwapPicked, setDcSwapPicked, dcSwapMode, setDcSwapMode, dcSwapSplitQty, setDcSwapSplitQty,
+    // IMS's own saved Floral data (the mandi list), read when Deal Check opens — for the dept head's colour changes
+    dcEoActuals,
   } = ctx;
 
   return (
@@ -397,6 +399,12 @@ export default function DCFloralsTab({ ctx }) {
                                 // colour reuse/pricing is actually assuming, even when they never
                                 // opened the 🎨 picker for this flower themselves.
                                 const rowPrefs = effectiveColorPrefRows(dcFloralColorPrefs[fnIdx], f.flowerId, activeFn, resolveMandiFlower(f.flowerId, mandiCatalogue)?.parent);
+                                // The Floral dept head changed this flower's colour on IMS's mandi list (colorOverride on
+                                // that function's logged rows, deptOps.Floral.mandiLinesByFn) — said here, the salesperson's
+                                // own pick left as it is (owner ask 2026-11-20: "pehle ye color tha aur fir dept head ne ye kar diya").
+                                const floralOps = dcEoActuals?.deptOps?.Floral || {};
+                                const imsLines = [...(Array.isArray(floralOps.mandiLinesByFn?.[fnIdx]) ? floralOps.mandiLinesByFn[fnIdx] : []), ...(Array.isArray(floralOps.mandiLines) ? floralOps.mandiLines : [])];
+                                const imsColour = imsLines.find(l => l && l.colorOverride && !l.dismissedFromPlan && String(l.name || "").trim().toLowerCase() === String(f.name || "").trim().toLowerCase())?.colorOverride || null;
                                 return (
                                 <Fragment key={f._aggKey||f.flowerId||f.name}>
                                 <tr className="dcf-row" style={{borderBottom:open?"none":`1px solid ${border}33`}}>
@@ -420,6 +428,12 @@ export default function DCFloralsTab({ ctx }) {
                                             {pi===0?`🎨 ${p.label} ₹${Math.round(p.rate)}`:pi===1?`2nd ${p.label}`:`3rd ${p.label}`}
                                           </span>
                                         ))}
+                                      </div>
+                                    )}
+                                    {imsColour && (
+                                      <div title={imsColour.at ? `Changed on IMS's mandi list, ${new Date(imsColour.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}` : "Changed on IMS's mandi list"}
+                                        style={{marginTop:4,fontSize:11,padding:"2px 8px",borderRadius:6,display:"inline-block",background:"rgba(245,158,11,0.12)",color:"#92400E",fontWeight:500}}>
+                                        🔁 Was <span style={{textDecoration:"line-through"}}>{imsColour.fromLabel || "your colour"}</span> → <b>{imsColour.label}</b>{imsColour.by ? ` · changed by ${imsColour.by} (Floral)` : " · changed by the Floral dept"}
                                       </div>
                                     )}
                                   </td>
