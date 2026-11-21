@@ -1765,9 +1765,18 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         // A zone with several trusses: each truss prints its own truss / drape / fabric chips, so the zone's line keeps only what
         // belongs to the whole zone (carpet, platform, floor, an FOC note) — it repeated every truss's fabric as a total
         // (owner: "repeat hora hai", 2026-11-21).
+        // A one-truss zone: its size (the zone page's "W 11.5 × H 12 ft", physical footprint) joins its Truss chip here too, beside
+        // the drawing (owner ask 2026-11-21) — a multi-truss zone's sizes are on each truss's own line.
+        const isTrussChip = (c) => c.k === t("Truss") && !String(c.v || "").includes(t("FOC — already at the venue"));
+        const withSize = (list) => {
+          if (!pg.zoneDims) return list;
+          const at = list.findIndex(isTrussChip);
+          if (at < 0) return [{ k: pg.dimsOf || t("Truss"), v: pg.zoneDims }, ...list];
+          return list.map((c, j) => (j === at ? { ...c, v: `${c.v} · ${pg.zoneDims}` } : c));
+        };
         const zoneStruct = multiTruss
-          ? (pg.struct || []).filter((c) => !(c.k === t("Truss") && !String(c.v || "").includes(t("FOC — already at the venue"))))
-          : (pg.struct || []);
+          ? (pg.struct || []).filter((c) => !isTrussChip(c))
+          : withSize(pg.struct || []);
         const strips = [zoneStruct, multiTruss ? [] : (pg.fabric || [])].filter((s) => s.length);
         // which function the zone is in, in brackets after its name (owner ask 2026-11-21) — two functions often share a zone name
         blocks.push({ no: zi + 1, title: pg.title, fnName: hn(pg.fnType || ""), strips, plans, photo: pg.photo || "" });

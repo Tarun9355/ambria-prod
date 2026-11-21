@@ -59,5 +59,8 @@ describe("Truss layouts page: each truss of a multi-truss zone carries its own c
     const single = { ...main };
     const html = buildDeptBookHtml({ ...ctxOf([[single, 0, 28]]), sel: { id: "e1", clientName: "T", date: "2026-12-05", deptInventory: {}, functionsDetail: [{ ...fn, zones: { entry: single } }] } });
     expect(html).not.toContain('class="tp-b tp-bt');
+    // its size sits in its Truss chip beside the drawing
+    const page = html.slice(html.indexOf('class="lay-h"'));
+    expect(page).toMatch(/Truss<\/i>[^<]*·[^<]*ft/);
   });
 });
