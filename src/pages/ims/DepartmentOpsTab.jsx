@@ -1199,6 +1199,30 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return out.length ? out : [{ date: eventDate(eo), venue: venueOf(eo) }];
   };
   const dateVenueLineOf = (eo) => allDateVenuesOf(eo).map(({ date, venue }) => [date, venue].filter(Boolean).join(" · ")).join(" + ");
+  // The header's own, readable version: dates grouped per venue and written as people say them - "23–24 Nov 2026 · Grand", not
+  // "2026-11-23 · Grand + 2026-11-24 · Grand" (owner ask 2026-11-21: "isko aur ache se kese represent kr sakte hai"). Two venues →
+  // "23 Nov · Grand + 24 Nov · Aura". The PDFs keep dateVenueLineOf.
+  const prettyDateVenueOf = (eo) => {
+    const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const byVenue = new Map();
+    allDateVenuesOf(eo).forEach(({ date, venue }) => { const a = byVenue.get(venue || "") || []; if (/^\d{4}-\d{2}-\d{2}$/.test(date || "")) a.push(date); byVenue.set(venue || "", a); });
+    const years = new Set([...byVenue.values()].flat().map(d => d.slice(0, 4)));
+    const fmtDates = (ds) => {
+      const u = [...new Set(ds)].sort(); if (!u.length) return "";
+      const runs = []; // consecutive days in one run
+      u.forEach(d => { const last = runs[runs.length - 1]; const prev = last && last[last.length - 1]; if (prev && (Date.parse(d) - Date.parse(prev)) === 86400000) last.push(d); else runs.push([d]); });
+      return runs.map(r => {
+        const a = r[0], b = r[r.length - 1], da = +a.slice(8), db = +b.slice(8), ma = MON[+a.slice(5, 7) - 1], mb = MON[+b.slice(5, 7) - 1];
+        return r.length === 1 ? `${da} ${ma}` : ma === mb ? `${da}–${db} ${ma}` : `${da} ${ma} – ${db} ${mb}`;
+      }).join(", ");
+    };
+    const parts = [...byVenue.entries()].map(([v, ds]) => [fmtDates(ds), v].filter(Boolean).join(" · ")).filter(Boolean);
+    const yr = years.size === 1 ? [...years][0] : "";
+    if (!parts.length) return "";
+    // the year once, after the dates of a one-venue event ("23–24 Nov 2026 · Grand"); at the end otherwise
+    if (yr && parts.length === 1 && byVenue.size === 1) { const [v] = [...byVenue.keys()]; return [fmtDates([...byVenue.values()][0]) + " " + yr, v].filter(Boolean).join(" · "); }
+    return parts.join(" + ") + (yr ? ` (${yr})` : "");
+  };
   const today = new Date().toISOString().slice(0, 10);
   // A "live" event for ops = confirmed/finalised. Excludes pending (not yet auto-confirmed), cancelled,
   // and review — so cancelled/dead deals never clutter the list or the transfer pickers.
@@ -4674,7 +4698,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       reading it for. Capped at two lines so a long venue cannot push the card
                       taller than the tiles it sits above; from sm there is room for one line and
                       it truncates as before. */}
-                  <div className="text-[12px] sm:text-sm text-gray-500 leading-snug line-clamp-2 sm:truncate">{dateVenueLineOf(sel) || "no date"}{sel.salesperson ? ` · booked by ${sel.salesperson}` : ""}{deptData.updatedBy ? ` · last edited by ${deptData.updatedBy}` : ""}</div>
+                  {/* When and where first, in words ("23–24 Nov 2026 · Grand"); who booked / last edited it on a quieter line under it -
+                      one run-on line of ISO dates, a repeated venue and two names read as a wall (owner ask 2026-11-21) */}
+                  <div className="mt-0.5 text-[13px] sm:text-sm font-medium text-gray-700 leading-snug truncate" title={dateVenueLineOf(sel) || ""}>{prettyDateVenueOf(sel) || "no date"}</div>
+                  {(sel.salesperson || deptData.updatedBy) && (
+                    <div className="text-[11.5px] sm:text-xs text-gray-400 leading-snug truncate">{[sel.salesperson ? `Booked by ${sel.salesperson}` : "", deptData.updatedBy ? `edited by ${deptData.updatedBy}` : ""].filter(Boolean).join(" · ")}</div>
+                  )}
                   {/* Site Supervisor — one per event (not per department, since the same person
                       oversees the whole booking onsite), assignable by anyone with this tab open
                       (same access as everything else here, no extra gate). Denormalized onto the
