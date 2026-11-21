@@ -57,6 +57,7 @@ import { itemTakesChoices } from "../../lib/studio/elementPrefs";
 import { findCrossFnReuseSource, computeFnInvQty, findSiblingFnInvUse, findSiblingFnSubcatOpportunity } from "../../lib/studio/crossFnReuse";
 import { computeFnFloralCost, buildMandiBreakdown, mergeSwapRows, effectiveColorPrefRows, floralPlanByFn } from "../../lib/studio/floralCost";
 import { mappedPiecesByItem } from "../../lib/ims/liveFloralPlan";
+import { patchFromArgs, mergeTransport, readTransport } from "../../lib/studio/transportBlob";
 import { computePeople, shiftToTiming, sizeFromMode, situationalFactorsFor, walkFnElements, tentingZoneUsage, fabricBangaliZone } from "../../lib/studio/manpowerCount";
 import { rowToClient } from "../../lib/studio/clientRow";
 import { DELETED_CATALOGUE_TABLE, EMPTY_DELETED_CATALOGUE, assembleDeletedCatalogue, withDeletedRates, withDeletedInventory, deletedKitParts } from "../../lib/studio/deletedCatalogue";
@@ -8162,14 +8163,27 @@ export default function StudioApp() {
   }, [authUser, notifications]);
 
   // ── Transport save (used by autoPersistCustomVenue) — VERBATIM (kv shim) ──
-  const saveTR = useCallback(async (nv, ntc, nfpt, nbt, ngr, ngr62, ngcr, ngcr62) => {
-    // Writes the legacy blob, so it persists the LOCAL list — never IMS's, which lives in its own key.
-    const sv = nv || trVenues; const st = ntc || truckCap; const sf = nfpt !== undefined ? nfpt : floralPerTruck; const sb = nbt || bufferTiers; const sgr = ngr !== undefined ? ngr : gensetRate; const sgr62 = ngr62 !== undefined ? ngr62 : gensetRate62;
-    const sgcr = ngcr !== undefined ? ngcr : gensetCostRate; const sgcr62 = ngcr62 !== undefined ? ngcr62 : gensetCostRate62;
+  // Writes only the fields being changed, onto the row as saved right now (lib/studio/transportBlob,
+  // audit 2026-11-21) — it used to write this tab's whole copy back, undoing anything IMS (or another
+  // tab) had saved in the meantime. Refuses to write at all while the real settings were never read:
+  // the local copy is then still the TR_DV/TR_DTC seed, and writing it over the saved row is the
+  // truck-capacity wipe the genset-migration guard below already exists for — this closes the same hole
+  // for every other caller (a custom venue saved from Event Info). Saves run one after another.
+  const trSaveQueueRef = useRef(Promise.resolve());
+  const saveTR = useCallback((nv, ntc, nfpt, nbt, ngr, ngr62, ngcr, ngcr62) => {
     if (nv) setTrVenues(nv); if (ntc) setTruckCap(ntc); if (nfpt !== undefined) setFloralPerTruck(nfpt); if (nbt) setBufferTiers(nbt); if (ngr !== undefined) setGensetRate(ngr); if (ngr62 !== undefined) setGensetRate62(ngr62); if (ngcr !== undefined) setGensetCostRate(ngcr); if (ngcr62 !== undefined) setGensetCostRate62(ngcr62);
-    const local = { venues: sv, truckCap: st, floralPerTruck: sf, bufferTiers: sb, gensetRate: sgr, gensetRate62: sgr62, gensetCostRate: sgcr, gensetCostRate62: sgcr62 };
-    await reliableSave(RC_SK_TR, JSON.stringify(local), "Transport");
-  }, [trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62]);
+    const patch = patchFromArgs(nv, ntc, nfpt, nbt, ngr, ngr62, ngcr, ngcr62);
+    const local = { venues: trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62 };
+    const run = async () => {
+      let fresh;
+      try { fresh = await readTransport(); }
+      catch (e) { console.warn("[saveTR] could not read the saved transport settings — not saving, so nothing is overwritten:", e?.message || e); showMsg && showMsg("Transport not saved — couldn't read the current settings. Try again.", "red"); return; }
+      if (!fresh && !trSettingsLoadedRef.current) { console.warn("[saveTR] transport settings never loaded — refusing to write the seed defaults"); return; }
+      await reliableSave(RC_SK_TR, JSON.stringify(mergeTransport(fresh || local, patch)), "Transport");
+    };
+    trSaveQueueRef.current = trSaveQueueRef.current.then(run, run);
+    return trSaveQueueRef.current;
+  }, [trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, showMsg]);
 
   // ── One-time backfill: fractional "gensets" → explicit genset125/genset62 ──
   // Pre-migration venues only ever had one fractional number (0.5 meaning "half a 125 KVA

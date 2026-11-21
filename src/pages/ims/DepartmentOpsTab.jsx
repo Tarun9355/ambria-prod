@@ -53,6 +53,7 @@ import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
 import { kvGet } from "../../lib/ims/kv";
 import { withLivePlan, isDismissMarker, dismissMarker } from "../../lib/ims/mandiLivePlan";
 import { buildLiveFloralPlan, fnFromDetail } from "../../lib/ims/liveFloralPlan";
+import { supabase, subscribeTable } from "../../lib/supabase";
 import { reqByDateFrom } from "../../lib/studio/soldBlocksPlan";
 import MappingDetailModal, { itemPhotoOf } from "../../components/shared/MappingDetailModal.jsx";
 
@@ -2236,15 +2237,20 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // An item with neither is shown as "no capacity set" and left out of the %, rather than counted as
   // taking no room — a truck must never look emptier than it is.
   const [truckCap, setTruckCap] = useState([]);
+  // LIVE (audit 2026-11-21): read once on open, so a capacity changed in Planning → 🚚 Truck (or a venue
+  // in Transport & Power) never reached an open Dept Ops — trucks kept the old fill % until a reload.
+  // Any change to the transport row now re-reads it.
   useEffect(() => {
     let on = true;
-    kvGet(RC_SK_TR).then(v => {
+    const load = () => kvGet(RC_SK_TR).then(v => {
       let o = v;
       for (let i = 0; i < 2 && typeof o === "string"; i++) { try { o = JSON.parse(o); } catch { break; } }
       if (on && Array.isArray(o?.truckCap)) setTruckCap(o.truckCap);
       if (on && Array.isArray(o?.venues)) setTrVenues(o.venues);
     }).catch(() => {});
-    return () => { on = false; };
+    load();
+    const ch = subscribeTable("settings", (payload) => { if ((payload?.new?.key || payload?.old?.key) === RC_SK_TR) load(); });
+    return () => { on = false; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
   const capBySub = useMemo(() => {
     const m = new Map();

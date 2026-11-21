@@ -49,6 +49,7 @@ import { rowToRcItem, rcItemToRow } from "../../lib/rateCard";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry";
 import { reportSaveProblem, clearSaveProblem } from "../../lib/saveHealth";
 import { writeWithRetry } from "../../lib/writeRetry";
+import { readTransport, writeTransport, renameTruckCapItem } from "../../lib/studio/transportBlob";
 
 const LMS_STALE_MS = 30 * 60 * 1000; // re-sync in background only if cache older than 30 min
 // BLOCKS_SK / RC_SK removed 30 Jul 2026: both were unused here (declaration + comments only) and
@@ -1339,6 +1340,12 @@ export default function IMS() {
       return;
     }
     if (newId === oldId) return; // pure re-casing — every case-insensitive join key still matches
+
+    // Its truck capacity (Planning → 🚚 Truck) follows the new name — capacities are keyed by the
+    // sub-category's name, so a rename used to leave the renamed sub-category at "not set" and drop it
+    // from every truck count (audit 2026-11-21). Fresh read, only truckCap changed (lib/studio/transportBlob).
+    readTransport().then((blob) => { const next = renameTruckCapItem(blob, oldId, trimmed); return next ? writeTransport(next) : null; })
+      .catch((e) => setError(`Renamed, but its truck capacity didn't move to the new name — set it again in Planning → Truck (${e?.message || e})`));
 
     setInventory((prev) => prev.map((it) => {
       const cur = String(it.subCat ?? it.subcategory ?? "").trim().toLowerCase();

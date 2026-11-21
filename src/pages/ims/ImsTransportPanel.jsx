@@ -13,8 +13,9 @@
 // IMS.jsx), so this fetches that one row itself instead of widening that filter. It's stored as a
 // JSON *string*, not an object — Studio's loader does JSON.parse on it, so writing an object here
 // would leave Studio unable to read its own transport config. Saves re-stringify.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase, fetchAll, subscribeTable } from "../../lib/supabase";
+import { patchFromArgs, mergeTransport, readTransport, writeTransport, parseTransport } from "../../lib/studio/transportBlob";
 import { makeS } from "../../lib/studio/styles";
 import { RC_SK_TR, TR_TIERS, TC_UNITS } from "../../lib/studio/keys";
 import { assembleVenuesFromRows } from "../../lib/ims/venueProperties";
@@ -55,26 +56,45 @@ export default function ImsTransportPanel({ rcItems = [], rcCats = [], rateCardC
     return () => { cancelled = true; try { supabase.removeChannel(ch); } catch { /* ignore */ } };
   }, []);
 
+  // LIVE (audit 2026-11-21): this screen read the row once when it opened, so a capacity or venue
+  // changed in Studio or in the other IMS screen never showed here until a reload. Any change to the
+  // row now re-reads it.
+  const trRef = useRef(null);
+  useEffect(() => { trRef.current = tr; }, [tr]);
+  useEffect(() => {
+    const ch = subscribeTable("settings", (payload) => {
+      const key = payload?.new?.key || payload?.old?.key;
+      if (key !== RC_SK_TR) return;
+      const fromPayload = parseTransport(payload?.new?.value);
+      if (fromPayload) setTr(fromPayload);
+      else readTransport().then((t) => { if (t) setTr(t); }).catch(() => {});
+    });
+    return () => { try { supabase.removeChannel(ch); } catch { /* ignore */ } };
+  }, []);
+
   // Same positional signature as Studio's saveTR, because TransportEditor calls it that way:
   // (venues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62).
-  const saveTR = useCallback(async (nv, ntc, nfpt, nbt, ngr, ngr62, ngcr, ngcr62) => {
-    if (!canEdit) return;
-    setTr((prev) => {
-      const next = {
-        venues: nv || prev.venues,
-        truckCap: ntc || prev.truckCap,
-        floralPerTruck: nfpt !== undefined ? nfpt : prev.floralPerTruck,
-        bufferTiers: nbt || prev.bufferTiers,
-        gensetRate: ngr !== undefined ? ngr : prev.gensetRate,
-        gensetRate62: ngr62 !== undefined ? ngr62 : prev.gensetRate62,
-        gensetCostRate: ngcr !== undefined ? ngcr : prev.gensetCostRate,
-        gensetCostRate62: ngcr62 !== undefined ? ngcr62 : prev.gensetCostRate62,
-      };
-      // Stringify — Studio JSON.parses this row. Writing an object would break its loader.
-      supabase.from("settings").upsert({ key: RC_SK_TR, value: JSON.stringify(next) }, { onConflict: "key" })
-        .then(({ error }) => { if (error) { setErr(error.message); showMsg?.("Save failed: " + error.message, "red"); } });
-      return next;
-    });
+  // Writes only the fields being changed, onto the row as saved right now (lib/studio/transportBlob) —
+  // it used to write this screen's whole copy, read when it opened, back over anything changed
+  // elsewhere since. Saves run one after another (each keystroke is a save), so they land in order.
+  const saveQueue = useRef(Promise.resolve());
+  const saveTR = useCallback((nv, ntc, nfpt, nbt, ngr, ngr62, ngcr, ngcr62) => {
+    if (!canEdit) return Promise.resolve();
+    const patch = patchFromArgs(nv, ntc, nfpt, nbt, ngr, ngr62, ngcr, ngcr62);
+    setTr((prev) => mergeTransport(prev, patch)); // the input shows the new value at once
+    const run = async () => {
+      try {
+        const fresh = await readTransport(); // throws on a failed read — never write over what couldn't be read
+        const next = mergeTransport(fresh || trRef.current, patch);
+        await writeTransport(next); // stringified inside — Studio JSON.parses this row
+        setErr("");
+      } catch (e) {
+        const m = e?.message || String(e);
+        setErr(m); showMsg?.("Save failed: " + m, "red");
+      }
+    };
+    saveQueue.current = saveQueue.current.then(run, run);
+    return saveQueue.current;
   }, [showMsg, canEdit]);
 
   // Studio derives these two from the venues blob; mirror it exactly so the venue table matches
