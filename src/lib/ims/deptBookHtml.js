@@ -69,6 +69,9 @@ export const dotTileUrl = () => {
 // Paint is the same rule Studio's normalizePaintAllocation uses: a colour equal to the item's own
 // base colour (Ivory when unset) is no repaint. It is keyed by inventory id and by name, matched
 // to a held row the same way invFnQty matches quantities.
+// A small paint-palette icon beside "Paint" on an item that goes out painted (owner ask 2026-11-21) — inline SVG, not an
+// emoji, so it prints the same in every browser and in the PDF.
+export const PAINT_ICON = `<svg class="pi" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="#C2410C" d="M12 3a9 9 0 0 0 0 18c1 0 1.8-.8 1.8-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-1 .8-1.8 1.8-1.8H16a5 5 0 0 0 5-5c0-3.9-4-7-9-7zm-5.5 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm3-4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm3 4a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/></svg>`;
 export const paintText = (m) => (m ? [...m].map(([c, q]) => `${c} ×${q}`).join(", ") : "");
 export const elPaint = (el, inv) => {
   const base = String(inv?.baseColour || "Ivory");
@@ -250,7 +253,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       const paint = finish.paintFor(it);
       const sub = (it.kitOf ? `<div class="sub">${t("part of {kit}", { kit: esc(hn(it.kitOf)) })}</div>` : "")
         + (it.invId && decidedInstead.has(String(it.invId)) ? `<div class="sub">${t("Planning chose instead: {list}", { list: esc(decidedInstead.get(String(it.invId)).join(", ")) })}</div>` : "")
-        + (paint ? `<div class="sub">${t("Paint: {paint}", { paint: esc(paintHn(paint)) })}</div>` : "")
+        + (paint ? `<div class="sub">${PAINT_ICON}${t("Paint: {paint}", { paint: esc(paintHn(paint)) })}</div>` : "")
         + (it.sub === "print" ? finish.prints.map(p => `<div class="sub">${esc(printLineT(p))}</div>`).join("") : "");
       return `<tr><td>${esc(hn(it.name))}${sub}</td><td class="n b">${esc(it.qtyUnit === "kg" ? kgR(it.qty) : it.qty)}</td></tr>`;
     });
@@ -1309,7 +1312,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         <div class="zc-r"><span>${t("Qty")}</span><b>${esc(it.qty)}${it.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(hu(it.unit))}</span>` : ""}</b></div>
         <div class="zc-r"><span>${t("Size")}</span><b>${esc(hd(it.dims) || "—")}</b></div>
         ${it.source ? `<div class="zc-r"><span>${t("From")}</span><b>${esc(it.source)}</b></div>` : it.deptTag ? `<div class="zc-r"><span>${t("Dept")}</span><b>${esc(t(it.deptTag))}</b></div>` : ""}
-        ${it.paint?.size ? `<div class="zc-r"><span>${t("Paint")}</span><b>${esc(paintHn(paintText(it.paint)))}</b></div>` : ""}
+        ${it.paint?.size ? `<div class="zc-r zc-paint"><span>${PAINT_ICON}${t("Paint")}</span><b>${esc(paintHn(paintText(it.paint)))}</b></div>` : ""}
         ${(it.extra || []).map(([k, v]) => `<div class="zc-r"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
         ${flowerRows(it)}
       </div>`;
@@ -2298,6 +2301,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
   .zc-r{display:flex;justify-content:space-between;align-items:baseline;gap:8px;line-height:1.8;border-top:1px solid #EDE8DC}
   .zc-r span{color:#6B6B6B;text-transform:uppercase;letter-spacing:.1em;font-size:9.5px;font-weight:700;flex-shrink:0}
   .zc-r b{color:#1A1A1A;font-size:11px;font-weight:700;text-align:right}
+  /* the paint-palette icon before "Paint" (PAINT_ICON) */
+  .pi{display:inline-block;vertical-align:-2px;margin-right:4px}
+  .zc-paint span{color:#C2410C}
   /* Flower lines: names read as names, not as the uppercase field labels above them. */
   .zc-r.f span{text-transform:none;letter-spacing:0;font-size:10.5px;font-weight:600;flex-shrink:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* The arrow: a gold shaft with a drawn head at the photo end and a dot at the card end. */
