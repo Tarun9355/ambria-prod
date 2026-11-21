@@ -1369,27 +1369,28 @@ export default function DealCheckOverlay({ ctx }) {
           try {
             const sqftByFn = {};
             const venueByFn = {};
-            let totalSqft = 0;
+            // each zone's platform floor, per function - the IMS line's "how?" (which zone, its size, sqft × rate)
+            const partsByFn = {};
             fns.forEach((fn, fnIdx) => {
               if (!fn?.zoneConfig || !fn?.enabledEls) return;
               venueByFn[fnIdx] = fn.fnVenue || "";
               Object.keys(fn.enabledEls).filter(k => fn.enabledEls[k]).forEach(zk => {
                 const zc = fn.zoneConfig[zk]; if (!zc) return;
-                [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty, platformFoc: zc.platformFoc },
-                  ...(zc.extraPlatformRows || [])].forEach(row => {
+                const zoneLbl = zoneLabelsD?.[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk;
+                const rowsP = [{ plH: zc.plH, floorDims: zc.floorDims || {}, plQty: zc.plQty, platformFoc: zc.platformFoc }, ...(zc.extraPlatformRows || [])];
+                rowsP.forEach((row, rIdx) => {
                   if (!row.plH || isPlatformFoc(row)) return; // FOC floor: already laid at the venue
                   const L = Number(row.floorDims?.L) || 0, W = Number(row.floorDims?.W) || 0;
                   if (L <= 0 || W <= 0) return;
                   const qty = Math.max(1, Math.round(Number(row.plQty) || 1));
                   const sqft = L * W * qty;
                   sqftByFn[fnIdx] = (sqftByFn[fnIdx] || 0) + sqft;
-                  totalSqft += sqft;
+                  (partsByFn[fnIdx] ||= []).push({ zone: rowsP.length > 1 ? `${zoneLbl} · floor ${rIdx + 1}` : zoneLbl, fn: fns.length > 1 ? (fn.fnType || "") : "", fnIdx, dims: `${L} × ${W}${qty > 1 ? ` ×${qty}` : ""}`, qty: Math.round(sqft * 100) / 100 });
                 });
               });
             });
             const rate = platformAvgRatePerSqft(dealCheckData?.trussInv);
             const fvCfgForPlatform = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
-            let totalPlatformDiscount = 0;
             Object.entries(sqftByFn).forEach(([fnIdx, sqft]) => {
               // Fixed-venue standing platform sqft nets off this function's own platform cost — same
               // "min(needed, standing) × discount%" rule the Truss tab's own standing pillar/beam
@@ -1398,12 +1399,17 @@ export default function DealCheckOverlay({ ctx }) {
               const venueTrussHere = fixedVenueFor(fvCfgForPlatform, venueByFn[fnIdx] || "")?.truss;
               const discount = platformStandingDiscount(sqft, rate, venueTrussHere);
               const pc = Math.max(0, Math.round(sqft * rate) - discount);
-              totalPlatformDiscount += discount;
               rental += pc; if (byFn[fnIdx]) byFn[fnIdx].rental += pc; addD("Tenting", "rental", pc);
+              // One line per function, carrying its fnIdx (they merge into one "Platform" line with a per-function share, byFn) and its
+              // zones as parts - a platform used to go as one event-wide line, so IMS Dept Ops' one-function view never listed it and the
+              // All-functions date columns put it under "Other" (owner ask 2026-11-21: "a zone with a platform and no truss might not be
+              // reflecting correctly"); same as the truss lines (commit 016e68c8).
+              if (deptInv["Tenting"] && sqft > 0) {
+                const parts = (partsByFn[fnIdx] || []).map(p => ({ ...p, rate: Math.round(rate), total: Math.round(p.qty * rate) }));
+                // (a fixed venue's standing-platform discount shows as the line's "≠ rate × qty" note)
+                deptInv["Tenting"].push({ name: "Platform", photo: "", qty: Math.round(sqft * 100) / 100, unit: Math.round(rate), total: pc, sub: "platform structure (blended Wood+Iron rate)", fnIdx: Number(fnIdx), parts });
+              }
             });
-            if (totalSqft > 0 && deptInv["Tenting"]) {
-              deptInv["Tenting"].push({ name: "Platform", photo: "", qty: Math.round(totalSqft * 100) / 100, unit: Math.round(rate), total: Math.round(totalSqft * rate) - totalPlatformDiscount, sub: "platform structure (blended Wood+Iron rate)" + (totalPlatformDiscount > 0 ? ` · standing discount −₹${Math.round(totalPlatformDiscount).toLocaleString("en-IN")}` : "") });
-            }
           } catch {}
           try {
             const carpetMarkup = dealCheckData?.carpetFreshMarkup ?? 40;
