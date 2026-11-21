@@ -121,9 +121,11 @@ export function buildFinish(fnList, inventory, printMaterials) {
       });
     });
   });
-  const paintFor = (row) => paintText((row?.invId && paintById.get(String(row.invId))) || paintByName.get(String(row?.name || "").trim().toLowerCase()));
+  // the item's paint as colour -> qty (paintMapFor, for the colour squares) and as plain text (paintFor)
+  const paintMapFor = (row) => (row?.invId && paintById.get(String(row.invId))) || paintByName.get(String(row?.name || "").trim().toLowerCase()) || null;
+  const paintFor = (row) => paintText(paintMapFor(row));
   const printLine = (p) => `${p.material} · ${p.size}${p.qty > 1 ? ` ×${p.qty}` : ""}${p.on ? ` on ${p.on}` : ""} — ${p.zone}${p.fn ? ` (${p.fn})` : ""}`;
-  return { paintFor, prints, printLine };
+  return { paintFor, paintMapFor, prints, printLine };
 }
 
 // Builds the production book's HTML — called once per export: one pass with `combined: true` for
@@ -174,6 +176,14 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     const hu = (u) => pdfUnit(lang, u);
     // A paint line ("Gold ×2, Silver ×1") with each colour through hn().
     const paintHn = (txt) => lang !== "hi" ? txt : String(txt || "").split(", ").map(part => part.replace(/^(.*) ×(\S+)$/, (m, c, q) => `${String(c).split(" + ").map(hn).join(" + ")} ×${q}`)).join(", ");
+    // Each paint colour with a small square of that colour before it (owner ask 2026-11-21) — "Gold + White" gets one
+    // square per colour. The colour comes from the colour catalogue (swatchHexFor), the same as the fabric swatches.
+    const paintHtml = (m) => (m && m.size ? [...m].map(([c, q]) => {
+      const parts = String(c).split(" + ").map(s => s.trim()).filter(Boolean);
+      const squares = parts.map(p => `<i class="psq" style="background:${esc(swatchHexFor(p, settings?.colourCatalogue))}"></i>`).join("");
+      // <em>, not <span>: the item card styles every span in a row as its label (uppercase, orange)
+      return `<em class="pcol">${squares}${esc(parts.map(p => (lang === "hi" ? hn(p) : p)).join(" + "))} ×${esc(q)}</em>`;
+    }).join(", ") : "");
     const bookTitle = combined ? t("All departments") : bookDepts.map(d => t(d)).join(" & ");
     // A flower piece's real / artificial split in numbers, the share that is 0 left out (owner ask 2026-11-11): "Real 100%",
     // "Artificial 100%", else both - "Artificial 70% · Real 30%". `real` is the real share, 0-100.
@@ -251,9 +261,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     });
     const loadRows = blockedItems.map(it => {
       const paint = finish.paintFor(it);
+      const paintMap = finish.paintMapFor(it);
       const sub = (it.kitOf ? `<div class="sub">${t("part of {kit}", { kit: esc(hn(it.kitOf)) })}</div>` : "")
         + (it.invId && decidedInstead.has(String(it.invId)) ? `<div class="sub">${t("Planning chose instead: {list}", { list: esc(decidedInstead.get(String(it.invId)).join(", ")) })}</div>` : "")
-        + (paint ? `<div class="sub">${PAINT_ICON}${t("Paint: {paint}", { paint: esc(paintHn(paint)) })}</div>` : "")
+        + (paint ? `<div class="sub">${PAINT_ICON}${t("Paint: {paint}", { paint: paintMap ? paintHtml(paintMap) : esc(paintHn(paint)) })}</div>` : "")
         + (it.sub === "print" ? finish.prints.map(p => `<div class="sub">${esc(printLineT(p))}</div>`).join("") : "");
       return `<tr><td>${esc(hn(it.name))}${sub}</td><td class="n b">${esc(it.qtyUnit === "kg" ? kgR(it.qty) : it.qty)}</td></tr>`;
     });
@@ -1302,7 +1313,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // An extra row's value (Status "♻ Repeat · 📌 Fixed · 200 standing", a choice) can wrap in the ~140px right of its label -
     // each line it wraps to is counted too, or its second line ran out past the card (owner report 2026-11-11).
     const valueLines = (v) => Math.max(1, Math.ceil([...String(v ?? "")].length / 24)); // ~24 characters of 11px bold a line; an emoji is one
-    const flLines = (it) => (it.paint?.size ? 1 : 0) + (it.extra || []).reduce((n, [, v]) => n + valueLines(v), 0) + Math.max(0, nameLines(it.name) - 2);
+    // the paint row can wrap (two colours, each with its square) — counted like any other value
+    const flLines = (it) => (it.paint?.size ? valueLines(paintText(it.paint) + " ".repeat(it.paint.size * 2)) : 0) + (it.extra || []).reduce((n, [, v]) => n + valueLines(v), 0) + Math.max(0, nameLines(it.name) - 2);
     const card = (it, zone, num) => `
       ${it.photo ? `<div class="zc-ph" style="${bgCss(it.photo, 180)}${flLines(it) ? `height:${168 - flLines(it) * 20}px` : ""}" ${bgData(it.photo, 180)}></div>` : ""}
       ${num ? `<div class="zc-no">${num}</div>` : ""}
@@ -1313,7 +1325,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         <div class="zc-r"><span>${t("Qty")}</span><b>${esc(it.qty)}${it.unit ? ` <span style="font-weight:500;font-size:.85em;opacity:.7">${esc(hu(it.unit))}</span>` : ""}</b></div>
         <div class="zc-r"><span>${t("Size")}</span><b>${esc(hd(it.dims) || "—")}</b></div>
         ${it.source ? `<div class="zc-r"><span>${t("From")}</span><b>${esc(it.source)}</b></div>` : it.deptTag ? `<div class="zc-r"><span>${t("Dept")}</span><b>${esc(t(it.deptTag))}</b></div>` : ""}
-        ${it.paint?.size ? `<div class="zc-r zc-paint"><span>${PAINT_ICON}${t("Paint")}</span><b>${esc(paintHn(paintText(it.paint)))}</b></div>` : ""}
+        ${it.paint?.size ? `<div class="zc-r zc-paint"><span>${PAINT_ICON}${t("Paint")}</span><b>${paintHtml(it.paint)}</b></div>` : ""}
         ${(it.extra || []).map(([k, v]) => `<div class="zc-r"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
         ${flowerRows(it)}
       </div>`;
@@ -2307,6 +2319,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
   /* the paint-palette icon before "Paint" (PAINT_ICON) */
   .pi{display:inline-block;vertical-align:-2px;margin-right:4px}
   .zc-paint span{color:#C2410C}
+  /* a small square of the paint colour before its name (paintHtml) */
+  .psq{display:inline-block;width:9px;height:9px;border-radius:2px;border:1px solid rgba(0,0,0,.25);margin-right:4px;vertical-align:-1px}
+  .pcol{white-space:nowrap;font-style:normal}
   /* Flower lines: names read as names, not as the uppercase field labels above them. */
   .zc-r.f span{text-transform:none;letter-spacing:0;font-size:10.5px;font-weight:600;flex-shrink:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* The arrow: a gold shaft with a drawn head at the photo end and a dot at the card end. */

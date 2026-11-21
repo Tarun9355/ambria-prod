@@ -5393,7 +5393,18 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                     ? `${it.rentalQty - it.qty} already at the venue from the day before — ${it.qty} to load${dl ? " on " + dl : ""}`
                                     : "Nothing new to load: these pieces are already at the venue (standing from the day before, or shared with the largest function that day)"}</div>;
                                 })()}
-                                {invFinish.paintFor(it) && <div className="text-pink-700 mt-0.5">🎨 Paint: {invFinish.paintFor(it)}</div>}
+                                {/* each paint colour with a small square of it, as the Setup Book prints it */}
+                                {invFinish.paintFor(it) && (
+                                  <div className="text-pink-700 mt-0.5 flex flex-wrap items-center gap-x-2">
+                                    <span>🎨 Paint:</span>
+                                    {[...(invFinish.paintMapFor?.(it) || [])].map(([c, q]) => (
+                                      <span key={c} className="inline-flex items-center gap-1 whitespace-nowrap">
+                                        {String(c).split(" + ").map((p) => <i key={p} aria-hidden="true" className="inline-block w-2.5 h-2.5 rounded-sm border border-black/25" style={{ background: swatchHexFor(p.trim(), settings?.colourCatalogue) }} />)}
+                                        {c} ×{q}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
