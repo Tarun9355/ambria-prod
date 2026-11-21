@@ -1797,10 +1797,13 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // even though picking a chip already correctly scopes every row below to that one function's own
   // data (invFn/mpFn index into sel.functionsDetail — never clubbed across functions).
   const fnChipRow = (value, setValue) => mpFns.length > 1 && (
-    <div className="m-2.5 mb-0 flex flex-wrap gap-1.5">
-      {[["all", "All functions"], ...mpFns.map((f, fi) => [fi, [f?.type || `Function ${fi + 1}`, venueWithParent(settings, f?.venue || sel?.venue || ""), mpFnDate(f)].filter(Boolean).join(" · ")])].map(([k, label]) => (
+    // Phone: one row that scrolls sideways, with the date as "23 Nov" - four chips wrapped onto three rows before (owner screenshot 2026-11-21)
+    <div className="m-2.5 mb-0 flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
+      {[["all", "All functions", ""], ...mpFns.map((f, fi) => { const iso = mpFnDate(f); const dt = /^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? new Date(iso + "T00:00:00Z") : null; return [fi, [f?.type || `Function ${fi + 1}`, venueWithParent(settings, f?.venue || sel?.venue || ""), iso].filter(Boolean).join(" · "), [f?.type || `Function ${fi + 1}`, venueWithParent(settings, f?.venue || sel?.venue || ""), dt ? dt.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }) : iso].filter(Boolean).join(" · ")]; })].map(([k, label, short]) => (
         <button key={k} onClick={() => setValue(k)} aria-pressed={value === k}
-          className={"rounded-lg px-2.5 py-1 text-[12px] font-semibold whitespace-nowrap cursor-pointer transition-colors " + (value === k ? "bg-blue-600 text-white" : "bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-blue-50 hover:text-blue-700")}>{label}</button>
+          className={"shrink-0 rounded-lg px-2.5 py-1.5 sm:py-1 text-[12px] font-semibold whitespace-nowrap cursor-pointer transition-colors " + (value === k ? "bg-blue-600 text-white" : "bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-blue-50 hover:text-blue-700")}>
+          {short ? <><span className="sm:hidden">{short}</span><span className="hidden sm:inline">{label}</span></> : label}
+        </button>
       ))}
     </div>
   );
@@ -3560,9 +3563,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     const phaseCls = (d) => d.phase === "dismantle" ? "bg-violet-50 text-violet-700" : d.phase === "minusOne" ? "bg-amber-50 text-amber-700" : d.phase === "gap" ? "bg-gray-100 text-gray-500" : "bg-blue-50 text-blue-800";
     return (
       <div className="mt-2 bg-white rounded-xl ring-1 ring-gray-200 text-[13.5px] text-gray-600 overflow-hidden">
-        <div className="flex items-center gap-2 px-3 py-2 bg-gray-50/80 border-b border-gray-100">
+        {/* wraps on a phone (title + rule on one line, dihari and the total under them); the caption is desktop-only */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-3 py-2 bg-gray-50/80 border-b border-gray-100">
           <span className="text-[14px] font-semibold text-gray-900">📅 Day-wise plan</span>
-          <span className="text-[12.5px] text-gray-400 truncate">crew × dihari shifts{editable ? " · editable" : ""}</span>
+          <span className="hidden sm:inline text-[12.5px] text-gray-400 truncate">crew × dihari shifts{editable ? " · editable" : ""}</span>
           <span className="shrink-0 cursor-help text-[12.5px] text-blue-500" title={"Cumulative-max rule: crew only scales UP across the booking — each day holds the max of its own need and any busier earlier day (it never drops mid-event). Open a day's \"how\" to see its own requirement; edit any day if you disagree."}>ⓘ rule</span>
           <span className="ml-auto shrink-0 flex items-center gap-1.5">
             <span className="rounded-md bg-white ring-1 ring-gray-200 px-2 py-0.5 font-semibold text-gray-800">{Math.round(totalDihari)} dihari</span>
@@ -5136,7 +5140,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 <div className="flex items-center gap-2 min-w-0">
                   <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-sm leading-none">📦</span>
                   <div className="min-w-0">
-                    <div className="text-[13px] font-semibold text-gray-900 truncate">Inventory blocked for {dept}</div>
+                    <div className="text-[13px] font-semibold text-gray-900 leading-snug sm:truncate">Inventory blocked for {dept}</div>
                     <div className="text-[10px] text-gray-500 truncate">{invShown.length} item{invShown.length === 1 ? "" : "s"} held for {invScoped ? "this function" : "this event"}</div>
                   </div>
                 </div>
@@ -5662,15 +5666,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   caption — but that is the shape that was just trimmed off Inventory for being
                   too tall, and two panels opened from the same row of tiles should not disagree
                   about what their own header looks like. */}
-              <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-blue-50 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
+              {/* Phone: the title, Whole event and the total squeezed "Manpower plan" to a few letters - the row wraps instead, the caption reads in full */}
+              <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-blue-50 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0 flex-1 basis-48">
                   <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-sm leading-none">👷</span>
                   <div className="min-w-0">
                     <div className="text-[13px] font-semibold text-gray-900 truncate">Manpower plan</div>
-                    <div className="text-[10px] text-gray-500 truncate">From Studio; edit any field, it saves. Sum matches the income card.</div>
+                    <div className="text-[10px] text-gray-500 leading-snug sm:truncate">From Studio; edit any field, it saves. Sum matches the income card.</div>
                   </div>
                 </div>
-                <div className="shrink-0 flex items-center gap-2">
+                <div className="shrink-0 ml-auto flex items-center gap-2">
                   {hasMpSnapshot && <button onClick={() => setMpEventOpen(o => !o)} aria-expanded={mpEventOpen}
                     title="Every department's crew on this booking — labours, supervisors and the rest"
                     className={"rounded-lg px-2.5 py-1 text-[12px] font-semibold whitespace-nowrap transition-colors " + (mpEventOpen ? "bg-blue-600 text-white" : "bg-white text-blue-700 ring-1 ring-blue-200 hover:bg-blue-100")}>👥 Whole event</button>}
@@ -5755,7 +5760,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                        As a card it is two deliberate lines: who, and how many, on top; what they
                        cost, below. The toggle becomes the chevron tile that opens the card. */
                     <div key={i} className="rounded-xl bg-white ring-1 ring-gray-100 shadow-[0_1px_2px_rgba(16,24,40,0.05)] p-2.5 space-y-2">
-                      <div className="flex items-center gap-2">
+                      {/* wraps on a phone: the ₹/day (or qty) box drops under the name, right-aligned, instead of cutting the crew name short */}
+                      <div className="flex flex-wrap items-center gap-2">
                         {/* Supervisors has nothing to expand into — ops IS the supervisor, so there's
                             no per-day plan behind the number, just the name and what it costs. */}
                         {/* <span>, not <button> — a view-only expand toggle, so it must survive the
@@ -5773,7 +5779,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           </span>
                         )}
                         <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center text-sm leading-none">{crewIcon(r.type)}</span>
-                        <span className="flex-1 min-w-0 text-sm font-semibold text-gray-900 truncate">{r.type}{r.shared && <span className="ml-1.5 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold align-middle">SHARED</span>}</span>
+                        {/* the SHARED tag never gets cut ("SHA…") - only the name truncates; tight rows wrap the rate under it */}
+                        <span className="flex-1 min-w-[9rem] flex items-center gap-1.5"><span className="min-w-0 truncate text-sm font-semibold text-gray-900">{r.type}</span>{r.shared && <span className="shrink-0 text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold">SHARED</span>}</span>
                         {/* Only a row added via "+ Add crew type" can be removed — Studio's own
                             planned crew types aren't something a dept head can delete, only tune. */}
                         {r._addedExtra && (
@@ -5790,9 +5797,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         ) : r.shared && !dayWise(r) ? (
                           <span className="shrink-0 text-[10px] text-gray-400">split allocation</span>
                         ) : dayWise(r) ? (
-                          <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">₹/day</span><input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} disabled={!canEditPlanning} className="w-20 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 ring-gray-200 bg-white" /></div>
+                          <div className="shrink-0 ml-auto flex items-center gap-1.5"><span className="text-[11px] text-gray-400">₹/day</span><input type="number" min="0" value={r.rate} onChange={e => setMp(i, "rate", e.target.value)} disabled={!canEditPlanning} className="w-20 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 ring-gray-200 bg-white" /></div>
                         ) : (
-                          <div className="shrink-0 flex items-center gap-1.5"><span className="text-[11px] text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} disabled={!canEditPlanning} className={"w-16 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 " + (overridden ? "ring-amber-400 bg-amber-50 font-bold" : "ring-gray-200 bg-white")} /></div>
+                          <div className="shrink-0 ml-auto flex items-center gap-1.5"><span className="text-[11px] text-gray-400">qty</span><input type="number" min="0" value={r.count} onChange={e => setMp(i, "count", e.target.value)} disabled={!canEditPlanning} className={"w-16 rounded-lg px-2 py-1.5 text-sm text-center font-semibold ring-1 " + (overridden ? "ring-amber-400 bg-amber-50 font-bold" : "ring-gray-200 bg-white")} /></div>
                         )}
                       </div>
                       {/* Second line: the rate that is editable, and the line total it produces.
