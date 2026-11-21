@@ -134,12 +134,17 @@ export const computeBattaPoolFeasibility = (eventsForDate, trussInv) => {
         ev.shortageBorne = true;
       }
     });
-    let hardOverflow = false;
-    Object.values(remaining).forEach(v => { if (v < -EPS) hardOverflow = true; });
-    if (hardOverflow) {
-      const hardSorted = sorted.filter(ev => ev.state === "hard");
-      if (hardSorted.length > 0) hardSorted[hardSorted.length - 1].shortageBorne = true;
-    }
+    // A material the booked (hard) events already overdraw is borne by the newest hard event that USES that material - it was
+    // the newest hard event whatever it used, so a deal with only iron truss was refused Sold for another deal's aluminium
+    // shortage (owner report 2026-11-21: Sakshi, "short 45.1 RFT aluminium" with no aluminium truss). Same rule as
+    // trussEngine.js's pillars / beams.
+    const hardSorted = sorted.filter(ev => ev.state === "hard");
+    Object.entries(remaining).forEach(([mat, v]) => {
+      if (!(v < -EPS)) return;
+      for (let i = hardSorted.length - 1; i >= 0; i--) {
+        if ((Number(hardSorted[i].totalBattaRftByMaterial?.[mat]) || 0) > 0) { hardSorted[i].shortageBorne = true; break; }
+      }
+    });
   }
 
   return { feasible, demand, soft, hard, stock, overflow };

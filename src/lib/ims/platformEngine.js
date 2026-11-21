@@ -183,8 +183,9 @@ export const computePlatformPoolFeasibility = (eventsForDate, trussInv) => {
         ev.shortageBorne = true;
       }
     });
+    // borne by the newest hard event that actually has platform here (not simply the newest hard event) - same rule as batta / truss
     if ((remaining[K] || 0) < -EPS) {
-      const hardSorted = sorted.filter(ev => ev.state === "hard");
+      const hardSorted = sorted.filter(ev => ev.state === "hard" && platformEventSqft(ev) > 0);
       if (hardSorted.length > 0) hardSorted[hardSorted.length - 1].shortageBorne = true;
     }
   }

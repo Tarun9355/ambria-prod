@@ -83,6 +83,17 @@ describe("computeBattaPoolFeasibility", () => {
     expect(events.find(e => e.eoId === "e2").shortageBorne).toBe(true);
   });
 
+  it("a booked material's overdraw is borne by the newest hard event that uses it, not by a newer iron-only one (Sakshi, 2026-11-21)", () => {
+    const events = [
+      { eoId: "alu", state: "hard", createdAt: 1, totalBattaRftByMaterial: { pole: 95 } }, // pole stock is 50: 45 over
+      { eoId: "ironOnly", state: "hard", createdAt: 2, totalBattaRftByMaterial: { iron: 30 } },
+    ];
+    const r = computeBattaPoolFeasibility(events, trussInv);
+    expect(r.overflow.pole).toBeCloseTo(45);
+    expect(events.find(e => e.eoId === "ironOnly").shortageBorne).toBe(false);
+    expect(events.find(e => e.eoId === "alu").shortageBorne).toBe(true);
+  });
+
   it("falls back to Iron's stock for aluminium (nothing configured of its own)", () => {
     const events = [{ eoId: "e1", state: "hard", createdAt: 1, totalBattaRftByMaterial: { aluminium: 100 } }];
     const r = computeBattaPoolFeasibility(events, trussInv);

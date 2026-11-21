@@ -6962,7 +6962,9 @@ export default function StudioApp() {
         const result = allocateBattaForDate({}, date, list, trussInv, "studio-presale-check");
         if (list.find((ev) => ev.eoId === SELF_CHECK_EOID)?.shortageBorne) {
           const over = result[date]?.stockSummary?.overflow || {};
-          flagged.push({ domain: "batta", emoji: "🧵", date, detail: Object.entries(over).map(([m, rft]) => `${rft} RFT ${m}`).join(", ") || "stock shortfall", where: fnsForDate.map((f) => fnName(f.fnIdx)) });
+          // only the materials THIS deal's truss uses - another material's shortage on the date is not this deal's to fix
+          const mine = Object.entries(over).filter(([m]) => (Number(battaEntry.totalBattaRftByMaterial?.[m]) || 0) > 0);
+          flagged.push({ domain: "batta", emoji: "🧵", date, detail: mine.map(([m, rft]) => `${rft} RFT ${m}`).join(", ") || "stock shortfall", where: fnsForDate.map((f) => fnName(f.fnIdx)) });
         }
       }
     });
