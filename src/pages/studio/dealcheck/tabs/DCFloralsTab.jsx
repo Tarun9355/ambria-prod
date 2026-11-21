@@ -926,10 +926,18 @@ export default function DCFloralsTab({ ctx }) {
                                           ) : (
                                             <div style={BOX}>
                                             <table style={{width:"100%",borderCollapse:"collapse"}}>
+                                              {/* Step by step like the real table (owner ask 2026-11-21: "artificial wale mai bhi proper calculation
+                                                  dikhao"): per pattern × patterns × artificial % = the real qty it replaces, which makes N bunches (or
+                                                  N pieces of the mapped item), × the rate = cost. It was only "real replaced · bunches · cost", and a
+                                                  mapped flower read "0.0 bunches" against a real cost. */}
                                               <thead><tr style={{borderBottom:`1px solid ${border}`}}>
                                                 <th style={{...TH,textAlign:"left"}}>Flower</th>
-                                                <th style={TH}>Real replaced</th>
-                                                <th style={TH}>Bunches</th>
+                                                <th style={TH}>Per pattern</th>
+                                                <th style={TH}>× Patterns</th>
+                                                <th style={TH}>× Art</th>
+                                                <th style={TH}>= Replaced</th>
+                                                <th style={TH}>→ Makes</th>
+                                                <th style={TH}>Rate</th>
                                                 <th style={TH}>Cost</th>
                                               </tr></thead>
                                               <tbody>
@@ -940,16 +948,37 @@ export default function DCFloralsTab({ ctx }) {
                                                     so printing "—" left the rows visibly short of the
                                                     total beneath them. It has no bunches and replaces
                                                     no real units, so those two columns stay blank. */}
-                                                {(eb.artLines || []).map((al, ai) => (
+                                                {(eb.artLines || []).map((al, ai) => {
+                                                  const SUB = {display:"block",fontSize:10.5,color:textS,fontWeight:400};
+                                                  const pp = al.perPattern != null ? `${n3(al.perPattern)} ${al.unit}` : "—";
+                                                  const costCol = al.invItem?"#3B82F6":(al.realOnly?textS:(al.isGreen?"#10B981":"#EC4899"));
+                                                  return (
                                                   <tr key={ai} style={ROW}>
-                                                    <td style={{...TD,textAlign:"left",whiteSpace:"normal",color:al.invItem?"#3B82F6":(al.realOnly?textS:"#1A1A2E")}}>{al.name}<span style={{fontSize:11,marginLeft:4,color:al.invItem?"#3B82F6":(al.realOnly?"#F59E0B":(al.isGreen?"#10B981":"#EC4899"))}}>{al.invItem?"📦":(al.realOnly?"🔒":(al.isGreen?"🌿":"🌹"))}</span></td>
-                                                    <td style={TD}>{al.invItem ? <span style={{fontSize:11,fontStyle:"italic",color:textS}}>{al.qty} {al.unit}</span> : al.realOnly ? <span style={{fontSize:11,fontStyle:"italic"}}>skipped</span> : `${al.realUnitsReplaced.toFixed(2)} ${al.unit}`}</td>
-                                                    <td style={{...TD,color:al.realOnly?textS:(al.missingRatio?"#F59E0B":"#1A1A2E")}}>{al.realOnly ? "—" : (al.missingRatio?"⚠ ratio?":al.bunches.toFixed(1))}</td>
-                                                    <td style={{...TD,color:al.invItem?"#3B82F6":(al.realOnly?textS:(al.isGreen?"#10B981":"#EC4899"))}}>{al.realOnly && !al.invItem ? "—" : rs(al.lineCost)}</td>
+                                                    <td style={{...TD,textAlign:"left",whiteSpace:"normal",color:al.invItem?"#3B82F6":(al.realOnly?textS:"#1A1A2E")}}>{al.name}<span style={{fontSize:11,marginLeft:4,color:al.invItem?"#3B82F6":(al.realOnly?"#F59E0B":(al.isGreen?"#10B981":(al.isMapped?"#7C3AED":"#EC4899")))}}>{al.invItem?"📦":(al.realOnly?"🔒":(al.isGreen?"🌿":(al.isMapped?"🔗":"🌹")))}</span></td>
+                                                    <td style={TD}>{pp}</td>
+                                                    <td style={TD}>{eb.qty}</td>
+                                                    {/* an inventory piece is always costed here whole; a Real Only flower is never replaced */}
+                                                    <td style={{...TD,color:(al.invItem||al.realOnly)?textS:"#1A1A2E"}} title={al.invItem ? "Inventory piece — counted whole, not split by the blend" : al.realOnly ? "Real Only — never replaced by artificial" : undefined}>{al.invItem ? "100%" : al.realOnly ? "—" : `${100-eb.realPct}%`}</td>
+                                                    <td style={{...TD,fontWeight:600}}>
+                                                      {al.invItem ? `${al.qty} ${al.unit}` : al.realOnly ? <span style={{fontSize:11,fontStyle:"italic",fontWeight:400,color:textS}}>skipped</span> : <>
+                                                        {al.reuseCredit > 0.0001 && <span title={`${al.reuseCredit.toFixed(2)} ${al.unit} reused from an earlier function`} style={{textDecoration:"line-through",opacity:0.4,marginRight:4,fontWeight:400}}>{Number(al.realUnitsReplacedFull).toFixed(2)}</span>}
+                                                        {al.realUnitsReplaced.toFixed(2)} {al.unit}
+                                                      </>}
+                                                    </td>
+                                                    {/* what that real qty becomes: bunches (× bunches per unit), or pieces of the mapped item (× pieces per unit) */}
+                                                    <td style={{...TD,color:al.missingRatio?"#F59E0B":"#1A1A2E"}}>
+                                                      {al.invItem || al.realOnly ? <span style={{color:textS}}>—</span>
+                                                        : al.isMapped ? <>{Number((al.mappedPcs||0).toFixed(2))} pc<span style={SUB}>× {al.pcsPerUnit} pc/{al.unit}{al.mappedName ? ` · ${al.mappedName}` : ""}</span></>
+                                                        : al.missingRatio ? "⚠ ratio?"
+                                                        : <>{al.bunches.toFixed(1)} bunch{Math.abs(al.bunches-1)<0.05?"":"es"}<span style={SUB}>× {al.bunchesPerUnit}/{al.unit}</span></>}
+                                                    </td>
+                                                    <td style={TD}>{al.invItem ? `${rs(al.unitPrice)}/${al.unit}` : al.realOnly ? <span style={{color:textS}}>—</span> : al.isMapped ? `₹${(Number(al.perBunch)||0).toLocaleString("en-IN",{maximumFractionDigits:2})}/pc` : `₹${(Number(al.perBunch)||0).toFixed(2)}/bunch`}</td>
+                                                    <td style={{...TD,color:costCol}}>{al.realOnly && !al.invItem ? "—" : rs(al.lineCost)}</td>
                                                   </tr>
-                                                ))}
+                                                  );
+                                                })}
                                                 <tr>
-                                                  <td colSpan={3} style={{...TD,fontWeight:600}}>Art subtotal</td>
+                                                  <td colSpan={7} style={{...TD,fontWeight:600}}>Art subtotal</td>
                                                   <td style={{...TD,color:"#EC4899",fontWeight:700}}>{rs(eb.artCost)}</td>
                                                 </tr>
                                               </tbody>

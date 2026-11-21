@@ -676,7 +676,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
           const parentId = parent?.id || fl.flowerId;
           const flowerType = parent?.flowerType || (parent?.isGreen ? "green" : "flower");
           if (flowerType === "real_only") {
-            artLines.push({ flowerId: parentId, name: parent?.name || fl.flowerId, realUnitsReplaced: 0, unit: parent?.unit || "?", bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: 0, lineCost: 0, missingRatio: false, realOnly: true });
+            artLines.push({ flowerId: parentId, name: parent?.name || fl.flowerId, perPattern: fl.qty || 0, realUnitsReplaced: 0, unit: parent?.unit || "?", bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: 0, lineCost: 0, missingRatio: false, realOnly: true });
             return;
           }
           const pUsage = precedingUsage?.get(fl.flowerId) || null;
@@ -691,7 +691,8 @@ export function computeFnFloralCost(fn, allFns, opts) {
             const pcsPerUnit = mapPcsPerUnit(parent);
             const mappedPcs = realUnitsReplaced * pcsPerUnit;
             const lineCost = mappedPcs * mapCost;
-            artLines.push({ flowerId: parentId, name: parent?.name || fl.flowerId, realUnitsReplaced, unit: parent?.unit || "?", bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: mapCost, lineCost, missingRatio: mapCost <= 0, realOnly: false, isMapped: true, mappedName: parent?.artificialMapName || null, mappedItemId: parent?.artificialMapItemId || null, pcsPerUnit, mappedPcs });
+            // perPattern / realUnitsReplacedFull / reuseCredit: Deal Check's "how" table writes the artificial side step by step, like the real side
+            artLines.push({ flowerId: parentId, name: parent?.name || fl.flowerId, perPattern: fl.qty || 0, realUnitsReplacedFull, reuseCredit: realUnitsReplacedFull - realUnitsReplaced, realUnitsReplaced, unit: parent?.unit || "?", bunchesPerUnit: 0, bunches: 0, isGreen: false, perBunch: mapCost, lineCost, missingRatio: mapCost <= 0, realOnly: false, isMapped: true, mappedName: parent?.artificialMapName || null, mappedItemId: parent?.artificialMapItemId || null, pcsPerUnit, mappedPcs });
             return;
           }
           const bunchesPerUnit = Number(parent?.artificialBunchesPerUnit) || 0;
@@ -703,7 +704,7 @@ export function computeFnFloralCost(fn, allFns, opts) {
           if (isGreen) { artGreenBunches += bunches; artGreenBunchesFull += bunchesFull; artBunchesGreenFull += bunchesFull; }
           else { artFlowerBunches += bunches; artFlowerBunchesFull += bunchesFull; artBunchesFlowerFull += bunchesFull; }
           const perBunch = isGreen ? greenPerBunchRate : flowerPerBunchRate;
-          artLines.push({ flowerId: parentId, name: parent?.name || fl.flowerId, realUnitsReplaced, unit: parent?.unit || "?", bunchesPerUnit, bunches, isGreen, perBunch, lineCost: bunches * perBunch, missingRatio: bunchesPerUnit <= 0, realOnly: false });
+          artLines.push({ flowerId: parentId, name: parent?.name || fl.flowerId, perPattern: fl.qty || 0, realUnitsReplacedFull, reuseCredit: realUnitsReplacedFull - realUnitsReplaced, realUnitsReplaced, unit: parent?.unit || "?", bunchesPerUnit, bunches, isGreen, perBunch, lineCost: bunches * perBunch, missingRatio: bunchesPerUnit <= 0, realOnly: false });
         });
       }
       // Inventory ingredients join the ARTIFICIAL total outside the artFrac gate — a
