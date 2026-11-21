@@ -53,6 +53,7 @@ import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
 import { kvGet } from "../../lib/ims/kv";
+import { ZONE_DEF_SK } from "../../lib/studio/keys";
 import { withLivePlan, isDismissMarker, dismissMarker } from "../../lib/ims/mandiLivePlan";
 import { buildLiveFloralPlan, fnFromDetail } from "../../lib/ims/liveFloralPlan";
 import { supabase, subscribeTable } from "../../lib/supabase";
@@ -949,6 +950,20 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // from the event's own zones (the truss plan above, the same one the setup book prints) - so the type shows without opening Deal
   // Check (owner ask 2026-11-21: "bina deal check ke nhi hoga?"). Same pieces rule as Deal Check's Tenting lines: FOC and Repeat
   // trusses load nothing; a beam set under a pillar joins its size's beam line.
+  // Zone names as Studio's zone settings write them ("Centre Lounge", not the key "centrelounge") - the setup book reads the same list
+  const [zoneDefLabels, setZoneDefLabels] = useState({});
+  useEffect(() => {
+    let off = false;
+    (async () => {
+      try {
+        let v = await kvGet(ZONE_DEF_SK);
+        for (let i = 0; i < 2 && typeof v === "string"; i++) { try { v = JSON.parse(v); } catch { break; } }
+        const m = {}; Object.entries(v?.meta || {}).forEach(([k, z]) => { if (z?.label) m[k] = z.label; });
+        if (!off) setZoneDefLabels(m);
+      } catch { /* built-in names */ }
+    })();
+    return () => { off = true; };
+  }, []);
   let _trussUse = null;
   const liveTrussUseOf = (name) => {
     if (!_trussUse) {
@@ -960,7 +975,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
           if (!row || !pv?.topology || isTrussFoc(row) || repeatCatFor(z.fn?.zones?.[z.zk], "truss")) return;
           const mode = trussBaseArea(row).mode;
           const type = [mode === "box" ? "Box" : mode === "singleU" ? "Single U" : (mode || ""), Number(row.trussQty) > 1 ? `×${row.trussQty}` : "", row.trussMaterial ? String(row.trussMaterial) : ""].filter(Boolean).join(" ");
-          const zone = String(z.zLabel || z.zk).replace(/\s*\(truss #\d+\)$/, "");
+          const zone = z.fn?.zoneNames?.[z.zk] || zoneDefLabels[z.zk] || String(z.zLabel || z.zk).replace(/\s*\(truss #\d+\)$/, "");
           const matInv = trussInvForMaterial(trussInv, row.trussMaterial);
           const pm = {}, bm = {};
           (pv.topology.pillars || []).forEach(p => (resolvePillarHeight(p.H, matInv).pieces || []).forEach(pc => { const m = pc.type === "beam" ? bm : pm; m[pc.size] = (m[pc.size] || 0) + pc.qty; }));
