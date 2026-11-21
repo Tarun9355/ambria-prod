@@ -1294,10 +1294,13 @@ export default function DealCheckOverlay({ ctx }) {
                       const beamRftRateEff = pv.costs.beamRft > 0 ? pv.costs.beamCost / pv.costs.beamRft : 0;
                       // one line per stock item and size - a ground beam joins its size's "Truss beam Nft" line (lib/studio/trussLines)
                       trussPieceLines({ pillars: pmap, beams: bmap, bases: smap }, pillarRftRateEff, beamRftRateEff)
-                        .forEach((l) => deptInv["Tenting"].push({ ...l, photo: "", sub: "truss structure" }));
+                        // fnIdx: which function this truss is in — kept per function on the merged line (byFn), so IMS Dept Ops'
+                        // one-function view lists it; without it the truss read as "not in any of this function's zones" and was
+                        // hidden there (owner report 2026-11-21: "haldi mai truss kyu ni aari, build mai toh hai")
+                        .forEach((l) => deptInv["Tenting"].push({ ...l, photo: "", sub: "truss structure", fnIdx: fi }));
                       if (pv.batta?.rftWithBuffer > 0 && pv.costs.battaCost > 0) {
                         const battaUnit = Math.round(pv.costs.battaCost / pv.batta.rftWithBuffer);
-                        deptInv["Tenting"].push({ name: "Batta", photo: "", qty: pv.batta.rftWithBuffer, unit: battaUnit, total: Math.round(pv.costs.battaCost), sub: "truss structure" });
+                        deptInv["Tenting"].push({ name: "Batta", photo: "", qty: pv.batta.rftWithBuffer, unit: battaUnit, total: Math.round(pv.costs.battaCost), sub: "truss structure", fnIdx: fi });
                       }
                     }
                     const fabCost = calcZoneFabricCost(row, tInv, anchors, row.drapeDensity || density, row.dcFabricMult) * repeatFabMult;
@@ -1334,7 +1337,7 @@ export default function DealCheckOverlay({ ctx }) {
                       const pushFab = (qty, unitLabel, name, oldKey, newKey, part) => {
                         if (!(qty > 0)) return;
                         const unit = rateFor(oldKey, newKey) * dcFabricMultOf(row, part);
-                        deptInv["Fabric"].push({ name: `${name} (${tierLabel})`, photo: "", qty: Math.round(qty * 100) / 100, unit: Math.round(unit * repeatFabMult), total: Math.round(qty * unit * repeatFabMult), sub: `${unitLabel} · ${zk}` });
+                        deptInv["Fabric"].push({ name: `${name} (${tierLabel})`, photo: "", qty: Math.round(qty * 100) / 100, unit: Math.round(unit * repeatFabMult), total: Math.round(qty * unit * repeatFabMult), sub: `${unitLabel} · ${zk}`, fnIdx: fi }); // fnIdx: listed in its own function's view (see the truss lines)
                       };
                       pushFab(fab.maskingPieces, "pc", "Wall Masking", "maskingPieceRate", "maskingPieceRateNew", "masking");
                       pushFab(fab.lizaKg, "kg", "Liza Fabric", "lizaKgRate", "lizaKgRateNew", "liza");
@@ -1450,6 +1453,7 @@ export default function DealCheckOverlay({ ctx }) {
                     parts: [{ zone: rows.length > 1 ? `${zoneLbl} · floor ${rIdx + 1}` : zoneLbl, fn: fns.length > 1 ? (fn.fnType || "") : "", dims: `${Number(fd.L) || Number(fd.S) || 0} × ${Number(fd.W) || Number(fd.S) || 0}`, qty: Math.round(area), rate: cRate, total: Math.round(cc) }],
                     sub: carpetItem ? imsField.subcategory(carpetItem) || "carpet" : "carpet",
                     imsId: carpetItem?.id,
+                    fnIdx: fi, // listed in its own function's view in IMS (see the truss lines)
                   });
                 });
               });
@@ -1486,7 +1490,7 @@ export default function DealCheckOverlay({ ctx }) {
                 if (pc > 0) {
                   printCost += pc; byFn[fi].buying += pc;
                   addD("Structure", "buying", pc);
-                  if (deptInv["Structure"]) deptInv["Structure"].push({ name: "🖨 Print / signage", photo: "", qty: jobs.length, unit: 0, total: Math.round(pc), sub: "print", prodOrBuy: "buying" });
+                  if (deptInv["Structure"]) deptInv["Structure"].push({ name: "🖨 Print / signage", photo: "", qty: jobs.length, unit: 0, total: Math.round(pc), sub: "print", prodOrBuy: "buying", fnIdx: fi });
                 }
               });
             });
