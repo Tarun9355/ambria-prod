@@ -117,6 +117,42 @@ function crewIcon(type) {
 // shared row for a header to sit above) but is hidden from sm up, where the inventory-blocked list
 // now has ONE sticky header row instead — repeating it on every card there was the exact "confusing"
 // the header replaces.
+// A row of chips that scrolls sideways on a phone, with "+N ›" / "‹" buttons on its edges for the chips out of view - a row cut
+// at the edge did not say "scroll" (owner 2026-11-21: "isme pta toh chale scroll krna hai"). Same hint as IMS Inventory's category row.
+// From sm up the chips wrap and no button shows.
+const ChipScrollRow = ({ className = "", children }) => {
+  const ref = useRef(null);
+  const [st, setSt] = useState({ left: false, right: 0 });
+  const measure = () => {
+    const el = ref.current; if (!el) return;
+    const box = el.getBoundingClientRect();
+    const right = [...el.children].filter(c => c.getBoundingClientRect().right > box.right + 1).length;
+    const left = el.scrollLeft > 2;
+    setSt(p => (p.left === left && p.right === right ? p : { left, right }));
+  };
+  useEffect(() => { measure(); window.addEventListener("resize", measure); return () => window.removeEventListener("resize", measure); });
+  const go = (dir) => ref.current?.scrollBy({ left: dir * Math.max(140, (ref.current?.clientWidth || 300) * 0.7), behavior: "smooth" });
+  return (
+    <div className={"relative " + className}>
+      {st.left && (
+        <button type="button" onClick={() => go(-1)} aria-label="Show earlier"
+          className="sm:hidden absolute left-0 top-0 bottom-0 z-10 pr-4 flex items-center bg-gradient-to-r from-white via-white to-transparent">
+          <span className="w-7 h-7 rounded-full bg-white border border-gray-200 shadow-sm flex items-center justify-center text-gray-600 text-base leading-none">‹</span>
+        </button>
+      )}
+      {st.right > 0 && (
+        <button type="button" onClick={() => go(1)} aria-label={`${st.right} more`}
+          className="sm:hidden absolute right-0 top-0 bottom-0 z-10 pl-6 flex items-center bg-gradient-to-l from-white via-white to-transparent">
+          <span className="h-7 pl-2.5 pr-2 rounded-full bg-white border border-blue-200 shadow-sm flex items-center gap-1 text-xs font-semibold text-blue-600 whitespace-nowrap">+{st.right} <span className="text-base leading-none">›</span></span>
+        </button>
+      )}
+      <div ref={ref} onScroll={measure} className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
+        {children}
+      </div>
+    </div>
+  );
+};
+
 // Phone: one cell of a 3-across grid, label above, read left to right; from sm up a fixed-width right-aligned column under the header.
 const StatCell = ({ label, w, children }) => (
   <div className={"min-w-0 text-left sm:flex-none sm:text-right " + w}>
@@ -1798,14 +1834,14 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // data (invFn/mpFn index into sel.functionsDetail — never clubbed across functions).
   const fnChipRow = (value, setValue) => mpFns.length > 1 && (
     // Phone: one row that scrolls sideways, with the date as "23 Nov" - four chips wrapped onto three rows before (owner screenshot 2026-11-21)
-    <div className="m-2.5 mb-0 flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
+    <ChipScrollRow className="m-2.5 mb-0">
       {[["all", "All functions", ""], ...mpFns.map((f, fi) => { const iso = mpFnDate(f); const dt = /^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? new Date(iso + "T00:00:00Z") : null; return [fi, [f?.type || `Function ${fi + 1}`, venueWithParent(settings, f?.venue || sel?.venue || ""), iso].filter(Boolean).join(" · "), [f?.type || `Function ${fi + 1}`, venueWithParent(settings, f?.venue || sel?.venue || ""), dt ? dt.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }) : iso].filter(Boolean).join(" · ")]; })].map(([k, label, short]) => (
         <button key={k} onClick={() => setValue(k)} aria-pressed={value === k}
           className={"shrink-0 rounded-lg px-2.5 py-1.5 sm:py-1 text-[12px] font-semibold whitespace-nowrap cursor-pointer transition-colors " + (value === k ? "bg-blue-600 text-white" : "bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-blue-50 hover:text-blue-700")}>
           {short ? <><span className="sm:hidden">{short}</span><span className="hidden sm:inline">{label}</span></> : label}
         </button>
       ))}
-    </div>
+    </ChipScrollRow>
   );
   // ── ONE FUNCTION'S INVENTORY ──
   // Deal Check sends the department's inventory summed across the whole booking, so the rows carry
