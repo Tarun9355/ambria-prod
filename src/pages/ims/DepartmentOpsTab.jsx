@@ -5635,27 +5635,40 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           </div>
                         );
                       })()}
-                      {Array.isArray(it.parts) && it.parts.length > 0 && kitOpen["how:" + it.id] && (
-                        <div className="ui-reveal-in bg-slate-50 px-2.5 py-1.5 space-y-1 text-xs">
-                          {it.parts.map((pt, pi) => (
-                            <div key={"p" + pi} className="flex items-center gap-2">
+                      {Array.isArray(it.parts) && it.parts.length > 0 && kitOpen["how:" + it.id] && (() => {
+                        // One function's view lists only that function's zones - it listed every function's (Haldi's line read 1220 sqft
+                        // over a list of 3460, total ₹51,900 against ₹18,300). By the part's function index, else its function name.
+                        const fnSel = invScoped ? mpFns[invFn] : null;
+                        const parts = !fnSel ? it.parts : it.parts.filter(pt => pt.fnIdx != null ? String(pt.fnIdx) === String(invFn) : (!pt.fn || pt.fn === (fnSel?.type || "")));
+                        if (!parts.length) return null;
+                        const unitTxt = it.qtyUnit ? " " + it.qtyUnit : "";
+                        const sumQty = parts.reduce((a, pt) => a + (Number(pt.qty) || 0), 0);
+                        return (
+                        <div className="ui-reveal-in bg-slate-50 px-2.5 py-1.5 space-y-1.5 sm:space-y-1 text-xs">
+                          {parts.map((pt, pi) => (
+                            // Phone: the zone reads whole on its own line with its total, the qty × rate under it - five columns cut every zone name short
+                            <div key={"p" + pi} className="flex items-start sm:items-center gap-2">
                               <span aria-hidden="true" className="text-gray-300 shrink-0">└</span>
-                              <span className="text-gray-700 truncate flex-1 min-w-0">{pt.zone}{pt.fn ? <span className="text-gray-400"> · {pt.fn}</span> : null}{pt.dims ? <span className="text-gray-400"> · {pt.dims} ft</span> : null}</span>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-gray-700 sm:truncate">{pt.zone}{pt.fn && !fnSel ? <span className="text-gray-400"> · {pt.fn}</span> : null}{pt.dims ? <span className="text-gray-400"> · {pt.dims} ft</span> : null}</div>
+                                <div className="sm:hidden mt-0.5 text-[11px] text-gray-500 tabular-nums">{qtyShown(pt.qty, it.qtyUnit)}{unitTxt} × {fmt(pt.rate)}</div>
+                              </div>
                               {Array.from({ length: dateSpacers }, (_, si) => <span key={"sp" + si} className={"hidden sm:block shrink-0 " + STAT_W.qty} />)}
-                              <span className={"shrink-0 font-medium text-gray-500 text-right tabular-nums " + STAT_W.qty}>{qtyShown(pt.qty, it.qtyUnit)}{it.qtyUnit ? " " + it.qtyUnit : ""}</span>
-                              <span className={"shrink-0 text-gray-500 text-right tabular-nums " + STAT_W.rate}>× {fmt(pt.rate)}</span>
+                              <span className={"hidden sm:block shrink-0 font-medium text-gray-500 text-right tabular-nums " + STAT_W.qty}>{qtyShown(pt.qty, it.qtyUnit)}{unitTxt}</span>
+                              <span className={"hidden sm:block shrink-0 text-gray-500 text-right tabular-nums " + STAT_W.rate}>× {fmt(pt.rate)}</span>
                               <span className={"shrink-0 font-semibold text-gray-700 text-right tabular-nums " + STAT_W.total}>{fmt(pt.total)}</span>
                             </div>
                           ))}
                           <div className="flex items-center gap-2 border-t border-gray-200 pt-1">
-                            <span className="flex-1 text-gray-600 font-semibold">Total</span>
+                            <span className="flex-1 text-gray-600 font-semibold">Total<span className="sm:hidden font-normal text-gray-500 tabular-nums"> · {qtyShown(sumQty, it.qtyUnit)}{unitTxt}</span></span>
                             {Array.from({ length: dateSpacers }, (_, si) => <span key={"sp" + si} className={"hidden sm:block shrink-0 " + STAT_W.qty} />)}
-                            <span className={"shrink-0 font-semibold text-gray-700 text-right tabular-nums " + STAT_W.qty}>{qtyShown(it.parts.reduce((a, pt) => a + (Number(pt.qty) || 0), 0), it.qtyUnit)}{it.qtyUnit ? " " + it.qtyUnit : ""}</span>
-                            <span className={"shrink-0 " + STAT_W.rate} />
-                            <span className={"shrink-0 font-bold text-gray-900 text-right tabular-nums " + STAT_W.total}>{fmt(it.parts.reduce((a, pt) => a + (Number(pt.total) || 0), 0))}</span>
+                            <span className={"hidden sm:block shrink-0 font-semibold text-gray-700 text-right tabular-nums " + STAT_W.qty}>{qtyShown(sumQty, it.qtyUnit)}{unitTxt}</span>
+                            <span className={"hidden sm:block shrink-0 " + STAT_W.rate} />
+                            <span className={"shrink-0 font-bold text-gray-900 text-right tabular-nums " + STAT_W.total}>{fmt(parts.reduce((a, pt) => a + (Number(pt.total) || 0), 0))}</span>
                           </div>
                         </div>
-                      )}
+                        );
+                      })()}
                       {it.isKit && it.components && it.components.length > 0 && (
                         <div className="ui-reveal-in bg-blue-50/50 px-2.5 py-1.5 space-y-1">
                           {it.components.map((cp, ci) => (

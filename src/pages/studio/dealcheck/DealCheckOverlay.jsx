@@ -1458,7 +1458,7 @@ export default function DealCheckOverlay({ ctx }) {
                     photo: carpetItem ? imsField.photos(carpetItem)[0] || "" : (row.cpPhoto || ""),
                     qty: Math.round(area), unit: cRate, total: Math.round(cc), qtyUnit: "sqft",
                     // Where these sqft come from, for IMS's "how?" on the merged line.
-                    parts: [{ zone: rows.length > 1 ? `${zoneLbl} · floor ${rIdx + 1}` : zoneLbl, fn: fns.length > 1 ? (fn.fnType || "") : "", dims: `${Number(fd.L) || Number(fd.S) || 0} × ${Number(fd.W) || Number(fd.S) || 0}`, qty: Math.round(area), rate: cRate, total: Math.round(cc) }],
+                    parts: [{ zone: rows.length > 1 ? `${zoneLbl} · floor ${rIdx + 1}` : zoneLbl, fn: fns.length > 1 ? (fn.fnType || "") : "", fnIdx: fi, dims: `${Number(fd.L) || Number(fd.S) || 0} × ${Number(fd.W) || Number(fd.S) || 0}`, qty: Math.round(area), rate: cRate, total: Math.round(cc) }],
                     sub: carpetItem ? imsField.subcategory(carpetItem) || "carpet" : "carpet",
                     imsId: carpetItem?.id,
                     fnIdx: fi, // listed in its own function's view in IMS (see the truss lines)
