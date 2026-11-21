@@ -24,7 +24,9 @@ import ElementChoicePlan from "./ElementChoicePlan.jsx";
 import { elementStockFor, choiceNotesForRows, preferenceNotesForRows } from "../../lib/ims/elementPlan";
 import { loadOnDate } from "../../lib/ims/loadByDate";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
-import { dcFabricMultOf, trussInvForMaterial, parseFlowerPalette } from "../../lib/studio/pricing";
+import { dcFabricMultOf, trussInvForMaterial, parseFlowerPalette, repeatCatFor } from "../../lib/studio/pricing";
+import { trussBaseArea } from "../../lib/studio/taxonomy";
+import { isTrussFoc } from "../../lib/studio/foc.js";
 import { resolveBeamSegment, resolvePillarHeight } from "../../lib/ims/trussEngine";
 import { RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_BOX } from "../../lib/studio/brand.js";
@@ -943,6 +945,34 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   let _plans = null;
   const plans = () => (_plans ||= makeEventPlans({ sel, inventory, blocks, eventOrders, settings, trussInv }));
   const trussPlanOf = () => plans().trussPlanOf();
+  // ── WHICH TRUSS EACH PIECE LINE IS FOR, LIVE ── "Truss pillar 12ft" → [{ fnIdx, zone, type: "Single U ×2 pole", qty }], worked out
+  // from the event's own zones (the truss plan above, the same one the setup book prints) - so the type shows without opening Deal
+  // Check (owner ask 2026-11-21: "bina deal check ke nhi hoga?"). Same pieces rule as Deal Check's Tenting lines: FOC and Repeat
+  // trusses load nothing; a beam set under a pillar joins its size's beam line.
+  let _trussUse = null;
+  const liveTrussUseOf = (name) => {
+    if (!_trussUse) {
+      _trussUse = new Map();
+      const add = (nm, u) => { if (!(u.qty > 0)) return; const a = _trussUse.get(nm) || []; a.push(u); _trussUse.set(nm, a); };
+      try {
+        trussPlanOf().forEach(z => {
+          const { row, pv } = z;
+          if (!row || !pv?.topology || isTrussFoc(row) || repeatCatFor(z.fn?.zones?.[z.zk], "truss")) return;
+          const mode = trussBaseArea(row).mode;
+          const type = [mode === "box" ? "Box" : mode === "singleU" ? "Single U" : (mode || ""), Number(row.trussQty) > 1 ? `×${row.trussQty}` : "", row.trussMaterial ? String(row.trussMaterial) : ""].filter(Boolean).join(" ");
+          const zone = String(z.zLabel || z.zk).replace(/\s*\(truss #\d+\)$/, "");
+          const matInv = trussInvForMaterial(trussInv, row.trussMaterial);
+          const pm = {}, bm = {};
+          (pv.topology.pillars || []).forEach(p => (resolvePillarHeight(p.H, matInv).pieces || []).forEach(pc => { const m = pc.type === "beam" ? bm : pm; m[pc.size] = (m[pc.size] || 0) + pc.qty; }));
+          (pv.topology.beams || []).forEach(b => (resolveBeamSegment(b.lengthFt, matInv).pieces || []).forEach(pc => { bm[pc.size] = (bm[pc.size] || 0) + pc.qty; }));
+          Object.entries(pm).forEach(([ft, n]) => add(`Truss pillar ${ft}ft`, { fnIdx: z.fi, zone, type, qty: n }));
+          Object.entries(bm).forEach(([ft, n]) => add(`Truss beam ${ft}ft`, { fnIdx: z.fi, zone, type, qty: n }));
+          if (pv.batta?.rftWithBuffer > 0) add("Batta", { fnIdx: z.fi, zone, type, qty: pv.batta.rftWithBuffer });
+        });
+      } catch (e) { console.warn("[deptOps] live truss use failed", e); }
+    }
+    return _trussUse.get(name) || null;
+  };
   const fabricEntriesOf = () => plans().fabricEntriesOf();
   const fabricPalettesOf = () => plans().fabricPalettesOf();
   const carpetPlanOf = () => plans().carpetPlanOf();
@@ -5370,7 +5400,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                 })()}
                                 {/* Which truss these pieces are for (Single U ×2 pole · Side Lounge) - Deal Check sends it per zone, like the setup book's Truss chip */}
                                 {(() => {
-                                  const uses = (it.src || it).trussUse;
+                                  // live from the event's zones (no Deal Check needed); what Deal Check last sent only when the live plan has nothing
+                                  const live = String(it.sub || "").trim().toLowerCase() === "truss structure" ? liveTrussUseOf(it.name) : null;
+                                  const uses = live || (it.src || it).trussUse;
                                   if (!Array.isArray(uses) || !uses.length) return null;
                                   const scoped = invFn === "all" ? uses : uses.filter(u => String(u.fnIdx) === String(invFn));
                                   const grp = new Map();
