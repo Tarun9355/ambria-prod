@@ -32,6 +32,8 @@ describe("Truss layouts page: each truss of a multi-truss zone carries its own c
     // the zone's line no longer repeats the trusses (each has its own line now)
     const page = html.slice(html.indexOf('class="lay-h"'));
     expect(page.slice(0, page.indexOf('tp-bt'))).not.toContain("+1 more");
+    // the zone's function in brackets after its name
+    expect(page).toContain('<em class="tp-fn">(Wedding)</em>');
   });
   it("a zone with one truss keeps just the zone's chips", () => {
     const single = { ...main };

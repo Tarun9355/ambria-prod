@@ -1768,7 +1768,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           ? (pg.struct || []).filter((c) => !(c.k === t("Truss") && !String(c.v || "").includes(t("FOC — already at the venue"))))
           : (pg.struct || []);
         const strips = [zoneStruct, multiTruss ? [] : (pg.fabric || [])].filter((s) => s.length);
-        blocks.push({ no: zi + 1, title: pg.title, strips, plans, photo: pg.photo || "" });
+        // which function the zone is in, in brackets after its name (owner ask 2026-11-21) — two functions often share a zone name
+        blocks.push({ no: zi + 1, title: pg.title, fnName: hn(pg.fnType || ""), strips, plans, photo: pg.photo || "" });
       });
       if (!blocks.length) return "";
       // Only the FIRST plan of a zone carries the thumbnail — the photo is the zone's, not any one
@@ -1808,7 +1809,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       return pages.map((list, i) => `<section data-block data-page class="zp"><div class="pc tl"></div><div class="pc tr"></div>
         <div class="lay-h"><b>${t("Truss layouts")}</b>${pages.length > 1 ? `<span> · ${t("Part {part} of {parts}", { part: i + 1, parts: pages.length })}</span>` : ""}</div>
         ${list.map((b) => `<div class="tp-c">
-          <div class="tp-t"><b>${t("Zone {n}", { n: String(b.no).padStart(2, "0") })}</b><span>${esc(hn(b.title))}</span>${b.cont ? `<i>${t("continued")}</i>` : ""}</div>
+          <div class="tp-t"><b>${t("Zone {n}", { n: String(b.no).padStart(2, "0") })}</b><span>${esc(hn(b.title))}${b.fnName ? ` <em class="tp-fn">(${esc(b.fnName)})</em>` : ""}</span>${b.cont ? `<i>${t("continued")}</i>` : ""}</div>
           ${b.strips.length ? `<div class="tp-b">${b.strips.map(s => `<div class="zst">${s.map(chip).join("")}</div>`).join("")}</div>` : ""}
           ${b.plans.map((p) => {
             const r = rowPx(p);
@@ -2213,6 +2214,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
   .tp-t{display:flex;align-items:baseline;gap:9px;height:30px;padding:0 18px;background:#F3EEE3;border-bottom:1px solid #E7DFCF}
   .tp-t b{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#7A7263}
   .tp-t span{font-size:14px;font-weight:700;color:#1A1A1A}
+  /* the zone's function, in brackets after its name */
+  .tp-t .tp-fn{font-style:normal;font-weight:600;color:#7A7263}
   /* A zone whose trusses ran past one sheet and carry on here. */
   .tp-t i{font-style:normal;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#7A7263}
   /* What the zone is built of and dressed in — the same chips its own page carries. */
