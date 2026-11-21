@@ -1702,7 +1702,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       const Z_HEAD = 31;                                   // .tp-t 30 + its bottom border
       const Z_FRAME = 18;                                  // .tp-c 2 border + 16 margin-bottom
       const S_PAD = 20, S_ROW = 30, S_GAP = 6;             // .tp-b padding, one chip row, the gap around rows
-      const P_PAD = 12, P_LABEL = 18, P_CUT = 10;          // .tp-s padding, the Truss #n line, .tp-k padding
+      const P_PAD = 12, P_LABEL = 18, P_CUT = 16;          // .tp-s padding, the Truss #n line, .tp-k padding
+      const T_PAD = 4;                                      // .tp-bt's extra top padding (14 px against .tp-b's 10)
       // The zone's reference photo, thumbnail-size beside its plan (owner ask, 2026-11-19): the plan
       // says where the frame stands, the photo says what it is being built into.
       //
@@ -1743,7 +1744,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       const gutterPx = (p) => (p.label ? P_LABEL : 0) + (p.diag && p.diag.qty > 1 ? 15 : 0);
       const rowPx = (p) => Math.max(p.diag ? p.diag.heightPx : 0, p.thumb ? P_THUMB : 0, gutterPx(p));
       // a truss's own chip line (p.chips, zones with more than one truss) sits above its drawing
-      const planPx = (p) => { const r = rowPx(p); return (p.chips && p.chips.length ? stripsPx([p.chips]) : 0) + (r ? P_PAD + r : 0) + P_CUT + cutPx(p.tt); };
+      const planPx = (p) => { const r = rowPx(p); return (p.chips && p.chips.length ? stripsPx([p.chips]) + T_PAD : 0) + (r ? P_PAD + r : 0) + P_CUT + cutPx(p.tt); };
 
       const blocks = [];
       zonePages.forEach((pg, zi) => {
@@ -1811,9 +1812,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         ${list.map((b) => `<div class="tp-c">
           <div class="tp-t"><b>${t("Zone {n}", { n: String(b.no).padStart(2, "0") })}</b><span>${esc(hn(b.title))}${b.fnName ? ` <em class="tp-fn">(${esc(b.fnName)})</em>` : ""}</span>${b.cont ? `<i>${t("continued")}</i>` : ""}</div>
           ${b.strips.length ? `<div class="tp-b">${b.strips.map(s => `<div class="zst">${s.map(chip).join("")}</div>`).join("")}</div>` : ""}
-          ${b.plans.map((p) => {
+          ${b.plans.map((p, pi) => {
             const r = rowPx(p);
-            return `${p.chips ? `<div class="tp-b tp-bt"><div class="zst">${p.chips.map(chip).join("")}</div></div>` : ""}${r ? `<div class="tp-s" style="min-height:${r}px">
+            // no dashed rule above the first truss when nothing sits between it and the zone's heading (two lines in a row)
+            return `${p.chips ? `<div class="tp-b tp-bt${pi === 0 && !b.strips.length ? " tp-bt0" : ""}"><div class="zst">${p.chips.map(chip).join("")}</div></div>` : ""}${r ? `<div class="tp-s" style="min-height:${r}px">
             <div class="tp-lab">${p.label ? `<i>${esc(p.label)}</i>` : ""}${p.diag && p.diag.qty > 1 ? `<em>× ${esc(p.diag.qty)}</em>` : ""}</div>
             <div class="tp-dr">${p.diag ? p.diag.svg : ""}</div>
             ${p.thumb ? `<div class="tp-ph" ${bg(b.photo, 260)}></div>` : ""}
@@ -2224,8 +2226,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
   .tp-b .zst:last-child{margin-bottom:0}
   /* One truss's own chips (a zone with more than one truss) — a hairline above, lighter chips, so they read as
      "this truss" under the zone's own. Same padding as .tp-b, which trussPlanPages counts (S_PAD). */
-  .tp-bt{border-top:1px dashed #DDD4C2}
+  .tp-bt{border-top:1px dashed #DDD4C2;padding-top:14px}
   .tp-bt .zst span{background:#F6F2E9}
+  .tp-bt0{border-top:0}
   /* Label gutter, drawing, thumbnail — laid out in flow, never stacked, so a plan as wide as the
      column cannot be painted over. The widths here are what trussPlanPages subtracts (P_GUTTER /
      P_THUMB_W / P_GAP) to tell the drawing its room: keep them in step. */
@@ -2239,7 +2242,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
   /* The zone's reference photo, beside its plan rather than over it. */
   .tp-ph{flex:0 0 86px;height:62px;border-radius:8px;border:1px solid #DDD4C2;background:#EFE9DC center/cover no-repeat}
   /* That truss's cut list, directly under its own plan. */
-  .tp-k{padding:0 14px 10px}
+  .tp-k{padding:0 14px 16px}
   .ztk{display:flex;box-sizing:border-box;border:1px solid #DDD4C2;border-radius:12px;background:#FBF8F1;overflow:hidden}
   .ztk-c{flex:1;min-width:0;box-sizing:border-box;padding:10px 16px;overflow:hidden}
   .ztk-c + .ztk-c{border-left:1px solid #E7DFCF}

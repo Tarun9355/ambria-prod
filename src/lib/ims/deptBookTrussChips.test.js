@@ -22,7 +22,7 @@ const ctxOf = (rows) => ({
 describe("Truss layouts page: each truss of a multi-truss zone carries its own chips", () => {
   it("prints the second truss's own type, size and material above its plan", () => {
     const html = buildDeptBookHtml(ctxOf([[zone, 0, 28], [extra, 1, 22]]));
-    const strips = html.split('class="tp-b tp-bt"').slice(1).map(s => s.slice(0, 600));
+    const strips = html.split('class="tp-b tp-bt').slice(1).map(s => s.slice(0, 600));
     expect(strips).toHaveLength(2);
     expect(strips[0]).toContain("Aluminium");
     expect(strips[0]).toContain("28 × 12 × 8 ft");
@@ -35,9 +35,29 @@ describe("Truss layouts page: each truss of a multi-truss zone carries its own c
     // the zone's function in brackets after its name
     expect(page).toContain('<em class="tp-fn">(Wedding)</em>');
   });
+  it("a truss masked in Acrylic names it (and its wall) on that truss's own line only", () => {
+    const acrylic = { ...extra, mkOn: true, mkT: "acrylic", mkWalls: { back: true } };
+    const z2 = { ...main, extraTrussRows: [acrylic] };
+    const f2 = { ...fn, zones: { entry: z2 } };
+    const html = buildDeptBookHtml({ ...ctxOf([[z2, 0, 28], [acrylic, 1, 22]]), sel: { id: "e1", clientName: "T", date: "2026-12-05", deptInventory: {}, functionsDetail: [f2] } });
+    const strips = html.split('class="tp-b tp-bt').slice(1).map(s => s.slice(0, 900));
+    expect(strips[0]).not.toContain("Acrylic");
+    expect(strips[1]).toContain("Acrylic");
+    expect(strips[1]).toContain("Back wall");
+  });
+
+  it("an FOC truss elsewhere in the zone keeps its 'already at the venue' note on the zone line", () => {
+    const focRow = { ...extra, trussFoc: true };
+    const z3 = { ...main, extraTrussRows: [extra, focRow] };
+    const f3 = { ...fn, zones: { entry: z3 } };
+    const html = buildDeptBookHtml({ ...ctxOf([[z3, 0, 28], [extra, 1, 22]]), sel: { id: "e1", clientName: "T", date: "2026-12-05", deptInventory: {}, functionsDetail: [f3] } });
+    const page = html.slice(html.indexOf('class="lay-h"'));
+    expect(page.slice(0, page.indexOf('tp-bt'))).toContain("FOC");
+  });
+
   it("a zone with one truss keeps just the zone's chips", () => {
     const single = { ...main };
     const html = buildDeptBookHtml({ ...ctxOf([[single, 0, 28]]), sel: { id: "e1", clientName: "T", date: "2026-12-05", deptInventory: {}, functionsDetail: [{ ...fn, zones: { entry: single } }] } });
-    expect(html).not.toContain("tp-bt\"");
+    expect(html).not.toContain('class="tp-b tp-bt');
   });
 });
