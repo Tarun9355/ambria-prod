@@ -5428,8 +5428,20 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                     g.qty += Number(u.qty) || 0; grp.set(k, g);
                                   });
                                   if (!grp.size) return null;
+                                  // All functions: the list runs to a dozen zones on a big event - folded behind a "which truss" toggle (owner ask 2026-11-21)
+                                  const foldable = invFn === "all" && grp.size > 1;
+                                  const tk = "tu:" + it.id, open = !foldable || !!kitOpen[tk];
+                                  const types = [...new Set([...grp.values()].map(g => g.type).filter(Boolean))];
                                   return (
-                                    <ul className="mt-1 space-y-0.5">
+                                    <>
+                                    {foldable && (
+                                      <button onClick={() => setKitOpen(o => ({ ...o, [tk]: !o[tk] }))} aria-expanded={open}
+                                        className="mt-1 inline-flex items-center gap-1.5 text-[11px] font-semibold text-indigo-700 hover:underline">
+                                        <span className={`inline-block transition-transform ${open ? "rotate-90" : ""}`} aria-hidden="true">›</span>
+                                        {grp.size} zones · {types.slice(0, 3).join(", ")}{types.length > 3 ? ` +${types.length - 3}` : ""}
+                                      </button>
+                                    )}
+                                    {open && <ul className="mt-1 space-y-0.5">
                                       {[...grp.values()].map((g, i) => (
                                         <li key={i} className="flex flex-wrap items-center gap-1.5 text-gray-600">
                                           {g.type && <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold text-[11px]">{g.type}</span>}
@@ -5437,7 +5449,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                           <span className="tabular-nums text-gray-800 font-semibold">× {Math.round(g.qty * 100) / 100}</span>
                                         </li>
                                       ))}
-                                    </ul>
+                                    </ul>}
+                                    </>
                                   );
                                 })()}
                                 {it.shortQty > 0 && (it.outOfStock
