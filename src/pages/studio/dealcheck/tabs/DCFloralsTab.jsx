@@ -920,7 +920,7 @@ export default function DCFloralsTab({ ctx }) {
                                         </div>
                                         {/* Artificial side */}
                                         <div>
-                                          <div style={{color:"#EC4899",fontWeight:600,marginBottom:6}}>● Artificial bunches ({100-eb.realPct}% × {eb.qty} pattern{eb.qty===1?"":"s"})</div>
+                                          <div style={{color:"#EC4899",fontWeight:600,marginBottom:6}}>● Artificial ({100-eb.realPct}% × {eb.qty} pattern{eb.qty===1?"":"s"})</div>
                                           {eb.artCost <= 0 ? (
                                             <div style={{color:"#1A1A2E",fontStyle:"italic"}}>{(!eb.artLines || eb.artLines.length === 0) ? "No artificial (100% real, no recipe, or bunches/unit not set on flowers)." : "Set Art Bunches/Unit on flowers in IMS Mandi tab."}</div>
                                           ) : (
@@ -954,7 +954,11 @@ export default function DCFloralsTab({ ctx }) {
                                                   const costCol = al.invItem?"#3B82F6":(al.realOnly?textS:(al.isGreen?"#10B981":"#EC4899"));
                                                   return (
                                                   <tr key={ai} style={ROW}>
-                                                    <td style={{...TD,textAlign:"left",whiteSpace:"normal",color:al.invItem?"#3B82F6":(al.realOnly?textS:"#1A1A2E")}}>{al.name}<span style={{fontSize:11,marginLeft:4,color:al.invItem?"#3B82F6":(al.realOnly?"#F59E0B":(al.isGreen?"#10B981":(al.isMapped?"#7C3AED":"#EC4899")))}}>{al.invItem?"📦":(al.realOnly?"🔒":(al.isGreen?"🌿":(al.isMapped?"🔗":"🌹")))}</span></td>
+                                                    {/* the mapped item's name under the flower (it wrapped the Makes column wide and squeezed the flower name onto two lines) */}
+                                                    <td style={{...TD,textAlign:"left",whiteSpace:"normal",minWidth:140,color:al.invItem?"#3B82F6":(al.realOnly?textS:"#1A1A2E")}}>
+                                                      <span style={{whiteSpace:"nowrap"}}>{al.name}<span style={{fontSize:11,marginLeft:4,color:al.invItem?"#3B82F6":(al.realOnly?"#F59E0B":(al.isGreen?"#10B981":(al.isMapped?"#7C3AED":"#EC4899")))}}>{al.invItem?"📦":(al.realOnly?"🔒":(al.isGreen?"🌿":(al.isMapped?"🔗":"🌹")))}</span></span>
+                                                      {al.isMapped && al.mappedName && <span style={{display:"block",fontSize:10.5,color:"#7C3AED",lineHeight:1.35,marginTop:1}}>→ {al.mappedName}</span>}
+                                                    </td>
                                                     <td style={TD}>{pp}</td>
                                                     <td style={TD}>{eb.qty}</td>
                                                     {/* an inventory piece is always costed here whole; a Real Only flower is never replaced */}
@@ -968,7 +972,7 @@ export default function DCFloralsTab({ ctx }) {
                                                     {/* what that real qty becomes: bunches (× bunches per unit), or pieces of the mapped item (× pieces per unit) */}
                                                     <td style={{...TD,color:al.missingRatio?"#F59E0B":"#1A1A2E"}}>
                                                       {al.invItem || al.realOnly ? <span style={{color:textS}}>—</span>
-                                                        : al.isMapped ? <>{Number((al.mappedPcs||0).toFixed(2))} pc<span style={SUB}>× {al.pcsPerUnit} pc/{al.unit}{al.mappedName ? ` · ${al.mappedName}` : ""}</span></>
+                                                        : al.isMapped ? <>{Number((al.mappedPcs||0).toFixed(2))} pc<span style={SUB}>× {al.pcsPerUnit} pc/{al.unit}</span></>
                                                         : al.missingRatio ? "⚠ ratio?"
                                                         : <>{al.bunches.toFixed(1)} bunch{Math.abs(al.bunches-1)<0.05?"":"es"}<span style={SUB}>× {al.bunchesPerUnit}/{al.unit}</span></>}
                                                     </td>
