@@ -1159,7 +1159,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         // First, not last: a zone with more than six items splits across pages, and a print
         // appended at the end landed on the zone's second page, away from the one the crew opens.
         items.unshift(...printCardsOf(zCfg), ...carpetCardsOf(zCfg, fn?.fnIdx ?? fi, zk, fn));
-        if (!items.length && !zPhoto && !zDims && !zStruct.length) return;
+        // a zone with nothing but Build's note still gets its page — the note was printed nowhere (owner ask 2026-11-21)
+        if (!items.length && !zPhoto && !zDims && !zStruct.length && !String(fn?.notes?.[zk] || "").trim()) return;
         zonePages.push({
           zk,
           fi,
@@ -1346,13 +1347,15 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       const fabStrip = !cont && !onTrussPage && (pg.fabric || []).length > 0;
       // The truss breakdown that used to sit here is on the Truss layouts page at the front now
       // (owner ask, 2026-11-19), under the plan of the very truss it cuts — see cutHtml above.
-      // Build's note for the zone (owner ask 2026-11-03), on its first page under the strips: up to 8 lines of about 95
-      // characters, its height out of the photo like the strips above, so the page still fits one sheet.
-      const NOTE_LINE = 18, NOTE_MAX_LINES = 8;
+      // Build's note for the zone (owner ask 2026-11-03), on its first page under the strips — ALL of it (owner ask
+      // 2026-11-21): it used to be clipped at 8 lines (max-height + overflow hidden), so the rest of a longer note simply
+      // never reached the crew. Its height comes out of the photo like the strips above (the photo keeps at least its
+      // minimum); a note so long the page still runs over is scaled with the sheet, never cut.
+      const NOTE_LINE = 18;
       const noteText = !cont ? (pg.note || "") : "";
-      const noteLines = noteText ? Math.min(NOTE_MAX_LINES, noteText.split(/\r?\n/).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 95)), 0)) : 0;
+      const noteLines = noteText ? noteText.split(/\r?\n/).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 95)), 0) : 0;
       const notePx = noteLines ? 30 + noteLines * NOTE_LINE : 0;
-      const noteBox = noteLines ? `<div class="znote" style="max-height:${notePx - 12}px"><b>📝 ${t("Note")}</b><span>${esc(noteText)}</span></div>` : "";
+      const noteBox = noteLines ? `<div class="znote"><b>📝 ${t("Note")}</b><span>${esc(noteText)}</span></div>` : "";
       const headPx = (cont ? CONT_HEAD_PX : HEAD_PX) + (strip ? 44 : 0) + (fabStrip ? 44 : 0) + notePx;
       // the fabric row comes out of the photo's floor too, so it never makes a page taller than it was without it
       const PHOTO_H = bare ? PAGE_PX - headPx : Math.max(Math.max(160, 260 - (fabStrip ? 44 : 0) - notePx), PAGE_PX - headPx - rows * (ROW_H + ARROW));
@@ -2225,7 +2228,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
   /* Says WHAT is being measured. On its own "L 52 × W 14 × H 12 ft" could be the zone, the
      structure or a single prop; it is the zone's own span. */
   .zst{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
-  .znote{box-sizing:border-box;margin:0 0 12px;padding:8px 14px;border:1px solid #F1D99A;border-radius:10px;background:#FFF9E8;font-size:12.5px;line-height:18px;color:#5A3E0A;white-space:pre-wrap;overflow:hidden}
+  .znote{box-sizing:border-box;margin:0 0 12px;padding:8px 14px;border:1px solid #F1D99A;border-radius:10px;background:#FFF9E8;font-size:12.5px;line-height:18px;color:#5A3E0A;white-space:pre-wrap;overflow-wrap:anywhere}
   .znote b{display:inline;margin-right:8px;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9A6B1F}
   /* ── TRUSS PLANS PAGE ── every zone's frame, together, at the front of the book.
      The px each rule adds is budgeted in trussPlanPages (Z_HEAD / S_* / P_*) — keep them in step. */
