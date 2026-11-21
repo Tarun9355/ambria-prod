@@ -788,7 +788,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         if (!trussTableByZone.has(zkey)) trussTableByZone.set(zkey, []);
         // matInv rides along so the plan can split each bay into the very pieces this cut list
         // names — a 22 ft run drawn as the 12 + 10 it is actually built from, joint and all.
-        trussTableByZone.get(zkey).push({ label: ri > 0 ? t("Truss #{n}", { n: ri + 1 }) : "", pillars, beams, battaRft, battaBuf: Number(bBuf) || 0, material: row.trussMaterial || "", topo: pv.topology, matInv });
+        // no "Truss #n" caption beside a zone's 2nd/3rd frame any more (owner ask 2026-11-21: "confusing") — the
+        // frames are drawn one under another in their zone, which already says they are separate trusses
+        trussTableByZone.get(zkey).push({ label: "", pillars, beams, battaRft, battaBuf: Number(bBuf) || 0, material: row.trussMaterial || "", topo: pv.topology, matInv });
       });
     }
 
