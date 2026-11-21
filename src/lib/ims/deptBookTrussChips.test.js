@@ -1,0 +1,38 @@
+import { describe, it, expect } from "vitest";
+import { buildDeptBookHtml } from "./deptBookHtml";
+
+// A zone with a "+ Add Truss" extra: each truss's own type / size / material prints above its plan on the Truss layouts
+// page (owner ask 2026-11-21) — the zone's chips only summed them up as "Box +1 more". A one-truss zone stays as before.
+const trussInv = { pillars: { 8: 40, 12: 20 }, beams: { 12: 40, 10: 20, 4: 20 } };
+const main = { trT: "box", dims: { L: 28, W: 12, H: 8 }, trussMaterial: "Aluminium", drapeDensity: "dense" };
+const extra = { trT: "box", dims: { L: 22, W: 12, H: 8 }, trussMaterial: "Iron", drapeDensity: "moderate" };
+const zone = { ...main, extraTrussRows: [extra] };
+const fn = { type: "Wedding", date: "2026-12-05", venue: "", enabledEls: { entry: true }, elements: {}, zones: { entry: zone } };
+const topo = (L) => ({ pillars: [{ H: 8 }, { H: 8 }, { H: 8 }, { H: 8 }], beams: [{ lengthFt: 12 }, { lengthFt: L - 12 }, { lengthFt: 12 }, { lengthFt: L - 12 }, { lengthFt: 12 }, { lengthFt: 12 }] });
+const ctxOf = (rows) => ({
+  dept: "Tenting", sel: { id: "e1", clientName: "Test", date: "2026-12-05", functionsDetail: [fn], deptInventory: {} },
+  inventory: [], blocks: {}, settings: {}, trussInv, catToDept: () => "Tenting", authUser: { name: "x" },
+  flowerPatterns: [], mandiCatalogue: [], floralModeBySub: {}, fvSettings: {}, trVenues: [],
+  blockedItemsGrouped: [], blockedItems: [], trucks: [], movements: [], fabricReqRows: [],
+  trussPlanOf: () => rows.map(([row, ri, L]) => ({ row, fi: 0, zk: "entry", ri, key: `0|entry|${ri}`, pv: { topology: topo(L), batta: { rftWithBuffer: 100, bufferPct: 10 } } })),
+  fabricEntriesOf: () => [], fabricPalettesOf: () => ({}), carpetPlanOf: () => ({ rows: [] }), elementPlanOf: () => ({ rows: [] }),
+  zoneLabelFor: (fi, zk) => zk, zoneAdminOrder: [],
+});
+
+describe("Truss layouts page: each truss of a multi-truss zone carries its own chips", () => {
+  it("prints the second truss's own type, size and material above its plan", () => {
+    const html = buildDeptBookHtml(ctxOf([[zone, 0, 28], [extra, 1, 22]]));
+    const strips = html.split('class="tp-b tp-bt"').slice(1).map(s => s.slice(0, 600));
+    expect(strips).toHaveLength(2);
+    expect(strips[0]).toContain("Aluminium");
+    expect(strips[0]).toContain("28 × 12 × 8 ft");
+    expect(strips[1]).toContain("Iron");
+    expect(strips[1]).toContain("22 × 12 × 8 ft");
+    expect(html).not.toContain("Truss #2");
+  });
+  it("a zone with one truss keeps just the zone's chips", () => {
+    const single = { ...main };
+    const html = buildDeptBookHtml({ ...ctxOf([[single, 0, 28]]), sel: { id: "e1", clientName: "T", date: "2026-12-05", deptInventory: {}, functionsDetail: [{ ...fn, zones: { entry: single } }] } });
+    expect(html).not.toContain("tp-bt\"");
+  });
+});

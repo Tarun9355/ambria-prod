@@ -29,7 +29,7 @@ import { trussDiagramSvg } from "./trussDiagramSvg";
 import { fitUrl } from "../studio/thumb.js";
 import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiFlower } from "./flowerHelpers";
 import { swatchHexFor } from "../studio/colours";
-import { buildFabricGroups, isFabricLine } from "./fabricGroups";
+import { buildFabricGroups, isFabricLine, trussDimsText } from "./fabricGroups";
 import { mandiHow } from "./floralHow";
 import { buildEventSwap, swappedRecipeFlower } from "./mandiSwap";
 import { realLineTaker, fullRecipeLines } from "./floralBook";
@@ -685,27 +685,42 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         });
       });
     }
+    // The fabric chips (Liza / Velvet curtains / Wall masking — each colour with its quantity) for a set of truss rows, by
+    // "fi|zk". The whole zone's rows give the zone's chips; ONE row gives that truss's own (fabricChipsOfRow, under its plan
+    // on the Truss layouts page). withWalls: Wall Masking's walls are worked out per zone, so only the zone's chips name them.
+    const fabricChipsFor = (entries, withWalls) => {
+      const out = new Map();
+      buildFabricGroups({ entries, lines: [], fabricPlan: sel?.fabricPlan, stock: trussInv, fnPalettes: fabricPalettesOf() }).groups.forEach(g => {
+        g.zones.forEach(z => {
+          if (z.fi == null) return;
+          const cols = (z.colours || []).filter(c => c.colour && c.colour !== "(unassigned)");
+          // Each colour with its quantity, as Planning's Fabric block shows it (owner ask 2026-11-02: one colour used to print with no
+          // quantity, so the crew could not tell how much Liza / Velvet the zone takes); no colour picked yet: the zone's own quantity.
+          const qtyTxt = (q) => Number(q) > 0 ? ` ${esc(g.unit === "kg" ? kgR(q) : q)} ${esc(hu(g.unit))}` : "";
+          const html = cols.length
+            ? cols.map(c => `<b class="fpc">${colourMark(c.colour, c.hex, c.photo)}${esc(hn(c.colour))}${qtyTxt(c.qty)}</b>`).join("") + (z.standing ? `<b class="fpc">♻ ${t("Repeat")}</b>` : "")
+            : esc(t("Colour not picked")) + (Number(z.qty) > 0 ? ` · <b>${qtyTxt(z.qty).trim()}</b>` : "");
+          const key = `${z.fi}|${z.zoneKey}`;
+          // Wall Masking: which walls the pieces go on (owner report 2026-11-13: the pieces printed with no wall, so the crew could not
+          // tell where they go) - only the walls masked in fabric, the rule the pieces are counted by.
+          const wallsTxt = withWalls && g.key === "masking" ? maskWallsOf(z.fi, z.zoneKey).fabric.map(w => t(WALL_LBL[w])).join(" + ") : "";
+          out.set(key, [...(out.get(key) || []), { k: t(g.label), html: html + (wallsTxt ? ` <b class="fpc">${esc(wallsTxt)}</b>` : "") }]);
+        });
+      });
+      return out;
+    };
+    let fabricEntriesAll = [];
     if (showStruct || inBook("Fabric")) {
       try {
-        buildFabricGroups({ entries: fabricEntriesOf(), lines: [], fabricPlan: sel?.fabricPlan, stock: trussInv, fnPalettes: fabricPalettesOf() }).groups.forEach(g => {
-          g.zones.forEach(z => {
-            if (z.fi == null) return;
-            const cols = (z.colours || []).filter(c => c.colour && c.colour !== "(unassigned)");
-            // Each colour with its quantity, as Planning's Fabric block shows it (owner ask 2026-11-02: one colour used to print with no
-            // quantity, so the crew could not tell how much Liza / Velvet the zone takes); no colour picked yet: the zone's own quantity.
-            const qtyTxt = (q) => Number(q) > 0 ? ` ${esc(g.unit === "kg" ? kgR(q) : q)} ${esc(hu(g.unit))}` : "";
-            const html = cols.length
-              ? cols.map(c => `<b class="fpc">${colourMark(c.colour, c.hex, c.photo)}${esc(hn(c.colour))}${qtyTxt(c.qty)}</b>`).join("") + (z.standing ? `<b class="fpc">♻ ${t("Repeat")}</b>` : "")
-              : esc(t("Colour not picked")) + (Number(z.qty) > 0 ? ` · <b>${qtyTxt(z.qty).trim()}</b>` : "");
-            const key = `${z.fi}|${z.zoneKey}`;
-            // Wall Masking: which walls the pieces go on (owner report 2026-11-13: the pieces printed with no wall, so the crew could not
-            // tell where they go) - only the walls masked in fabric, the rule the pieces are counted by.
-            const wallsTxt = g.key === "masking" ? maskWallsOf(z.fi, z.zoneKey).fabric.map(w => t(WALL_LBL[w])).join(" + ") : "";
-            fabricByZone.set(key, [...(fabricByZone.get(key) || []), { k: t(g.label), html: html + (wallsTxt ? ` <b class="fpc">${esc(wallsTxt)}</b>` : "") }]);
-          });
-        });
+        fabricEntriesAll = fabricEntriesOf();
+        fabricChipsFor(fabricEntriesAll, true).forEach((list, key) => fabricByZone.set(key, [...(fabricByZone.get(key) || []), ...list]));
       } catch { /* the zone pages print without the colours */ }
     }
+    const fabricChipsOfRow = (fi, zk, ri) => {
+      const e = fabricEntriesAll.filter(x => x.fi === fi && x.zk === zk && (x.ri || 0) === (ri || 0));
+      if (!e.length) return [];
+      try { return fabricChipsFor(e, false).get(`${fi}|${zk}`) || []; } catch { return []; }
+    };
     // ── REPEAT / FIXED ON AN ITEM ── (owner ask 2026-11-01, like the fabric's ♻ Repeat) the crew sees which items need no fresh
     // pull: ♻ Repeat (the item's own Repeat, else its zone's Elements chip - the rule Studio prices by), ♻ Reused from an EARLIER
     // function of the deal at the same venue the same or the day before (the earlier one is not tagged - it is the one that brings
@@ -790,7 +805,20 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         // names — a 22 ft run drawn as the 12 + 10 it is actually built from, joint and all.
         // no "Truss #n" caption beside a zone's 2nd/3rd frame any more (owner ask 2026-11-21: "confusing") — the
         // frames are drawn one under another in their zone, which already says they are separate trusses
-        trussTableByZone.get(zkey).push({ label: "", pillars, beams, battaRft, battaBuf: Number(bBuf) || 0, material: row.trussMaterial || "", topo: pv.topology, matInv });
+        // This truss's OWN chips (owner ask 2026-11-21: a zone's "+ Add Truss" extra has its own type, size, material, drape and
+        // fabric, which the zone's chips only summed up as "Box +1 more") — printed above its plan when the zone has more than one.
+        const rowChips = [];
+        const trTxt = [trussTypeLbl(row.trT), Number(row.trussQty) > 1 ? `x${row.trussQty}` : "", row.trussMaterial ? hn(String(row.trussMaterial)) : ""].filter(Boolean).join(" ");
+        // just the size — trussDimsText adds "box truss" and the material, which trTxt already says
+        const dimTxt = trussDimsText({ ...row, trussMaterial: "" }).replace(/\s*(box|u)\s+truss$/i, "");
+        if (trTxt || dimTxt) rowChips.push({ k: t("Truss"), v: [trTxt, dimTxt].filter(Boolean).join(" · ") });
+        if (!row.noFabric) {
+          const fab = fabricChipsOfRow(fi, zk, ri);
+          const dens = String(row.drapeDensity || "moderate").toLowerCase();
+          if (fab.length && DRAPE_LBL[dens]) rowChips.push({ k: t("Drape"), html: esc(t(DRAPE_LBL[dens])) });
+          rowChips.push(...fab);
+        }
+        trussTableByZone.get(zkey).push({ label: "", chips: rowChips, pillars, beams, battaRft, battaBuf: Number(bBuf) || 0, material: row.trussMaterial || "", topo: pv.topology, matInv });
       });
     }
 
@@ -1706,17 +1734,21 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // figure, and .tp-s's 12 px of padding is P_PAD on top of it.
       const gutterPx = (p) => (p.label ? P_LABEL : 0) + (p.diag && p.diag.qty > 1 ? 15 : 0);
       const rowPx = (p) => Math.max(p.diag ? p.diag.heightPx : 0, p.thumb ? P_THUMB : 0, gutterPx(p));
-      const planPx = (p) => { const r = rowPx(p); return (r ? P_PAD + r : 0) + P_CUT + cutPx(p.tt); };
+      // a truss's own chip line (p.chips, zones with more than one truss) sits above its drawing
+      const planPx = (p) => { const r = rowPx(p); return (p.chips && p.chips.length ? stripsPx([p.chips]) : 0) + (r ? P_PAD + r : 0) + P_CUT + cutPx(p.tt); };
 
       const blocks = [];
       zonePages.forEach((pg, zi) => {
         // EVERY truss of the zone, not only the ones a plan came out of: a truss whose plan could
         // not be drawn still has a cut list, and that list lives nowhere else now. The drawing is
         // sized to the room its own row leaves — only the zone's first truss carries the thumbnail.
+        const multiTruss = (pg.trussTable || []).length > 1;
         const plans = (pg.trussTable || []).map((tt, i) => {
           const thumb = !!pg.photo && i === 0;
           return {
             tt, label: tt.label, thumb,
+            // each truss's own type / size / drape / fabric when the zone has more than one (the zone's chips above sum them up)
+            chips: multiTruss && Array.isArray(tt.chips) && tt.chips.length ? tt.chips : null,
             diag: tt.topo ? trussDiagramSvg(tt.topo, { maxHeightPx: PLAN_MAX_PX, maxWidthPx: drawWidth(thumb), resolveBay: bayPiecesOf(tt.matInv) }) : null,
           };
         });
@@ -1766,7 +1798,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           ${b.strips.length ? `<div class="tp-b">${b.strips.map(s => `<div class="zst">${s.map(chip).join("")}</div>`).join("")}</div>` : ""}
           ${b.plans.map((p) => {
             const r = rowPx(p);
-            return `${r ? `<div class="tp-s" style="min-height:${r}px">
+            return `${p.chips ? `<div class="tp-b tp-bt"><div class="zst">${p.chips.map(chip).join("")}</div></div>` : ""}${r ? `<div class="tp-s" style="min-height:${r}px">
             <div class="tp-lab">${p.label ? `<i>${esc(p.label)}</i>` : ""}${p.diag && p.diag.qty > 1 ? `<em>× ${esc(p.diag.qty)}</em>` : ""}</div>
             <div class="tp-dr">${p.diag ? p.diag.svg : ""}</div>
             ${p.thumb ? `<div class="tp-ph" ${bg(b.photo, 260)}></div>` : ""}
@@ -2173,6 +2205,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
   .tp-b{padding:10px 14px}
   .tp-b .zst{margin:0 0 6px}
   .tp-b .zst:last-child{margin-bottom:0}
+  /* One truss's own chips (a zone with more than one truss) — a hairline above, lighter chips, so they read as
+     "this truss" under the zone's own. Same padding as .tp-b, which trussPlanPages counts (S_PAD). */
+  .tp-bt{border-top:1px dashed #DDD4C2}
+  .tp-bt .zst span{background:#F6F2E9}
   /* Label gutter, drawing, thumbnail — laid out in flow, never stacked, so a plan as wide as the
      column cannot be painted over. The widths here are what trussPlanPages subtracts (P_GUTTER /
      P_THUMB_W / P_GAP) to tell the drawing its room: keep them in step. */
