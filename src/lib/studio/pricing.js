@@ -949,10 +949,18 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
     const key = ov?.matKey || (ov?.customItemId ? null : zc.mkT);
     return /fabric/i.test(String(key || ""));
   };
+  // Which footprint side each wall runs along. A Full Box's back wall faces its front opening, so it runs the truss's WIDTH
+  // (dims.W - topology physicalW) and its side walls run the DEPTH (dims.L - physicalL): the same as Build prices it (back
+  // W × H, left / right L × H). This read the back off physicalL for every config, so a 29.5 ft wide, 5.5 ft deep stage got one
+  // 13 ft masking piece for its back wall instead of three (owner check 2026-11-21, "fabric quantity for a 30 ft truss").
+  // A U / Half Box's span is its physicalL already (physicalW is 0 / the back depth), so those stay as they were.
+  const isFullBox = preview.config === "full_box";
+  const backRun = isFullBox ? maskW : maskL;
+  const sideRun = isFullBox ? maskL : maskW;
   let rft = 0;
-  if (wallIsFabric("back")  && maskL > 0) rft += maskL;
-  if (wallIsFabric("left")  && maskW > 0) rft += maskW;
-  if (wallIsFabric("right") && maskW > 0) rft += maskW;
+  if (wallIsFabric("back")  && backRun > 0) rft += backRun;
+  if (wallIsFabric("left")  && sideRun > 0) rft += sideRun;
+  if (wallIsFabric("right") && sideRun > 0) rft += sideRun;
   const maskingPieces = rft > 0 ? Math.ceil(rft / 13) : 0;
 
   // Liza kg — depends on truss config (Tarun lock 26 May):
