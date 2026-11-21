@@ -29,6 +29,9 @@ describe("Truss layouts page: each truss of a multi-truss zone carries its own c
     expect(strips[1]).toContain("Iron");
     expect(strips[1]).toContain("22 × 12 × 8 ft");
     expect(html).not.toContain("Truss #2");
+    // the zone's line no longer repeats the trusses (each has its own line now)
+    const page = html.slice(html.indexOf('class="lay-h"'));
+    expect(page.slice(0, page.indexOf('tp-bt'))).not.toContain("+1 more");
   });
   it("a zone with one truss keeps just the zone's chips", () => {
     const single = { ...main };

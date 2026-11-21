@@ -640,13 +640,15 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     const WALL_LBL = { back: "Back wall", left: "Left wall", right: "Right wall" };
     const maskRatesList = Array.isArray(settings?.maskingRates) ? settings.maskingRates : [];
     const maskMatName = (key) => (maskRatesList.find(r => r && r.key === key)?.name) || ({ fabric: "Fabric", acrylic: "Acrylic", flex: "Flex", vinyl: "Vinyl" })[key] || String(key || "");
-    const maskWallsOf = (fi, zk) => {
+    // onlyRi: one truss row of the zone (0 = the zone's own, 1+ = its "+ Add Truss" extras) — for that truss's own chips
+    const maskWallsOf = (fi, zk, onlyRi = null) => {
       const f = fns.find((x, i) => (x?.fnIdx ?? i) === fi) || fns[fi];
       const zc = f?.zones?.[zk];
       const out = { fabric: [], other: new Map() }; // other: material label -> its walls
       if (!zc) return out;
       const addOther = (label, w) => { const list = out.other.get(label) || []; if (w && !list.includes(w)) list.push(w); out.other.set(label, list); };
-      [zc, ...(Array.isArray(zc.extraTrussRows) ? zc.extraTrussRows : [])].forEach(row => {
+      const allRows = [zc, ...(Array.isArray(zc.extraTrussRows) ? zc.extraTrussRows : [])];
+      (onlyRi == null ? allRows : [allRows[onlyRi]]).forEach(row => {
         if (!row || isTrussFoc(row)) return; // FOC truss - its masking is already up
         const wallMatAll = row.mkWallMat || {};
         const hasWallOverride = ["back", "left", "right"].some(w => wallMatAll[w] && (wallMatAll[w].matKey || wallMatAll[w].customItemId));
@@ -687,8 +689,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     }
     // The fabric chips (Liza / Velvet curtains / Wall masking — each colour with its quantity) for a set of truss rows, by
     // "fi|zk". The whole zone's rows give the zone's chips; ONE row gives that truss's own (fabricChipsOfRow, under its plan
-    // on the Truss layouts page). withWalls: Wall Masking's walls are worked out per zone, so only the zone's chips name them.
-    const fabricChipsFor = (entries, withWalls) => {
+    // on the Truss layouts page). wallsRi: whose walls Wall Masking names — null = the whole zone's, a number = that truss's.
+    const fabricChipsFor = (entries, wallsRi = null) => {
       const out = new Map();
       buildFabricGroups({ entries, lines: [], fabricPlan: sel?.fabricPlan, stock: trussInv, fnPalettes: fabricPalettesOf() }).groups.forEach(g => {
         g.zones.forEach(z => {
@@ -703,7 +705,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const key = `${z.fi}|${z.zoneKey}`;
           // Wall Masking: which walls the pieces go on (owner report 2026-11-13: the pieces printed with no wall, so the crew could not
           // tell where they go) - only the walls masked in fabric, the rule the pieces are counted by.
-          const wallsTxt = withWalls && g.key === "masking" ? maskWallsOf(z.fi, z.zoneKey).fabric.map(w => t(WALL_LBL[w])).join(" + ") : "";
+          const wallsTxt = g.key === "masking" ? maskWallsOf(z.fi, z.zoneKey, wallsRi).fabric.map(w => t(WALL_LBL[w])).join(" + ") : "";
           out.set(key, [...(out.get(key) || []), { k: t(g.label), html: html + (wallsTxt ? ` <b class="fpc">${esc(wallsTxt)}</b>` : "") }]);
         });
       });
@@ -713,13 +715,18 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     if (showStruct || inBook("Fabric")) {
       try {
         fabricEntriesAll = fabricEntriesOf();
-        fabricChipsFor(fabricEntriesAll, true).forEach((list, key) => fabricByZone.set(key, [...(fabricByZone.get(key) || []), ...list]));
+        fabricChipsFor(fabricEntriesAll, null).forEach((list, key) => fabricByZone.set(key, [...(fabricByZone.get(key) || []), ...list]));
       } catch { /* the zone pages print without the colours */ }
     }
+    // One truss's own fabric chips, plus its Acrylic / Flex / Vinyl / panel masking with the walls (the zone gets that as a
+    // separate "Masking" chip, built from all its trusses).
     const fabricChipsOfRow = (fi, zk, ri) => {
       const e = fabricEntriesAll.filter(x => x.fi === fi && x.zk === zk && (x.ri || 0) === (ri || 0));
-      if (!e.length) return [];
-      try { return fabricChipsFor(e, false).get(`${fi}|${zk}`) || []; } catch { return []; }
+      let out = [];
+      if (e.length) { try { out = fabricChipsFor(e, ri || 0).get(`${fi}|${zk}`) || []; } catch { out = []; } }
+      const { other } = maskWallsOf(fi, zk, ri || 0);
+      if (other.size) out = [...out, { k: t("Masking"), html: [...other].map(([mat, ws]) => `<b class="fpc">${esc(hn(mat))}${ws.length ? ` · ${esc(ws.map(w => t(WALL_LBL[w])).join(" + "))}` : ""}</b>`).join("") }];
+      return out;
     };
     // ── REPEAT / FIXED ON AN ITEM ── (owner ask 2026-11-01, like the fabric's ♻ Repeat) the crew sees which items need no fresh
     // pull: ♻ Repeat (the item's own Repeat, else its zone's Elements chip - the rule Studio prices by), ♻ Reused from an EARLIER
@@ -812,10 +819,11 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         // just the size — trussDimsText adds "box truss" and the material, which trTxt already says
         const dimTxt = trussDimsText({ ...row, trussMaterial: "" }).replace(/\s*(box|u)\s+truss$/i, "");
         if (trTxt || dimTxt) rowChips.push({ k: t("Truss"), v: [trTxt, dimTxt].filter(Boolean).join(" · ") });
-        if (!row.noFabric) {
+        {
           const fab = fabricChipsOfRow(fi, zk, ri);
           const dens = String(row.drapeDensity || "moderate").toLowerCase();
-          if (fab.length && DRAPE_LBL[dens]) rowChips.push({ k: t("Drape"), html: esc(t(DRAPE_LBL[dens])) });
+          // the drape only where this truss carries fabric (Liza / curtains / masking pieces) — not for an Acrylic panel alone
+          if (!row.noFabric && fab.some(c => c.k !== t("Masking")) && DRAPE_LBL[dens]) rowChips.push({ k: t("Drape"), html: esc(t(DRAPE_LBL[dens])) });
           rowChips.push(...fab);
         }
         trussTableByZone.get(zkey).push({ label: "", chips: rowChips, pillars, beams, battaRft, battaBuf: Number(bBuf) || 0, material: row.trussMaterial || "", topo: pv.topology, matInv });
@@ -1753,7 +1761,13 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           };
         });
         if (!plans.length) return;
-        const strips = [pg.struct || [], pg.fabric || []].filter((s) => s.length);
+        // A zone with several trusses: each truss prints its own truss / drape / fabric chips, so the zone's line keeps only what
+        // belongs to the whole zone (carpet, platform, floor, an FOC note) — it repeated every truss's fabric as a total
+        // (owner: "repeat hora hai", 2026-11-21).
+        const zoneStruct = multiTruss
+          ? (pg.struct || []).filter((c) => !(c.k === t("Truss") && !String(c.v || "").includes(t("FOC — already at the venue"))))
+          : (pg.struct || []);
+        const strips = [zoneStruct, multiTruss ? [] : (pg.fabric || [])].filter((s) => s.length);
         blocks.push({ no: zi + 1, title: pg.title, strips, plans, photo: pg.photo || "" });
       });
       if (!blocks.length) return "";
