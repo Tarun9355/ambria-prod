@@ -4757,8 +4757,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       )}
                     </div>
                   )}
+                  {/* Phone: the bell, EN | हि, download and View deck on their own line under the facts - beside the title they squeezed
+                      "Tenting — Sahil" to "Te…" and broke the date over three lines (owner screenshot 2026-11-21) */}
+                  <div className="sm:hidden mt-2">{actionIcons}</div>
                 </div>
-                <div className="sm:hidden">{actionIcons}</div>
               </div>
               <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-2 sm:mt-0 sm:pt-0 sm:border-0 sm:shrink-0">
                 <div className="hidden sm:block">{actionIcons}</div>
