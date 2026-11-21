@@ -110,7 +110,7 @@ import { getSharingAwareAvailable, collapsedDealShiftFor } from "../../../lib/im
 import { calcZoneFabric, resolveFabricAllocation, fabricAnchorsForRow, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial, platformStandingDiscount, scaleTrussPreview } from "../../../lib/studio/pricing";
 import { resolveBeamSegment, resolvePillarHeight } from "../../../lib/ims/trussEngine";
 import { platformAvgRatePerSqft } from "../../../lib/ims/platformEngine";
-import { carpetPricingFor, CARPET_OFF, carpetTakesStockPick } from "../../../lib/studio/taxonomy";
+import { carpetPricingFor, CARPET_OFF, carpetTakesStockPick, trussBaseArea } from "../../../lib/studio/taxonomy";
 import { qtyUsedElsewhereInDealCheck } from "../../../lib/studio/dealAvailability";
 import { isHiddenSubcat, oosCostPctFor, canFulfillShortfall } from "../../../lib/rateCard";
 import { matchKit } from "../../../lib/studio/kitVariants";
@@ -1279,6 +1279,10 @@ export default function DealCheckOverlay({ ctx }) {
                       // beam stock, so it joins that size's "Truss beam Nft" line (one line, 8 + 1 = 9), whatever its role. It is priced
                       // inside the pillar's height at the pillar rate, so the line's total keeps both parts and its rate is their average.
                       const pmap = {}, bmap = {}, smap = {};
+                      const _trMode = trussBaseArea(row).mode;
+                      const _trType = [_trMode === "box" ? "Box" : _trMode === "singleU" ? "Single U" : (_trMode || ""), Number(row.trussQty) > 1 ? `×${row.trussQty}` : "", row.trussMaterial ? String(row.trussMaterial) : ""].filter(Boolean).join(" ");
+                      const _trZone = zoneLabelsD?.[zk]?.label || (fn.customZones || []).find(cz => cz.id === zk)?.name || zk;
+                      const trussUseOf = (q) => ({ zone: _trZone, type: _trType, qty: Number(q) || 0 });
                       (pv.topology.pillars || []).forEach(p => { (resolvePillarHeight(p.H, matInv).pieces || []).forEach(pc => { const m = pc.type === "beam" ? smap : pmap; m[pc.size] = (m[pc.size] || 0) + pc.qty; }); });
                       (pv.topology.beams || []).forEach(b => { (resolveBeamSegment(b.lengthFt, matInv).pieces || []).forEach(pc => { bmap[pc.size] = (bmap[pc.size] || 0) + pc.qty; }); });
                       // Per-piece rate = this zone's own effective ₹/RFT (cost ÷ total RFT, already
@@ -1297,10 +1301,13 @@ export default function DealCheckOverlay({ ctx }) {
                         // fnIdx: which function this truss is in — kept per function on the merged line (byFn), so IMS Dept Ops'
                         // one-function view lists it; without it the truss read as "not in any of this function's zones" and was
                         // hidden there (owner report 2026-11-21: "haldi mai truss kyu ni aari, build mai toh hai")
-                        .forEach((l) => deptInv["Tenting"].push({ ...l, photo: "", sub: "truss structure", fnIdx: fi }));
+                        // trussUse: which zone's truss these pieces are for and what kind it is ("Single U ×2 pole") - the merged
+                        // line only said "truss structure", while the setup book names the type (owner report 2026-11-21:
+                        // "inventory block mai single u double u nahi dikhara jabki pdf mai hai")
+                        .forEach((l) => deptInv["Tenting"].push({ ...l, photo: "", sub: "truss structure", fnIdx: fi, trussUse: [{ ...trussUseOf(l.qty), fnIdx: fi }] }));
                       if (pv.batta?.rftWithBuffer > 0 && pv.costs.battaCost > 0) {
                         const battaUnit = Math.round(pv.costs.battaCost / pv.batta.rftWithBuffer);
-                        deptInv["Tenting"].push({ name: "Batta", photo: "", qty: pv.batta.rftWithBuffer, unit: battaUnit, total: Math.round(pv.costs.battaCost), sub: "truss structure", fnIdx: fi });
+                        deptInv["Tenting"].push({ name: "Batta", photo: "", qty: pv.batta.rftWithBuffer, unit: battaUnit, total: Math.round(pv.costs.battaCost), sub: "truss structure", fnIdx: fi, trussUse: [{ ...trussUseOf(pv.batta.rftWithBuffer), fnIdx: fi }] });
                       }
                     }
                     const fabCost = calcZoneFabricCost(row, tInv, anchors, row.drapeDensity || density, row.dcFabricMult) * repeatFabMult;
@@ -1522,6 +1529,7 @@ export default function DealCheckOverlay({ ctx }) {
                 if (it.shortQty) { seen[key].shortQty = (seen[key].shortQty || 0) + it.shortQty; seen[key].shortCost = (seen[key].shortCost || 0) + (it.shortCost || 0); }
                 if (it.calc) seen[key].calc = addCalc(seen[key].calc, it.calc);
                 if (Array.isArray(it.parts)) seen[key].parts = [...(seen[key].parts || []), ...it.parts];
+                if (Array.isArray(it.trussUse)) seen[key].trussUse = [...(seen[key].trussUse || []), ...it.trussUse];
                 if (Array.isArray(it.components)) { // merge kit sub-elements too (same kit across zones)
                   const base = seen[key].components || (seen[key].components = []);
                   it.components.forEach(cp => {
@@ -1531,7 +1539,7 @@ export default function DealCheckOverlay({ ctx }) {
                   });
                 }
               }
-              else { seen[key] = { ...it, rentalQty: rq, calc: it.calc ? addCalc(null, it.calc) : undefined, components: Array.isArray(it.components) ? it.components.map(c => ({ ...c })) : undefined, parts: Array.isArray(it.parts) ? [...it.parts] : undefined }; merged.push(seen[key]); }
+              else { seen[key] = { ...it, rentalQty: rq, calc: it.calc ? addCalc(null, it.calc) : undefined, components: Array.isArray(it.components) ? it.components.map(c => ({ ...c })) : undefined, parts: Array.isArray(it.parts) ? [...it.parts] : undefined, trussUse: Array.isArray(it.trussUse) ? [...it.trussUse] : undefined }; merged.push(seen[key]); }
               // Per-function truth, kept alongside the merged line — Dept Ops' own scoped-to-one-
               // function view used to ESTIMATE a function's share by scaling the merged total
               // proportionally to its qty (qty ÷ merged qty), which only happens to be right when

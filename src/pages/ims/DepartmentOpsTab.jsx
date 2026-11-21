@@ -5368,6 +5368,31 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                   if (!(len > 0) || !(n > 0)) return null;
                                   return <div className="text-gray-700 mt-0.5 tabular-nums">{/pillar/i.test(it.name) ? "Height" : "Length"} <b>{len} ft</b> each · {n} × {len} = <b>{Math.round(n * len * 100) / 100} ft</b> in all</div>;
                                 })()}
+                                {/* Which truss these pieces are for (Single U ×2 pole · Side Lounge) - Deal Check sends it per zone, like the setup book's Truss chip */}
+                                {(() => {
+                                  const uses = (it.src || it).trussUse;
+                                  if (!Array.isArray(uses) || !uses.length) return null;
+                                  const scoped = invFn === "all" ? uses : uses.filter(u => String(u.fnIdx) === String(invFn));
+                                  const grp = new Map();
+                                  scoped.forEach(u => {
+                                    const fnName = invFn === "all" ? (mpFns[u.fnIdx]?.type || "") : "";
+                                    const k = (u.type || "") + "|" + (u.zone || "") + "|" + fnName;
+                                    const g = grp.get(k) || { type: u.type, zone: u.zone, fnName, qty: 0 };
+                                    g.qty += Number(u.qty) || 0; grp.set(k, g);
+                                  });
+                                  if (!grp.size) return null;
+                                  return (
+                                    <ul className="mt-1 space-y-0.5">
+                                      {[...grp.values()].map((g, i) => (
+                                        <li key={i} className="flex flex-wrap items-center gap-1.5 text-gray-600">
+                                          {g.type && <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold text-[11px]">{g.type}</span>}
+                                          <span className="truncate">{g.zone}{g.fnName ? ` (${g.fnName})` : ""}</span>
+                                          <span className="tabular-nums text-gray-800 font-semibold">× {Math.round(g.qty * 100) / 100}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  );
+                                })()}
                                 {it.shortQty > 0 && (it.outOfStock
                                   ? <div className="text-red-600 mt-0.5">{it.shortQty} out of stock — can't be made in production, pick an alternative in Build</div>
                                   : (() => {
