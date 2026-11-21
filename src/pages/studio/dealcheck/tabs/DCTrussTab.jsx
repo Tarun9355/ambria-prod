@@ -100,7 +100,7 @@ export default function DCTrussTab({ ctx }) {
                     // used to disagree with the sidebar's function totals (which already read
                     // dcCostRollup, not this tab's own preview) for any function 2+ that cross-fn-
                     // reuses a prior function's structure, even with no zone manually flagged Repeat.
-                    const crossFnPrevFn = findCrossFnReuseSource(fn, fns);
+                    const crossFnPrevFn = findCrossFnReuseSource(fn, fns, { earlierOnly: true }); // same rule as Deal Check's rollup: only an earlier function of the day
                     const previews = zones.flatMap(zk => {
                       const zCfg = (fn.zoneConfig || {})[zk];
                       const zLabel = (zoneMeta?.[zk]?.label) || ((fn.customZones || []).find(cz => cz.id === zk)?.name) || zk;

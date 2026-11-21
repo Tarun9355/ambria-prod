@@ -895,7 +895,8 @@ export default function DealCheckOverlay({ ctx }) {
             // Still needed for the truss block's isRepeat flag further down (a ZONE-identity question —
             // "did any eligible sibling also build this zone" — not an item-quantity one, so it's
             // untouched by the running-peak rework above).
-            const crossFnPrevFn = findCrossFnReuseSource(fn, fns);
+            // earlierOnly: of two functions on one day, only the later one reuses the earlier one's standing truss - never both ways
+            const crossFnPrevFn = findCrossFnReuseSource(fn, fns, { earlierOnly: true });
             const frontierMap = (fnGroupFrontier[fnGroupIds[fi]] ||= new Map());
             // consumablePool is seeded ONCE from the frontier as it stood before this function started
             // (so it reflects exactly what earlier functions in the group contributed, no more — this

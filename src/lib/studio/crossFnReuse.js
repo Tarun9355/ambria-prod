@@ -32,17 +32,31 @@ import { walkKitUnits } from "../ims/helpers.js";
 // position — with two functions sharing day 1, whichever of Haldi/Cocktail didn't land in that one
 // slot (an accident of array order, not physical reality) was invisible to reuse entirely, even
 // though both functions' setups are equally still standing at the venue for Wedding to draw on.
-export function findCrossFnReuseSource(fnData, allFns) {
+// The order of a day's shifts, for `earlierOnly` below. An unknown shift sorts after the known ones.
+const SHIFT_RANK = { morning: 0, lunch: 1, sundowner: 2, evening: 2, night: 3 };
+const shiftRank = (s) => { const r = SHIFT_RANK[String(s || "").trim().toLowerCase()]; return r == null ? 9 : r; };
+
+// opts.earlierOnly: on the SAME date, only a function that comes before this one (by shift: Morning, Lunch, Sundowner,
+// Night; same shift → the earlier function in the list) counts. Without it the same-day rule ran both ways - Haldi (Morning)
+// and Sangeet (Night), same venue and day, each took the other's Entry & Passage truss as "already standing", so that truss
+// was loaded by neither and billed at the Repeat rate in both (owner report 2026-11-21). The day-before case is unchanged.
+export function findCrossFnReuseSource(fnData, allFns, opts = {}) {
   if (!fnData?.fnVenue || !fnData?.fnDate) return null;
   const venue = venueKey(fnData.fnVenue);
   const myDate = Date.parse(fnData.fnDate);
   if (!Number.isFinite(myDate)) return null;
-  const eligible = (allFns || []).filter(f => {
+  const list = allFns || [];
+  const posOf = (f) => { const i = list.indexOf(f); return i >= 0 ? i : (Number.isFinite(Number(f?.fnIdx)) ? Number(f.fnIdx) : 0); };
+  const eligible = list.filter(f => {
     if (f === fnData || f.fnIdx === fnData.fnIdx || !f.fnVenue || !f.fnDate) return false;
     if (venueKey(f.fnVenue) !== venue) return false;
     const t = Date.parse(f.fnDate);
     if (!Number.isFinite(t)) return false;
     const dayDiff = Math.round((myDate - t) / (24 * 60 * 60 * 1000));
+    if (dayDiff === 0 && opts.earlierOnly) {
+      const a = shiftRank(f.fnShift), b = shiftRank(fnData.fnShift);
+      return a < b || (a === b && posOf(f) < posOf(fnData));
+    }
     return dayDiff === 0 || dayDiff === 1; // same calendar date, or exactly the day before
   });
   if (!eligible.length) return null;
