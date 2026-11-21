@@ -25,9 +25,12 @@ describe("Truss layouts page: each truss of a multi-truss zone carries its own c
     const strips = html.split('class="tp-b tp-bt').slice(1).map(s => s.slice(0, 600));
     expect(strips).toHaveLength(2);
     expect(strips[0]).toContain("Aluminium");
-    expect(strips[0]).toContain("28 × 12 × 8 ft");
+    expect(strips[0]).toContain("L 28 × W 12 × H 8 ft");
     expect(strips[1]).toContain("Iron");
-    expect(strips[1]).toContain("22 × 12 × 8 ft");
+    expect(strips[1]).toContain("L 22 × W 12 × H 8 ft");
+    // type and size are separate chips
+    expect(strips[1]).toMatch(/Truss<\/i>Box Iron<\/span>/);
+    expect(strips[1]).toMatch(/Size<\/i>L 22 × W 12 × H 8 ft<\/span>/);
     expect(html).not.toContain("Truss #2");
     // the zone's line no longer repeats the trusses (each has its own line now)
     const page = html.slice(html.indexOf('class="lay-h"'));
@@ -61,6 +64,7 @@ describe("Truss layouts page: each truss of a multi-truss zone carries its own c
     expect(html).not.toContain('class="tp-b tp-bt');
     // its size sits in its Truss chip beside the drawing
     const page = html.slice(html.indexOf('class="lay-h"'));
-    expect(page).toMatch(/Truss<\/i>[^<]*·[^<]*ft/);
+    expect(page).toMatch(/Size<\/i>[^<]*ft<\/span>/);
+    expect(page).not.toMatch(/Truss<\/i>[^<]*·[^<]*ft/);
   });
 });

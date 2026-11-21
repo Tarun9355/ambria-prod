@@ -816,9 +816,12 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         // fabric, which the zone's chips only summed up as "Box +1 more") — printed above its plan when the zone has more than one.
         const rowChips = [];
         const trTxt = [trussTypeLbl(row.trT), Number(row.trussQty) > 1 ? `x${row.trussQty}` : "", row.trussMaterial ? hn(String(row.trussMaterial)) : ""].filter(Boolean).join(" ");
-        // just the size — trussDimsText adds "box truss" and the material, which trTxt already says
-        const dimTxt = trussDimsText({ ...row, trussMaterial: "" }).replace(/\s*(box|u)\s+truss$/i, "");
-        if (trTxt || dimTxt) rowChips.push({ k: t("Truss"), v: [trTxt, dimTxt].filter(Boolean).join(" · ") });
+        // just the size, written like the zone's own ("L 22 × W 12 × H 8 ft"); trussDimsText (no letters, adds "box truss" and the
+        // material) only when the row's dims have no L / W / H
+        const dimTxt = zoneDimsText(row.dims) || trussDimsText({ ...row, trussMaterial: "" }).replace(/\s*(box|u)\s+truss$/i, "");
+        // type and size as two chips with a gap between them (owner ask 2026-11-21: one run-on chip was confusing)
+        if (trTxt) rowChips.push({ k: t("Truss"), v: trTxt });
+        if (dimTxt) rowChips.push({ k: t("Size"), v: dimTxt });
         {
           const fab = fabricChipsOfRow(fi, zk, ri);
           const dens = String(row.drapeDensity || "moderate").toLowerCase();
@@ -1768,11 +1771,13 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         // A one-truss zone: its size (the zone page's "W 11.5 × H 12 ft", physical footprint) joins its Truss chip here too, beside
         // the drawing (owner ask 2026-11-21) — a multi-truss zone's sizes are on each truss's own line.
         const isTrussChip = (c) => c.k === t("Truss") && !String(c.v || "").includes(t("FOC — already at the venue"));
+        // its own "Size" chip right after the Truss chip, not run into it (owner ask 2026-11-21: "alag krke dikhao")
         const withSize = (list) => {
           if (!pg.zoneDims) return list;
+          const sizeChip = { k: t("Size"), v: pg.zoneDims };
           const at = list.findIndex(isTrussChip);
-          if (at < 0) return [{ k: pg.dimsOf || t("Truss"), v: pg.zoneDims }, ...list];
-          return list.map((c, j) => (j === at ? { ...c, v: `${c.v} · ${pg.zoneDims}` } : c));
+          if (at < 0) return [sizeChip, ...list];
+          return [...list.slice(0, at + 1), sizeChip, ...list.slice(at + 1)];
         };
         const zoneStruct = multiTruss
           ? (pg.struct || []).filter((c) => !isTrussChip(c))
