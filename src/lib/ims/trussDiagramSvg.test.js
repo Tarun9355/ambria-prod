@@ -96,13 +96,16 @@ describe("trussDiagramSvg", () => {
   });
 
   // ── Truss Qty is a REPEAT of the frame, never a longer run ──
+  // ONE frame is drawn and the count comes back as `qty` for the book to print "× 5" (trussDiagramSvg.js
+  // note 2, owner ask "fifth pass", 2026-11-19): five copies of one figure said nothing the count does not,
+  // and cost the width the one frame needs. These tests still asked for every copy to be drawn.
   describe("Truss Qty", () => {
-    it("reads repeated pieces as separate trusses, not extra bays", () => {
+    it("reads repeated pieces as separate trusses, not extra bays — drawn once, counted in qty", () => {
       // A Single U x5 arrives as five identical `top` beams. Read naively that is a 5-bay run of
-      // 6 pillars; the truth is five 1-bay frames of 2 pillars each.
+      // 6 pillars; the truth is five 1-bay frames of 2 pillars each — one of them drawn.
       const d = trussDiagramSvg(lineT([10], 5));
       expect(d.qty).toBe(5);
-      expect(pillars(d.svg)).toBe(10);
+      expect(pillars(d.svg)).toBe(2);
       expect(pillars(d.svg)).not.toBe(6);
     });
 
@@ -112,18 +115,17 @@ describe("trussDiagramSvg", () => {
       expect(pillars(d.svg)).toBe(5); // one run of 4 bays
     });
 
-    it("repeats a full box without merging it into one frame", () => {
+    it("a box of qty 3 is the same one frame, never merged into a longer one", () => {
       const one = trussDiagramSvg(box([12, 10], [10]));
       const three = trussDiagramSvg(box([12, 10], [10], 3));
       expect(three.qty).toBe(3);
-      expect(pillars(three.svg)).toBe(pillars(one.svg) * 3);
+      expect(pillars(three.svg)).toBe(pillars(one.svg));
     });
 
-    it("clips the tail rather than drawing repeats too small to read", () => {
+    it("a qty of 40 still reports 40 and draws one readable frame", () => {
       const many = trussDiagramSvg(lineT([10], 40));
       expect(many.qty).toBe(40);                     // the count still tells the truth
-      expect(pillars(many.svg)).toBeLessThan(80);    // but not every frame is drawn
-      expect(many.svg).toContain("…");
+      expect(pillars(many.svg)).toBe(2);             // one frame, not forty squeezed in
     });
   });
 
@@ -195,15 +197,20 @@ describe("trussDiagramSvg", () => {
 
   // deptBookPdf shrinks an over-tall zone section as ONE image, so an uncapped plan on a
   // three-truss zone does not win itself room — it shrinks the cut list's figures alongside it.
+  // The cap is spent on the STEP (each bay drawn shorter), never on scaling the finished picture down —
+  // scaling took the figures with it, a 150 x 28 ft box printed at 4 px (trussDiagramSvg.js, review
+  // 2026-11-19). Once the step is at its readable minimum the frame keeps that size and reports it, and
+  // the book fits fewer on a page. These tests still asked for the old scale-down.
   describe("height cap", () => {
-    it("scales the plan down rather than cropping it", () => {
+    it("draws a deep plan smaller (shorter bays), never cropped, never past what it reports", () => {
       const full = trussDiagramSvg(box([12, 10, 12], [10]));
       const capped = trussDiagramSvg(box([12, 10, 12], [10]), { maxHeightPx: 100 });
-      expect(capped.heightPx).toBeLessThanOrEqual(100);
-      expect(capped.heightPx).toBeLessThan(full.heightPx);
-      // same drawing, same pillars — scaled, not cropped
+      expect(capped.heightPx).toBeLessThanOrEqual(full.heightPx);
+      // same frame, same pillars — drawn smaller, not cut off
       expect(pillars(capped.svg)).toBe(pillars(full.svg));
-      expect(capped.svg).toContain(full.svg.match(/viewBox="([^"]+)"/)[1]);
+      const w = Number(capped.svg.match(/width="(\d+)"/)[1]);
+      const h = Number(capped.svg.match(/height="(\d+)"/)[1]);
+      expect(capped.heightPx).toBeGreaterThanOrEqual(h * Math.min(1, COLUMN / w));
     });
 
     it("leaves a plan already under the cap alone", () => {
@@ -212,14 +219,19 @@ describe("trussDiagramSvg", () => {
       expect(capped.heightPx).toBe(flat.heightPx);
     });
 
-    it("still reserves what a capped plan renders at", () => {
+    it("always reserves what the plan renders at, whatever the cap (the page budget relies on it)", () => {
       [50, 80, 100, 150].forEach((cap) => {
         const d = trussDiagramSvg(box(Array(14).fill(10), [10, 10]), { maxHeightPx: cap });
         const w = Number(d.svg.match(/width="(\d+)"/)[1]);
         const h = Number(d.svg.match(/height="(\d+)"/)[1]);
-        expect(h).toBeLessThanOrEqual(cap);
         expect(d.heightPx).toBeGreaterThanOrEqual(h * Math.min(1, COLUMN / w));
       });
+    });
+
+    it("a bigger cap never draws a deep plan smaller", () => {
+      const small = trussDiagramSvg(box([12, 10, 12], [10, 10]), { maxHeightPx: 80 });
+      const big = trussDiagramSvg(box([12, 10, 12], [10, 10]), { maxHeightPx: 300 });
+      expect(big.heightPx).toBeGreaterThanOrEqual(small.heightPx);
     });
   });
 
