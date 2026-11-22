@@ -176,12 +176,12 @@ export default function StudioEventInfo({ ctx }) {
   // own saved venue never resolved to a priced entry (StudioApp.jsx's venueRedirectNotice) — landing
   // here silently, with only the small inline "Missing — …" status line near Continue, is easy to
   // not notice at all (owner ask, 2026-11-22: tell them explicitly what to fix, not just block them).
+  // The effect itself lives BELOW the ctx destructuring further down (not here) — its dependency
+  // array reads venueRedirectNotice/setVenueRedirectNotice, and a dep array is evaluated immediately
+  // at render time, not deferred like the effect body; putting it here, before ctx is destructured,
+  // read both names before their own `const` initialized — "Cannot access … before initialization"
+  // on literally every render of this component (confirmed live, 2026-11-22, a full Studio crash).
   const [showMissingModal, setShowMissingModal] = useState(false);
-  useEffect(() => {
-    if (!venueRedirectNotice) return;
-    setShowMissingModal(true);
-    setVenueRedirectNotice(false); // one-shot — consumed so it doesn't reappear on a later re-render of this same visit
-  }, [venueRedirectNotice, setVenueRedirectNotice]);
   // LMS leads and Studio clients default to "mine only" (see the salesperson filter below) —
   // this is the escape hatch for sitting in on a colleague's meeting. Resets to false each time
   // the component mounts fresh (not persisted), so nobody is silently stuck in "all" mode later.
@@ -211,6 +211,13 @@ export default function StudioEventInfo({ ctx }) {
     trVenues, venueParents, resolveTrVenue, venueRedirectNotice, setVenueRedirectNotice,
     mode, setMode, canManageAny,
   } = ctx;
+  // showMissingModal's own one-shot trigger — see its useState's comment above for why this effect
+  // has to live down here, after venueRedirectNotice/setVenueRedirectNotice are actually in scope.
+  useEffect(() => {
+    if (!venueRedirectNotice) return;
+    setShowMissingModal(true);
+    setVenueRedirectNotice(false); // one-shot — consumed so it doesn't reappear on a later re-render of this same visit
+  }, [venueRedirectNotice, setVenueRedirectNotice]);
   // Search runs on the clients alone while their saved builds still download (StudioApp's clientsLite); a Load only once
   // the builds are in (sessionsReady) - loading a deal from a session-less copy would open it empty.
   const sessionsReady = ledgerReady && !ledgerLoadError;
