@@ -6499,31 +6499,41 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           truck and still show up on its challan. */}
                       <div className="rounded-lg ring-1 ring-dashed ring-gray-300 p-2.5 space-y-2">
                         <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Add an item not in this deal</div>
-                        <div className="flex flex-wrap gap-2">
-                          <select value={addPicker[t.id]?.sub || ""} onChange={e => setAddPicker(p => ({ ...p, [t.id]: { sub: e.target.value, invId: "", qty: 1 } }))}
-                            className="h-8 min-w-[140px] rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400">
-                            <option value="">Sub-category…</option>
-                            {[...deptInventoryBySub.keys()].sort().map(s => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                          {addPicker[t.id]?.sub && (
-                            <select value={addPicker[t.id]?.invId || ""} onChange={e => setAddPicker(p => ({ ...p, [t.id]: { ...p[t.id], invId: e.target.value } }))}
-                              className="h-8 min-w-[160px] flex-1 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400">
-                              <option value="">Item…</option>
-                              {(deptInventoryBySub.get(addPicker[t.id].sub) || []).map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-                            </select>
-                          )}
-                          {addPicker[t.id]?.invId && (
-                            <>
-                              <input type="number" min="1" value={addPicker[t.id]?.qty ?? 1} onChange={e => setAddPicker(p => ({ ...p, [t.id]: { ...p[t.id], qty: e.target.value } }))} aria-label="Quantity to add"
-                                className="h-8 w-16 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                              <button onClick={() => {
-                                const pick = addPicker[t.id];
-                                const inv = (deptInventoryBySub.get(pick.sub) || []).find(i => i.id === pick.invId);
-                                if (inv) { addTruckCustomItem(t.id, inv, pick.qty); setAddPicker(p => ({ ...p, [t.id]: null })); }
-                              }} className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold">+ Add</button>
-                            </>
-                          )}
-                        </div>
+                        <select value={addPicker[t.id]?.sub || ""} onChange={e => setAddPicker(p => ({ ...p, [t.id]: { sub: e.target.value, invId: "", qty: 1 } }))}
+                          className="h-8 min-w-[140px] rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400">
+                          <option value="">Sub-category…</option>
+                          {[...deptInventoryBySub.keys()].sort().map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        {/* Picked by a thumbnail grid, not a name-only dropdown (owner ask, 2026-11-22) -
+                            a sub-category can hold several near-identical-sounding items, and the photo
+                            is how the floor actually tells them apart. */}
+                        {addPicker[t.id]?.sub && (
+                          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-64 overflow-y-auto p-1 rounded-lg bg-gray-50">
+                            {(deptInventoryBySub.get(addPicker[t.id].sub) || []).map(i => {
+                              const on = addPicker[t.id]?.invId === i.id;
+                              const ph = i.img || (Array.isArray(i.photoUrls) && i.photoUrls[0]) || "";
+                              return (
+                                <button key={i.id} type="button" onClick={() => setAddPicker(p => ({ ...p, [t.id]: { ...p[t.id], invId: i.id } }))} aria-pressed={on}
+                                  className={"flex flex-col items-center gap-1 p-1.5 rounded-lg ring-1 bg-white transition-colors " + (on ? "ring-blue-400 ring-2" : "ring-gray-200 hover:bg-gray-50")}>
+                                  {ph ? <img src={thumbUrl(ph, 112)} loading="lazy" decoding="async" alt="" className="w-full aspect-square rounded-md object-cover" onError={e => { e.target.style.display = "none"; }} />
+                                    : <div className="w-full aspect-square rounded-md bg-gray-100 flex items-center justify-center text-gray-300 text-2xl">📦</div>}
+                                  <span className="w-full text-[10.5px] text-gray-700 text-center leading-snug line-clamp-2" title={i.name}>{i.name}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {addPicker[t.id]?.invId && (
+                          <div className="flex items-center gap-2">
+                            <input type="number" min="1" value={addPicker[t.id]?.qty ?? 1} onChange={e => setAddPicker(p => ({ ...p, [t.id]: { ...p[t.id], qty: e.target.value } }))} aria-label="Quantity to add"
+                              className="h-8 w-16 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                            <button onClick={() => {
+                              const pick = addPicker[t.id];
+                              const inv = (deptInventoryBySub.get(pick.sub) || []).find(i => i.id === pick.invId);
+                              if (inv) { addTruckCustomItem(t.id, inv, pick.qty); setAddPicker(p => ({ ...p, [t.id]: null })); }
+                            }} className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold">+ Add</button>
+                          </div>
+                        )}
                         {t.custom.length > 0 && (
                           <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
                             {t.custom.map(c => (
