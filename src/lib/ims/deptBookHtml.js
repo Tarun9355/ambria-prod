@@ -403,7 +403,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     } catch { /* the saved size it is */ }
     const zoneDimsText = (d) => {
       if (!d) return "";
-      const parts = [["L", d.L], ["W", d.W], ["H", d.H]].filter(([, v]) => Number(v) > 0);
+      // d.L is the truss's DEPTH (Build's own W / L / H order — see zoneDims.js), so it prints as
+      // "D" here, matching physDimsByZone's own W/D/H labels above (owner report: a truss's depth
+      // printed as "L", read as its Length, in the PDF's "Size" chip).
+      const parts = [["D", d.L], ["W", d.W], ["H", d.H]].filter(([, v]) => Number(v) > 0);
       return parts.length ? parts.map(([k, v]) => `${k} ${v}`).join(" × ") + " ft" : "";
     };
 
