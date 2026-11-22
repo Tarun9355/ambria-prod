@@ -11510,6 +11510,68 @@ export default function StudioApp() {
     setStep(0);
   }, [pricingReady, activeClientId, clientLedger, allInhouseVenues, trVenues, venueParents]);
 
+  // ── RE-CLAIM "SOMEONE ELSE IS EDITING THIS" PRESENCE AFTER A RESTORE (owner report, 2026-11-22) ──
+  // loadClientSessionGuarded (claimDealPresence + dealOpenConflict, above) only ever runs from Event
+  // Info's explicit "Load →" — deliberately, per its own comment: the mount-restore path (a hard
+  // refresh — and, since /studio and /ims are separate Routes that fully unmount each other, a
+  // Studio↔IMS switch takes this SAME path too, not the "a live deal is already open" early-return
+  // just above, which in practice only ever sees activeClientId null at this point) calls
+  // loadClientSession directly and never claims presence for the restored deal at all. This tab then
+  // edits it invisibly — nothing tells anyone it's here — so a second person's "Load →" moments later
+  // sees no one on the deal and walks right in, recreating the exact two-editors collision this
+  // feature exists to prevent (same root shape as the venue-pricing gap just above: a safety check
+  // that only ever ran through the explicit-Load path, silently absent after a refresh).
+  // window.__AMBRIA_SWEEP__ (set once in main.jsx, same flag saveSession's own sweep guard reads):
+  // never claims inside the hidden planning-sweep frame — that's an automated process re-opening
+  // booked deals headlessly to sync their Deal Check snapshot, not a second editor, and claiming
+  // presence for it would make every deal it touches falsely read as "already being edited" to a real
+  // salesperson trying to open one while a sweep is running.
+  //
+  // Known accepted gap (regression review): clicking "Load →" on this SAME deal, or a different one,
+  // in the narrow window before this effect's own claim below has resolved can still race it (the
+  // channel-dedup/one-shot machinery here isn't coordinated with loadClientSessionGuarded's own
+  // claim) — requires re-clicking Load within roughly a second of the page restoring that exact deal,
+  // not fixed here; the staleness check below at least stops a LATE-resolving claim from landing on
+  // whatever deal is active by the time it finishes, which is the part that could otherwise leak a
+  // channel or falsely lock an abandoned deal for someone else.
+  const presenceReclaimedRef = useRef(false);
+  useEffect(() => {
+    if (presenceReclaimedRef.current || (typeof window !== "undefined" && window.__AMBRIA_SWEEP__)) return;
+    if (!activeClientId || !authUser?.id || dealPresenceRef.current) return;
+    presenceReclaimedRef.current = true;
+    const claimedForId = activeClientId;
+    (async () => {
+      const { channel, others, selfElsewhere } = await claimDealPresence(claimedForId, { id: authUser.id, name: authUser.name || "Someone" });
+      // Stale by the time this resolves — the user has already moved off this deal (a new deal
+      // started/loaded, or this tab left Studio entirely) or something else already claimed it
+      // (loadClientSessionGuarded, mid-race) while this was in flight. Release rather than act on a
+      // deal that's no longer the live one, or overwrite a claim that's already correct.
+      if (activeClientIdRef.current !== claimedForId || dealPresenceRef.current) {
+        try { supabase.removeChannel(channel); } catch { /* ignore */ }
+        return;
+      }
+      if (others.length) {
+        try { supabase.removeChannel(channel); } catch { /* ignore */ }
+        const who = others.map(o => o?.userName || "Someone").join(", ");
+        setDealOpenConflict({ message: `${who} ${others.length > 1 ? "are" : "is"} already editing this deal right now — your changes here could conflict with theirs.` });
+        return;
+      }
+      // selfElsewhere deliberately stays silent here (unlike loadClientSessionGuarded's own, which
+      // DOES warn) — a stale leftover entry from this SAME user (a crashed tab, sleep, a network
+      // change; claimDealPresence's own comment documents a confirmed case surviving from a prior
+      // day) used to only ever surface on an explicit Load →; checking it on every single refresh
+      // instead would repeat a false "you already have this open" on every reload until the leftover
+      // ages out server-side, with no retry to recover from it (regression review). Simply not
+      // claiming here — same as before this effect existed — is the safer failure mode; a GENUINE
+      // second live tab of this same user is still caught the moment either of them next uses Load →.
+      if (selfElsewhere) {
+        try { supabase.removeChannel(channel); } catch { /* ignore */ }
+        return;
+      }
+      dealPresenceRef.current = { channel, clientId: claimedForId };
+    })();
+  }, [activeClientId, authUser]);
+
   // ── IMS PLANNING SWEEP: BOOKED DEALS CATCH UP WITH IMS SETTINGS ──
   // Planning shows each booked deal's Deal Check snapshot, and Deal Check only runs in a browser, so
   // a change an admin makes in IMS (per-labour counts, labour tiers, shifts, rentals, recipes…)
