@@ -11485,6 +11485,31 @@ export default function StudioApp() {
     loadClientSession(client, session, landingStep, { isNewVisit: false, landingFnIdx: savedFn });
   }, [clientLedger, activeClientId, loadClientSession]);
 
+  // ── RE-CHECK VENUE PRICING ONCE REAL DATA LANDS (owner report, 2026-11-22) ──
+  // loadClientSession's own venue-pricing check (its own comment has the full reasoning) is
+  // pricingReady-gated — correct for avoiding a false bounce against boot-time placeholder data, but
+  // it means the restore-on-mount path above (a hard refresh, or a Studio↔IMS switch that finds
+  // activeClientId already set and never calls loadClientSession at all — see its own early return)
+  // skips the check entirely for that one restore. A genuinely unpriced deal reopened exactly that
+  // way — the single most common way anyone reopens a deal they were already working on — slipped
+  // straight back into Build with nothing flagged, which defeats the whole point of the gate. This
+  // re-runs the identical check once pricingReady actually turns true, independent of HOW
+  // activeClientId got set, so it catches that gap the moment real data is in rather than waiting for
+  // the next explicit "Load →"/LMS load or the periodic planning sweep.
+  const venueRecheckedRef = useRef(false);
+  useEffect(() => {
+    if (venueRecheckedRef.current) return;
+    if (!pricingReady || !activeClientId) return;
+    venueRecheckedRef.current = true;
+    const client = (clientLedger || []).find(c => c.id === activeClientId);
+    if (!client?.venue) return;
+    if (allInhouseVenues.includes(client.venue)) return;
+    if (resolveTrVenue(trVenues, client.venue, venueParents)) return;
+    if (client.venue !== "Others") setClientVenueOther(client.venue);
+    setVenueRedirectNotice(true);
+    setStep(0);
+  }, [pricingReady, activeClientId, clientLedger, allInhouseVenues, trVenues, venueParents]);
+
   // ── IMS PLANNING SWEEP: BOOKED DEALS CATCH UP WITH IMS SETTINGS ──
   // Planning shows each booked deal's Deal Check snapshot, and Deal Check only runs in a browser, so
   // a change an admin makes in IMS (per-labour counts, labour tiers, shifts, rentals, recipes…)
