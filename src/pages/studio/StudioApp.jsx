@@ -2795,6 +2795,12 @@ export default function StudioApp() {
   // stale-save conflict dialog above it, not a quick confirmation, so it gets the same centred,
   // dimmed-backdrop modal treatment rather than the auto-dismissing toast. { message } or null.
   const [dealOpenConflict, setDealOpenConflict] = useState(null);
+  // One-shot: loadClientSession flips this true the moment it forces landingStep to Event Info
+  // because the client's OWN saved venue didn't resolve to a priced entry (see its own comment) —
+  // StudioEventInfo.jsx reads it once on arrival to pop a modal naming what's missing (not just a
+  // quiet inline status line, which is easy to land on without noticing why), then clears it back to
+  // false so it doesn't reappear on every subsequent re-render of the same visit.
+  const [venueRedirectNotice, setVenueRedirectNotice] = useState(false);
 
   // MEMOIZED, and it has to be. As a plain function this got a new identity on every render, and
   // that identity is load-bearing: saveClientLedger is useCallback(..., [showMsg]), so it churned
@@ -10995,6 +11001,7 @@ export default function StudioApp() {
     if (pricingReady && client.venue && !allInhouseVenues.includes(client.venue) && !resolveTrVenue(trVenues, client.venue, venueParents)) {
       landingStep = 0;
       if (client.venue !== "Others") setClientVenueOther(client.venue);
+      setVenueRedirectNotice(true);
     }
     setFn(client.fn || "");
     setClientShift(client.shift || "");
@@ -16151,7 +16158,7 @@ export default function StudioApp() {
     // deal check
     dealCheckData, setDealCheckData, dealCheckLoading, setDealCheckLoading, dealCheckError, setDealCheckError, catDeptMap, saveCatDeptMap,
     // mount-loaded fallbacks so Build works before Deal Check opens (fixed-venue Repeat chip, floral auto-derive)
-    studioFloralData, sharedFloralSettings, venueParents, resolveTrVenue,
+    studioFloralData, sharedFloralSettings, venueParents, resolveTrVenue, venueRedirectNotice, setVenueRedirectNotice,
     imsColourCatalogue, setImsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, paletteCatalogueLoaded, imsPaintableCategories, setImsPaintableCategories,
     imsDefaultPaintCost, setImsDefaultPaintCost, savePaletteData, paintPickerTarget, setPaintPickerTarget, fabricPickerTarget, setFabricPickerTarget,
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,
