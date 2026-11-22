@@ -2544,7 +2544,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     const w = window.open("", "_blank");
     if (!w) return;
     const rows = loadItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0)
-      .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("");
+      .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("");
     const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
     w.document.write(`<html><head><title>Challan — ${dept} — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
       <h2>${DEPT_ICON[dept]} Ambria — ${dept} Challan · Truck ${n}</h2>
