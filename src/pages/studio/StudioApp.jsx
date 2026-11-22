@@ -10961,6 +10961,41 @@ export default function StudioApp() {
     // the gate would check the WRONG name's pricing, and typing into the still-stale field would
     // overwrite this client's real venue (owner report, 2026-11-16, regression review).
     setClientVenueOther("");
+    // Event Info's own Continue gate (needsCustomVenueSetup, StudioEventInfo.jsx) only ever runs
+    // while someone is actually ON that screen — a "Load →" of an EXISTING client with an existing
+    // build skips straight past it to landingStep (Browse/Build), which is exactly how a deal saved
+    // with its venue left as an unpriced "Others" (name typed but never priced, or never even named)
+    // got all the way into a live build with ₹0 transport (owner report, 2026-11-22). Force landing
+    // on Event Info instead whenever this client's OWN saved venue doesn't resolve — same check the
+    // gate itself uses, so the two can never disagree about what counts as "still unpriced".
+    //
+    // pricingReady-gated (regression review): trVenues/venueParents still hold their boot-time
+    // defaults (TR_DV, {}) for the first instant of every mount — the SEPARATE mount-restore effect
+    // (which brings back a deal already open across a refresh/Studio↔IMS switch) also calls this
+    // function then, before pricingReady has had a chance to turn true, so this check is skipped for
+    // that one restore every time — a genuinely-unpriced deal reopened this way is NOT caught until
+    // the next explicit "Load →"/LMS load, or the next planning sweep (which does wait on
+    // pricingReady). Accepted, bounded gap — not "checked at least once per mount" as an earlier
+    // version of this comment incorrectly claimed; deferring restore itself on pricingReady would
+    // fix it but noticeably delays every refresh (pricingReady waits on the heaviest reads, rate_card
+    // + inventory) for a comparatively rare edge case.
+    //
+    // allInhouseVenues excluded deliberately: an Ambria-owned sub-venue missing its OWN trVenues row
+    // is an admin data gap (a property never given a rate, or a failed venues load), not something
+    // typable here — bouncing it to Event Info would show a pointless "already in your venue list,
+    // pick it from the dropdown" dead end for a venue that's already exactly what the dropdown shows
+    // selected (regression review). Only a genuinely new/outdoor/custom venue goes through this gate.
+    //
+    // othersVenueName also seeded here (regression review): the gate's own precondition is
+    // `venue === "Others" || !!othersVenueName` — a venue saved as a plain TYPED name (not the
+    // literal sentinel) left `clientVenueOther` at the "" just set above, so the gate's precondition
+    // was false and Event Info showed nothing to fill in even after landing there. Restoring the
+    // saved name into clientVenueOther (instead of leaving it blank) satisfies that precondition AND
+    // pre-fills the venue-name field with what's already known, rather than asking it to be retyped.
+    if (pricingReady && client.venue && !allInhouseVenues.includes(client.venue) && !resolveTrVenue(trVenues, client.venue, venueParents)) {
+      landingStep = 0;
+      if (client.venue !== "Others") setClientVenueOther(client.venue);
+    }
     setFn(client.fn || "");
     setClientShift(client.shift || "");
     setClientPax(client.pax || "");
@@ -11192,7 +11227,7 @@ export default function StudioApp() {
     setStep(landingStep);
     // The single-function path's toast, gone for the reason given on the multi-function one above.
     return mergeResult;
-  }, [events, allVideos, ytVideoTags]);
+  }, [events, allVideos, ytVideoTags, trVenues, venueParents, pricingReady, allInhouseVenues]);
 
   // ── STOP A SECOND LIVE EDITOR ON THE SAME DEAL — EVEN THE SAME PERSON'S OWN OTHER DEVICE ──
   // Confirmed race-condition risk (Sangeeta, 2026-11-03) — two concurrent editors on the same
