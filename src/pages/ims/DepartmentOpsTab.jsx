@@ -2440,6 +2440,20 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     const next = fn(eventTruckList);
     setEventOrders(prev => prev.map(e => e.id === sel.id ? { ...e, trucks: next } : e));
   };
+  // Every item in THIS department's own inventory (not just what Build/Deal Check blocked for this
+  // deal), grouped by sub-category - so a truck can carry something that was never part of the deal
+  // at all (owner ask, 2026-11-22: a spare panel, an outside-the-build extra). Same department rule
+  // every other inventory-ownership check in IMS uses (InventoryTab's own visibleInventory).
+  const deptInventoryBySub = useMemo(() => {
+    const m = new Map();
+    (inventory || []).forEach(i => {
+      if (catToDept(i.cat || i.category) !== dept) return;
+      const sub = String(i.subCat || i.subcategory || "").trim() || "Other";
+      if (!m.has(sub)) m.set(sub, []);
+      m.get(sub).push(i);
+    });
+    return m;
+  }, [inventory, dept, settings?.categoryDepartments]); // eslint-disable-line react-hooks/exhaustive-deps
   // This department's view of the shared trucks, in the shape the rest of the tab already reads —
   // items keyed "inv:"+listId — so the challans, the PDF and Receiving carry on unchanged.
   const keyByListId = new Map(blockedItems.map(it => ["inv:" + it.id, truckKey(it)]));
@@ -2453,11 +2467,17 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       const q = mine[truckKey(it)]; if (Number(q) > 0) items["inv:" + it.id] = q;
       const x = mineX[truckKey(it)]; if (Number(x) > 0) extras["inv:" + it.id] = x;
     });
-    return { ...t, items, extras };
+    // Items added straight from this department's own inventory, never in Build/Deal Check's own
+    // list (owner ask, 2026-11-22) - a flat array, not keyed by truckKey, since there is no Deal
+    // Check row for these to match against at all.
+    const custom = Array.isArray(t.custom?.[dept]) ? t.custom[dept] : [];
+    return { ...t, items, extras, custom };
   });
   // One truck open at a time: opening another closes the last, so the next truck's header is on
   // screen at once instead of below a screen of the previous truck's items.
   const [openTruck, setOpenTruck] = useState(null);
+  // Per-truck "add an item not from Build" picker state — keyed by truck id, { sub, invId, qty }.
+  const [addPicker, setAddPicker] = useState({});
   const truckRefs = useRef({});
   const toggleTruck = (id) => {
     const next = openTruck === id ? null : id;
@@ -2481,6 +2501,21 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     saveEventTrucks(list => list.map(t => t.id === id ? { ...t, extra: { ...(t.extra || {}), [dept]: { ...((t.extra || {})[dept] || {}), [k]: qty } } } : t));
   };
   const delTruck = (id) => saveEventTrucks(list => list.filter(t => t.id !== id));
+  // Items picked straight from this department's own inventory (deptInventoryBySub), never a Build/Deal
+  // Check row — kept as a flat array, not truckKey'd, since there is nothing in the deal to match
+  // against. Each gets its own small id (not an array index) so editing/removing one never shifts
+  // under an in-flight edit to another.
+  const addTruckCustomItem = (id, invItem, qty) => {
+    if (!invItem || !(Number(qty) > 0)) return;
+    const row = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), invId: invItem.id, name: invItem.name, sub: invItem.subCat || invItem.subcategory || "", qty: Number(qty) };
+    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, custom: { ...(t.custom || {}), [dept]: [...((t.custom || {})[dept] || []), row] } } : t));
+  };
+  const setTruckCustomQty = (id, rowId, qty) => {
+    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, custom: { ...(t.custom || {}), [dept]: ((t.custom || {})[dept] || []).map(r => r.id === rowId ? { ...r, qty: Math.max(0, Number(qty) || 0) } : r) } } : t));
+  };
+  const removeTruckCustomItem = (id, rowId) => {
+    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, custom: { ...(t.custom || {}), [dept]: ((t.custom || {})[dept] || []).filter(r => r.id !== rowId) } } : t));
+  };
   const truckLoadedQty = (key) => trucks.reduce((s, t) => s + (Number(t.items?.[key]) || 0), 0); // total loaded across all trucks
   const truckExtraQty = (key) => trucks.reduce((s, t) => s + (Number(t.extras?.[key]) || 0), 0); // overload across all trucks
   const TRUCK_STATUS_LABEL = { loading: "Loading", dispatched: "Dispatched", "at-site": "At site", returned: "Returned" };
@@ -2538,13 +2573,22 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         out.push({ dept: d, name: d === dept ? shownName(it) : (it.name || ""), sub: it.sub || "", qty: q, fullQty: it.qty, extra: x, src: it });
       });
     });
+    // Items added straight from a department's own inventory (truck.custom[dept]) - no Deal Check
+    // row to match against, so these ride along by department alone, not by truckKey.
+    Object.keys(raw.custom || {}).forEach(d => {
+      (raw.custom[d] || []).forEach(c => {
+        if (!(Number(c.qty) > 0)) return;
+        out.push({ dept: d, name: c.name, sub: c.sub || "", qty: Number(c.qty), fullQty: Number(c.qty), extra: 0, src: null });
+      });
+    });
     return out;
   };
   const printTruckChallan = (truck, n) => {
     const w = window.open("", "_blank");
     if (!w) return;
     const rows = loadItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0)
-      .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("");
+      .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("")
+      + (truck.custom || []).filter(c => Number(c.qty) > 0).map(c => `<tr><td>${c.name} <span style="font-size:11px;color:#92400e">(added, not in Build)</span></td><td>${c.sub || "—"}</td><td style="text-align:center">${c.qty}</td></tr>`).join("");
     const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
     w.document.write(`<html><head><title>Challan — ${dept} — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
       <h2>${DEPT_ICON[dept]} Ambria — ${dept} Challan · Truck ${n}</h2>
@@ -2598,7 +2642,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck — every department", M, y); y += 16;
       header();
       const items = combinedTruckItems(truck.id);
-      if (items.length) items.forEach(it => row([[it.name + (challanSrcText(it.src) ? ` (${challanSrcText(it.src)})` : ""), cx.name], [it.dept, cx.dept], [it.sub || "-", cx.type], [`${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}`, cx.qty, "right"]]));
+      if (items.length) items.forEach(it => row([[it.name + (it.src === null ? " (added, not in Build)" : challanSrcText(it.src) ? ` (${challanSrcText(it.src)})` : ""), cx.name], [it.dept, cx.dept], [it.sub || "-", cx.type], [`${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}`, cx.qty, "right"]]));
       else row([["No items assigned to this truck", cx.name]]);
       if (deptTools.length) {
         y += 12; room(36);
@@ -6448,6 +6492,53 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         {[["Vehicle no.", "vehicle"], ["Driver", "driver"], ["Phone", "phone"]].map(([l, k]) => (
                           <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className="block text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{l}</label><TruckTextBox value={t[k] || ""} clean={k === "phone" ? phone10 : undefined} onCommit={v => setTruck(t.id, { [k]: v })} {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })} className="mt-1 w-full h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></div>
                         ))}
+                      </div>
+                      {/* Add an item from this department's own inventory that never came from
+                          Build/Deal Check (owner ask, 2026-11-22) - picked by sub-category, then by
+                          item, so a spare panel or an outside-the-deal extra can still ride on a
+                          truck and still show up on its challan. */}
+                      <div className="rounded-lg ring-1 ring-dashed ring-gray-300 p-2.5 space-y-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Add an item not in this deal</div>
+                        <div className="flex flex-wrap gap-2">
+                          <select value={addPicker[t.id]?.sub || ""} onChange={e => setAddPicker(p => ({ ...p, [t.id]: { sub: e.target.value, invId: "", qty: 1 } }))}
+                            className="h-8 min-w-[140px] rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400">
+                            <option value="">Sub-category…</option>
+                            {[...deptInventoryBySub.keys()].sort().map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                          {addPicker[t.id]?.sub && (
+                            <select value={addPicker[t.id]?.invId || ""} onChange={e => setAddPicker(p => ({ ...p, [t.id]: { ...p[t.id], invId: e.target.value } }))}
+                              className="h-8 min-w-[160px] flex-1 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400">
+                              <option value="">Item…</option>
+                              {(deptInventoryBySub.get(addPicker[t.id].sub) || []).map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                            </select>
+                          )}
+                          {addPicker[t.id]?.invId && (
+                            <>
+                              <input type="number" min="1" value={addPicker[t.id]?.qty ?? 1} onChange={e => setAddPicker(p => ({ ...p, [t.id]: { ...p[t.id], qty: e.target.value } }))} aria-label="Quantity to add"
+                                className="h-8 w-16 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                              <button onClick={() => {
+                                const pick = addPicker[t.id];
+                                const inv = (deptInventoryBySub.get(pick.sub) || []).find(i => i.id === pick.invId);
+                                if (inv) { addTruckCustomItem(t.id, inv, pick.qty); setAddPicker(p => ({ ...p, [t.id]: null })); }
+                              }} className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold">+ Add</button>
+                            </>
+                          )}
+                        </div>
+                        {t.custom.length > 0 && (
+                          <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
+                            {t.custom.map(c => (
+                              <div key={c.id} className="flex items-center gap-2.5 px-2.5 py-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2">{c.name}</div>
+                                  <div className="mt-0.5 text-[10px] text-amber-700">{c.sub || "—"} · not in Build/Deal Check</div>
+                                </div>
+                                <TruckTextBox type="number" min="0" value={c.qty || ""} onCommit={v => setTruckCustomQty(t.id, c.id, v)} aria-label={`${c.name} on this truck`}
+                                  className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                                <button onClick={() => removeTruckCustomItem(t.id, c.id)} aria-label={`Remove ${c.name}`} title="Remove" className="shrink-0 text-gray-400 hover:text-red-600 text-sm px-1.5">×</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       {loadItems.length > 0 ? (
                         /* One line per item: name over its loaded status, the "on this truck" box
