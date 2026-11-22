@@ -2516,6 +2516,30 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return shortfallLine(shortfallBreakdown({ booked: Number(base.rentalQty ?? base.qty) || 0, short: Number(base.shortQty) || 0 }, shortAlloc[allocKeyOf(base)]));
   };
   const challanSrcNote = (it) => { const line = challanSrcText(it); return line ? `<div style="font-size:11px;color:#92400e;margin-top:2px">${line}</div>` : ""; };
+  // Every department's own slice of ONE truck, combined (owner ask, 2026-11-22): a truck is shared by
+  // the whole event, so the driver's "Download PDF" challan should say everything physically riding on
+  // it, not just the one department's slice that happened to generate it (a Floral user downloading it
+  // used to get only Floral's items, even when the same truck also carried Tenting's). Looked up from
+  // eventTruckList's raw record (its own `loads`/`extra` still carry every department's map), not the
+  // `trucks` array this component otherwise renders with, which is already filtered down to `dept`.
+  // Each row keeps its own department (a "Dept" column) so whoever unloads it still knows whose item is
+  // whose. shownName()'s Fabric design-choice override only applies to this tab's OWN department's rows
+  // (it is keyed by blockedItems' ids, which a different department's flatDeptItems() ids can collide
+  // with) - another department's rows print their plain saved name instead.
+  const combinedTruckItems = (truckId) => {
+    const raw = eventTruckList.find(t => t.id === truckId);
+    if (!raw) return [];
+    const out = [];
+    Object.keys(raw.loads || {}).forEach(d => {
+      const mine = raw.loads?.[d] || {}, mineX = raw.extra?.[d] || {};
+      flatDeptItems(d).forEach(it => {
+        const q = Number(mine[truckKey(it)]) || 0, x = Number(mineX[truckKey(it)]) || 0;
+        if (q <= 0 && x <= 0) return;
+        out.push({ dept: d, name: d === dept ? shownName(it) : (it.name || ""), sub: it.sub || "", qty: q, fullQty: it.qty, extra: x, src: it });
+      });
+    });
+    return out;
+  };
   const printTruckChallan = (truck, n) => {
     const w = window.open("", "_blank");
     if (!w) return;
@@ -2544,7 +2568,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       const [{ jsPDF }] = await loadPdfLibs();
       const pdf = new jsPDF({ unit: "pt", format: "a4" });
       const W = pdf.internal.pageSize.getWidth(), H = pdf.internal.pageSize.getHeight(), M = 40;
-      const cx = { name: M + 6, type: M + 300, qty: W - M - 6 };
+      const cx = { name: M + 6, dept: M + 250, type: M + 330, qty: W - M - 6 };
       let y = M;
       const room = (h) => { if (y + h > H - M) { pdf.addPage(); y = M; } };
       const row = (cells, { bold = false, fill = null, h = 20 } = {}) => {
@@ -2555,7 +2579,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         cells.forEach(([t, x, align]) => pdf.text(String(t ?? ""), x, y, { align: align || "left", maxWidth: align === "right" ? undefined : 280 }));
         y += h;
       };
-      const header = () => row([["Item", cx.name], ["Type", cx.type], ["Qty", cx.qty, "right"]], { bold: true, fill: [243, 244, 246] });
+      const header = () => row([["Item", cx.name], ["Dept", cx.dept], ["Type", cx.type], ["Qty", cx.qty, "right"]], { bold: true, fill: [243, 244, 246] });
       // The Ambria Design & Decor mark at the head of the challan — the dark version (black wordmark,
       // gold "DESIGN & DECOR"), since the page is white. Sized off the crop's own proportions; a
       // logo that fails to load just leaves the title where it was.
@@ -2566,15 +2590,15 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         y += lh + 18;
       }
       pdf.setFont("helvetica", "bold"); pdf.setFontSize(16); pdf.setTextColor(79, 70, 229);
-      pdf.text(`Ambria - ${dept} Challan - Truck ${n}`, M, y); y += 22;
+      pdf.text(`Ambria - Combined Challan - Truck ${n}`, M, y); y += 22;
       pdf.setTextColor(17); pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
       pdf.text(`Event: ${sel.clientName || "-"}  |  ${dateVenueLineOf(sel) || "-"}`, M, y); y += 16;
       pdf.text(`Vehicle: ${truck.vehicle || "______"}  |  Driver: ${truck.driver || "______"}  |  Phone: ${truck.phone || "______"}`, M, y); y += 26;
       pdf.setFontSize(9.5);
-      pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck", M, y); y += 16;
+      pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck — every department", M, y); y += 16;
       header();
-      const items = loadItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0);
-      if (items.length) items.forEach(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; row([[shownName(it) + (challanSrcText(it) ? ` (${challanSrcText(it)})` : ""), cx.name], [it.sub || "-", cx.type], [`${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}`, cx.qty, "right"]]); });
+      const items = combinedTruckItems(truck.id);
+      if (items.length) items.forEach(it => row([[it.name + (challanSrcText(it.src) ? ` (${challanSrcText(it.src)})` : ""), cx.name], [it.dept, cx.dept], [it.sub || "-", cx.type], [`${it.qty} of ${it.fullQty}${it.extra ? ` + ${it.extra} extra` : ""}`, cx.qty, "right"]]));
       else row([["No items assigned to this truck", cx.name]]);
       if (deptTools.length) {
         y += 12; room(36);
@@ -2589,7 +2613,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       pdf.setFontSize(8); pdf.setTextColor(120);
       pdf.text(`Generated ${new Date().toLocaleString("en-IN")} - ${authUser?.name || "-"}`, M, H - 20);
       const safe = (t) => String(t || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
-      pdf.save(`Challan - ${safe(dept)} - Truck ${n} - ${safe(sel.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`);
+      pdf.save(`Challan - Combined - Truck ${n} - ${safe(sel.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`);
     } catch (err) {
       if (isStaleChunk(err)) { reloadForUpdate(); return; }
       alert(`Could not make the challan PDF.\n\n${err?.message || err}`);
