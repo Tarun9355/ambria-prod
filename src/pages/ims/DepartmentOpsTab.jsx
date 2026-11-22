@@ -4572,13 +4572,21 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               // Ambria's own venues gets that venue's color, a client's own outdoor
                               // venue gets "ADD"'s color (lib/ims/fixedVenues.js's venueCalendarColor).
                               // THIS cell's own date's function — see fnForDate's comment.
-                              const vc = venueCalendarColor(settings, fnForDate(eo, ds)?.venue || eo.venue || "");
+                              const dayFn = fnForDate(eo, ds);
+                              const vc = venueCalendarColor(settings, dayFn?.venue || eo.venue || "");
+                              // Session (shift) — the phone/day-detail list below already shows this
+                              // ("Venue and shift, because that is what an event_order actually
+                              // carries") but the desktop month grid never did (owner ask, 2026-11-22).
+                              const shift = dayFn?.shift || eo.shift || "";
                               return (
-                                <button key={eo.id} onClick={() => setSelId(eo.id)} title={deptChangesOf(eo.id).length ? changeTip(deptChangesOf(eo.id)) : `Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
-                                  className={`w-full flex items-center gap-1 text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
-                                  <span className="shrink-0 text-[9px] font-bold opacity-70">{vc.code}</span>
-                                  <span className="min-w-0 truncate">{eo.clientName || "Event"}</span>
-                                  {deptChangesOf(eo.id).length > 0 && <ChangedMark tip={changeTip(deptChangesOf(eo.id))} />}
+                                <button key={eo.id} onClick={() => setSelId(eo.id)} title={deptChangesOf(eo.id).length ? changeTip(deptChangesOf(eo.id)) : `Plan ${eo.clientName || "Event"}${shift ? ` · ${shift}` : ""}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
+                                  className={`w-full text-left pl-2 pr-1.5 py-1 rounded-md border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
+                                  <span className="flex items-center gap-1 text-[11px] font-medium leading-tight">
+                                    <span className="shrink-0 text-[9px] font-bold opacity-70">{vc.code}</span>
+                                    <span className="min-w-0 truncate">{eo.clientName || "Event"}</span>
+                                    {deptChangesOf(eo.id).length > 0 && <ChangedMark tip={changeTip(deptChangesOf(eo.id))} />}
+                                  </span>
+                                  {shift && <span className="block text-[9.5px] font-normal opacity-70 truncate leading-tight">{shift}</span>}
                                 </button>
                               );
                             })}
