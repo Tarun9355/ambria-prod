@@ -2598,7 +2598,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck — every department", M, y); y += 16;
       header();
       const items = combinedTruckItems(truck.id);
-      if (items.length) items.forEach(it => row([[it.name + (challanSrcText(it.src) ? ` (${challanSrcText(it.src)})` : ""), cx.name], [it.dept, cx.dept], [it.sub || "-", cx.type], [`${it.qty} of ${it.fullQty}${it.extra ? ` + ${it.extra} extra` : ""}`, cx.qty, "right"]]));
+      if (items.length) items.forEach(it => row([[it.name + (challanSrcText(it.src) ? ` (${challanSrcText(it.src)})` : ""), cx.name], [it.dept, cx.dept], [it.sub || "-", cx.type], [`${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}`, cx.qty, "right"]]));
       else row([["No items assigned to this truck", cx.name]]);
       if (deptTools.length) {
         y += 12; room(36);
