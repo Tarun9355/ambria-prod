@@ -39,6 +39,17 @@ export function fullRecipeLines(recipe, pieces, realShare, snapReal, words = { r
     const fromSnap = takeSnap(f);
     if (!(total > 0)) return;
     if (f.full || !mixed) { out.push({ name: f.name, qty: total, unit: f.unit || "", tag: "" }); return; }
+    // A "mapping" flower's artificial share is its own row elsewhere (deptBookHtml's mappedZones: the
+    // mapped INVENTORY ITEM's own name and piece count, summed across every recipe slot that maps to
+    // it) - this loop only ever shows its REAL portion, under the real flower's own name, same as any
+    // other flower; nothing prints here at all when none of it is bought real (owner report, 2026-11-22:
+    // showing this flower's raw recipe-unit count as "Artificial X" here duplicated and conflicted with
+    // the mapped item's own, already-correct piece count on its own row).
+    if (f.mapping) {
+      const real = fromSnap ? r2(fromSnap.qty) : r2(total * share);
+      if (real > 0) out.push({ name: f.name, qty: real, unit: f.unit || "", tag: mixed ? words.real : "" });
+      return;
+    }
     // 100% artificial (share<=0): every unit of this flower is already covered by the card's own
     // generic "Artificial flowers"/"Artificial greens" bunch line(s) (a separate, already-present
     // source on the same card - the zone's own artificial-bunch allocation) - naming the specific

@@ -7421,6 +7421,22 @@ export default function StudioApp() {
         lines: [...(e.realLines || []).map(l => ({ name: l.name, qty: Number(l.qty) || 0, unit: l.unit || "" })),
           ...(e.artLines || []).filter(l => l.invItem).map(l => ({ name: l.name, qty: Number(l.qty) || 0, unit: l.unit || "" }))].filter(l => l.qty > 0) }))
         .filter(z => z.lines.length),
+      // A "mapping" flower's artificial pieces per element row, with its zone (snapshot v29) - one line per MAPPED
+      // inventory item, summed across however many recipe ingredients map to it (two recipe slots, e.g. a "3ft" and a
+      // "Ladi" form, both substituted with the same artificial product, print as one combined piece count instead of
+      // two - owner report, 2026-11-22: the Dept Ops PDF printed "Rajnigandha 3ft - 720 piece" and "Rajnigandha 2ft
+      // Ladi - 720 piece" as if they were two different things to source, when both are the same physical item).
+      mappedZones: eb.filter(e => (e.artLines || []).some(l => l.isMapped)).map(e => {
+        const byItem = new Map();
+        (e.artLines || []).forEach(al => {
+          if (!al.isMapped) return;
+          const key = al.mappedItemId || al.mappedName || al.name;
+          const prev = byItem.get(key);
+          if (prev) prev.qty += al.mappedPcs || 0;
+          else byItem.set(key, { name: al.mappedName || al.name, mappedItemId: al.mappedItemId || null, unit: "pc", qty: al.mappedPcs || 0 });
+        });
+        return { zone: e.zoneKey, el: e.name, kitParent: e.kitParent || null, qty: rnd(e.qty), lines: [...byItem.values()].map(l => ({ ...l, qty: rnd(l.qty) })).filter(l => l.qty > 0) };
+      }).filter(z => z.lines.length),
       uncosted: (r.uncosted || []).map(u => ({ name: u.name, zone: u.zoneKey, qty: u.qty, reason: u.reason })),
       elements: elements.map(g => ({ ...g, zones: [...new Set(g.zones)], qty: rnd(g.qty), real: Math.round(g.real), art: Math.round(g.art), total: Math.round(g.total), invCost: Math.round(g.invCost) })),
     };

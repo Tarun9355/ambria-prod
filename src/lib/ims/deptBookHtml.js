@@ -1070,8 +1070,12 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
             const swapped = swappedRecipeFlower(eventSwapFor(fn?.fnIdx ?? fi), mf.name, baseQty);
             // full: an inventory ingredient, or a mandi flower that is real-only, goes in at its whole amount whatever the mix - as Deal Check counts it
             const full = mf.flowerType === "real_only";
-            if (swapped) return { ...swapped, full };
-            return { name: mf.name, qty: baseQty, unit: mf.unit || "", full };
+            // mapping: this flower's artificial share prints as its own row elsewhere (mappedZones, keyed
+            // by the mapped ITEM, summed across every recipe slot that maps to it) - fullRecipeLines only
+            // shows its real portion here, under its own species name (see floralBook.js).
+            const mapping = mf.flowerType === "mapping";
+            if (swapped) return { ...swapped, full, mapping };
+            return { name: mf.name, qty: baseQty, unit: mf.unit || "", full, mapping };
           }).filter(f => f && f.qty > 0);
           // ── THE KIT'S PARTS AS BUILD HAS THEM NOW ──
           // The parts list below the zone came only from Deal Check's snapshot (deptInventory), so a part added to the kit in
@@ -1533,6 +1537,25 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // a piece by any of its names (its name now, then the names Deal Check may have recorded it under) - one block of bunches
       const namesOf = (it) => [...new Set([it.name, ...(it.altNames || [])].map(n => String(n || "").trim()).filter(Boolean))];
       const takeArtAny = (names) => { const list = []; names.forEach(n => { const k = artKey(n); if (artLeft.has(k)) { list.push(...artLeft.get(k)); artLeft.delete(k); } }); return artLines(list); };
+      // ── A "MAPPING" FLOWER'S ARTIFICIAL PIECES, ONE LINE PER MAPPED ITEM ──
+      // floralDetail[fn].mappedZones (snapshot v29): each element's mapped flowers already summed by mappedItemId
+      // there (StudioApp.jsx calcFnFloralDetail) - two recipe slots standing in for the same physical artificial
+      // item (e.g. a "3ft" and a "Ladi" form both substituted with the same product) print as ONE combined piece
+      // count here, never two (owner report, 2026-11-22: "Rajnigandha 3ft - 720 piece" and "Rajnigandha 2ft Ladi -
+      // 720 piece" read as two different things to go source, when both are the same box to pull from).
+      const zMapped = floralCards ? (sel?.floralDetail?.[pg.fnIdx]?.mappedZones || []).filter(z => z.zone === pg.zk) : [];
+      const mappedLeft = new Map();
+      zMapped.forEach(z => { const k = artKey(z.kitParent || z.el); mappedLeft.set(k, [...(mappedLeft.get(k) || []), z]); });
+      const mappedLines = (list) => {
+        const byItem = new Map();
+        list.forEach(z => (z.lines || []).forEach(l => {
+          const key = l.mappedItemId || l.name;
+          const prev = byItem.get(key);
+          if (prev) prev.qty += Number(l.qty) || 0; else byItem.set(key, { ...l, qty: Number(l.qty) || 0 });
+        }));
+        return [...byItem.values()].filter(l => l.qty > 0).map(l => ({ name: l.name, qty: Math.round(l.qty * 100) / 100, unit: l.unit || "pc", photo: invPhoto(invById.get(String(l.mappedItemId)), null) || "" }));
+      };
+      const takeMappedAny = (names) => { const list = []; names.forEach(n => { const k = artKey(n); if (mappedLeft.has(k)) { list.push(...mappedLeft.get(k)); mappedLeft.delete(k); } }); return mappedLines(list); };
       // ── REAL FLOWERS AS DEAL CHECK HAS THEM ──
       // Deal Check's own real flower lines per element row (floralDetail[fn].realZones, snapshot v12): the real share, real-only
       // flowers at full, the reuse credit taken off, the recipe's inventory ingredients - so a line here is the number Deal Check
@@ -1541,9 +1564,10 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       const realTaker = realLineTaker(floralCards ? sel?.floralDetail?.[pg.fnIdx]?.realZones : [], pg.zk, eventSwapFor(pg.fnIdx));
       (pg.items || []).forEach(it => {
         const art = floralCards && it.mix ? takeArtAny(namesOf(it)) : [];
+        const mappedParts = floralCards && it.mix ? takeMappedAny(namesOf(it)) : [];
         const realName = floralCards && it.mix ? namesOf(it).find(n => realTaker.has(n)) : null;
         const snapReal = realName ? realTaker.take(realName) : null;
-        if (floralCards && ((Array.isArray(it.recipe) && it.recipe.length) || art.length || (snapReal && snapReal.length))) {
+        if (floralCards && ((Array.isArray(it.recipe) && it.recipe.length) || art.length || mappedParts.length || (snapReal && snapReal.length))) {
           // Each flower line is the whole recipe amount, its tag saying how much of it is real (the amount Deal Check and the mandi
           // list have) and how much artificial; real-only flowers and inventory ingredients at full, untagged. The artificial
           // bunches to pull follow; the header still says the mix.
@@ -1554,7 +1578,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           const realParts = (Array.isArray(it.recipe) && it.recipe.length)
             ? fullRecipeLines(it.recipe, Number(it.qty) || 0, realShare, snapReal, { real: t("Real"), art: t("Artificial") }, !!it.mix)
             : (snapReal || []).map(f => ({ ...f, tag }));
-          const parts = [...realParts.filter(f => f.qty > 0), ...art];
+          const parts = [...realParts.filter(f => f.qty > 0), ...art, ...mappedParts];
           if (parts.length) blocks.push({ h: detailH(parts), html: detailCard("🌸", it.name, it.qty, it.unit, parts, it.mix, it.size) });
         }
         // A Floral kit (a console of pots, candles and books) prints its parts card in the combined "All departments" book too (owner report
@@ -1608,6 +1632,7 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           // being null (the combined book) already leaves `zArt`/`artLeft` empty, so this is a no-op
           // there, same as every other flower section in that book.
           parts.push(...takeArtAny(namesOf(it)));
+          parts.push(...takeMappedAny(namesOf(it)));
           // Same for the recipe's REAL flowers (Morya Patti, banglore daisy, …) — realTaker is ALSO
           // keyed by the kit's own name for a kit-sourced row (realLineTaker, fixed alongside). Before
           // this, a kit's attached recipe never matched the `it.mix` branch above (a kit element is
@@ -1625,17 +1650,18 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       // flowers — Morya Patti, banglore daisy, … — never printed anywhere at all, because there used
       // to be no leftover fallback for the real side the way the artificial side already had one).
       const realLeftover = new Map(realTaker.remaining().map(r => [r.key, r]));
-      const leftoverKeys = new Set([...artLeft.keys(), ...realLeftover.keys()]);
+      const leftoverKeys = new Set([...artLeft.keys(), ...mappedLeft.keys(), ...realLeftover.keys()]);
       leftoverKeys.forEach(k => {
         const artList = artLeft.get(k) || [];
+        const mappedList = mappedLeft.get(k) || [];
         const realEntry = realLeftover.get(k);
-        const parts = [...(realEntry?.lines || []), ...artLines(artList)];
+        const parts = [...(realEntry?.lines || []), ...artLines(artList), ...mappedLines(mappedList)];
         if (!parts.length) return;
-        const name = artList[0]?.el || realEntry?.el || t("Arrangement");
+        const name = artList[0]?.el || mappedList[0]?.el || realEntry?.el || t("Arrangement");
         // its split as Deal Check worked it (realPct, snapshot v19) - "Artificial 100%" like every other flower card; an older
         // snapshot without it still says just "Artificial" until the deal re-syncs
         const rp = artList.find(a => typeof a.realPct === "number")?.realPct;
-        const q = artList.reduce((t, a) => t + (Number(a.qty) || 0), 0);
+        const q = artList.reduce((t, a) => t + (Number(a.qty) || 0), 0) || mappedList.reduce((t, a) => t + (Number(a.qty) || 0), 0);
         blocks.push({ h: detailH(parts), html: detailCard("🌸", name, q || "", "", parts, typeof rp === "number" ? mixText(rp) : (realEntry ? undefined : t("Artificial"))) });
       });
       // The truss cut list (pillars / beams / batta) is on the Truss layouts page at the front, under
