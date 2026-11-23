@@ -2663,6 +2663,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const [openTruck, setOpenTruck] = useState(null);
   // Per-trip "add an item not from Build" picker state — keyed by trip id, { sub, invId, qty }.
   const [addPicker, setAddPicker] = useState({});
+  // Which ONE trip is showing for a given truck (owner ask, 2026-11-23: tabs, not every trip
+  // stacked one after another - a truck with several trips used to grow the page's own scroll with
+  // each one added). Keyed by truck id -> trip id; falls back to the truck's first trip below
+  // whenever the stored id isn't (or is no longer) one of its trips, so a removed/not-yet-picked
+  // trip can never leave nothing showing.
+  const [activeTrip, setActiveTrip] = useState({});
   const truckRefs = useRef({});
   const toggleTruck = (id) => {
     const next = openTruck === id ? null : id;
@@ -2688,7 +2694,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     const { loads: _l, extra: _e, custom: _c, status: _s, ...rest } = t;
     return { ...rest, trips };
   }));
-  const addTrip = (id) => setTrips(id, trips => [...trips, newTrip()]);
+  const addTrip = (id) => {
+    const trip = newTrip();
+    setTrips(id, trips => [...trips, trip]);
+    setActiveTrip(p => ({ ...p, [id]: trip.id }));
+  };
   // At least one trip must always remain - removing the last one would leave a truck with nowhere
   // to load anything, which this screen has no way to recover from short of deleting the truck.
   const removeTrip = (id, tripId) => setTrips(id, trips => trips.length > 1 ? trips.filter(tr => tr.id !== tripId) : trips);
@@ -6764,12 +6774,18 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       {/* ── EACH TRIP IS ITS OWN RUN ── its own status, its own challan, its own items
                           (owner ask, 2026-11-23: "the same truck makes multiple trips... for trip 2,
                           dont show me items that have already fully gone out for trip 1"). Only the
-                          vehicle/driver/phone above are shared; everything below is per trip. */}
-                      {t.trips.map((trip, tripI) => {
+                          vehicle/driver/phone above are shared; everything below is per trip. Shown
+                          one at a time behind tabs (owner ask, 2026-11-23: several trips stacked one
+                          after another grew the page's own scroll with every trip added) - tabs only
+                          appear once there's more than one trip to choose between. */}
+                      {(() => {
+                        const activeTripId = (activeTrip[t.id] && t.trips.some(tr => tr.id === activeTrip[t.id])) ? activeTrip[t.id] : t.trips[0]?.id;
+                        const trip = t.trips.find(tr => tr.id === activeTripId) || t.trips[0];
+                        const tripI = t.trips.findIndex(tr => tr.id === trip.id);
+                        const multi = t.trips.length > 1;
                         const oc = truckOccs[trip.id] || { used: 0, byDept: [], unknown: 0 };
                         const pct = Math.round(oc.used * 100);
                         const over = oc.used > 1.005, full = oc.used >= 0.999;
-                        const multi = t.trips.length > 1;
                         // Hidden once nothing is left to send out anywhere AND this trip itself has
                         // none of its own loaded - an earlier trip that already took it all shouldn't
                         // clutter a later one, but a row already partly on THIS trip stays editable.
@@ -6778,18 +6794,28 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           const onThis = Number(trip.items?.[k]) || 0;
                           return onThis > 0 || truckLoadedQty(k) < (Number(it.qty) || 0);
                         });
-                        return (
-                          <div key={trip.id} className={multi ? "rounded-lg ring-1 ring-gray-200 p-2.5 space-y-2.5" : "space-y-2.5"}>
-                            {multi && (
-                              <div className="flex items-center justify-between">
-                                <span className="text-xs font-semibold text-gray-700">Trip {tripI + 1}</span>
-                                <button onClick={() => removeTrip(t.id, trip.id)} disabled={Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))}
-                                  aria-label={`Remove trip ${tripI + 1}`} title="Remove this trip"
-                                  className="shrink-0 w-6 h-6 rounded-md flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors">
-                                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
-                                </button>
-                              </div>
-                            )}
+                        return (<>
+                          {multi && (
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {t.trips.map((tr, i) => {
+                                const on = tr.id === trip.id;
+                                const trOc = truckOccs[tr.id] || { used: 0 };
+                                const trFlag = trOc.used >= 0.999 || trOc.used > 1.005;
+                                return (
+                                  <button key={tr.id} type="button" onClick={() => setActiveTrip(p => ({ ...p, [t.id]: tr.id }))} aria-pressed={on}
+                                    className={"h-8 px-3 rounded-lg text-xs font-semibold ring-1 transition-colors " + (on ? "bg-blue-600 text-white ring-blue-600" : "bg-white text-gray-700 ring-gray-200 hover:bg-gray-50")}>
+                                    Trip {i + 1}{trFlag && <span className={on ? "text-red-200" : "text-red-500"}> ●</span>}
+                                  </button>
+                                );
+                              })}
+                              <button onClick={() => removeTrip(t.id, trip.id)} disabled={Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))}
+                                aria-label={`Remove trip ${tripI + 1}`} title="Remove this trip"
+                                className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors">
+                                <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
+                              </button>
+                            </div>
+                          )}
+                          <div className="space-y-2.5">
                             {/* ── WHO FILLS THIS TRIP ── the bar itself is in the header above; opened, it
                                 adds each department's share of it and what to do when it is full. */}
                             {(oc.byDept.length > 0 || oc.unknown > 0) && (
@@ -6910,8 +6936,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               </div>
                             ) : <div className="text-xs text-gray-400">{blockedItems.length ? (loadItems.length ? "Nothing left to load — it's all gone out on another trip." : "Nothing to load - everything is already at the venue.") : "No inventory blocked for this department."}</div>}
                           </div>
-                        );
-                      })}
+                        </>);
+                      })()}
                       </>)}
                     </div>
                   ))}
