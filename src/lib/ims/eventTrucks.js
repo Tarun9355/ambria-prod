@@ -6,6 +6,11 @@
 // This file instead reads it across EVERY department at once, for the Site Supervisor page, which
 // needs a truck's whole manifest (every department's items riding on it), not one department's view.
 //
+// A truck can make more than one trip (owner ask, 2026-11-23) - loads/extra/custom/status now live
+// per trip (`truck.trips[]`), not on the truck itself. tripsOf() is the ONE place that reads a
+// truck's trips, shared by this file and DepartmentOpsTab.jsx so there is never a second, divergent
+// idea of what a truck's trips are.
+//
 // It works directly off the stored load keys rather than re-deriving each department's flat item
 // list (DepartmentOpsTab.jsx's own `flatDeptItems`/`kitPartOfDept`, which needs that department's
 // Deal Check snapshot, fabric grouping, etc.) — a load key already carries enough to look the item
@@ -17,6 +22,14 @@ export const TRUCK_STATUS = ["loading", "dispatched", "at-site", "returned"];
 export const TRUCK_STATUS_LABEL = { loading: "Loading", dispatched: "Dispatched", "at-site": "At site", returned: "Returned" };
 
 const titleCase = (s) => String(s || "").replace(/_+/g, " ").trim().replace(/\b\w/g, (c) => c.toUpperCase());
+
+// A truck saved before trips existed has no `trips` array at all - treated as exactly ONE trip,
+// built from its own (now legacy) top-level loads/extra/custom/status, so nothing already loaded or
+// dispatched ever needs re-entering. Never mutates `t`; always returns a fresh array.
+export function tripsOf(t) {
+  if (Array.isArray(t?.trips) && t.trips.length) return t.trips;
+  return [{ id: (t?.id || "trip") + "_trip1", status: t?.status || "loading", loads: t?.loads || {}, extra: t?.extra || {}, custom: t?.custom || {} }];
+}
 
 // A stored load key ("inv:<id>", "inv:<id>@<kitname>", or "nm:<name>") → a display label + photo.
 export function labelForLoadKey(key, inventory) {
@@ -35,23 +48,30 @@ export function labelForLoadKey(key, inventory) {
 // department) — what the Site Supervisor needs to see "what's on THIS truck", instead of
 // DepartmentOpsTab.jsx's one-department-at-a-time `trucks` memo. Trucks with nothing loaded on
 // them yet are still included (status is still worth showing), with an empty `lines` array.
+// Summed across EVERY trip (a Receiving supervisor confirms what's physically on the truck when it
+// arrives, whichever trip brought it - trip-by-trip detail belongs to Dept Ops' own loading screen).
 export function truckManifest(sel, inventory) {
   const trucks = Array.isArray(sel?.trucks) ? sel.trucks : [];
   return trucks.map((t) => {
-    const lines = [];
-    const depts = new Set([...Object.keys(t.loads || {}), ...Object.keys(t.extra || {})]);
-    depts.forEach((dept) => {
-      const items = t.loads?.[dept] || {};
-      const extras = t.extra?.[dept] || {};
-      const keys = new Set([...Object.keys(items), ...Object.keys(extras)]);
-      keys.forEach((key) => {
-        const n = Number(items[key]) || 0;
-        const extraN = Number(extras[key]) || 0;
-        if (n <= 0 && extraN <= 0) return; // a spares-only line (extra > 0, no regular load) still counts
-        const { label, photo } = labelForLoadKey(key, inventory);
-        lines.push({ dept, key, label, photo, planned: n, extra: extraN });
+    const totals = new Map(); // `${dept}|${key}` -> { dept, key, planned, extra }
+    tripsOf(t).forEach((trip) => {
+      const depts = new Set([...Object.keys(trip.loads || {}), ...Object.keys(trip.extra || {})]);
+      depts.forEach((dept) => {
+        const items = trip.loads?.[dept] || {};
+        const extras = trip.extra?.[dept] || {};
+        const keys = new Set([...Object.keys(items), ...Object.keys(extras)]);
+        keys.forEach((key) => {
+          const n = Number(items[key]) || 0;
+          const extraN = Number(extras[key]) || 0;
+          if (n <= 0 && extraN <= 0) return; // a spares-only line (extra > 0, no regular load) still counts
+          const id = dept + "|" + key;
+          const cur = totals.get(id) || { dept, key, planned: 0, extra: 0 };
+          cur.planned += n; cur.extra += extraN;
+          totals.set(id, cur);
+        });
       });
     });
+    const lines = [...totals.values()].map((v) => ({ ...v, ...labelForLoadKey(v.key, inventory) }));
     return { truck: t, lines };
   });
 }

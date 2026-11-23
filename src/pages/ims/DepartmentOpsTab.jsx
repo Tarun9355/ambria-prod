@@ -47,6 +47,7 @@ import { renderDeptBook, loadPdfLibs, loadPdfLogosOnce, isStaleChunk, reloadForU
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
 import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeLogs } from "../../lib/ims/recentChanges";
+import { tripsOf } from "../../lib/ims/eventTrucks";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { isMyEvent, supervisorIdsOfUser, fixedAtVenue } from "../../lib/ims/mySupervisorEvents";
 import { logWrite } from "../../lib/studio/userActions";
@@ -1111,7 +1112,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const [actualsPdfBusy, setActualsPdfBusy] = useState(false);
   const [laboursHow, setLaboursHow] = useState({});
   const [trussFabEdit, setTrussFabEdit] = useState(null); // "zoneKey|part" whose fabric colours are being edited in the Truss plan // "type|date" → the carry-over breakdown is open
-  const [challanPdfBusy, setChallanPdfBusy] = useState(null); // id of the truck whose challan PDF is being made
+  const [challanPdfBusy, setChallanPdfBusy] = useState(null); // id of the trip whose challan PDF is being made
   // Fetch the PDF libraries a few seconds after the tab opens, while the page's own files are
   // still the deployed ones — see loadPdfLibs.
   useEffect(() => { const t = setTimeout(() => { loadPdfLibs().catch(() => {}); }, 3000); return () => clearTimeout(t); }, []);
@@ -2596,6 +2597,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       const legacy = plateKey ? legacyByPlate.get(plateKey) : null;
       if (!legacy) return t;
       usedPlates.add(plateKey);
+      // Already split into trips - legacy data predates trips entirely, so a still-missing
+      // department folds onto trip 1 (never a new trip of its own); a department already present on
+      // ANY trip is left alone, same "never overwrite real data" rule as the pre-trips version.
+      if (Array.isArray(t.trips) && t.trips.length) {
+        const missing = {};
+        let changed = false;
+        Object.entries(legacy.byDept).forEach(([d, ld]) => { if (!t.trips.some(tr => tr.loads?.[d])) { missing[d] = ld; changed = true; } });
+        if (!changed) return t;
+        return { ...t, trips: t.trips.map((tr, i) => i === 0 ? { ...tr, loads: { ...(tr.loads || {}), ...missing } } : tr) };
+      }
       let loads = t.loads || {}, changed = false;
       Object.entries(legacy.byDept).forEach(([d, ld]) => { if (!loads[d]) { loads = { ...loads, [d]: ld }; changed = true; } });
       return changed ? { ...t, loads } : t;
@@ -2625,26 +2636,32 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // This department's view of the shared trucks, in the shape the rest of the tab already reads —
   // items keyed "inv:"+listId — so the challans, the PDF and Receiving carry on unchanged.
   const keyByListId = new Map(blockedItems.map(it => ["inv:" + it.id, truckKey(it)]));
-  // `extras` is the overload: pieces put on a truck BEYOND what the item needs (spares), kept apart
-  // from the normal load (truck.extra[dept], same keys) so "10 of 10" stays true and the extra shows
-  // as its own "+2 extra". It still takes room, so it counts toward how full the truck is; the
-  // truck's capacity itself is never changed by it.
+  // A physical truck can leave the warehouse, come back, and load again for a second run (owner ask,
+  // 2026-11-23: "the same truck makes multiple trips") - each trip gets its own status, items and
+  // challan; only vehicle/driver/phone stay truck-level, shared by every trip of it. `extras` is the
+  // overload: pieces put on a trip BEYOND what the item needs (spares), kept apart from the normal
+  // load (trip.extra[dept], same keys) so "10 of 10" stays true and the extra shows as its own "+2
+  // extra". It still takes room, so it counts toward how full THAT TRIP is; the trip's capacity
+  // itself is never changed by it.
   const trucks = eventTruckList.map(t => {
-    const mine = t.loads?.[dept] || {}, mineX = t.extra?.[dept] || {}, items = {}, extras = {};
-    blockedItems.forEach(it => {
-      const q = mine[truckKey(it)]; if (Number(q) > 0) items["inv:" + it.id] = q;
-      const x = mineX[truckKey(it)]; if (Number(x) > 0) extras["inv:" + it.id] = x;
+    const trips = tripsOf(t).map(trip => {
+      const mine = trip.loads?.[dept] || {}, mineX = trip.extra?.[dept] || {}, items = {}, extras = {};
+      blockedItems.forEach(it => {
+        const q = mine[truckKey(it)]; if (Number(q) > 0) items["inv:" + it.id] = q;
+        const x = mineX[truckKey(it)]; if (Number(x) > 0) extras["inv:" + it.id] = x;
+      });
+      // Items added straight from this department's own inventory, never in Build/Deal Check's own
+      // list (owner ask, 2026-11-22) - a flat array, not keyed by truckKey, since there is no Deal
+      // Check row for these to match against at all.
+      const custom = Array.isArray(trip.custom?.[dept]) ? trip.custom[dept] : [];
+      return { ...trip, items, extras, custom };
     });
-    // Items added straight from this department's own inventory, never in Build/Deal Check's own
-    // list (owner ask, 2026-11-22) - a flat array, not keyed by truckKey, since there is no Deal
-    // Check row for these to match against at all.
-    const custom = Array.isArray(t.custom?.[dept]) ? t.custom[dept] : [];
-    return { ...t, items, extras, custom };
+    return { ...t, trips };
   });
   // One truck open at a time: opening another closes the last, so the next truck's header is on
   // screen at once instead of below a screen of the previous truck's items.
   const [openTruck, setOpenTruck] = useState(null);
-  // Per-truck "add an item not from Build" picker state — keyed by truck id, { sub, invId, qty }.
+  // Per-trip "add an item not from Build" picker state — keyed by trip id, { sub, invId, qty }.
   const [addPicker, setAddPicker] = useState({});
   const truckRefs = useRef({});
   const toggleTruck = (id) => {
@@ -2652,50 +2669,71 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     setOpenTruck(next);
     if (next) setTimeout(() => truckRefs.current[next]?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 0);
   };
+  const newTrip = () => ({ id: "trip_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), status: "loading", loads: {}, extra: {}, custom: {} });
   const addTruck = () => {
     const id = "trk_" + Date.now();
-    saveEventTrucks(list => [...list, { id, vehicle: "", driver: "", phone: "", status: "loading", loads: {} }]);
+    saveEventTrucks(list => [...list, { id, vehicle: "", driver: "", phone: "", trips: [newTrip()] }]);
     setOpenTruck(id);
   };
   const setTruck = (id, patch) => saveEventTrucks(list => list.map(t => t.id === id ? { ...t, ...patch } : t));
-  const setTruckItem = (id, key, qty) => {
-    const k = keyByListId.get(key);
-    if (!k) return;
-    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, loads: { ...(t.loads || {}), [dept]: { ...((t.loads || {})[dept] || {}), [k]: qty } } } : t));
-  };
-  const setTruckExtra = (id, key, qty) => {
-    const k = keyByListId.get(key);
-    if (!k) return;
-    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, extra: { ...(t.extra || {}), [dept]: { ...((t.extra || {})[dept] || {}), [k]: qty } } } : t));
-  };
   const delTruck = (id) => saveEventTrucks(list => list.filter(t => t.id !== id));
+  // Replaces a truck's whole `trips` array with the result of `fn(tripsOf(t))` - migrates the legacy
+  // implicit trip-1 shape (a truck saved before trips existed, see tripsOf) into a real `trips` array
+  // the first time any trip is touched, and drops the truck's own now-redundant top-level
+  // loads/extra/custom/status once migrated, so there is only ever ONE place a trip's data lives
+  // from here on - never a stale duplicate copy.
+  const setTrips = (id, fn) => saveEventTrucks(list => list.map(t => {
+    if (t.id !== id) return t;
+    const trips = fn(tripsOf(t));
+    const { loads: _l, extra: _e, custom: _c, status: _s, ...rest } = t;
+    return { ...rest, trips };
+  }));
+  const addTrip = (id) => setTrips(id, trips => [...trips, newTrip()]);
+  // At least one trip must always remain - removing the last one would leave a truck with nowhere
+  // to load anything, which this screen has no way to recover from short of deleting the truck.
+  const removeTrip = (id, tripId) => setTrips(id, trips => trips.length > 1 ? trips.filter(tr => tr.id !== tripId) : trips);
+  const setTripStatus = (id, tripId, status) => setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, status } : tr));
+  const setTripItem = (id, tripId, key, qty) => {
+    const k = keyByListId.get(key);
+    if (!k) return;
+    setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, loads: { ...(tr.loads || {}), [dept]: { ...((tr.loads || {})[dept] || {}), [k]: qty } } } : tr));
+  };
+  const setTripExtra = (id, tripId, key, qty) => {
+    const k = keyByListId.get(key);
+    if (!k) return;
+    setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, extra: { ...(tr.extra || {}), [dept]: { ...((tr.extra || {})[dept] || {}), [k]: qty } } } : tr));
+  };
   // Items picked straight from this department's own inventory (deptInventoryBySub), never a Build/Deal
   // Check row — kept as a flat array, not truckKey'd, since there is nothing in the deal to match
   // against. Each gets its own small id (not an array index) so editing/removing one never shifts
   // under an in-flight edit to another.
-  const addTruckCustomItem = (id, invItem, qty) => {
+  const addTripCustomItem = (id, tripId, invItem, qty) => {
     if (!invItem || !(Number(qty) > 0)) return;
     const row = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), invId: invItem.id, name: invItem.name, sub: invItem.subCat || invItem.subcategory || "", qty: Number(qty) };
-    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, custom: { ...(t.custom || {}), [dept]: [...((t.custom || {})[dept] || []), row] } } : t));
+    setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, custom: { ...(tr.custom || {}), [dept]: [...((tr.custom || {})[dept] || []), row] } } : tr));
   };
-  const setTruckCustomQty = (id, rowId, qty) => {
-    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, custom: { ...(t.custom || {}), [dept]: ((t.custom || {})[dept] || []).map(r => r.id === rowId ? { ...r, qty: Math.max(0, Number(qty) || 0) } : r) } } : t));
+  const setTripCustomQty = (id, tripId, rowId, qty) => {
+    setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, custom: { ...(tr.custom || {}), [dept]: ((tr.custom || {})[dept] || []).map(r => r.id === rowId ? { ...r, qty: Math.max(0, Number(qty) || 0) } : r) } } : tr));
   };
-  const removeTruckCustomItem = (id, rowId) => {
-    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, custom: { ...(t.custom || {}), [dept]: ((t.custom || {})[dept] || []).filter(r => r.id !== rowId) } } : t));
+  const removeTripCustomItem = (id, tripId, rowId) => {
+    setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, custom: { ...(tr.custom || {}), [dept]: ((tr.custom || {})[dept] || []).filter(r => r.id !== rowId) } } : tr));
   };
-  const truckLoadedQty = (key) => trucks.reduce((s, t) => s + (Number(t.items?.[key]) || 0), 0); // total loaded across all trucks
-  const truckExtraQty = (key) => trucks.reduce((s, t) => s + (Number(t.extras?.[key]) || 0), 0); // overload across all trucks
+  // Across every trip of every truck - what matters for "how much of item X is left to send out" is
+  // the total already on its way, whichever trip or truck carries it (owner ask, 2026-11-23: a
+  // second trip must only ever offer what the first trip didn't already take).
+  const truckLoadedQty = (key) => trucks.reduce((s, t) => s + t.trips.reduce((s2, tr) => s2 + (Number(tr.items?.[key]) || 0), 0), 0);
+  const truckExtraQty = (key) => trucks.reduce((s, t) => s + t.trips.reduce((s2, tr) => s2 + (Number(tr.extras?.[key]) || 0), 0), 0);
   const TRUCK_STATUS_LABEL = { loading: "Loading", dispatched: "Dispatched", "at-site": "At site", returned: "Returned" };
   const TRUCK_STATUS_CLS = { loading: "bg-blue-50 text-blue-700 ring-blue-200", dispatched: "bg-amber-50 text-amber-700 ring-amber-200", "at-site": "bg-emerald-50 text-emerald-700 ring-emerald-200", returned: "bg-gray-100 text-gray-600 ring-gray-200" };
-  // How full each truck is: every department's loads, each piece counted at its share of a truck.
-  const truckOcc = (t) => {
+  // How full a TRIP is: every department's loads on it, each piece counted at its share of a truck —
+  // fill is per-trip now, not per-truck (each trip is its own run, owner ask 2026-11-23).
+  const truckOcc = (trip) => {
     let used = 0, unknown = 0;
     const byDept = [];
-    const depts = [...new Set([...Object.keys(t.loads || {}), ...Object.keys(t.extra || {})])];
+    const depts = [...new Set([...Object.keys(trip.loads || {}), ...Object.keys(trip.extra || {})])];
     depts.forEach(d => {
       const ld = {};
-      [t.loads?.[d] || {}, t.extra?.[d] || {}].forEach(src => Object.entries(src).forEach(([k, q]) => { ld[k] = (ld[k] || 0) + (Number(q) || 0); }));
+      [trip.loads?.[d] || {}, trip.extra?.[d] || {}].forEach(src => Object.entries(src).forEach(([k, q]) => { ld[k] = (ld[k] || 0) + (Number(q) || 0); }));
       let du = 0;
       Object.entries(ld).forEach(([k, q]) => {
         const qn = Number(q) || 0;
@@ -2708,8 +2746,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     });
     return { used, byDept, unknown };
   };
-  const truckOccs = Object.fromEntries(eventTruckList.map(t => [t.id, truckOcc(t)]));
-  const fullTrucks = eventTruckList.filter(t => truckOccs[t.id].used >= 0.999).length;
+  const truckOccs = Object.fromEntries(eventTruckList.flatMap(t => tripsOf(t).map(tr => [tr.id, truckOcc(tr)])));
+  const fullTrucks = eventTruckList.reduce((s, t) => s + tripsOf(t).filter(tr => (truckOccs[tr.id]?.used || 0) >= 0.999).length, 0);
   const DEPT_BAR = { Furniture: "bg-amber-500", Floral: "bg-pink-500", Structure: "bg-slate-500", Tenting: "bg-emerald-500", Transport: "bg-orange-500", Lighting: "bg-yellow-400", Fabric: "bg-violet-500" };
   // A short "Can be made" line on a challan says where its units come from - "600 = 500 in stock + 100 outsourced" - so the
   // challan does not read as if all 600 were ours or all made in-house. Empty for every other line.
@@ -2719,52 +2757,55 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return shortfallLine(shortfallBreakdown({ booked: Number(base.rentalQty ?? base.qty) || 0, short: Number(base.shortQty) || 0 }, shortAlloc[allocKeyOf(base)]));
   };
   const challanSrcNote = (it) => { const line = challanSrcText(it); return line ? `<div style="font-size:11px;color:#92400e;margin-top:2px">${line}</div>` : ""; };
-  // Every department's own slice of ONE truck, combined (owner ask, 2026-11-22): a truck is shared by
-  // the whole event, so the driver's "Download PDF" challan should say everything physically riding on
-  // it, not just the one department's slice that happened to generate it (a Floral user downloading it
-  // used to get only Floral's items, even when the same truck also carried Tenting's). Looked up from
-  // eventTruckList's raw record (its own `loads`/`extra` still carry every department's map), not the
-  // `trucks` array this component otherwise renders with, which is already filtered down to `dept`.
-  // Each row keeps its own department (a "Dept" column) so whoever unloads it still knows whose item is
-  // whose. shownName()'s Fabric design-choice override only applies to this tab's OWN department's rows
-  // (it is keyed by blockedItems' ids, which a different department's flatDeptItems() ids can collide
-  // with) - another department's rows print their plain saved name instead.
-  const combinedTruckItems = (truckId) => {
+  // Every department's own slice of ONE TRIP, combined (owner ask, 2026-11-22, trip-scoped 2026-11-23):
+  // a truck is shared by the whole event, so the driver's "Download PDF" challan should say everything
+  // physically riding on THIS RUN, not just the one department's slice that happened to generate it (a
+  // Floral user downloading it used to get only Floral's items, even when the same truck also carried
+  // Tenting's) - and not some OTHER trip's items, now that one truck can make more than one run.
+  // Looked up from eventTruckList's raw record (its own trips' `loads`/`extra` still carry every
+  // department's map), not the `trucks` array this component otherwise renders with, which is already
+  // filtered down to `dept`. Each row keeps its own department (a "Dept" column) so whoever unloads it
+  // still knows whose item is whose. shownName()'s Fabric design-choice override only applies to this
+  // tab's OWN department's rows (it is keyed by blockedItems' ids, which a different department's
+  // flatDeptItems() ids can collide with) - another department's rows print their plain saved name
+  // instead.
+  const combinedTruckItems = (truckId, tripId) => {
     const raw = eventTruckList.find(t => t.id === truckId);
-    if (!raw) return [];
+    const trip = raw && tripsOf(raw).find(tr => tr.id === tripId);
+    if (!trip) return [];
     const out = [];
-    Object.keys(raw.loads || {}).forEach(d => {
-      const mine = raw.loads?.[d] || {}, mineX = raw.extra?.[d] || {};
+    Object.keys(trip.loads || {}).forEach(d => {
+      const mine = trip.loads?.[d] || {}, mineX = trip.extra?.[d] || {};
       flatDeptItems(d).forEach(it => {
         const q = Number(mine[truckKey(it)]) || 0, x = Number(mineX[truckKey(it)]) || 0;
         if (q <= 0 && x <= 0) return;
         out.push({ dept: d, name: d === dept ? shownName(it) : (it.name || ""), sub: it.sub || "", qty: q, fullQty: it.qty, extra: x, src: it });
       });
     });
-    // Items added straight from a department's own inventory (truck.custom[dept]) - no Deal Check
+    // Items added straight from a department's own inventory (trip.custom[dept]) - no Deal Check
     // row to match against, so these ride along by department alone, not by truckKey.
-    Object.keys(raw.custom || {}).forEach(d => {
-      (raw.custom[d] || []).forEach(c => {
+    Object.keys(trip.custom || {}).forEach(d => {
+      (trip.custom[d] || []).forEach(c => {
         if (!(Number(c.qty) > 0)) return;
         out.push({ dept: d, name: c.name, sub: c.sub || "", qty: Number(c.qty), fullQty: Number(c.qty), extra: 0, src: null });
       });
     });
     return out;
   };
-  const printTruckChallan = (truck, n) => {
+  const printTruckChallan = (truck, tripId, n, tripN) => {
     const w = window.open("", "_blank");
     if (!w) return;
-    // Combined across every department sharing this truck (owner ask, 2026-11-23) - same source as
+    // Combined across every department sharing this trip (owner ask, 2026-11-23) - same source as
     // the Download PDF (combinedTruckItems), so the two agree; each row keeps its own Dept column.
-    const rows = combinedTruckItems(truck.id)
+    const rows = combinedTruckItems(truck.id, tripId)
       .map(it => `<tr><td>${it.name}${it.src === null ? ` <span style="font-size:11px;color:#92400e">(added, not in Build)</span>` : challanSrcNote(it.src)}</td><td>${it.dept}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}</td></tr>`).join("");
     const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
-    w.document.write(`<html><head><title>Combined Challan — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
-      <h2>🚚 Ambria — Combined Challan · Truck ${n}</h2>
+    w.document.write(`<html><head><title>Combined Challan — Truck ${n} · Trip ${tripN}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
+      <h2>🚚 Ambria — Combined Challan · Truck ${n} · Trip ${tripN}</h2>
       <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${dateVenueLineOf(sel) || "-"}</p>
       <p>Vehicle: ${truck.vehicle || "______"} &nbsp;|&nbsp; Driver: ${truck.driver || "______"} &nbsp;|&nbsp; Phone: ${truck.phone || "______"}</p>
-      <h4>Inventory on this truck — every department</h4>
-      <table><tr><th>Item</th><th>Dept</th><th>Type</th><th>Qty</th></tr>${rows || '<tr><td colspan="4" style="text-align:center;color:#999">No items assigned to this truck</td></tr>'}</table>
+      <h4>Inventory on this trip — every department</h4>
+      <table><tr><th>Item</th><th>Dept</th><th>Type</th><th>Qty</th></tr>${rows || '<tr><td colspan="4" style="text-align:center;color:#999">No items assigned to this trip</td></tr>'}</table>
       ${toolRows ? `<h4>Essentials / tools — ${dept}</h4><table><tr><th>Item</th><th>Type</th><th>Qty</th></tr>${toolRows}</table>` : ""}
       <br><p>Dispatched by: _______________ &nbsp;&nbsp; Received by: _______________</p>
       <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
@@ -2774,9 +2815,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // The same challan as a downloaded PDF, for when no printer is at hand — it can be shared on
   // WhatsApp or printed later. Plain jsPDF text like the Actuals PDF; its built-in font has no
   // emoji, so the icons from the printed version are left out.
-  const downloadTruckChallanPdf = async (truck, n) => {
+  const downloadTruckChallanPdf = async (truck, tripId, n, tripN) => {
     if (!sel || challanPdfBusy) return;
-    setChallanPdfBusy(truck.id);
+    setChallanPdfBusy(tripId);
     try {
       const [{ jsPDF }] = await loadPdfLibs();
       const pdf = new jsPDF({ unit: "pt", format: "a4" });
@@ -2803,16 +2844,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         y += lh + 18;
       }
       pdf.setFont("helvetica", "bold"); pdf.setFontSize(16); pdf.setTextColor(79, 70, 229);
-      pdf.text(`Ambria - Combined Challan - Truck ${n}`, M, y); y += 22;
+      pdf.text(`Ambria - Combined Challan - Truck ${n} - Trip ${tripN}`, M, y); y += 22;
       pdf.setTextColor(17); pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
       pdf.text(`Event: ${sel.clientName || "-"}  |  ${dateVenueLineOf(sel) || "-"}`, M, y); y += 16;
       pdf.text(`Vehicle: ${truck.vehicle || "______"}  |  Driver: ${truck.driver || "______"}  |  Phone: ${truck.phone || "______"}`, M, y); y += 26;
       pdf.setFontSize(9.5);
-      pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck — every department", M, y); y += 16;
+      pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this trip — every department", M, y); y += 16;
       header();
-      const items = combinedTruckItems(truck.id);
+      const items = combinedTruckItems(truck.id, tripId);
       if (items.length) items.forEach(it => row([[it.name + (it.src === null ? " (added, not in Build)" : challanSrcText(it.src) ? ` (${challanSrcText(it.src)})` : ""), cx.name], [it.dept, cx.dept], [it.sub || "-", cx.type], [`${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}`, cx.qty, "right"]]));
-      else row([["No items assigned to this truck", cx.name]]);
+      else row([["No items assigned to this trip", cx.name]]);
       if (deptTools.length) {
         y += 12; room(36);
         pdf.setFont("helvetica", "bold"); pdf.text("Essentials / tools", M, y); y += 16;
@@ -2826,7 +2867,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       pdf.setFontSize(8); pdf.setTextColor(120);
       pdf.text(`Generated ${new Date().toLocaleString("en-IN")} - ${authUser?.name || "-"}`, M, H - 20);
       const safe = (t) => String(t || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
-      pdf.save(`Challan - Combined - Truck ${n} - ${safe(sel.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`);
+      pdf.save(`Challan - Combined - Truck ${n} - Trip ${tripN} - ${safe(sel.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`);
     } catch (err) {
       if (isStaleChunk(err)) { reloadForUpdate(); return; }
       alert(`Could not make the challan PDF.\n\n${err?.message || err}`);
@@ -3192,7 +3233,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       if (it.foc) return; // left at the venue — never trucked in, so never a Receiving shortfall
       const key = itemKeyFor(it.invId, it.name); used.add(key);
       const inc = incomingByItem[key]; const reused = inc?.total || 0;
-      const whTrucks = trucks.map((t, ti) => ({ id: t.id, n: ti + 1, vehicle: t.vehicle, driver: t.driver, phone: t.phone || "", qty: Number(t.items?.["inv:" + it.id]) || 0 })).filter(x => x.qty > 0);
+      const whTrucks = trucks.map((t, ti) => ({ id: t.id, n: ti + 1, vehicle: t.vehicle, driver: t.driver, phone: t.phone || "", qty: t.trips.reduce((s, tr) => s + (Number(tr.items?.["inv:" + it.id]) || 0), 0) })).filter(x => x.qty > 0);
       const whQty = whTrucks.reduce((s, x) => s + x.qty, 0);
       const totalIn = whQty + reused;
       if (it.qty > 0 || totalIn > 0) rows.push({ name: it.name, photo: it.photo || "", required: it.qty, reused, whTrucks, whQty, totalIn, shortfall: Math.max(0, it.qty - totalIn), over: Math.max(0, totalIn - it.qty), sources: inc?.sources || [] });
@@ -6648,70 +6689,51 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     <div key={t.id} ref={el => { truckRefs.current[t.id] = el; }} className={"rounded-xl ring-1 p-3 space-y-2.5 scroll-mt-4 " + (openTruck === t.id ? "ring-blue-200" : "ring-gray-200")}>
                       {/* ── THE HEADER IS THE TRUCK, OPEN OR SHUT ──
                           Everything needed to tell trucks apart without opening one: number, plate,
-                          driver, phone, status and how full it is. Tapping it opens this truck and
-                          closes whichever was open. */}
+                          driver, phone, and each trip's own status and how full IT is (a truck can
+                          make more than one run, owner ask 2026-11-23 - fill is per trip, not per
+                          truck). Tapping it opens this truck and closes whichever was open. */}
                       <div className="flex items-start justify-between gap-2">
-                        {(() => {
-                          const oc = truckOccs[t.id] || { used: 0 };
-                          const pct = Math.round(oc.used * 100), over = oc.used > 1.005, full = oc.used >= 0.999;
-                          const st = t.status || "loading";
-                          return (
-                            <button type="button" onClick={() => toggleTruck(t.id)} aria-expanded={openTruck === t.id} className="min-w-0 flex-1 text-left cursor-pointer">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span aria-hidden="true" className={"shrink-0 text-gray-400 transition-transform duration-150 " + (openTruck === t.id ? "rotate-90" : "")}>
-                                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L8.5 7 L5 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                                </span>
-                                <span className="text-sm font-semibold text-gray-900 shrink-0">Truck {ti + 1}</span>
-                                <span className="min-w-0 truncate text-[12px] text-gray-500">{[t.vehicle, t.driver].filter(Boolean).join(" · ") || "no vehicle yet"}</span>
-                                <span className={"shrink-0 ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded ring-1 " + (TRUCK_STATUS_CLS[st] || TRUCK_STATUS_CLS.loading)}>{TRUCK_STATUS_LABEL[st] || st}</span>
-                              </div>
-                              <div className="mt-1.5 pl-5 flex items-center gap-2">
-                                {t.phone ? <span className="shrink-0 text-[11px] text-gray-500 tabular-nums">📞 {t.phone}</span> : null}
-                                <div className={"min-w-0 flex-1 h-1.5 rounded-full overflow-hidden flex " + (over ? "bg-red-100" : "bg-gray-100")}>
-                                  {(oc.byDept || []).map(b => <div key={b.dept} className={DEPT_BAR[b.dept] || "bg-gray-400"} style={{ width: `${Math.min(100, b.used * 100)}%` }} />)}
+                        <button type="button" onClick={() => toggleTruck(t.id)} aria-expanded={openTruck === t.id} className="min-w-0 flex-1 text-left cursor-pointer">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span aria-hidden="true" className={"shrink-0 text-gray-400 transition-transform duration-150 " + (openTruck === t.id ? "rotate-90" : "")}>
+                              <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L8.5 7 L5 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            </span>
+                            <span className="text-sm font-semibold text-gray-900 shrink-0">Truck {ti + 1}</span>
+                            <span className="min-w-0 truncate text-[12px] text-gray-500">{[t.vehicle, t.driver].filter(Boolean).join(" · ") || "no vehicle yet"}</span>
+                            {t.trips.length > 1 && <span className="shrink-0 ml-auto text-[10px] font-semibold text-gray-400">{t.trips.length} trips</span>}
+                          </div>
+                          <div className="mt-1.5 pl-5 space-y-1">
+                            {t.phone && <span className="block text-[11px] text-gray-500 tabular-nums">📞 {t.phone}</span>}
+                            {t.trips.map((trip, tripI) => {
+                              const oc = truckOccs[trip.id] || { used: 0 };
+                              const pct = Math.round(oc.used * 100), over = oc.used > 1.005, full = oc.used >= 0.999;
+                              const st = trip.status || "loading";
+                              return (
+                                <div key={trip.id} className="flex items-center gap-2">
+                                  {t.trips.length > 1 && <span className="shrink-0 text-[10px] font-semibold text-gray-400 w-10">Trip {tripI + 1}</span>}
+                                  <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ring-1 " + (TRUCK_STATUS_CLS[st] || TRUCK_STATUS_CLS.loading)}>{TRUCK_STATUS_LABEL[st] || st}</span>
+                                  <div className={"min-w-0 flex-1 h-1.5 rounded-full overflow-hidden flex " + (over ? "bg-red-100" : "bg-gray-100")}>
+                                    {(oc.byDept || []).map(b => <div key={b.dept} className={DEPT_BAR[b.dept] || "bg-gray-400"} style={{ width: `${Math.min(100, b.used * 100)}%` }} />)}
+                                  </div>
+                                  <span className={"shrink-0 text-[11px] font-bold tabular-nums " + (over || full ? "text-red-600" : pct >= 80 ? "text-amber-600" : "text-gray-700")}>{over ? `Over ${pct}%` : full ? "Full" : `${pct}% full`}</span>
                                 </div>
-                                <span className={"shrink-0 text-[11px] font-bold tabular-nums " + (over || full ? "text-red-600" : pct >= 80 ? "text-amber-600" : "text-gray-700")}>{over ? `Over ${pct}%` : full ? "Full" : `${pct}% full`}</span>
-                              </div>
-                            </button>
-                          );
-                        })()}
+                              );
+                            })}
+                          </div>
+                        </button>
                         {/* Removing a truck removes it for every department, so it is held back while
-                            another department still has items on it. */}
-                        <button onClick={() => delTruck(t.id)} disabled={Object.entries(t.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))}
-                          aria-label={`Remove truck ${ti + 1}`} title={Object.entries(t.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0)) ? "Another department has items on this truck" : "Remove truck"}
+                            another department has items on ANY of its trips. */}
+                        <button onClick={() => delTruck(t.id)} disabled={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0)))}
+                          aria-label={`Remove truck ${ti + 1}`} title={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))) ? "Another department has items on this truck" : "Remove truck"}
                           className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors">
                           <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
                         </button>
                       </div>
                       {openTruck === t.id && (<>
-                      {/* ── WHO FILLS IT ── the bar itself is in the header above; opened, the truck adds
-                          each department's share of it and what to do when it is full. */}
-                      {(() => {
-                        const oc = truckOccs[t.id] || { used: 0, byDept: [], unknown: 0 };
-                        const pct = Math.round(oc.used * 100);
-                        const over = oc.used > 1.005, full = oc.used >= 0.999;
-                        if (!oc.byDept.length && !oc.unknown) return null;
-                        return (
-                          <div>
-                            {(over || full) && <div className="text-[11px] font-bold text-red-600">{over ? `Over by ${pct - 100}% — move items to another truck` : "Full — no space left"}</div>}
-                            {oc.byDept.length > 0 && (
-                              <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-500">
-                                {oc.byDept.map(b => <span key={b.dept} className={"inline-flex items-center gap-1 " + (b.dept === dept ? "font-semibold text-gray-800" : "")}><span className={"w-2 h-2 rounded-sm " + (DEPT_BAR[b.dept] || "bg-gray-400")} />{b.dept} {Math.round(b.used * 100)}%</span>)}
-                              </div>
-                            )}
-                            {oc.unknown > 0 && <div className="mt-0.5 text-[10px] text-gray-400">{oc.unknown} item{oc.unknown === 1 ? " has" : "s have"} no truck capacity set — not counted. Set it in Planning → 🚚 Truck.</div>}
-                          </div>
-                        );
-                      })()}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <select value={t.status || "loading"} onChange={e => setTruck(t.id, { status: e.target.value })} className="h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs font-medium capitalize focus:outline-none focus:ring-2 focus:ring-blue-400">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
-                        {t.phone && <a href={"tel:" + t.phone} className="h-8 inline-flex items-center text-xs font-semibold text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 rounded-lg px-2.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>Call {t.phone}</a>}
-                        <button onClick={() => downloadTruckChallanPdf(t, ti + 1)} disabled={!!challanPdfBusy} className="h-8 ml-auto text-xs font-semibold bg-white ring-1 ring-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-60 px-3 rounded-lg transition-colors">{challanPdfBusy === t.id ? "Making PDF…" : "Download PDF"}</button>
-                        <button onClick={() => printTruckChallan(t, ti + 1)} className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg transition-colors">Print challan</button>
-                      </div>
                       {/* Labelled, so the chips read as "pick one of these" rather than as tags
                           already applied to the truck. Vehicle and driver stacked in the chip,
-                          not joined by a dot, so the plate number leads. */}
+                          not joined by a dot, so the plate number leads. Truck-level - shared by
+                          every trip it makes. */}
                       {eventTrucks.length > 0 && (
                         <div>
                           <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Pick from fleet</div>
@@ -6733,106 +6755,158 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className="block text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{l}</label><TruckTextBox value={t[k] || ""} clean={k === "phone" ? phone10 : undefined} onCommit={v => setTruck(t.id, { [k]: v })} {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })} className="mt-1 w-full h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></div>
                         ))}
                       </div>
-                      {/* Add an item from this department's own inventory that never came from
-                          Build/Deal Check (owner ask, 2026-11-22) - picked by sub-category, then by
-                          item, so a spare panel or an outside-the-deal extra can still ride on a
-                          truck and still show up on its challan. */}
-                      <div className="rounded-lg ring-1 ring-dashed ring-gray-300 p-2.5 space-y-2">
-                        <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Add an item not in this deal</div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {[...deptInventoryBySub.keys()].sort().map(s => {
-                            const on = addPicker[t.id]?.sub === s;
-                            return (
-                              <button key={s} type="button" onClick={() => setAddPicker(p => ({ ...p, [t.id]: on ? null : { sub: s, invId: "", qty: 1 } }))} aria-pressed={on}
-                                className={"px-2.5 py-1 rounded-full text-[11px] font-medium ring-1 transition-colors " + (on ? "bg-blue-600 text-white ring-blue-600" : "bg-white text-gray-700 ring-gray-200 hover:bg-gray-50")}>
-                                {s}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        {/* Picked by a thumbnail grid, not a name-only dropdown (owner ask, 2026-11-22) -
-                            a sub-category can hold several near-identical-sounding items, and the photo
-                            is how the floor actually tells them apart. */}
-                        {addPicker[t.id]?.sub && (
-                          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-64 overflow-y-auto p-1 rounded-lg bg-gray-50">
-                            {(deptInventoryBySub.get(addPicker[t.id].sub) || []).map(i => {
-                              const on = addPicker[t.id]?.invId === i.id;
-                              const ph = i.img || (Array.isArray(i.photoUrls) && i.photoUrls[0]) || "";
-                              return (
-                                <button key={i.id} type="button" onClick={() => setAddPicker(p => ({ ...p, [t.id]: { ...p[t.id], invId: i.id } }))} aria-pressed={on}
-                                  className={"flex flex-col items-center gap-1 p-1.5 rounded-lg ring-1 bg-white transition-colors " + (on ? "ring-blue-400 ring-2" : "ring-gray-200 hover:bg-gray-50")}>
-                                  {ph ? <img src={thumbUrl(ph, 112)} loading="lazy" decoding="async" alt="" className="w-full aspect-square rounded-md object-cover" onError={e => { e.target.style.display = "none"; }} />
-                                    : <div className="w-full aspect-square rounded-md bg-gray-100 flex items-center justify-center text-gray-300 text-2xl">📦</div>}
-                                  <span className="w-full text-[10.5px] text-gray-700 text-center leading-snug line-clamp-2" title={i.name}>{i.name}</span>
+                      {/* ── EACH TRIP IS ITS OWN RUN ── its own status, its own challan, its own items
+                          (owner ask, 2026-11-23: "the same truck makes multiple trips... for trip 2,
+                          dont show me items that have already fully gone out for trip 1"). Only the
+                          vehicle/driver/phone above are shared; everything below is per trip. */}
+                      {t.trips.map((trip, tripI) => {
+                        const oc = truckOccs[trip.id] || { used: 0, byDept: [], unknown: 0 };
+                        const pct = Math.round(oc.used * 100);
+                        const over = oc.used > 1.005, full = oc.used >= 0.999;
+                        const multi = t.trips.length > 1;
+                        // Hidden once nothing is left to send out anywhere AND this trip itself has
+                        // none of its own loaded - an earlier trip that already took it all shouldn't
+                        // clutter a later one, but a row already partly on THIS trip stays editable.
+                        const visibleLoadItems = loadItems.filter(it => {
+                          const k = "inv:" + it.id;
+                          const onThis = Number(trip.items?.[k]) || 0;
+                          return onThis > 0 || truckLoadedQty(k) < (Number(it.qty) || 0);
+                        });
+                        return (
+                          <div key={trip.id} className={multi ? "rounded-lg ring-1 ring-gray-200 p-2.5 space-y-2.5" : "space-y-2.5"}>
+                            {multi && (
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-semibold text-gray-700">Trip {tripI + 1}</span>
+                                <button onClick={() => removeTrip(t.id, trip.id)} disabled={Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))}
+                                  aria-label={`Remove trip ${tripI + 1}`} title="Remove this trip"
+                                  className="shrink-0 w-6 h-6 rounded-md flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors">
+                                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
                                 </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                        {addPicker[t.id]?.invId && (
-                          <div className="flex items-center gap-2">
-                            <input type="number" min="1" value={addPicker[t.id]?.qty ?? 1} onChange={e => setAddPicker(p => ({ ...p, [t.id]: { ...p[t.id], qty: e.target.value } }))} aria-label="Quantity to add"
-                              className="h-8 w-16 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                            <button onClick={() => {
-                              const pick = addPicker[t.id];
-                              const inv = (deptInventoryBySub.get(pick.sub) || []).find(i => i.id === pick.invId);
-                              if (inv) { addTruckCustomItem(t.id, inv, pick.qty); setAddPicker(p => ({ ...p, [t.id]: null })); }
-                            }} className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold">+ Add</button>
-                          </div>
-                        )}
-                        {t.custom.length > 0 && (
-                          <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
-                            {t.custom.map(c => (
-                              <div key={c.id} className="flex items-center gap-2.5 px-2.5 py-2">
-                                <div className="min-w-0 flex-1">
-                                  <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2">{c.name}</div>
-                                  <div className="mt-0.5 text-[10px] text-amber-700">{c.sub || "—"} · not in Build/Deal Check</div>
+                              </div>
+                            )}
+                            {/* ── WHO FILLS THIS TRIP ── the bar itself is in the header above; opened, it
+                                adds each department's share of it and what to do when it is full. */}
+                            {(oc.byDept.length > 0 || oc.unknown > 0) && (
+                              <div>
+                                {(over || full) && <div className="text-[11px] font-bold text-red-600">{over ? `Over by ${pct - 100}% — move items to another trip` : "Full — no space left"}</div>}
+                                {oc.byDept.length > 0 && (
+                                  <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-500">
+                                    {oc.byDept.map(b => <span key={b.dept} className={"inline-flex items-center gap-1 " + (b.dept === dept ? "font-semibold text-gray-800" : "")}><span className={"w-2 h-2 rounded-sm " + (DEPT_BAR[b.dept] || "bg-gray-400")} />{b.dept} {Math.round(b.used * 100)}%</span>)}
+                                  </div>
+                                )}
+                                {oc.unknown > 0 && <div className="mt-0.5 text-[10px] text-gray-400">{oc.unknown} item{oc.unknown === 1 ? " has" : "s have"} no truck capacity set — not counted. Set it in Planning → 🚚 Truck.</div>}
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <select value={trip.status || "loading"} onChange={e => setTripStatus(t.id, trip.id, e.target.value)} className="h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs font-medium capitalize focus:outline-none focus:ring-2 focus:ring-blue-400">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
+                              {t.phone && <a href={"tel:" + t.phone} className="h-8 inline-flex items-center text-xs font-semibold text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 rounded-lg px-2.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>Call {t.phone}</a>}
+                              <button onClick={() => downloadTruckChallanPdf(t, trip.id, ti + 1, tripI + 1)} disabled={!!challanPdfBusy} className="h-8 ml-auto text-xs font-semibold bg-white ring-1 ring-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-60 px-3 rounded-lg transition-colors">{challanPdfBusy === trip.id ? "Making PDF…" : "Download PDF"}</button>
+                              <button onClick={() => printTruckChallan(t, trip.id, ti + 1, tripI + 1)} className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg transition-colors">Print challan</button>
+                            </div>
+                            {/* Add an item from this department's own inventory that never came from
+                                Build/Deal Check (owner ask, 2026-11-22) - picked by sub-category, then by
+                                item, so a spare panel or an outside-the-deal extra can still ride on a
+                                truck and still show up on its challan. */}
+                            <div className="rounded-lg ring-1 ring-dashed ring-gray-300 p-2.5 space-y-2">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Add an item not in this deal</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {[...deptInventoryBySub.keys()].sort().map(s => {
+                                  const on = addPicker[trip.id]?.sub === s;
+                                  return (
+                                    <button key={s} type="button" onClick={() => setAddPicker(p => ({ ...p, [trip.id]: on ? null : { sub: s, invId: "", qty: 1 } }))} aria-pressed={on}
+                                      className={"px-2.5 py-1 rounded-full text-[11px] font-medium ring-1 transition-colors " + (on ? "bg-blue-600 text-white ring-blue-600" : "bg-white text-gray-700 ring-gray-200 hover:bg-gray-50")}>
+                                      {s}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              {/* Picked by a thumbnail grid, not a name-only dropdown (owner ask, 2026-11-22) -
+                                  a sub-category can hold several near-identical-sounding items, and the photo
+                                  is how the floor actually tells them apart. */}
+                              {addPicker[trip.id]?.sub && (
+                                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-64 overflow-y-auto p-1 rounded-lg bg-gray-50">
+                                  {(deptInventoryBySub.get(addPicker[trip.id].sub) || []).map(i => {
+                                    const on = addPicker[trip.id]?.invId === i.id;
+                                    const ph = i.img || (Array.isArray(i.photoUrls) && i.photoUrls[0]) || "";
+                                    return (
+                                      <button key={i.id} type="button" onClick={() => setAddPicker(p => ({ ...p, [trip.id]: { ...p[trip.id], invId: i.id } }))} aria-pressed={on}
+                                        className={"flex flex-col items-center gap-1 p-1.5 rounded-lg ring-1 bg-white transition-colors " + (on ? "ring-blue-400 ring-2" : "ring-gray-200 hover:bg-gray-50")}>
+                                        {ph ? <img src={thumbUrl(ph, 112)} loading="lazy" decoding="async" alt="" className="w-full aspect-square rounded-md object-cover" onError={e => { e.target.style.display = "none"; }} />
+                                          : <div className="w-full aspect-square rounded-md bg-gray-100 flex items-center justify-center text-gray-300 text-2xl">📦</div>}
+                                        <span className="w-full text-[10.5px] text-gray-700 text-center leading-snug line-clamp-2" title={i.name}>{i.name}</span>
+                                      </button>
+                                    );
+                                  })}
                                 </div>
-                                <TruckTextBox type="number" min="0" value={c.qty || ""} onCommit={v => setTruckCustomQty(t.id, c.id, v)} aria-label={`${c.name} on this truck`}
-                                  className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                                <button onClick={() => removeTruckCustomItem(t.id, c.id)} aria-label={`Remove ${c.name}`} title="Remove" className="shrink-0 text-gray-400 hover:text-red-600 text-sm px-1.5">×</button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      {loadItems.length > 0 ? (
-                        /* One line per item: name over its loaded status, the "on this truck" box
-                           at the right. As a flex-wrap row the status and the box broke onto
-                           lines of their own at any width under ~500px. Only what is to be loaded:
-                           fixed / repeat items are listed apart below, not filled in (atVenueOf). */
-                        <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
-                          {loadItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const extraHere = Number(t.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
-                            <div key={k} className="flex items-center gap-2.5 px-2.5 py-2">
-                              {(() => { const cv = choiceViewAll.get(it.id); const ph = cv?.name ? cv.photo : it.photo; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : it.hex ? <div aria-hidden="true" className="w-8 h-8 rounded-lg ring-1 ring-black/10 shrink-0" style={{ background: it.hex }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
-                              <div className="min-w-0 flex-1">
-                                <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={choiceViewAll.get(it.id)?.name || it.name}>{choiceViewAll.get(it.id)?.name || it.name}</div>
-                                {/* a kit's part is loaded as its own piece - say which kit it goes with */}
-                                {(it.kitOf || it.fromKit) && <div className="text-[10px] text-blue-600 truncate">part of {it.kitOf || it.fromKit}</div>}
-                                <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty}{it.qtyUnit ? ` ${it.qtyUnit}` : ""} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
-                                {/* This item's share of the truck, and how many more of it the space left takes. */}
-                                {(() => {
-                                  const sh = truckShares[dept]?.get(truckKey(it));
-                                  if (!sh) return <div className="text-[10px] text-gray-400">no truck capacity set</div>;
-                                  const left = Math.max(0, 1 - (truckOccs[t.id]?.used || 0));
-                                  return <div className="text-[10px] text-gray-500 tabular-nums">{onThis > 0 ? `${Math.round(onThis * sh.perUnit * 100)}% of this truck · ` : ""}{left > 0 ? `fits ~${Math.floor(left / sh.perUnit + 1e-9)} more` : "no space left"} · ~{Math.round(sh.perTruck)} per truck</div>;
-                                })()}
-                              </div>
-                              {/* Normal load, capped at what the item still needs across all trucks. Once it is
-                                  fully loaded, the amber box takes any extra (overload) on this truck. */}
-                              <TruckTextBox type="number" min="0" max={maxHere} value={onThis || ""} onCommit={v => setTruckItem(t.id, k, v === "" ? "" : Math.min(maxHere, Math.max(0, Number(v) || 0)))} placeholder="0" aria-label={`${it.name} on this truck`} title={`On this truck (up to ${maxHere})`}
-                                className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                              {(totalLoaded >= (Number(it.qty) || 0) || extraHere > 0) && (
-                                <label className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-700" title="Extra pieces on this truck beyond what the item needs (overload)">
-                                  +
-                                  <TruckTextBox type="number" min="0" value={extraHere || ""} onCommit={v => setTruckExtra(t.id, k, v === "" ? "" : Math.max(0, Number(v) || 0))} placeholder="extra" aria-label={`${it.name} extra on this truck`}
-                                    className="w-14 h-8 rounded-lg bg-amber-50 ring-1 ring-amber-300 px-1.5 text-sm text-center font-semibold tabular-nums text-amber-800 placeholder:font-normal placeholder:text-[10px] placeholder:text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400" />
-                                </label>
+                              )}
+                              {addPicker[trip.id]?.invId && (
+                                <div className="flex items-center gap-2">
+                                  <input type="number" min="1" value={addPicker[trip.id]?.qty ?? 1} onChange={e => setAddPicker(p => ({ ...p, [trip.id]: { ...p[trip.id], qty: e.target.value } }))} aria-label="Quantity to add"
+                                    className="h-8 w-16 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                                  <button onClick={() => {
+                                    const pick = addPicker[trip.id];
+                                    const inv = (deptInventoryBySub.get(pick.sub) || []).find(i => i.id === pick.invId);
+                                    if (inv) { addTripCustomItem(t.id, trip.id, inv, pick.qty); setAddPicker(p => ({ ...p, [trip.id]: null })); }
+                                  }} className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold">+ Add</button>
+                                </div>
+                              )}
+                              {trip.custom.length > 0 && (
+                                <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
+                                  {trip.custom.map(c => (
+                                    <div key={c.id} className="flex items-center gap-2.5 px-2.5 py-2">
+                                      <div className="min-w-0 flex-1">
+                                        <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2">{c.name}</div>
+                                        <div className="mt-0.5 text-[10px] text-amber-700">{c.sub || "—"} · not in Build/Deal Check</div>
+                                      </div>
+                                      <TruckTextBox type="number" min="0" value={c.qty || ""} onCommit={v => setTripCustomQty(t.id, trip.id, c.id, v)} aria-label={`${c.name} on this trip`}
+                                        className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                                      <button onClick={() => removeTripCustomItem(t.id, trip.id, c.id)} aria-label={`Remove ${c.name}`} title="Remove" className="shrink-0 text-gray-400 hover:text-red-600 text-sm px-1.5">×</button>
+                                    </div>
+                                  ))}
+                                </div>
                               )}
                             </div>
-                          ); })}
-                        </div>
-                      ) : <div className="text-xs text-gray-400">{blockedItems.length ? "Nothing to load - everything is already at the venue." : "No inventory blocked for this department."}</div>}
+                            {visibleLoadItems.length > 0 ? (
+                              /* One line per item: name over its loaded status, the "on this trip" box
+                                 at the right. As a flex-wrap row the status and the box broke onto
+                                 lines of their own at any width under ~500px. Only what is to be loaded:
+                                 fixed / repeat items are listed apart below, not filled in (atVenueOf). */
+                              <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
+                                {visibleLoadItems.map(it => { const k = "inv:" + it.id; const onThis = Number(trip.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const extraHere = Number(trip.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
+                                  <div key={k} className="flex items-center gap-2.5 px-2.5 py-2">
+                                    {(() => { const cv = choiceViewAll.get(it.id); const ph = cv?.name ? cv.photo : it.photo; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : it.hex ? <div aria-hidden="true" className="w-8 h-8 rounded-lg ring-1 ring-black/10 shrink-0" style={{ background: it.hex }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={choiceViewAll.get(it.id)?.name || it.name}>{choiceViewAll.get(it.id)?.name || it.name}</div>
+                                      {/* a kit's part is loaded as its own piece - say which kit it goes with */}
+                                      {(it.kitOf || it.fromKit) && <div className="text-[10px] text-blue-600 truncate">part of {it.kitOf || it.fromKit}</div>}
+                                      <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty}{it.qtyUnit ? ` ${it.qtyUnit}` : ""} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
+                                      {/* This item's share of the trip, and how many more of it the space left takes. */}
+                                      {(() => {
+                                        const sh = truckShares[dept]?.get(truckKey(it));
+                                        if (!sh) return <div className="text-[10px] text-gray-400">no truck capacity set</div>;
+                                        const left = Math.max(0, 1 - (truckOccs[trip.id]?.used || 0));
+                                        return <div className="text-[10px] text-gray-500 tabular-nums">{onThis > 0 ? `${Math.round(onThis * sh.perUnit * 100)}% of this trip · ` : ""}{left > 0 ? `fits ~${Math.floor(left / sh.perUnit + 1e-9)} more` : "no space left"} · ~{Math.round(sh.perTruck)} per truck</div>;
+                                      })()}
+                                    </div>
+                                    {/* Normal load, capped at what the item still needs across every trip of every
+                                        truck. Once it is fully loaded, the amber box takes any extra (overload). */}
+                                    <TruckTextBox type="number" min="0" max={maxHere} value={onThis || ""} onCommit={v => setTripItem(t.id, trip.id, k, v === "" ? "" : Math.min(maxHere, Math.max(0, Number(v) || 0)))} placeholder="0" aria-label={`${it.name} on this trip`} title={`On this trip (up to ${maxHere})`}
+                                      className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                                    {(totalLoaded >= (Number(it.qty) || 0) || extraHere > 0) && (
+                                      <label className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-700" title="Extra pieces on this trip beyond what the item needs (overload)">
+                                        +
+                                        <TruckTextBox type="number" min="0" value={extraHere || ""} onCommit={v => setTripExtra(t.id, trip.id, k, v === "" ? "" : Math.max(0, Number(v) || 0))} placeholder="extra" aria-label={`${it.name} extra on this trip`}
+                                          className="w-14 h-8 rounded-lg bg-amber-50 ring-1 ring-amber-300 px-1.5 text-sm text-center font-semibold tabular-nums text-amber-800 placeholder:font-normal placeholder:text-[10px] placeholder:text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                                      </label>
+                                    )}
+                                  </div>
+                                ); })}
+                              </div>
+                            ) : <div className="text-xs text-gray-400">{blockedItems.length ? (loadItems.length ? "Nothing left to load — it's all gone out on another trip." : "Nothing to load - everything is already at the venue.") : "No inventory blocked for this department."}</div>}
+                          </div>
+                        );
+                      })}
+                      <button onClick={() => addTrip(t.id)} className="h-8 px-3 rounded-lg ring-1 ring-dashed ring-gray-300 text-gray-500 hover:text-gray-700 hover:ring-gray-400 text-xs font-semibold transition-colors">+ Add trip</button>
                       </>)}
                     </div>
                   ))}
