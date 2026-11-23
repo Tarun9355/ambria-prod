@@ -2681,7 +2681,20 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     saveEventTrucks(list => [...list, { id, vehicle: "", driver: "", phone: "", trips: [newTrip()] }]);
     setOpenTruck(id);
   };
-  const setTruck = (id, patch) => saveEventTrucks(list => list.map(t => t.id === id ? { ...t, ...patch } : t));
+  // Refuses to give a truck the same vehicle number as ANOTHER truck already on this event (owner
+  // report, 2026-11-23: users were ending up with two separate truck cards for one real vehicle,
+  // via "Pick from fleet" or just retyping its number) - matched the same way eventTruckList's own
+  // legacy-plate merge already does (trimmed, lowercased). The fix is to add another TRIP to the
+  // existing truck, not a second truck - this just says so instead of silently allowing the
+  // duplicate for someone to notice later.
+  const setTruck = (id, patch) => {
+    if (patch.vehicle != null && String(patch.vehicle).trim()) {
+      const plateKey = String(patch.vehicle).trim().toLowerCase();
+      const dupIdx = eventTruckList.findIndex(t => t.id !== id && String(t.vehicle || "").trim().toLowerCase() === plateKey);
+      if (dupIdx >= 0) { alert(`Truck ${dupIdx + 1} already has this vehicle (${patch.vehicle}). Open Truck ${dupIdx + 1} and use "+ Add trip" there instead of a new truck.`); return; }
+    }
+    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, ...patch } : t));
+  };
   const delTruck = (id) => saveEventTrucks(list => list.filter(t => t.id !== id));
   // Replaces a truck's whole `trips` array with the result of `fn(tripsOf(t))` - migrates the legacy
   // implicit trip-1 shape (a truck saved before trips existed, see tripsOf) into a real `trips` array
