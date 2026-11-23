@@ -2678,7 +2678,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const newTrip = () => ({ id: "trip_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), status: "loading", loads: {}, extra: {}, custom: {} });
   const addTruck = () => {
     const id = "trk_" + Date.now();
-    saveEventTrucks(list => [...list, { id, vehicle: "", driver: "", phone: "", trips: [newTrip()] }]);
+    // New truck goes to the top (owner ask, 2026-11-23) - the one you just added, about to be
+    // filled in, is what you want in front of you, not a new "Truck N" at the bottom of a long list.
+    saveEventTrucks(list => [{ id, vehicle: "", driver: "", phone: "", trips: [newTrip()] }, ...list]);
     setOpenTruck(id);
   };
   // Refuses to give a truck the same vehicle number as ANOTHER truck already on this event (owner
