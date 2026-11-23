@@ -6739,11 +6739,17 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           truck and still show up on its challan. */}
                       <div className="rounded-lg ring-1 ring-dashed ring-gray-300 p-2.5 space-y-2">
                         <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Add an item not in this deal</div>
-                        <select value={addPicker[t.id]?.sub || ""} onChange={e => setAddPicker(p => ({ ...p, [t.id]: { sub: e.target.value, invId: "", qty: 1 } }))}
-                          className="h-8 min-w-[140px] rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400">
-                          <option value="">Sub-category…</option>
-                          {[...deptInventoryBySub.keys()].sort().map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
+                        <div className="flex flex-wrap gap-1.5">
+                          {[...deptInventoryBySub.keys()].sort().map(s => {
+                            const on = addPicker[t.id]?.sub === s;
+                            return (
+                              <button key={s} type="button" onClick={() => setAddPicker(p => ({ ...p, [t.id]: on ? null : { sub: s, invId: "", qty: 1 } }))} aria-pressed={on}
+                                className={"px-2.5 py-1 rounded-full text-[11px] font-medium ring-1 transition-colors " + (on ? "bg-blue-600 text-white ring-blue-600" : "bg-white text-gray-700 ring-gray-200 hover:bg-gray-50")}>
+                                {s}
+                              </button>
+                            );
+                          })}
+                        </div>
                         {/* Picked by a thumbnail grid, not a name-only dropdown (owner ask, 2026-11-22) -
                             a sub-category can hold several near-identical-sounding items, and the photo
                             is how the floor actually tells them apart. */}
