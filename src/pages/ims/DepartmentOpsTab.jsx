@@ -2586,17 +2586,18 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const printTruckChallan = (truck, n) => {
     const w = window.open("", "_blank");
     if (!w) return;
-    const rows = loadItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0)
-      .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("")
-      + (truck.custom || []).filter(c => Number(c.qty) > 0).map(c => `<tr><td>${c.name} <span style="font-size:11px;color:#92400e">(added, not in Build)</span></td><td>${c.sub || "—"}</td><td style="text-align:center">${c.qty}</td></tr>`).join("");
+    // Combined across every department sharing this truck (owner ask, 2026-11-23) - same source as
+    // the Download PDF (combinedTruckItems), so the two agree; each row keeps its own Dept column.
+    const rows = combinedTruckItems(truck.id)
+      .map(it => `<tr><td>${it.name}${it.src === null ? ` <span style="font-size:11px;color:#92400e">(added, not in Build)</span>` : challanSrcNote(it.src)}</td><td>${it.dept}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}</td></tr>`).join("");
     const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
-    w.document.write(`<html><head><title>Challan — ${dept} — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
-      <h2>${DEPT_ICON[dept]} Ambria — ${dept} Challan · Truck ${n}</h2>
+    w.document.write(`<html><head><title>Combined Challan — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
+      <h2>🚚 Ambria — Combined Challan · Truck ${n}</h2>
       <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${dateVenueLineOf(sel) || "-"}</p>
       <p>Vehicle: ${truck.vehicle || "______"} &nbsp;|&nbsp; Driver: ${truck.driver || "______"} &nbsp;|&nbsp; Phone: ${truck.phone || "______"}</p>
-      <h4>Inventory on this truck</h4>
-      <table><tr><th>Item</th><th>Type</th><th>Qty</th></tr>${rows || '<tr><td colspan="3" style="text-align:center;color:#999">No items assigned to this truck</td></tr>'}</table>
-      ${toolRows ? `<h4>Essentials / tools</h4><table><tr><th>Item</th><th>Type</th><th>Qty</th></tr>${toolRows}</table>` : ""}
+      <h4>Inventory on this truck — every department</h4>
+      <table><tr><th>Item</th><th>Dept</th><th>Type</th><th>Qty</th></tr>${rows || '<tr><td colspan="4" style="text-align:center;color:#999">No items assigned to this truck</td></tr>'}</table>
+      ${toolRows ? `<h4>Essentials / tools — ${dept}</h4><table><tr><th>Item</th><th>Type</th><th>Qty</th></tr>${toolRows}</table>` : ""}
       <br><p>Dispatched by: _______________ &nbsp;&nbsp; Received by: _______________</p>
       <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
       <button onclick="window.print()">🖨️ Print</button></body></html>`);
@@ -6355,7 +6356,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   </button>
                 </div>
                 <div className="mt-1.5 flex items-center justify-between gap-3">
-                  <span className="text-xs text-gray-500">Trucks are shared by every department on this event. Each prints its own challan.</span>
+                  <span className="text-xs text-gray-500">Trucks are shared by every department on this event — every challan lists everything on the truck.</span>
                   <button onClick={() => setShowFleet(v => !v)} aria-expanded={showFleet}
                     className={"shrink-0 text-xs font-semibold transition-colors " + (showFleet ? "text-gray-900" : "text-blue-600 hover:text-blue-800")}>
                     {showFleet ? "Done" : "Manage fleet"}
