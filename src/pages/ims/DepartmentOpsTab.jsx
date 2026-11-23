@@ -2694,21 +2694,42 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     const { loads: _l, extra: _e, custom: _c, status: _s, ...rest } = t;
     return { ...rest, trips };
   }));
+  // A truck only ever starts a second trip because the first one already left (owner ask,
+  // 2026-11-23) - the trip that was last (now no longer the newest) gets bumped out of "Loading"
+  // into "Dispatched" so nobody has to remember to do it by hand, and is locked from further
+  // editing below (see `locked` in the trip render) - never downgraded if it was already further
+  // along (at-site/returned) than that.
   const addTrip = (id) => {
     const trip = newTrip();
-    setTrips(id, trips => [...trips, trip]);
+    setTrips(id, trips => [
+      ...trips.map((tr, i) => i === trips.length - 1 && (tr.status || "loading") === "loading" ? { ...tr, status: "dispatched" } : tr),
+      trip,
+    ]);
     setActiveTrip(p => ({ ...p, [id]: trip.id }));
   };
   // At least one trip must always remain - removing the last one would leave a truck with nowhere
   // to load anything, which this screen has no way to recover from short of deleting the truck.
   const removeTrip = (id, tripId) => setTrips(id, trips => trips.length > 1 ? trips.filter(tr => tr.id !== tripId) : trips);
-  const setTripStatus = (id, tripId, status) => setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, status } : tr));
+  // A trip is only ever editable while it's the NEWEST one on its truck - once a later trip exists,
+  // it's already dispatched (see addTrip) and locked. The UI already disables every control that
+  // reaches these writers, but this refuses the write itself too, so a future control (or anything
+  // else that ends up calling one of these) can never quietly bypass that just by skipping the
+  // disabled prop - same defense-in-depth saveDept's own canEditPlanning check already is for this
+  // file's other gated writes, not left as UI-only.
+  const isActiveTrip = (id, tripId) => {
+    const t = eventTruckList.find(tt => tt.id === id);
+    const trips = t && tripsOf(t);
+    return !!trips && trips.length > 0 && trips[trips.length - 1].id === tripId;
+  };
+  const setTripStatus = (id, tripId, status) => { if (!isActiveTrip(id, tripId)) return; setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, status } : tr)); };
   const setTripItem = (id, tripId, key, qty) => {
+    if (!isActiveTrip(id, tripId)) return;
     const k = keyByListId.get(key);
     if (!k) return;
     setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, loads: { ...(tr.loads || {}), [dept]: { ...((tr.loads || {})[dept] || {}), [k]: qty } } } : tr));
   };
   const setTripExtra = (id, tripId, key, qty) => {
+    if (!isActiveTrip(id, tripId)) return;
     const k = keyByListId.get(key);
     if (!k) return;
     setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, extra: { ...(tr.extra || {}), [dept]: { ...((tr.extra || {})[dept] || {}), [k]: qty } } } : tr));
@@ -2718,14 +2739,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // against. Each gets its own small id (not an array index) so editing/removing one never shifts
   // under an in-flight edit to another.
   const addTripCustomItem = (id, tripId, invItem, qty) => {
-    if (!invItem || !(Number(qty) > 0)) return;
+    if (!isActiveTrip(id, tripId) || !invItem || !(Number(qty) > 0)) return;
     const row = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), invId: invItem.id, name: invItem.name, sub: invItem.subCat || invItem.subcategory || "", qty: Number(qty) };
     setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, custom: { ...(tr.custom || {}), [dept]: [...((tr.custom || {})[dept] || []), row] } } : tr));
   };
   const setTripCustomQty = (id, tripId, rowId, qty) => {
+    if (!isActiveTrip(id, tripId)) return;
     setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, custom: { ...(tr.custom || {}), [dept]: ((tr.custom || {})[dept] || []).map(r => r.id === rowId ? { ...r, qty: Math.max(0, Number(qty) || 0) } : r) } } : tr));
   };
   const removeTripCustomItem = (id, tripId, rowId) => {
+    if (!isActiveTrip(id, tripId)) return;
     setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, custom: { ...(tr.custom || {}), [dept]: ((tr.custom || {})[dept] || []).filter(r => r.id !== rowId) } } : tr));
   };
   // Across every trip of every truck - what matters for "how much of item X is left to send out" is
@@ -6779,10 +6802,18 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           after another grew the page's own scroll with every trip added) - tabs only
                           appear once there's more than one trip to choose between. */}
                       {(() => {
-                        const activeTripId = (activeTrip[t.id] && t.trips.some(tr => tr.id === activeTrip[t.id])) ? activeTrip[t.id] : t.trips[0]?.id;
+                        // Falls back to the NEWEST trip, not the first - that's the one still being
+                        // loaded (every earlier one is locked, see `locked` below), so landing there
+                        // by default (first open, or after removing whichever trip WAS showing) means
+                        // never landing on a read-only tab with the one actually in progress a click away.
+                        const activeTripId = (activeTrip[t.id] && t.trips.some(tr => tr.id === activeTrip[t.id])) ? activeTrip[t.id] : t.trips[t.trips.length - 1]?.id;
                         const trip = t.trips.find(tr => tr.id === activeTripId) || t.trips[0];
                         const tripI = t.trips.findIndex(tr => tr.id === trip.id);
                         const multi = t.trips.length > 1;
+                        // Only the NEWEST trip is still being loaded - every earlier one already left
+                        // the moment a later trip started (owner ask, 2026-11-23), so it's locked from
+                        // further editing here (its status was already bumped to Dispatched in addTrip).
+                        const locked = tripI !== t.trips.length - 1;
                         const oc = truckOccs[trip.id] || { used: 0, byDept: [], unknown: 0 };
                         const pct = Math.round(oc.used * 100);
                         const over = oc.used > 1.005, full = oc.used >= 0.999;
@@ -6801,15 +6832,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                 const on = tr.id === trip.id;
                                 const trOc = truckOccs[tr.id] || { used: 0 };
                                 const trFlag = trOc.used >= 0.999 || trOc.used > 1.005;
+                                const trLocked = i !== t.trips.length - 1;
                                 return (
                                   <button key={tr.id} type="button" onClick={() => setActiveTrip(p => ({ ...p, [t.id]: tr.id }))} aria-pressed={on}
                                     className={"h-8 px-3 rounded-lg text-xs font-semibold ring-1 transition-colors " + (on ? "bg-blue-600 text-white ring-blue-600" : "bg-white text-gray-700 ring-gray-200 hover:bg-gray-50")}>
-                                    Trip {i + 1}{trFlag && <span className={on ? "text-red-200" : "text-red-500"}> ●</span>}
+                                    {trLocked && "🔒 "}Trip {i + 1}{trFlag && <span className={on ? "text-red-200" : "text-red-500"}> ●</span>}
                                   </button>
                                 );
                               })}
-                              <button onClick={() => removeTrip(t.id, trip.id)} disabled={Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))}
-                                aria-label={`Remove trip ${tripI + 1}`} title="Remove this trip"
+                              <button onClick={() => removeTrip(t.id, trip.id)} disabled={locked || Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))}
+                                aria-label={`Remove trip ${tripI + 1}`} title={locked ? "Already dispatched - can't remove" : "Remove this trip"}
                                 className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors">
                                 <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
                               </button>
@@ -6830,7 +6862,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               </div>
                             )}
                             <div className="flex items-center gap-2 flex-wrap">
-                              <select value={trip.status || "loading"} onChange={e => setTripStatus(t.id, trip.id, e.target.value)} className="h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs font-medium capitalize focus:outline-none focus:ring-2 focus:ring-blue-400">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
+                              <select value={trip.status || "loading"} onChange={e => setTripStatus(t.id, trip.id, e.target.value)} disabled={locked} className="h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs font-medium capitalize focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60 disabled:cursor-not-allowed">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
+                              {locked && <span className="text-[10px] text-gray-400">🔒 already dispatched - a later trip exists</span>}
                               {t.phone && <a href={"tel:" + t.phone} className="h-8 inline-flex items-center text-xs font-semibold text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 rounded-lg px-2.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>Call {t.phone}</a>}
                               <button onClick={() => downloadTruckChallanPdf(t, trip.id, ti + 1, tripI + 1)} disabled={!!challanPdfBusy} className="h-8 ml-auto text-xs font-semibold bg-white ring-1 ring-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-60 px-3 rounded-lg transition-colors">{challanPdfBusy === trip.id ? "Making PDF…" : "Download PDF"}</button>
                               <button onClick={() => printTruckChallan(t, trip.id, ti + 1, tripI + 1)} className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg transition-colors">Print challan</button>
@@ -6838,7 +6871,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             {/* Add an item from this department's own inventory that never came from
                                 Build/Deal Check (owner ask, 2026-11-22) - picked by sub-category, then by
                                 item, so a spare panel or an outside-the-deal extra can still ride on a
-                                truck and still show up on its challan. */}
+                                truck and still show up on its challan. Hidden once this trip is locked -
+                                it already left, there's nothing left to add to it. */}
+                            {!locked && (
                             <div className="rounded-lg ring-1 ring-dashed ring-gray-300 p-2.5 space-y-2">
                               <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Add an item not in this deal</div>
                               <div className="flex flex-wrap gap-1.5">
@@ -6882,22 +6917,25 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                   }} className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold">+ Add</button>
                                 </div>
                               )}
-                              {trip.custom.length > 0 && (
-                                <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
-                                  {trip.custom.map(c => (
-                                    <div key={c.id} className="flex items-center gap-2.5 px-2.5 py-2">
-                                      <div className="min-w-0 flex-1">
-                                        <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2">{c.name}</div>
-                                        <div className="mt-0.5 text-[10px] text-amber-700">{c.sub || "—"} · not in Build/Deal Check</div>
-                                      </div>
-                                      <TruckTextBox type="number" min="0" value={c.qty || ""} onCommit={v => setTripCustomQty(t.id, trip.id, c.id, v)} aria-label={`${c.name} on this trip`}
-                                        className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                                      <button onClick={() => removeTripCustomItem(t.id, trip.id, c.id)} aria-label={`Remove ${c.name}`} title="Remove" className="shrink-0 text-gray-400 hover:text-red-600 text-sm px-1.5">×</button>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
                             </div>
+                            )}
+                            {/* Already-added ad-hoc items stay visible (and on the challan) once a trip
+                                locks - just no longer editable, same as everything else on it. */}
+                            {trip.custom.length > 0 && (
+                              <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
+                                {trip.custom.map(c => (
+                                  <div key={c.id} className="flex items-center gap-2.5 px-2.5 py-2">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2">{c.name}</div>
+                                      <div className="mt-0.5 text-[10px] text-amber-700">{c.sub || "—"} · not in Build/Deal Check</div>
+                                    </div>
+                                    <TruckTextBox type="number" min="0" value={c.qty || ""} onCommit={v => setTripCustomQty(t.id, trip.id, c.id, v)} disabled={locked} aria-label={`${c.name} on this trip`}
+                                      className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60 disabled:cursor-not-allowed" />
+                                    {!locked && <button onClick={() => removeTripCustomItem(t.id, trip.id, c.id)} aria-label={`Remove ${c.name}`} title="Remove" className="shrink-0 text-gray-400 hover:text-red-600 text-sm px-1.5">×</button>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                             {visibleLoadItems.length > 0 ? (
                               /* One line per item: name over its loaded status, the "on this trip" box
                                  at the right. As a flex-wrap row the status and the box broke onto
@@ -6922,13 +6960,13 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                     </div>
                                     {/* Normal load, capped at what the item still needs across every trip of every
                                         truck. Once it is fully loaded, the amber box takes any extra (overload). */}
-                                    <TruckTextBox type="number" min="0" max={maxHere} value={onThis || ""} onCommit={v => setTripItem(t.id, trip.id, k, v === "" ? "" : Math.min(maxHere, Math.max(0, Number(v) || 0)))} placeholder="0" aria-label={`${it.name} on this trip`} title={`On this trip (up to ${maxHere})`}
-                                      className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                                    <TruckTextBox type="number" min="0" max={maxHere} value={onThis || ""} onCommit={v => setTripItem(t.id, trip.id, k, v === "" ? "" : Math.min(maxHere, Math.max(0, Number(v) || 0)))} disabled={locked} placeholder="0" aria-label={`${it.name} on this trip`} title={`On this trip (up to ${maxHere})`}
+                                      className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60 disabled:cursor-not-allowed" />
                                     {(totalLoaded >= (Number(it.qty) || 0) || extraHere > 0) && (
                                       <label className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-700" title="Extra pieces on this trip beyond what the item needs (overload)">
                                         +
-                                        <TruckTextBox type="number" min="0" value={extraHere || ""} onCommit={v => setTripExtra(t.id, trip.id, k, v === "" ? "" : Math.max(0, Number(v) || 0))} placeholder="extra" aria-label={`${it.name} extra on this trip`}
-                                          className="w-14 h-8 rounded-lg bg-amber-50 ring-1 ring-amber-300 px-1.5 text-sm text-center font-semibold tabular-nums text-amber-800 placeholder:font-normal placeholder:text-[10px] placeholder:text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                                        <TruckTextBox type="number" min="0" value={extraHere || ""} onCommit={v => setTripExtra(t.id, trip.id, k, v === "" ? "" : Math.max(0, Number(v) || 0))} disabled={locked} placeholder="extra" aria-label={`${it.name} extra on this trip`}
+                                          className="w-14 h-8 rounded-lg bg-amber-50 ring-1 ring-amber-300 px-1.5 text-sm text-center font-semibold tabular-nums text-amber-800 placeholder:font-normal placeholder:text-[10px] placeholder:text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:opacity-60 disabled:cursor-not-allowed" />
                                       </label>
                                     )}
                                   </div>
