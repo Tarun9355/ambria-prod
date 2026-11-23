@@ -2554,31 +2554,46 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     });
     return out;
   }, [sel, blockedItems, capBySub, dept]);
-  // Trucks saved before they were shared lived in each department's own deptOps; until the event has
-  // a list of its own, they are read from there (every department's) and become the list on the
-  // first change, loads re-keyed from list positions to inventory ids.
-  // The SAME physical truck was often typed into more than one department's own old list separately
-  // (owner report, 2026-11-23: Furniture's "Truck 1" and Structure's "Truck 1" were the same vehicle,
-  // same plate, but neither ever saw the other's load) - merge any pre-migration rows that share a
-  // vehicle number into ONE truck, combining every department's own loads onto it, rather than
-  // surfacing them as separate trucks forever. A row with no plate typed yet has nothing to match by
-  // and is kept on its own.
+  // Trucks saved before they were shared lived in each department's own deptOps; any such row not
+  // yet folded into the event's own shared list (sel.trucks) is backfilled in here, matched by
+  // vehicle number. This has to run on EVERY render, not just while sel.trucks is still completely
+  // empty - a department only ever starts contributing to a shared truck once it's actually been
+  // through the new shared UI itself, so a department whose old per-dept row was never touched there
+  // stays un-migrated even after some OTHER department already created that same shared truck (owner
+  // report, 2026-11-23: Furniture had already added "DL1LAJ1250" as a shared truck from its own
+  // screen before this fix existed, so an all-or-nothing "only while sel.trucks has nothing at all"
+  // version of this backfill could never run again for this event - Structure's own old, separate
+  // row for the identical vehicle stayed invisible forever, even after merging the TRULY unmigrated
+  // case). A legacy row only ever backfills a department's `loads[d]` while that key is completely
+  // ABSENT from the shared truck - once a department has touched a shared truck for real (even with
+  // nothing loaded, an explicit {}), that's authoritative and is never overwritten by stale array
+  // data. A legacy row with no vehicle typed yet has nothing to match by and surfaces as its own,
+  // separate truck, same as before any of this existed.
   const eventTruckList = (() => {
-    if (Array.isArray(sel?.trucks)) return sel.trucks;
-    const merged = new Map(); // vehicle number (trimmed, lowercase) -> merged truck
+    const legacyByPlate = new Map(); // vehicle number (trimmed, lowercase) -> { ...truck fields, byDept }
     const noPlate = [];
     Object.entries(sel?.deptOps || {}).forEach(([d, od]) => {
       (Array.isArray(od?.trucks) ? od.trucks : []).forEach(t => {
         const items = flatDeptItems(d), ld = {};
         Object.entries(t.items || {}).forEach(([k, q]) => { const it = items.find(x => "inv:" + x.id === k); if (it && Number(q) > 0) ld[truckKey(it)] = Number(q); });
         const plateKey = String(t.vehicle || "").trim().toLowerCase();
-        if (!plateKey) { noPlate.push({ id: t.id, vehicle: t.vehicle || "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } }); return; }
-        const existing = merged.get(plateKey);
-        if (existing) existing.loads[d] = ld;
-        else merged.set(plateKey, { id: t.id, vehicle: t.vehicle || "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } });
+        if (!plateKey) { noPlate.push({ id: t.id, vehicle: "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } }); return; }
+        if (!legacyByPlate.has(plateKey)) legacyByPlate.set(plateKey, { id: t.id, vehicle: t.vehicle || "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", byDept: {} });
+        legacyByPlate.get(plateKey).byDept[d] = ld;
       });
     });
-    return [...merged.values(), ...noPlate];
+    const usedPlates = new Set();
+    const base = (Array.isArray(sel?.trucks) ? sel.trucks : []).map(t => {
+      const plateKey = String(t.vehicle || "").trim().toLowerCase();
+      const legacy = plateKey ? legacyByPlate.get(plateKey) : null;
+      if (!legacy) return t;
+      usedPlates.add(plateKey);
+      let loads = t.loads || {}, changed = false;
+      Object.entries(legacy.byDept).forEach(([d, ld]) => { if (!loads[d]) { loads = { ...loads, [d]: ld }; changed = true; } });
+      return changed ? { ...t, loads } : t;
+    });
+    legacyByPlate.forEach((legacy, plateKey) => { if (!usedPlates.has(plateKey)) base.push({ id: legacy.id, vehicle: legacy.vehicle, driver: legacy.driver, phone: legacy.phone, status: legacy.status, loads: legacy.byDept }); });
+    return [...base, ...noPlate];
   })();
   const saveEventTrucks = (fn) => {
     if (!sel || !canEditPlanning) return;
