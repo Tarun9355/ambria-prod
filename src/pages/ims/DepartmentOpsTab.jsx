@@ -2855,15 +2855,15 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // Combined across every department sharing this trip (owner ask, 2026-11-23) - same source as
     // the Download PDF (combinedTruckItems), so the two agree; each row keeps its own Dept column.
     const rows = combinedTruckItems(truck.id, tripId)
-      .map(it => `<tr><td>${it.name}${it.src === null ? ` <span style="font-size:11px;color:#92400e">(added, not in Build)</span>` : challanSrcNote(it.src)}${it.noCap ? `<div style="font-size:11px;color:#b45309">⚠ truck capacity not set for this item - count it manually</div>` : ""}</td><td>${it.dept}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}</td></tr>`).join("");
-    const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
+      .map(it => `<tr><td>${it.name}${it.src === null ? ` <span style="font-size:11px;color:#92400e">(added, not in Build)</span>` : challanSrcNote(it.src)}${it.noCap ? `<div style="font-size:11px;color:#b45309">⚠ truck capacity not set for this item - count it manually</div>` : ""}</td><td>${it.dept}</td><td style="text-align:center">${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}</td></tr>`).join("");
+    const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
     w.document.write(`<html><head><title>Combined Challan — Truck ${n} · Trip ${tripN}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
       <h2>🚚 Ambria — Combined Challan · Truck ${n} · Trip ${tripN}</h2>
       <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${dateVenueLineOf(sel) || "-"}</p>
       <p>Vehicle: ${truck.vehicle || "______"} &nbsp;|&nbsp; Driver: ${truck.driver || "______"} &nbsp;|&nbsp; Phone: ${truck.phone || "______"}</p>
       <h4>Inventory on this trip — every department</h4>
-      <table><tr><th>Item</th><th>Dept</th><th>Type</th><th>Qty</th></tr>${rows || '<tr><td colspan="4" style="text-align:center;color:#999">No items assigned to this trip</td></tr>'}</table>
-      ${toolRows ? `<h4>Essentials / tools — ${dept}</h4><table><tr><th>Item</th><th>Type</th><th>Qty</th></tr>${toolRows}</table>` : ""}
+      <table><tr><th>Item</th><th>Dept</th><th>Qty</th></tr>${rows || '<tr><td colspan="3" style="text-align:center;color:#999">No items assigned to this trip</td></tr>'}</table>
+      ${toolRows ? `<h4>Essentials / tools — ${dept}</h4><table><tr><th>Item</th><th>Qty</th></tr>${toolRows}</table>` : ""}
       <br><p>Dispatched by: _______________ &nbsp;&nbsp; Received by: _______________</p>
       <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
       <button onclick="window.print()">🖨️ Print</button></body></html>`);
