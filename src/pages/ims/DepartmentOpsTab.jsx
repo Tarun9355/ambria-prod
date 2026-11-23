@@ -2695,7 +2695,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     }
     saveEventTrucks(list => list.map(t => t.id === id ? { ...t, ...patch } : t));
   };
-  const delTruck = (id) => saveEventTrucks(list => list.filter(t => t.id !== id));
+  const delTruck = async (id, n) => {
+    if (!(await askDelete(`Remove Truck ${n}?`, "Removes it for every department sharing this event's trucks - anything loaded on any of its trips goes with it."))) return;
+    saveEventTrucks(list => list.filter(t => t.id !== id));
+  };
   // Replaces a truck's whole `trips` array with the result of `fn(tripsOf(t))` - migrates the legacy
   // implicit trip-1 shape (a truck saved before trips existed, see tripsOf) into a real `trips` array
   // the first time any trip is touched, and drops the truck's own now-redundant top-level
@@ -2722,7 +2725,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   };
   // At least one trip must always remain - removing the last one would leave a truck with nowhere
   // to load anything, which this screen has no way to recover from short of deleting the truck.
-  const removeTrip = (id, tripId) => setTrips(id, trips => trips.length > 1 ? trips.filter(tr => tr.id !== tripId) : trips);
+  const removeTrip = async (id, tripId, n) => {
+    if (!(await askDelete(`Remove Trip ${n}?`, "Removes everything loaded on this trip - it won't be recoverable."))) return;
+    setTrips(id, trips => trips.length > 1 ? trips.filter(tr => tr.id !== tripId) : trips);
+  };
   // A trip is only ever editable while it's the NEWEST one on its truck - once a later trip exists,
   // it's already dispatched (see addTrip) and locked. The UI already disables every control that
   // reaches these writers, but this refuses the write itself too, so a future control (or anything
@@ -6774,7 +6780,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         </button>
                         {/* Removing a truck removes it for every department, so it is held back while
                             another department has items on ANY of its trips. */}
-                        <button onClick={() => delTruck(t.id)} disabled={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0)))}
+                        <button onClick={() => delTruck(t.id, ti + 1)} disabled={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0)))}
                           aria-label={`Remove truck ${ti + 1}`} title={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))) ? "Another department has items on this truck" : "Remove truck"}
                           className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors">
                           <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
@@ -6853,7 +6859,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                   </button>
                                 );
                               })}
-                              <button onClick={() => removeTrip(t.id, trip.id)} disabled={locked || Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))}
+                              <button onClick={() => removeTrip(t.id, trip.id, tripI + 1)} disabled={locked || Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))}
                                 aria-label={`Remove trip ${tripI + 1}`} title={locked ? "Already dispatched - can't remove" : "Remove this trip"}
                                 className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors">
                                 <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
