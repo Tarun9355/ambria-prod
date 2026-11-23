@@ -2779,7 +2779,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       flatDeptItems(d).forEach(it => {
         const q = Number(mine[truckKey(it)]) || 0, x = Number(mineX[truckKey(it)]) || 0;
         if (q <= 0 && x <= 0) return;
-        out.push({ dept: d, name: d === dept ? shownName(it) : (it.name || ""), sub: it.sub || "", qty: q, fullQty: it.qty, extra: x, src: it });
+        // An item with no truck-capacity rule (Planning → 🚚 Truck) already rode on the challan same
+        // as any other loaded item - this just flags it there too, not only in the loading screen's
+        // own "no truck capacity set" note, since that fill % silently leaving it out is exactly the
+        // kind of gap a driver/loader should be told about, not have it just quietly not count (owner
+        // ask, 2026-11-23: "ignoring it completely is problematic").
+        out.push({ dept: d, name: d === dept ? shownName(it) : (it.name || ""), sub: it.sub || "", qty: q, fullQty: it.qty, extra: x, src: it, noCap: !truckShares[d]?.get(truckKey(it)) });
       });
     });
     // Items added straight from a department's own inventory (trip.custom[dept]) - no Deal Check
@@ -2798,7 +2803,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // Combined across every department sharing this trip (owner ask, 2026-11-23) - same source as
     // the Download PDF (combinedTruckItems), so the two agree; each row keeps its own Dept column.
     const rows = combinedTruckItems(truck.id, tripId)
-      .map(it => `<tr><td>${it.name}${it.src === null ? ` <span style="font-size:11px;color:#92400e">(added, not in Build)</span>` : challanSrcNote(it.src)}</td><td>${it.dept}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}</td></tr>`).join("");
+      .map(it => `<tr><td>${it.name}${it.src === null ? ` <span style="font-size:11px;color:#92400e">(added, not in Build)</span>` : challanSrcNote(it.src)}${it.noCap ? `<div style="font-size:11px;color:#b45309">⚠ truck capacity not set for this item - count it manually</div>` : ""}</td><td>${it.dept}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}</td></tr>`).join("");
     const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
     w.document.write(`<html><head><title>Combined Challan — Truck ${n} · Trip ${tripN}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
       <h2>🚚 Ambria — Combined Challan · Truck ${n} · Trip ${tripN}</h2>
@@ -2852,7 +2857,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this trip — every department", M, y); y += 16;
       header();
       const items = combinedTruckItems(truck.id, tripId);
-      if (items.length) items.forEach(it => row([[it.name + (it.src === null ? " (added, not in Build)" : challanSrcText(it.src) ? ` (${challanSrcText(it.src)})` : ""), cx.name], [it.dept, cx.dept], [it.sub || "-", cx.type], [`${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}`, cx.qty, "right"]]));
+      if (items.length) items.forEach(it => row([[it.name + (it.src === null ? " (added, not in Build)" : challanSrcText(it.src) ? ` (${challanSrcText(it.src)})` : "") + (it.noCap ? " [truck capacity not set - count manually]" : ""), cx.name], [it.dept, cx.dept], [it.sub || "-", cx.type], [`${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}`, cx.qty, "right"]]));
       else row([["No items assigned to this trip", cx.name]]);
       if (deptTools.length) {
         y += 12; room(36);
@@ -6755,6 +6760,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className="block text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{l}</label><TruckTextBox value={t[k] || ""} clean={k === "phone" ? phone10 : undefined} onCommit={v => setTruck(t.id, { [k]: v })} {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })} className="mt-1 w-full h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></div>
                         ))}
                       </div>
+                      <button onClick={() => addTrip(t.id)} className="h-8 px-3 rounded-lg ring-1 ring-dashed ring-gray-300 text-gray-500 hover:text-gray-700 hover:ring-gray-400 text-xs font-semibold transition-colors">+ Add trip</button>
                       {/* ── EACH TRIP IS ITS OWN RUN ── its own status, its own challan, its own items
                           (owner ask, 2026-11-23: "the same truck makes multiple trips... for trip 2,
                           dont show me items that have already fully gone out for trip 1"). Only the
@@ -6906,7 +6912,6 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           </div>
                         );
                       })}
-                      <button onClick={() => addTrip(t.id)} className="h-8 px-3 rounded-lg ring-1 ring-dashed ring-gray-300 text-gray-500 hover:text-gray-700 hover:ring-gray-400 text-xs font-semibold transition-colors">+ Add trip</button>
                       </>)}
                     </div>
                   ))}
