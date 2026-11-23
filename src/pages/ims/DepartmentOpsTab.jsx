@@ -2521,16 +2521,19 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return sb;
   };
   // A department's flat item list, with the same ids its own Inventory list uses (kit shell + parts).
-  const flatDeptItems = (d) => {
-    if (d === dept) return blockedItems;
-    const out = [];
-    (Array.isArray(sel?.deptInventory?.[d]) ? sel.deptInventory[d] : []).forEach((x, i) => {
-      const base = { id: x.name + i, invId: x.imsId || null, name: x.name, qty: Number(x.qty) || 0, sub: x.sub || "" };
-      out.push(base);
-      if (x.isKit && Array.isArray(x.components)) x.components.filter(cp => kitPartOfDept(cp, x.name, d)).forEach((cp, ci) => out.push({ id: base.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, qty: Number(cp.qty) || 0, sub: cp.sub || "", kitOf: x.name }));
-    });
-    return out;
-  };
+  // For the CURRENTLY OPEN department this is just the already-memoized blockedItems; for any OTHER
+  // department it must still be built the SAME rich way (blockedGroupedOf/blockedFlatOf/swapInfoOf
+  // are already generic over `d`, not hardcoded to the open tab) rather than a lighter, separate
+  // reconstruction straight off sel.deptInventory[d] - that lighter version used to produce a
+  // DIFFERENT invId/kit-part resolution (and so a different truckKey) than the one the OTHER
+  // department's own screen produces for the exact same physical item, which is what a truck's
+  // loads are actually keyed by. Two real bugs traced back to this (owner reports, 2026-11-23): a
+  // shared truck's fill % reading differently depending on which department's tab was open (each
+  // only got the rich treatment for ITS OWN items), and a third department's screen (e.g. Tenting,
+  // carrying neither load itself) showing every item on a shared truck as "no truck capacity set"
+  // because NEITHER contributor got it. Recomputed fresh each call for a non-open department (not
+  // memoized) - the same cost this already paid via the lighter path, just the correct one now.
+  const flatDeptItems = (d) => d === dept ? blockedItems : blockedFlatOf(blockedGroupedOf(d, swapInfoOf(d)), d);
   // What a truck load is keyed by. The list ids above are positions in Deal Check's snapshot and move
   // when it is re-synced, so a load saved on the event is keyed by the inventory id (or the name).
   const truckKey = (it) => it.invId ? "inv:" + it.invId + (it.kitOf ? "@" + String(it.kitOf).toLowerCase() : "") : "nm:" + String(it.name || "").trim().toLowerCase();
@@ -2570,11 +2573,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // data. A legacy row with no vehicle typed yet has nothing to match by and surfaces as its own,
   // separate truck, same as before any of this existed.
   const eventTruckList = (() => {
+    // flatDeptItems(d) now does real work (the same rich blockedGroupedOf/blockedFlatOf pipeline a
+    // department's own screen uses, not a cheap one-off reconstruction) - cached per department HERE
+    // so a department with several old legacy truck rows only pays for it once, not once per row.
+    const itemsByDept = new Map();
+    const itemsOf = (d) => { if (!itemsByDept.has(d)) itemsByDept.set(d, flatDeptItems(d)); return itemsByDept.get(d); };
     const legacyByPlate = new Map(); // vehicle number (trimmed, lowercase) -> { ...truck fields, byDept }
     const noPlate = [];
     Object.entries(sel?.deptOps || {}).forEach(([d, od]) => {
       (Array.isArray(od?.trucks) ? od.trucks : []).forEach(t => {
-        const items = flatDeptItems(d), ld = {};
+        const items = itemsOf(d), ld = {};
         Object.entries(t.items || {}).forEach(([k, q]) => { const it = items.find(x => "inv:" + x.id === k); if (it && Number(q) > 0) ld[truckKey(it)] = Number(q); });
         const plateKey = String(t.vehicle || "").trim().toLowerCase();
         if (!plateKey) { noPlate.push({ id: t.id, vehicle: "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } }); return; }
