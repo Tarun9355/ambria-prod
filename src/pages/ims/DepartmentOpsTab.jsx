@@ -1159,7 +1159,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return (Array.isArray(c?.colorVariants) ? c.colorVariants : []).filter(v => v && (v.name || v.label));
   };
   const [colourPickRow, setColourPickRow] = useState(null); // index of the mandi row whose colour picker is open
-  const [reusePicker, setReusePicker] = useState({ fromFnIdx: "", amount: "" }); // 🔄 reuse-transfer picker, this tab's open function
+  const [reusePicker, setReusePicker] = useState({ fromEventId: "", fromFnIdx: "", amount: "" }); // 🔄 reuse-transfer picker — source deal, then its function
 
   const eventDate = (eo) => eo?.functionsDetail?.[0]?.date || eo?.date || eo?.eventDate || "";
   // The event's venue with its property — "Valencia › Poolside", not a bare "Poolside".
@@ -2254,48 +2254,124 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // A planned flower removed on purpose leaves a hidden marker, or the live plan would add it straight back.
     saveMandi(Number(row.projQty) > 0 && !row.swapFor ? [...kept, dismissMarker(row)] : kept);
   };
-  // ── 🔄 REUSE: FLOWERS MOVED FROM ANOTHER FUNCTION OF THIS SAME EVENT ──
+  // ── 🔄 REUSE: FLOWERS MOVED FROM ANOTHER FUNCTION — THIS DEAL, OR ANY OTHER CLIENT'S DEAL ──
   // A rupee value, not a flower — some of what was bought for function A is physically being used
   // here instead, so A's own real spend goes DOWN by that much and this function's goes UP by the
-  // same amount, each as its own flagged row (owner ask, 2026-11-22/23). Written directly into BOTH
-  // functions' mandiLinesByFn in ONE patch (writeDept merges one patch per save, so this lands
-  // atomically - no race between "this function's row" landing and "the source's row" landing).
+  // same amount, each as its own flagged row (owner ask, 2026-11-22/23; widened to any past deal,
+  // not just this one, 2026-11-23). The source function can be ANOTHER CLIENT'S event entirely —
+  // the two sides then live in two different event_orders rows, so this can no longer always go
+  // through writeDept (scoped to `sel` alone). Same-event stays on the original, proven path
+  // (one patch, straight through saveDept); cross-event builds each side's patch independently
+  // against ITS OWN event's current Floral deptOps, then lands both in ONE setEventOrders update
+  // so neither side can land without the other.
   // Same identity-safety saveMandi already applies per key (archive a disowned/orphaned entry rather
   // than silently overwrite it, stamp the function's current date+venue+label) - applied here per
-  // TOUCHED key, since this writes two keys at once where saveMandi only ever writes its own tab's one.
-  const addReuseTransfer = (fromFnIdx, amount) => {
+  // TOUCHED key/event, since this writes two keys (possibly two different events) at once where
+  // saveMandi only ever writes its own tab's one.
+  const addReuseTransfer = (fromEventId, fromFnIdx, amount) => {
+    if (!canEditPlanning || !sel) return;
     const toFnIdx = activeMandiTab?.fnIdx;
-    if (!(Number(amount) > 0) || fromFnIdx == null || toFnIdx == null || String(fromFnIdx) === String(toFnIdx)) return;
-    const toFn = liveFnByIdx.get(String(toFnIdx)), fromFn = liveFnByIdx.get(String(fromFnIdx));
-    if (!toFn || !fromFn) return;
+    if (!(Number(amount) > 0) || !fromEventId || fromFnIdx == null || toFnIdx == null) return;
+    if (actualsLockState(sel, settings, Date.now()).locked) return; // explicit, symmetric with the fromEvent check below - the fieldset is today's only caller, but this must never depend on staying that way
+    const sameEvent = fromEventId === sel.id;
+    if (sameEvent && String(fromFnIdx) === String(toFnIdx)) return;
+    const toFn = liveFnByIdx.get(String(toFnIdx));
+    if (!toFn) return;
+    const fromEvent = sameEvent ? sel : (eventOrders || []).find(e => e.id === fromEventId);
+    if (!fromEvent) return;
+    // Another client's deal has no live Deal Check run happening here (liveFloral is this event's
+    // own hook) - its function list comes from its own last-synced floralPlan.byFn, same fallback
+    // this component already uses for ITS OWN event when there's no live run available.
+    const fromFn = sameEvent
+      ? liveFnByIdx.get(String(fromFnIdx))
+      : (Array.isArray(fromEvent.floralPlan?.byFn) ? fromEvent.floralPlan.byFn : []).find(x => String(x.fnIdx) === String(fromFnIdx));
+    if (!fromFn) return;
+    if (!sameEvent && actualsLockState(fromEvent, settings, Date.now()).locked) return;
     const pairId = "reuse_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     const at = Date.now(), by = authUser?.name || authUser?.username || "";
-    let nextByFn = { ...mandiLinesByFn };
-    let nextArchived = mandiLinesArchived;
-    const nextMeta = { ...mandiLinesByFnMeta };
-    [[toFnIdx, toFn, "in", fromFn.fnLabel], [fromFnIdx, fromFn, "out", toFn.fnLabel]].forEach(([fnIdx, liveFn, dir, otherLabel]) => {
-      const existing = nextByFn[fnIdx];
-      const mustArchive = Array.isArray(existing) && existing.length > 0 && !ownsStoredEntry(fnIdx);
-      if (mustArchive) nextArchived = [...nextArchived, { fnIdx, meta: mandiLinesByFnMeta[fnIdx] || null, rows: existing, archivedAt: at }];
+    const fromLabel = fromFn.fnLabel + (sameEvent ? "" : ` (${fromEvent.clientName || fromEvent.name || "another deal"})`);
+    const toLabel = toFn.fnLabel;
+    if (sameEvent) {
+      let nextByFn = { ...mandiLinesByFn };
+      let nextArchived = mandiLinesArchived;
+      const nextMeta = { ...mandiLinesByFnMeta };
+      [[toFnIdx, toFn, "in", fromLabel], [fromFnIdx, fromFn, "out", toLabel]].forEach(([fnIdx, liveFn, dir, otherLabel]) => {
+        const existing = nextByFn[fnIdx];
+        const mustArchive = Array.isArray(existing) && existing.length > 0 && !ownsStoredEntry(fnIdx);
+        if (mustArchive) nextArchived = [...nextArchived, { fnIdx, meta: mandiLinesByFnMeta[fnIdx] || null, rows: existing, archivedAt: at }];
+        const base = mustArchive ? [] : (Array.isArray(existing) ? existing : []);
+        nextByFn = { ...nextByFn, [fnIdx]: [...base, { reuse: true, pairId, dir, amount: Number(amount), otherLabel, at, by }] };
+        nextMeta[fnIdx] = { date: liveFn.fnDate || "", venue: liveFn.fnVenue || "", label: liveFn.fnLabel || "" };
+      });
+      const patch = { mandiLinesByFn: nextByFn, mandiLinesByFnMeta: nextMeta, ...(nextArchived !== mandiLinesArchived ? { mandiLinesArchived: nextArchived } : {}) };
+      const { mandiGrandReal: nextGrandReal } = deriveMandiView({ ...deptData, ...patch }, fp);
+      saveDept({ ...patch, realMandi: nextGrandReal });
+      return;
+    }
+    // Cross-deal: build each side's patch against ITS OWN event's current Floral deptOps (never the
+    // other event's — `deptData`/`mandiLinesByFn` above are `sel`'s own and must never be read for
+    // `fromEvent`), then write both event_orders rows in one functional update.
+    const buildSide = (targetEvent, fnIdx, liveFn, dir, otherLabel, otherEventId) => {
+      const floral = targetEvent.deptOps?.Floral || {};
+      const curByFn = (floral.mandiLinesByFn && typeof floral.mandiLinesByFn === "object") ? floral.mandiLinesByFn : {};
+      const curMeta = (floral.mandiLinesByFnMeta && typeof floral.mandiLinesByFnMeta === "object") ? floral.mandiLinesByFnMeta : {};
+      const curArchived = Array.isArray(floral.mandiLinesArchived) ? floral.mandiLinesArchived : [];
+      const meta = curMeta[fnIdx];
+      const owns = !meta || (meta.date === (liveFn.fnDate || "") && meta.venue === (liveFn.fnVenue || "") && meta.label === (liveFn.fnLabel || ""));
+      const existing = curByFn[fnIdx];
+      const mustArchive = Array.isArray(existing) && existing.length > 0 && !owns;
+      const nextArchived = mustArchive ? [...curArchived, { fnIdx, meta: curMeta[fnIdx] || null, rows: existing, archivedAt: at }] : curArchived;
       const base = mustArchive ? [] : (Array.isArray(existing) ? existing : []);
-      nextByFn = { ...nextByFn, [fnIdx]: [...base, { reuse: true, pairId, dir, amount: Number(amount), otherLabel, at, by }] };
-      nextMeta[fnIdx] = { date: liveFn.fnDate || "", venue: liveFn.fnVenue || "", label: liveFn.fnLabel || "" };
-    });
-    const patch = { mandiLinesByFn: nextByFn, mandiLinesByFnMeta: nextMeta, ...(nextArchived !== mandiLinesArchived ? { mandiLinesArchived: nextArchived } : {}) };
-    const { mandiGrandReal: nextGrandReal } = deriveMandiView({ ...deptData, ...patch }, fp);
-    saveDept({ ...patch, realMandi: nextGrandReal });
+      const nextByFn = { ...curByFn, [fnIdx]: [...base, { reuse: true, pairId, dir, amount: Number(amount), otherLabel, otherEventId, at, by }] };
+      const nextMeta = { ...curMeta, [fnIdx]: { date: liveFn.fnDate || "", venue: liveFn.fnVenue || "", label: liveFn.fnLabel || "" } };
+      const patch = { mandiLinesByFn: nextByFn, mandiLinesByFnMeta: nextMeta, ...(mustArchive ? { mandiLinesArchived: nextArchived } : {}) };
+      // No live Deal Check run for the OTHER event here - its own last-synced floralPlan stands in,
+      // same fallback this file already uses for its own event when liveFloral isn't available.
+      const fpForTotal = targetEvent.id === sel.id ? fp : (targetEvent.floralPlan || {});
+      const { mandiGrandReal: nextGrandReal } = deriveMandiView({ ...floral, ...patch }, fpForTotal);
+      return { ...patch, realMandi: nextGrandReal };
+    };
+    const toPatch = buildSide(sel, toFnIdx, toFn, "in", fromLabel, fromEvent.id);
+    const fromPatch = buildSide(fromEvent, fromFnIdx, fromFn, "out", toLabel, sel.id);
+    setEventOrders(prev => prev.map(e => {
+      const patch = e.id === sel.id ? toPatch : e.id === fromEvent.id ? fromPatch : null;
+      if (!patch) return e;
+      if (patchTouchesActuals(patch) && actualsLockState(e, settings, Date.now()).locked) return e;
+      const ops = { ...(e.deptOps || {}) };
+      ops.Floral = { ...(ops.Floral || {}), ...patch, updatedAt: at, updatedBy: by, changes: stampDeptChanges(ops.Floral?.changes, patch, at, by) };
+      return { ...e, deptOps: ops };
+    }));
   };
-  // Removes BOTH sides of a transfer at once (matched by their shared pairId) - a one-sided leftover
-  // would silently misstate either function's real spend, so there is no "remove just mine" option.
-  const removeReuseTransfer = (pairId) => {
-    const nextByFn = {};
-    Object.keys(mandiLinesByFn).forEach(k => {
-      const rows = mandiLinesByFn[k];
-      nextByFn[k] = Array.isArray(rows) ? rows.filter(r => !(r.reuse && r.pairId === pairId)) : rows;
-    });
-    const patch = { mandiLinesByFn: nextByFn };
-    const { mandiGrandReal: nextGrandReal } = deriveMandiView({ ...deptData, ...patch }, fp);
-    saveDept({ ...patch, realMandi: nextGrandReal });
+  // Removes BOTH sides of a transfer at once (matched by their shared pairId), in whichever one or
+  // two events they live in - a one-sided leftover would silently misstate either function's real
+  // spend, so there is no "remove just mine" option. `otherEventId` is only set on a cross-deal row
+  // (added 2026-11-23); an older same-event row has none, and sel.id alone already covers both its
+  // sides, so this stays backward-compatible with every reuse row written before cross-deal existed.
+  const removeReuseTransfer = (pairId, otherEventId) => {
+    if (!canEditPlanning || !sel) return;
+    const at = Date.now(), by = authUser?.name || authUser?.username || "—";
+    const targetIds = new Set([sel.id, otherEventId].filter(Boolean));
+    setEventOrders(prev => prev.map(e => {
+      if (!targetIds.has(e.id)) return e;
+      const floral = e.deptOps?.Floral || {};
+      const curByFn = (floral.mandiLinesByFn && typeof floral.mandiLinesByFn === "object") ? floral.mandiLinesByFn : {};
+      let changed = false;
+      const nextByFn = {};
+      Object.keys(curByFn).forEach(k => {
+        const rows = curByFn[k];
+        if (Array.isArray(rows) && rows.some(r => r.reuse && r.pairId === pairId)) { changed = true; nextByFn[k] = rows.filter(r => !(r.reuse && r.pairId === pairId)); }
+        else nextByFn[k] = rows;
+      });
+      if (!changed) return e;
+      if (actualsLockState(e, settings, Date.now()).locked) return e;
+      const fpForTotal = e.id === sel.id ? fp : (e.floralPlan || {});
+      const patch = { mandiLinesByFn: nextByFn };
+      const { mandiGrandReal: nextGrandReal } = deriveMandiView({ ...floral, ...patch }, fpForTotal);
+      const fullPatch = { ...patch, realMandi: nextGrandReal };
+      const ops = { ...(e.deptOps || {}) };
+      ops.Floral = { ...floral, ...fullPatch, updatedAt: at, updatedBy: by, changes: stampDeptChanges(floral.changes, fullPatch, at, by) };
+      return { ...e, deptOps: ops };
+    }));
   };
   // ── 🔁 SWAP: NOT IN THE MANDI TODAY ──
   // The shopper puts 0 against a flower (or taps 🔁) and records what was bought instead. The
@@ -6209,7 +6285,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                   <div className="text-right w-28 text-xs text-gray-300">—</div>
                                   <div className="flex items-center justify-end gap-1 w-[264px]">
                                     <span className={"shrink-0 text-sm font-semibold " + (r.dir === "in" ? "text-emerald-600" : "text-red-500")}>{r.dir === "in" ? "+" : "−"}{fmt(Number(r.amount) || 0)}</span>
-                                    <button onClick={() => removeReuseTransfer(r.pairId)} title="Remove this reuse transfer on both functions" className="shrink-0 text-red-300 hover:text-red-500 text-xs ml-1">×</button>
+                                    <button onClick={() => removeReuseTransfer(r.pairId, r.otherEventId)} title="Remove this reuse transfer on both functions" className="shrink-0 text-red-300 hover:text-red-500 text-xs ml-1">×</button>
                                   </div>
                                 </div>
                               );
@@ -6364,31 +6440,59 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         )}
                         {mandiQuery.trim() && mandiSuggest.length === 0 && <div className="absolute z-20 left-0 right-0 mt-1 bg-white border rounded-lg shadow-lg px-3 py-2 text-xs text-gray-400">No match in Mandi Prices. <button onClick={() => addMandi({ name: mandiQuery.trim(), unit: "bundle", currentPrice: 0 })} className="text-emerald-600 font-medium">Add "{mandiQuery.trim()}" anyway</button></div>}
                       </div>
-                      {/* 🔄 Reuse flowers already bought for another function of this same event (owner
-                          ask, 2026-11-22/23) - a rupee value, not a flower: moves real spend from the
-                          source function's own tab to this one, so each function's actual cost says
-                          what it actually got, not just where the money was first spent. Only offered
-                          on a genuine live function tab (not "Already logged"/Unmatched/Archived) - a
-                          flat/legacy tab has no stable fnIdx of its own to attribute either side to. */}
+                      {/* 🔄 Reuse flowers already bought for another function — this same deal, or any
+                          other client's deal entirely (owner ask, 2026-11-22/23, widened 2026-11-23:
+                          "i can take flower reuse from client A function and add it to client B deal")
+                          - a rupee value, not a flower: moves real spend from the source function's
+                          own tab to this one, so each function's actual cost says what it actually
+                          got, not just where the money was first spent. Only offered on a genuine
+                          live function tab (not "Already logged"/Unmatched/Archived) - a flat/legacy
+                          tab has no stable fnIdx of its own to attribute either side to. */}
                       {activeMandiTab?.fnIdx != null && !activeMandiTab.orphaned && !activeMandiTab.archived && (() => {
-                        const otherFnTabs = mandiTabs.filter(t => t.fnIdx != null && !t.orphaned && !t.archived && t.key !== activeMandiTabKey);
-                        if (!otherFnTabs.length) return null;
+                        const sameDealFnOptions = mandiTabs.filter(t => t.fnIdx != null && !t.orphaned && !t.archived && t.key !== activeMandiTabKey).map(t => ({ fnIdx: t.fnIdx, label: t.label }));
+                        const otherDealEvents = (eventOrders || [])
+                          .filter(e => e.id !== sel.id && Array.isArray(e.floralPlan?.byFn) && e.floralPlan.byFn.length > 0)
+                          .map(e => ({ id: e.id, label: `${e.clientName || e.name || "Event"} — ${eventDate(e) || "no date"}`, date: eventDate(e) }))
+                          .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+                        const sourceEvents = [
+                          ...(sameDealFnOptions.length ? [{ id: sel.id, label: "This deal — other functions" }] : []),
+                          ...otherDealEvents,
+                        ];
+                        if (!sourceEvents.length) return null;
+                        const fnOptions = !reusePicker.fromEventId ? [] : reusePicker.fromEventId === sel.id ? sameDealFnOptions : (() => {
+                          const ev = (eventOrders || []).find(e => e.id === reusePicker.fromEventId);
+                          return (Array.isArray(ev?.floralPlan?.byFn) ? ev.floralPlan.byFn : []).map(e => ({ fnIdx: e.fnIdx, label: e.fnLabel + (e.fnVenue ? ` · ${e.fnVenue}` : "") + (e.fnDate ? ` · ${e.fnDate}` : "") }));
+                        })();
+                        // A cross-deal source's own Actuals may be locked even though THIS event's
+                        // fieldset (which gates this whole picker) only reflects sel's own lock -
+                        // addReuseTransfer already refuses that write silently; surface it here too,
+                        // rather than a "+ Add" that visibly does nothing (2026-11-23 review finding).
+                        const fromEventLocked = reusePicker.fromEventId && reusePicker.fromEventId !== sel.id
+                          ? actualsLockState((eventOrders || []).find(e => e.id === reusePicker.fromEventId), settings, Date.now()).locked
+                          : false;
+                        const canAdd = reusePicker.fromEventId && reusePicker.fromFnIdx !== "" && Number(reusePicker.amount) > 0 && !fromEventLocked;
                         return (
                           <div className="rounded-lg ring-1 ring-dashed ring-amber-300 bg-amber-50/40 p-2.5 space-y-2">
                             <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-amber-700">🔄 Reuse flowers from another function</div>
                             <div className="flex flex-wrap items-center gap-2">
-                              <select value={reusePicker.fromFnIdx} onChange={e => setReusePicker(p => ({ ...p, fromFnIdx: e.target.value }))}
+                              <select value={reusePicker.fromEventId} onChange={e => setReusePicker(p => ({ ...p, fromEventId: e.target.value, fromFnIdx: "" }))}
                                 className="h-8 min-w-[160px] flex-1 rounded-lg bg-white ring-1 ring-amber-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400">
+                                <option value="">From which deal…</option>
+                                {sourceEvents.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
+                              </select>
+                              <select value={reusePicker.fromFnIdx} onChange={e => setReusePicker(p => ({ ...p, fromFnIdx: e.target.value }))} disabled={!reusePicker.fromEventId}
+                                className="h-8 min-w-[160px] flex-1 rounded-lg bg-white ring-1 ring-amber-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:opacity-50">
                                 <option value="">From which function…</option>
-                                {otherFnTabs.map(t => <option key={t.key} value={t.fnIdx}>{t.label}</option>)}
+                                {fnOptions.map(t => <option key={t.fnIdx} value={t.fnIdx}>{t.label}</option>)}
                               </select>
                               <span className="text-[11px] text-amber-700">₹</span>
                               <input type="number" min="1" value={reusePicker.amount} onChange={e => setReusePicker(p => ({ ...p, amount: e.target.value }))} placeholder="value" aria-label="Reused flower value"
                                 className="h-8 w-24 rounded-lg bg-white ring-1 ring-amber-200 px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-amber-400" />
-                              <button onClick={() => { if (reusePicker.fromFnIdx && Number(reusePicker.amount) > 0) { addReuseTransfer(reusePicker.fromFnIdx, reusePicker.amount); setReusePicker({ fromFnIdx: "", amount: "" }); } }}
-                                disabled={!(reusePicker.fromFnIdx && Number(reusePicker.amount) > 0)}
+                              <button onClick={() => { if (canAdd) { addReuseTransfer(reusePicker.fromEventId, reusePicker.fromFnIdx, reusePicker.amount); setReusePicker({ fromEventId: "", fromFnIdx: "", amount: "" }); } }}
+                                disabled={!canAdd}
                                 className="h-8 px-3 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold">+ Add</button>
                             </div>
+                            {fromEventLocked && <div className="text-[10px] text-red-600">That deal's Actuals are locked (past event, no reopen) — ask an admin to reopen it before reusing from this function.</div>}
                           </div>
                         );
                       })()}
