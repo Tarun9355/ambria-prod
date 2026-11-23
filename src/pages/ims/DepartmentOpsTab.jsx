@@ -2658,6 +2658,17 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     });
     return { ...t, trips };
   });
+  // A truck's own number is its creation order (oldest = Truck 1), never its position in the list -
+  // a new truck goes to the TOP of the list (owner ask, 2026-11-23: it's the one about to be filled
+  // in, not a new entry buried at the bottom) without renumbering every truck already in place, so
+  // the newest one reads "Truck 2" above "Truck 1", not the reverse. Shared with the Receiving
+  // reconciliation view's own "Truck N" label (sourceRows/whTrucks) so the two screens never disagree
+  // on which truck is which number.
+  const truckNumOf = (id) => {
+    const n = Number(String(id || "").replace(/^trk_/, ""));
+    return Number.isFinite(n) ? n : 0;
+  };
+  const truckNumById = new Map([...eventTruckList].sort((a, b) => truckNumOf(a.id) - truckNumOf(b.id)).map((t, i) => [t.id, i + 1]));
   // One truck open at a time: opening another closes the last, so the next truck's header is on
   // screen at once instead of below a screen of the previous truck's items.
   const [openTruck, setOpenTruck] = useState(null);
@@ -3292,7 +3303,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       if (it.foc) return; // left at the venue — never trucked in, so never a Receiving shortfall
       const key = itemKeyFor(it.invId, it.name); used.add(key);
       const inc = incomingByItem[key]; const reused = inc?.total || 0;
-      const whTrucks = trucks.map((t, ti) => ({ id: t.id, n: ti + 1, vehicle: t.vehicle, driver: t.driver, phone: t.phone || "", qty: t.trips.reduce((s, tr) => s + (Number(tr.items?.["inv:" + it.id]) || 0), 0) })).filter(x => x.qty > 0);
+      const whTrucks = trucks.map(t => ({ id: t.id, n: truckNumById.get(t.id), vehicle: t.vehicle, driver: t.driver, phone: t.phone || "", qty: t.trips.reduce((s, tr) => s + (Number(tr.items?.["inv:" + it.id]) || 0), 0) })).filter(x => x.qty > 0);
       const whQty = whTrucks.reduce((s, x) => s + x.qty, 0);
       const totalIn = whQty + reused;
       if (it.qty > 0 || totalIn > 0) rows.push({ name: it.name, photo: it.photo || "", required: it.qty, reused, whTrucks, whQty, totalIn, shortfall: Math.max(0, it.qty - totalIn), over: Math.max(0, totalIn - it.qty), sources: inc?.sources || [] });
@@ -6742,7 +6753,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 </div>
               ) : (
                 <div className="px-3 sm:px-4 py-3 space-y-3">
-                  {trucks.map((t, ti) => (
+                  {trucks.map((t) => (
                     /* Each truck is its own card. Stacked in bare padding they ran into each
                        other, and nothing marked where one truck's items stopped. */
                     <div key={t.id} ref={el => { truckRefs.current[t.id] = el; }} className={"rounded-xl ring-1 p-3 space-y-2.5 scroll-mt-4 " + (openTruck === t.id ? "ring-blue-200" : "ring-gray-200")}>
@@ -6757,7 +6768,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             <span aria-hidden="true" className={"shrink-0 text-gray-400 transition-transform duration-150 " + (openTruck === t.id ? "rotate-90" : "")}>
                               <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L8.5 7 L5 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                             </span>
-                            <span className="text-sm font-semibold text-gray-900 shrink-0">Truck {ti + 1}</span>
+                            <span className="text-sm font-semibold text-gray-900 shrink-0">Truck {truckNumById.get(t.id)}</span>
                             <span className="min-w-0 truncate text-[12px] text-gray-500">{[t.vehicle, t.driver].filter(Boolean).join(" · ") || "no vehicle yet"}</span>
                             {t.trips.length > 1 && <span className="shrink-0 ml-auto text-[10px] font-semibold text-gray-400">{t.trips.length} trips</span>}
                           </div>
@@ -6782,8 +6793,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         </button>
                         {/* Removing a truck removes it for every department, so it is held back while
                             another department has items on ANY of its trips. */}
-                        <button onClick={() => delTruck(t.id, ti + 1)} disabled={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0)))}
-                          aria-label={`Remove truck ${ti + 1}`} title={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))) ? "Another department has items on this truck" : "Remove truck"}
+                        <button onClick={() => delTruck(t.id, truckNumById.get(t.id))} disabled={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0)))}
+                          aria-label={`Remove truck ${truckNumById.get(t.id)}`} title={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))) ? "Another department has items on this truck" : "Remove truck"}
                           className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors">
                           <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
                         </button>
@@ -6886,8 +6897,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               <select value={trip.status || "loading"} onChange={e => setTripStatus(t.id, trip.id, e.target.value)} disabled={locked} className="h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs font-medium capitalize focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60 disabled:cursor-not-allowed">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
                               {locked && <span className="text-[10px] text-gray-400">🔒 already dispatched - a later trip exists</span>}
                               {t.phone && <a href={"tel:" + t.phone} className="h-8 inline-flex items-center text-xs font-semibold text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 rounded-lg px-2.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>Call {t.phone}</a>}
-                              <button onClick={() => downloadTruckChallanPdf(t, trip.id, ti + 1, tripI + 1)} disabled={!!challanPdfBusy} className="h-8 ml-auto text-xs font-semibold bg-white ring-1 ring-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-60 px-3 rounded-lg transition-colors">{challanPdfBusy === trip.id ? "Making PDF…" : "Download PDF"}</button>
-                              <button onClick={() => printTruckChallan(t, trip.id, ti + 1, tripI + 1)} className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg transition-colors">Print challan</button>
+                              <button onClick={() => downloadTruckChallanPdf(t, trip.id, truckNumById.get(t.id), tripI + 1)} disabled={!!challanPdfBusy} className="h-8 ml-auto text-xs font-semibold bg-white ring-1 ring-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-60 px-3 rounded-lg transition-colors">{challanPdfBusy === trip.id ? "Making PDF…" : "Download PDF"}</button>
+                              <button onClick={() => printTruckChallan(t, trip.id, truckNumById.get(t.id), tripI + 1)} className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg transition-colors">Print challan</button>
                             </div>
                             {/* Add an item from this department's own inventory that never came from
                                 Build/Deal Check (owner ask, 2026-11-22) - picked by sub-category, then by
