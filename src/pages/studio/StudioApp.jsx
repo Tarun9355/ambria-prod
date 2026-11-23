@@ -3083,6 +3083,11 @@ export default function StudioApp() {
   // if one's open, else step back one Studio screen (Summary → Build → Browse → Event Info); only
   // once neither applies does Back actually leave the app.
   useEffect(() => {
+    // Never inside a hidden same-origin iframe (the headless studio-sweep shards, AutoPlanningSync.jsx,
+    // and the PDF-run frame) — a pushState in there lands on the TOP-level tab's own history, so the
+    // next real back gesture pops the frame's dead entry instead of doing anything visible (regression
+    // review, 2026-11-23, off the mobile back-gesture trap in backGestureTrap.js).
+    if (window.top !== window.self) return;
     window.history.pushState({ studioNavGuard: true }, "");
     const onPopState = () => {
       if (dcFullPageOpen) { closeDealCheck(); window.history.pushState({ studioNavGuard: true }, ""); return; }

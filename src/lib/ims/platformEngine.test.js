@@ -10,6 +10,7 @@ import {
   platformMaterialOf,
   platformStockSqft,
   platformTotalStockSqft,
+  platformPiecesFor,
   PLATFORM_POOL_KEY,
 } from "./platformEngine";
 
@@ -312,5 +313,71 @@ describe("platformAvgRatePerSqft — blended billing (owner decision, 2026-11-05
   it("a truss-material string (e.g. 'pole') is not a platform material — returns 0, never falls back to the full array", () => {
     const trussInv = { platforms: [{ lengthFt: 5, widthFt: 5, stock: 2, material: "Iron", ratePerSqft: 12 }] };
     expect(platformAvgRatePerSqft(trussInv, "pole")).toBe(0);
+  });
+});
+
+describe("platformPiecesFor — sqft need broken into physical pieces (owner ask, 2026-11-23)", () => {
+  it("one configured size: plain ceiling division", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood" }] };
+    expect(platformPiecesFor(100, trussInv)).toEqual([{ id: "a", label: "8×4ft", lengthFt: 8, widthFt: 4, material: "wood", sqftPerPiece: 32, qty: 4 }]); // 100/32 -> 4 pieces
+  });
+
+  it("largest size first, draws down its own stock before moving to a smaller size", () => {
+    const trussInv = { platforms: [
+      { id: "big", lengthFt: 10, widthFt: 10, stock: 5, material: "Iron" }, // 100 sqft/pc, 500 sqft stock
+      { id: "small", lengthFt: 4, widthFt: 4, stock: 50, material: "Iron" }, // 16 sqft/pc
+    ] };
+    const out = platformPiecesFor(560, trussInv); // 500 from 5 big + 60 from small (ceil(60/16)=4 -> 64)
+    expect(out).toEqual([
+      { id: "big", label: "10×10ft", lengthFt: 10, widthFt: 10, material: "iron", sqftPerPiece: 100, qty: 5 },
+      { id: "small", label: "4×4ft", lengthFt: 4, widthFt: 4, material: "iron", sqftPerPiece: 16, qty: 4 },
+    ]);
+  });
+
+  it("once every size's stock is exhausted, the remainder still reports against the smallest size, flagged overStock", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 2, material: "Wood" }] }; // 32 sqft/pc, 64 sqft stock
+    const out = platformPiecesFor(100, trussInv); // 64 from stock + 36 remaining -> ceil(36/32)=2 more
+    expect(out).toEqual([{ id: "a", label: "8×4ft", lengthFt: 8, widthFt: 4, material: "wood", sqftPerPiece: 32, qty: 4, overStock: 2 }]);
+  });
+
+  it("no configured sizes or zero/negative need: empty", () => {
+    expect(platformPiecesFor(100, { platforms: [] })).toEqual([]);
+    expect(platformPiecesFor(0, { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 10 }] })).toEqual([]);
+  });
+
+  it("a custom label overrides the dims-based default", () => {
+    const trussInv = { platforms: [{ id: "a", label: "Big Wood Deck", lengthFt: 8, widthFt: 4, stock: 10, material: "Wood" }] };
+    expect(platformPiecesFor(32, trussInv)[0].label).toBe("Big Wood Deck");
+  });
+
+  it("regression (2026-11-23 review, finding 2a): never rounds a scarce large size up when a smaller size can finish the job", () => {
+    // 101 sqft against a 100-sqft size and a 16-sqft size: ceil-at-every-step used to reach for a
+    // SECOND 100-sqft piece (200 sqft total) instead of one of each (116 sqft).
+    const trussInv = { platforms: [
+      { id: "big", lengthFt: 10, widthFt: 10, stock: 10, material: "Iron" },
+      { id: "small", lengthFt: 4, widthFt: 4, stock: 50, material: "Iron" },
+    ] };
+    expect(platformPiecesFor(101, trussInv)).toEqual([
+      { id: "big", label: "10×10ft", lengthFt: 10, widthFt: 10, material: "iron", sqftPerPiece: 100, qty: 1 },
+      { id: "small", label: "4×4ft", lengthFt: 4, widthFt: 4, material: "iron", sqftPerPiece: 16, qty: 1 },
+    ]);
+  });
+
+  it("regression (2026-11-23 review, finding 2b): each physical floor rounds up on its own — pooling before rounding undercounts", () => {
+    // Three separate 16-sqft floors against only a 32-sqft piece size: each floor needs its OWN whole
+    // piece (3 total) — a piece can't be split across two floors, even though pooling the sqft first
+    // (48 sqft) and rounding once would read as only ceil(48/32) = 2.
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood" }] };
+    expect(platformPiecesFor([16, 16, 16], trussInv)).toEqual([
+      { id: "a", label: "8×4ft", lengthFt: 8, widthFt: 4, material: "wood", sqftPerPiece: 32, qty: 3 },
+    ]);
+  });
+
+  it("stock is shared and drawn down ACROSS floors in one call, not re-offered fresh to each floor", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 2, material: "Wood" }] }; // 32 sqft/pc, 64 sqft stock
+    // Three floors each needing exactly one piece: the first two come from real stock, the third is overStock.
+    expect(platformPiecesFor([30, 30, 30], trussInv)).toEqual([
+      { id: "a", label: "8×4ft", lengthFt: 8, widthFt: 4, material: "wood", sqftPerPiece: 32, qty: 3, overStock: 1 },
+    ]);
   });
 });

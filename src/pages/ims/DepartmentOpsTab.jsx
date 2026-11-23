@@ -28,6 +28,7 @@ import { dcFabricMultOf, trussInvForMaterial, parseFlowerPalette, repeatCatFor }
 import { trussBaseArea } from "../../lib/studio/taxonomy";
 import { isTrussFoc } from "../../lib/studio/foc.js";
 import { resolveBeamSegment, resolvePillarHeight } from "../../lib/ims/trussEngine";
+import { platformPiecesFor, PLATFORM_MATERIAL_LABEL } from "../../lib/ims/platformEngine";
 import { RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_BOX } from "../../lib/studio/brand.js";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
@@ -6053,6 +6054,34 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             <span className={"hidden sm:block shrink-0 " + STAT_W.rate} />
                             <span className={"shrink-0 font-bold text-gray-900 text-right tabular-nums " + STAT_W.total}>{fmt(parts.reduce((a, pt) => a + (Number(pt.total) || 0), 0))}</span>
                           </div>
+                          {/* Platform is billed purely by sqft (no per-booking signal for which configured piece size/material
+                              fulfils a zone's floor — platformEngine.js's own header comment), but Tenting still has to go pull
+                              actual pieces off the rack, not a sqft figure (owner ask 2026-11-23: "we know the sqft needed, we
+                              know the sqft of each piece, so why not just show pieces"). Largest piece first, real Platform
+                              Config stock respected; this is a display-only breakdown of the SAME total above, never a second
+                              number that could disagree with it, and never changes what gets billed. */}
+                          {it.sub === "platform structure (blended Wood+Iron rate)" && (() => {
+                            // Each ZONE's own floor, not the pooled sumQty above — a physical piece can't be split
+                            // across two different floors, so every floor has to round up on its own (regression
+                            // review, 2026-11-23: three small floors needing one piece each is 3 pieces, not
+                            // ceil(their sum / one piece size), which can undercount).
+                            const pieces = platformPiecesFor(parts.map((pt) => pt.qty), trussInv);
+                            if (!pieces.length) return null;
+                            return (
+                              <div className="border-t border-gray-200 pt-1 space-y-0.5">
+                                <div className="text-gray-500 font-semibold">To pull from stock</div>
+                                {pieces.map((p, pi) => (
+                                  <div key={p.id ?? pi} className="flex items-center justify-between gap-2 text-gray-700">
+                                    <span>{p.label} · {PLATFORM_MATERIAL_LABEL[p.material] || p.material}</span>
+                                    <span className="tabular-nums font-medium">
+                                      ×{p.qty}
+                                      {p.overStock > 0 && <span className="text-amber-600 font-semibold"> ({p.overStock} beyond Config's stock)</span>}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </div>
                         );
                       })()}
