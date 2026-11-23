@@ -2557,12 +2557,29 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // Trucks saved before they were shared lived in each department's own deptOps; until the event has
   // a list of its own, they are read from there (every department's) and become the list on the
   // first change, loads re-keyed from list positions to inventory ids.
-  const eventTruckList = Array.isArray(sel?.trucks) ? sel.trucks : Object.entries(sel?.deptOps || {}).flatMap(([d, od]) =>
-    (Array.isArray(od?.trucks) ? od.trucks : []).map(t => {
-      const items = flatDeptItems(d), ld = {};
-      Object.entries(t.items || {}).forEach(([k, q]) => { const it = items.find(x => "inv:" + x.id === k); if (it && Number(q) > 0) ld[truckKey(it)] = Number(q); });
-      return { id: t.id, vehicle: t.vehicle || "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } };
-    }));
+  // The SAME physical truck was often typed into more than one department's own old list separately
+  // (owner report, 2026-11-23: Furniture's "Truck 1" and Structure's "Truck 1" were the same vehicle,
+  // same plate, but neither ever saw the other's load) - merge any pre-migration rows that share a
+  // vehicle number into ONE truck, combining every department's own loads onto it, rather than
+  // surfacing them as separate trucks forever. A row with no plate typed yet has nothing to match by
+  // and is kept on its own.
+  const eventTruckList = (() => {
+    if (Array.isArray(sel?.trucks)) return sel.trucks;
+    const merged = new Map(); // vehicle number (trimmed, lowercase) -> merged truck
+    const noPlate = [];
+    Object.entries(sel?.deptOps || {}).forEach(([d, od]) => {
+      (Array.isArray(od?.trucks) ? od.trucks : []).forEach(t => {
+        const items = flatDeptItems(d), ld = {};
+        Object.entries(t.items || {}).forEach(([k, q]) => { const it = items.find(x => "inv:" + x.id === k); if (it && Number(q) > 0) ld[truckKey(it)] = Number(q); });
+        const plateKey = String(t.vehicle || "").trim().toLowerCase();
+        if (!plateKey) { noPlate.push({ id: t.id, vehicle: t.vehicle || "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } }); return; }
+        const existing = merged.get(plateKey);
+        if (existing) existing.loads[d] = ld;
+        else merged.set(plateKey, { id: t.id, vehicle: t.vehicle || "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } });
+      });
+    });
+    return [...merged.values(), ...noPlate];
+  })();
   const saveEventTrucks = (fn) => {
     if (!sel || !canEditPlanning) return;
     const next = fn(eventTruckList);
