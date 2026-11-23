@@ -672,7 +672,9 @@ function seedRowsFromFlowers(flowersArr) {
     return { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
   });
 }
-function mandiRealTotalOf(rows) { return (Array.isArray(rows) ? rows : []).reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0); }
+// A reuse-transfer row (`reuse: true`) carries a flat signed `amount` (in, +; out, −) instead of
+// qty × price — flowers moved from one function to another, not bought (addReuseTransfer below).
+function mandiRealTotalOf(rows) { return (Array.isArray(rows) ? rows : []).reduce((s, r) => s + (r.reuse ? (Number(r.amount) || 0) : (Number(r.qty) || 0) * (Number(r.price) || 0)), 0); }
 
 // A SINGLE pure function of (deptData, fp) — the department's own saved data and Studio's floral
 // plan — computing every tab, which rows belong to which, and the one grand total every other figure
@@ -1157,6 +1159,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return (Array.isArray(c?.colorVariants) ? c.colorVariants : []).filter(v => v && (v.name || v.label));
   };
   const [colourPickRow, setColourPickRow] = useState(null); // index of the mandi row whose colour picker is open
+  const [reusePicker, setReusePicker] = useState({ fromFnIdx: "", amount: "" }); // 🔄 reuse-transfer picker, this tab's open function
 
   const eventDate = (eo) => eo?.functionsDetail?.[0]?.date || eo?.date || eo?.eventDate || "";
   // The event's venue with its property — "Valencia › Poolside", not a bare "Poolside".
@@ -2194,7 +2197,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const mandiShopped = Array.isArray(activeStoredLines);
   // This OPEN TAB's own totals — the editing table's footer below must match the rows actually on
   // screen, never the grand total across every tab (mandiGrandReal/mandiGrandTotal, further below).
-  const mandiActualReal = mandiRows.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0);
+  const mandiActualReal = mandiRealTotalOf(mandiRows);
   // Real flowers only (owner ask 2026-11-11): artificial bunches come out of our own stock, so they are not an actual spend - they
   // show, with their kg and ₹, under Inventory blocked instead. (Was real + the artificial projection.)
   const mandiActualTotal = mandiActualReal;
@@ -2251,6 +2254,49 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // A planned flower removed on purpose leaves a hidden marker, or the live plan would add it straight back.
     saveMandi(Number(row.projQty) > 0 && !row.swapFor ? [...kept, dismissMarker(row)] : kept);
   };
+  // ── 🔄 REUSE: FLOWERS MOVED FROM ANOTHER FUNCTION OF THIS SAME EVENT ──
+  // A rupee value, not a flower — some of what was bought for function A is physically being used
+  // here instead, so A's own real spend goes DOWN by that much and this function's goes UP by the
+  // same amount, each as its own flagged row (owner ask, 2026-11-22/23). Written directly into BOTH
+  // functions' mandiLinesByFn in ONE patch (writeDept merges one patch per save, so this lands
+  // atomically - no race between "this function's row" landing and "the source's row" landing).
+  // Same identity-safety saveMandi already applies per key (archive a disowned/orphaned entry rather
+  // than silently overwrite it, stamp the function's current date+venue+label) - applied here per
+  // TOUCHED key, since this writes two keys at once where saveMandi only ever writes its own tab's one.
+  const addReuseTransfer = (fromFnIdx, amount) => {
+    const toFnIdx = activeMandiTab?.fnIdx;
+    if (!(Number(amount) > 0) || fromFnIdx == null || toFnIdx == null || String(fromFnIdx) === String(toFnIdx)) return;
+    const toFn = liveFnByIdx.get(String(toFnIdx)), fromFn = liveFnByIdx.get(String(fromFnIdx));
+    if (!toFn || !fromFn) return;
+    const pairId = "reuse_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    const at = Date.now(), by = authUser?.name || authUser?.username || "";
+    let nextByFn = { ...mandiLinesByFn };
+    let nextArchived = mandiLinesArchived;
+    const nextMeta = { ...mandiLinesByFnMeta };
+    [[toFnIdx, toFn, "in", fromFn.fnLabel], [fromFnIdx, fromFn, "out", toFn.fnLabel]].forEach(([fnIdx, liveFn, dir, otherLabel]) => {
+      const existing = nextByFn[fnIdx];
+      const mustArchive = Array.isArray(existing) && existing.length > 0 && !ownsStoredEntry(fnIdx);
+      if (mustArchive) nextArchived = [...nextArchived, { fnIdx, meta: mandiLinesByFnMeta[fnIdx] || null, rows: existing, archivedAt: at }];
+      const base = mustArchive ? [] : (Array.isArray(existing) ? existing : []);
+      nextByFn = { ...nextByFn, [fnIdx]: [...base, { reuse: true, pairId, dir, amount: Number(amount), otherLabel, at, by }] };
+      nextMeta[fnIdx] = { date: liveFn.fnDate || "", venue: liveFn.fnVenue || "", label: liveFn.fnLabel || "" };
+    });
+    const patch = { mandiLinesByFn: nextByFn, mandiLinesByFnMeta: nextMeta, ...(nextArchived !== mandiLinesArchived ? { mandiLinesArchived: nextArchived } : {}) };
+    const { mandiGrandReal: nextGrandReal } = deriveMandiView({ ...deptData, ...patch }, fp);
+    saveDept({ ...patch, realMandi: nextGrandReal });
+  };
+  // Removes BOTH sides of a transfer at once (matched by their shared pairId) - a one-sided leftover
+  // would silently misstate either function's real spend, so there is no "remove just mine" option.
+  const removeReuseTransfer = (pairId) => {
+    const nextByFn = {};
+    Object.keys(mandiLinesByFn).forEach(k => {
+      const rows = mandiLinesByFn[k];
+      nextByFn[k] = Array.isArray(rows) ? rows.filter(r => !(r.reuse && r.pairId === pairId)) : rows;
+    });
+    const patch = { mandiLinesByFn: nextByFn };
+    const { mandiGrandReal: nextGrandReal } = deriveMandiView({ ...deptData, ...patch }, fp);
+    saveDept({ ...patch, realMandi: nextGrandReal });
+  };
   // ── 🔁 SWAP: NOT IN THE MANDI TODAY ──
   // The shopper puts 0 against a flower (or taps 🔁) and records what was bought instead. The
   // original row stays, at qty 0, marked swappedTo; the replacement is its own row right under it,
@@ -2289,8 +2335,14 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const num = (v) => { const n = Number(v) || 0; return String(Math.round(n * 100) / 100); };
     // Each flower with its photo, so the shopper can match it at the stall (mandiPhotoOf above).
+    // A 🔄 reuse-transfer row is a rupee value, not a flower — nothing to go buy, so it never prints
+    // here; the footer total below is summed from this same filtered list, never mandiActualReal
+    // (which DOES include any reuse adjustment), so the printed total always matches the rows a
+    // shopper/accountant can actually add up by hand.
     const photoOf = mandiPhotoOf;
-    const rows = mandiRows.map((r, i) => {
+    const printedRows = mandiRows.filter(r => !r.reuse);
+    const printedTotal = printedRows.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0);
+    const rows = printedRows.map((r, i) => {
       const sub = [
         r.colorOverride?.label ? `🎨 ${esc(r.colorOverride.label)} (was ${esc(r.colorOverride.fromLabel || "Deal Check's colour")})` : r.colorVariant?.label ? `🎨 ${esc(r.colorVariant.label)}` : "",
         Array.isArray(r.colorPrefs) && r.colorPrefs.length > 1 ? `if not at the mandi: ${esc(r.colorPrefs.slice(1).map(p => p.label).join(", "))}` : "",
@@ -2308,7 +2360,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       <h2>🌸 Ambria — Mandi Shopping List${mandiTabs.length > 1 && activeMandiTab ? ` — ${esc(activeMandiTab.label)}` : ""}</h2>
       <p>Event: ${esc(sel?.clientName || "-")} &nbsp;|&nbsp; ${esc(dateVenueLineOf(sel) || "-")}</p>
       <table><tr><th class="c">#</th><th class="c">Photo</th><th>Flower</th><th class="r">Planned</th><th class="r">To buy</th><th class="r">₹/unit</th><th class="r">Total</th><th>Bought qty</th><th>Paid ₹/unit</th></tr>${rows || '<tr><td colspan="9" style="text-align:center;color:#999">No flowers on the list</td></tr>'}
-      <tfoot><tr><td colspan="6">Total (real flowers)</td><td class="r">₹${num(mandiActualReal)}</td><td></td><td></td></tr></tfoot></table>
+      <tfoot><tr><td colspan="6">Total (real flowers)</td><td class="r">₹${num(printedTotal)}</td><td></td><td></td></tr></tfoot></table>
       <br><p>Bought by: _______________ &nbsp;&nbsp; Checked by: _______________</p>
       <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
       <button onclick="window.print()">🖨️ Print</button></body></html>`);
@@ -6146,6 +6198,21 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         ) : (
                           <div className="">
                             {mandiRows.map((r, i) => {
+                              // 🔄 Reuse-transfer row (addReuseTransfer): a flat ₹ value moved to/from
+                              // another function, never a flower to shop for - its own simple layout,
+                              // no photo/colour/qty/price/swap, and removing it takes BOTH sides with it.
+                              if (r.reuse) return (
+                                <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center bg-amber-50/40">
+                                  <div className="min-w-0 text-xs text-amber-800">
+                                    🔄 {r.dir === "in" ? `Reused from ${r.otherLabel || "another function"}` : `Reused to ${r.otherLabel || "another function"}`}
+                                  </div>
+                                  <div className="text-right w-28 text-xs text-gray-300">—</div>
+                                  <div className="flex items-center justify-end gap-1 w-[264px]">
+                                    <span className={"shrink-0 text-sm font-semibold " + (r.dir === "in" ? "text-emerald-600" : "text-red-500")}>{r.dir === "in" ? "+" : "−"}{fmt(Number(r.amount) || 0)}</span>
+                                    <button onClick={() => removeReuseTransfer(r.pairId)} title="Remove this reuse transfer on both functions" className="shrink-0 text-red-300 hover:text-red-500 text-xs ml-1">×</button>
+                                  </div>
+                                </div>
+                              );
                               const lineActual = (Number(r.qty) || 0) * (Number(r.price) || 0);
                               const lineVar = lineActual - (Number(r.projCost) || 0);
                               return (
@@ -6297,6 +6364,34 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         )}
                         {mandiQuery.trim() && mandiSuggest.length === 0 && <div className="absolute z-20 left-0 right-0 mt-1 bg-white border rounded-lg shadow-lg px-3 py-2 text-xs text-gray-400">No match in Mandi Prices. <button onClick={() => addMandi({ name: mandiQuery.trim(), unit: "bundle", currentPrice: 0 })} className="text-emerald-600 font-medium">Add "{mandiQuery.trim()}" anyway</button></div>}
                       </div>
+                      {/* 🔄 Reuse flowers already bought for another function of this same event (owner
+                          ask, 2026-11-22/23) - a rupee value, not a flower: moves real spend from the
+                          source function's own tab to this one, so each function's actual cost says
+                          what it actually got, not just where the money was first spent. Only offered
+                          on a genuine live function tab (not "Already logged"/Unmatched/Archived) - a
+                          flat/legacy tab has no stable fnIdx of its own to attribute either side to. */}
+                      {activeMandiTab?.fnIdx != null && !activeMandiTab.orphaned && !activeMandiTab.archived && (() => {
+                        const otherFnTabs = mandiTabs.filter(t => t.fnIdx != null && !t.orphaned && !t.archived && t.key !== activeMandiTabKey);
+                        if (!otherFnTabs.length) return null;
+                        return (
+                          <div className="rounded-lg ring-1 ring-dashed ring-amber-300 bg-amber-50/40 p-2.5 space-y-2">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-amber-700">🔄 Reuse flowers from another function</div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <select value={reusePicker.fromFnIdx} onChange={e => setReusePicker(p => ({ ...p, fromFnIdx: e.target.value }))}
+                                className="h-8 min-w-[160px] flex-1 rounded-lg bg-white ring-1 ring-amber-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400">
+                                <option value="">From which function…</option>
+                                {otherFnTabs.map(t => <option key={t.key} value={t.fnIdx}>{t.label}</option>)}
+                              </select>
+                              <span className="text-[11px] text-amber-700">₹</span>
+                              <input type="number" min="1" value={reusePicker.amount} onChange={e => setReusePicker(p => ({ ...p, amount: e.target.value }))} placeholder="value" aria-label="Reused flower value"
+                                className="h-8 w-24 rounded-lg bg-white ring-1 ring-amber-200 px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                              <button onClick={() => { if (reusePicker.fromFnIdx && Number(reusePicker.amount) > 0) { addReuseTransfer(reusePicker.fromFnIdx, reusePicker.amount); setReusePicker({ fromFnIdx: "", amount: "" }); } }}
+                                disabled={!(reusePicker.fromFnIdx && Number(reusePicker.amount) > 0)}
+                                className="h-8 px-3 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold">+ Add</button>
+                            </div>
+                          </div>
+                        );
+                      })()}
                       {mandiActualReal > 0 && projectedTotal > 0 && (
                         <div className={"text-xs font-semibold " + (variance > 0 ? "text-red-600" : "text-emerald-700")}>
                           {variance > 0 ? "▲ Over" : variance < 0 ? "▼ Under" : "On"} plan by {fmt(Math.abs(variance))} (this tab) — salesperson's P&L uses the combined real {fmt(mandiGrandReal)}.
