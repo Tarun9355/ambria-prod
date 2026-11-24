@@ -24,7 +24,12 @@ const fnDate = (eo) => {
 // on each truck, right now" and "who's actually on site", not the dept-head planning screens.
 export default function SiteSupervisorTab({ eventOrders, setEventOrders, inventory, settings, blocks, trussInv, rateCardCategories, authUser }) {
   const [selId, setSelId] = useState(() => { try { return sessionStorage.getItem(PICK_KEY) || ""; } catch { return ""; } });
-  const [mode, setMode] = useState("actual"); // "plan" | "actual"
+  // Was a Planned/Actual toggle — Actual already starts out showing exactly what was planned until
+  // someone edits a figure, so a separate read-only "Planned" view never showed anything the Actual
+  // one didn't (owner ask 2026-11-24: "since what is planned is already auto filled in the Actual we
+  // dont need a planned and a actual different tabs"). Kept as a plain constant, not removed outright,
+  // since both SiteReceivingPanel and SiteCrewPanel still branch on it internally.
+  const mode = "actual";
   const [section, setSection] = useState("receiving");
 
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
@@ -63,14 +68,8 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
           </div>
         </div>
 
-        <div className="mt-3 flex items-center gap-1.5">
-          <div className="inline-flex bg-gray-50 rounded-xl p-1 gap-0.5">
-            <button onClick={() => setMode("plan")} aria-pressed={mode === "plan"}
-              className={"h-8 px-3 rounded-lg text-[12.5px] font-semibold " + (mode === "plan" ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:bg-white")}>📋 Planned</button>
-            <button onClick={() => setMode("actual")} aria-pressed={mode === "actual"}
-              className={"h-8 px-3 rounded-lg text-[12.5px] font-semibold " + (mode === "actual" ? "bg-amber-100 text-amber-700" : "text-gray-500 hover:bg-white")}>✅ Actual</button>
-          </div>
-          <span className="text-[11px] text-gray-400">{mode === "actual" ? (lock.locked ? "Locked — this event's actuals are final" : "What's actually arrived & on site — editable") : "What the dept heads loaded & scheduled"}</span>
+        <div className="mt-3">
+          <span className="text-[11px] text-gray-400">{lock.locked ? "Locked — this event's actuals are final" : "What's actually arrived & on site — editable"}</span>
         </div>
 
         {lock.locked && (
