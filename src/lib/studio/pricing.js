@@ -939,6 +939,22 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
   // physicalL/W, which is the footprint alone with no extra wrap added.
   const maskL = topo.maskingL ?? topo.physicalL ?? 0;
   const maskW = topo.maskingW ?? topo.physicalW ?? 0;
+  // Full Box ONLY: buildTopology's own internal axis labels run front/back beams off dims.L and
+  // left/right beams off dims.W — the OPPOSITE of what the Build wall picker's own "L = Depth,
+  // W = Width" labels mean to a salesperson (owner report 2026-11-24: masking a full box's
+  // left/right walls, entered as 8×12, was costing out as 24×12 — the Width field's value instead
+  // of the Depth field's). A back wall mirrors the front opening's own span (the WIDTH); left/right
+  // are the connecting side walls (the DEPTH) — so for full_box, back reads the W-axis value and
+  // left/right read the L-axis value, swapped from buildTopology's own beam-naming convention.
+  // Half Box/U truss are untouched: a half_box's "back" already correctly mirrors its single front
+  // span (maskingL, whichever of L/W the salesperson actually typed it into — a 2-dim truss only
+  // ever fills one), and its left/right already correctly use the fixed trussBackDepth setting
+  // (maskingW, a wholly different field for that config, never dims.W). trussRowCost's own masking
+  // ₹ cost calc (pricing.js, trussRowCost, the `wallSqft` block) already applies this exact same
+  // per-config mapping — this brings the FABRIC PIECE count in line with it.
+  const isFullBox = preview.config === "full_box";
+  const backRft = isFullBox ? maskW : maskL;
+  const sideRft = isFullBox ? maskL : maskW;
   // Wall Masking FABRIC pieces only for a wall that is masked (masking switched on) in fabric - its own material (Build's
   // per-wall pick, zc.mkWallMat) else the truss's (zc.mkT). An Acrylic / Flex / Vinyl wall or a custom printed panel is not
   // fabric stock: counting it turned "Acrylic 300 sqft" into "Wall Masking Ivory x3" in Deal Check (RC-79), and masking
@@ -950,9 +966,9 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
     return /fabric/i.test(String(key || ""));
   };
   let rft = 0;
-  if (wallIsFabric("back")  && maskL > 0) rft += maskL;
-  if (wallIsFabric("left")  && maskW > 0) rft += maskW;
-  if (wallIsFabric("right") && maskW > 0) rft += maskW;
+  if (wallIsFabric("back")  && backRft > 0) rft += backRft;
+  if (wallIsFabric("left")  && sideRft > 0) rft += sideRft;
+  if (wallIsFabric("right") && sideRft > 0) rft += sideRft;
   const maskingPieces = rft > 0 ? Math.ceil(rft / 13) : 0;
 
   // Liza kg — depends on truss config (Tarun lock 26 May):

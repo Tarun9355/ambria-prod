@@ -54,6 +54,27 @@ describe("truckManifest", () => {
     const inventory = [{ id: "d", name: "Spare Chair" }];
     expect(truckManifest(sel, inventory)[0].lines).toEqual([{ dept: "Furniture", key: "inv:d", label: "Spare Chair", photo: "", planned: 0, extra: 2 }]);
   });
+
+  // Regression (owner report 2026-11-24): a truck loaded ONLY via DepartmentOpsTab.jsx's
+  // addTripCustomItem (a department's own inventory pick, never matched to a Build/Deal Check row —
+  // kept under trip.custom[dept], not loads/extra) used to be completely invisible to the Site
+  // Receiving panel — depts was built only from loads/extra's own keys.
+  it("includes custom items (trip.custom), summed into the same dept|key totals as loads/extra", () => {
+    const sel = { trucks: [{ id: "t4", trips: [{ id: "trip1", custom: { Furniture: [{ id: "c1", invId: "e", name: "Extra Stool", qty: 3 }, { id: "c2", invId: "e", name: "Extra Stool", qty: 2 }] } }] }] };
+    const inventory = [{ id: "e", name: "Extra Stool", img: "stool.jpg" }];
+    expect(truckManifest(sel, inventory)[0].lines).toEqual([{ dept: "Furniture", key: "inv:e", label: "Extra Stool", photo: "stool.jpg", planned: 5, extra: 0 }]);
+  });
+
+  it("merges a custom item with a loads/extra line that happens to share the same inventory id", () => {
+    const sel = { trucks: [{ id: "t5", trips: [{ id: "trip1", loads: { Furniture: { "inv:e": 4 } }, custom: { Furniture: [{ id: "c1", invId: "e", name: "Extra Stool", qty: 2 }] } }] }] };
+    const inventory = [{ id: "e", name: "Extra Stool" }];
+    expect(truckManifest(sel, inventory)[0].lines).toEqual([{ dept: "Furniture", key: "inv:e", label: "Extra Stool", photo: "", planned: 6, extra: 0 }]);
+  });
+
+  it("ignores a custom item with no invId or non-positive qty", () => {
+    const sel = { trucks: [{ id: "t6", trips: [{ id: "trip1", custom: { Furniture: [{ id: "c1", name: "No id", qty: 3 }, { id: "c2", invId: "e", name: "Zero", qty: 0 }] } }] }] };
+    expect(truckManifest(sel, []).find((m) => m.truck.id === "t6").lines).toEqual([]);
+  });
 });
 
 describe("hasUnmigratedLegacyTrucks", () => {

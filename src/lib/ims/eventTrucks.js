@@ -55,7 +55,7 @@ export function truckManifest(sel, inventory) {
   return trucks.map((t) => {
     const totals = new Map(); // `${dept}|${key}` -> { dept, key, planned, extra }
     tripsOf(t).forEach((trip) => {
-      const depts = new Set([...Object.keys(trip.loads || {}), ...Object.keys(trip.extra || {})]);
+      const depts = new Set([...Object.keys(trip.loads || {}), ...Object.keys(trip.extra || {}), ...Object.keys(trip.custom || {})]);
       depts.forEach((dept) => {
         const items = trip.loads?.[dept] || {};
         const extras = trip.extra?.[dept] || {};
@@ -67,6 +67,20 @@ export function truckManifest(sel, inventory) {
           const id = dept + "|" + key;
           const cur = totals.get(id) || { dept, key, planned: 0, extra: 0 };
           cur.planned += n; cur.extra += extraN;
+          totals.set(id, cur);
+        });
+        // Custom items (DepartmentOpsTab.jsx's addTripCustomItem — a department's own inventory pick,
+        // never matched to a Build/Deal Check row, so never keyed into loads/extra at all) used to be
+        // invisible here entirely: a truck loaded ONLY with custom items showed nothing on Site, with
+        // nothing in the loading screen itself ever hinting why (owner report 2026-11-24 — the actual
+        // cause behind "a loaded truck shows nothing in Receiving", not a missing dispatch status).
+        (Array.isArray(trip.custom?.[dept]) ? trip.custom[dept] : []).forEach((row) => {
+          const q = Number(row?.qty) || 0;
+          if (q <= 0 || !row?.invId) return;
+          const key = "inv:" + row.invId;
+          const id = dept + "|" + key;
+          const cur = totals.get(id) || { dept, key, planned: 0, extra: 0 };
+          cur.planned += q;
           totals.set(id, cur);
         });
       });

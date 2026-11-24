@@ -21,10 +21,24 @@ const STATUS_TEXT = { pending: "Not arrived", confirmed: "Confirmed OK", issue: 
 export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eventOrders, authUser, mode, settings }) {
   const [openId, setOpenId] = useState(null);
   const [flaggingKey, setFlaggingKey] = useState(null); // `${truckId}|${dept}|${key}` currently showing its issue panel
+  // "all" (default) or one department — a supervisor checking in a truck usually cares about every
+  // department on it, but a dept head who only wants to confirm THEIR OWN pieces arrived (owner ask
+  // 2026-11-24) needs to cut the noise of every other department's lines on the same shared truck.
+  // A view filter only — which lines are SHOWN, never which ones "Arrived as planned"/flag confirms
+  // (that stays whole-truck, every department together, same as before).
+  const [deptFilter, setDeptFilter] = useState("all");
 
   const manifest = truckManifest(sel, inventory);
   const transfers = incomingTransfersFor(eventOrders, sel?.id);
   const receiving = receivingOf(sel);
+  const allDepts = [...new Set([...manifest.flatMap((m) => m.lines.map((l) => l.dept)), ...transfers.map((t) => t.fromDept)])].filter(Boolean).sort();
+  // Falls back to "all" the instant the picked department doesn't exist on THIS event (switching to
+  // a different event in the picker above doesn't remount this panel, so a stale filter from the
+  // last event — one this event may not even have — would otherwise hide every truck here with no
+  // obvious reason why, same for a department's last line simply being removed while looking at it).
+  const activeFilter = deptFilter === "all" || allDepts.includes(deptFilter) ? deptFilter : "all";
+  const visibleManifest = activeFilter === "all" ? manifest : manifest.map((m) => ({ ...m, lines: m.lines.filter((l) => l.dept === activeFilter) })).filter((m) => m.lines.length > 0);
+  const visibleTransfers = activeFilter === "all" ? transfers : transfers.filter((t) => t.fromDept === activeFilter);
   // Post-event actuals lock (lib/ims/actualsLock.js) — every write this panel makes is a receiving
   // actual, so once locked the whole panel is read-only.
   const lock = actualsLockState(sel, settings);
@@ -76,9 +90,32 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           👁 View only — your access to Site doesn't include editing
         </div>
       )}
-      {manifest.map(({ truck, lines }) => {
+      {allDepts.length > 0 && (
+        <div className="flex gap-1.5 flex-wrap">
+          <button onClick={() => setDeptFilter("all")}
+            className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (activeFilter === "all" ? "bg-gray-900 text-white border-transparent" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50")}>
+            All departments
+          </button>
+          {allDepts.map((d) => (
+            <button key={d} onClick={() => setDeptFilter(d)}
+              className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (activeFilter === d ? "bg-gray-900 text-white border-transparent" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50")}>
+              {DEPT_ICON[d] || ""} {d}
+            </button>
+          ))}
+        </div>
+      )}
+      {/* Only when a department IS actually picked — "all" showing zero trucks means this event
+          genuinely has nothing to receive yet, and the panel's own top-level empty state (manifest
+          and transfers both empty) already covers that; this message must never replace the
+          transfers list below when an event has transfers but no trucks at all. */}
+      {activeFilter !== "all" && visibleManifest.length === 0 && (
+        <div className="bg-white rounded-xl border border-gray-100 p-6 text-center text-sm text-gray-400">
+          Nothing for {activeFilter} on any truck for this event.
+        </div>
+      )}
+      {visibleManifest.map(({ truck, lines }) => {
         const status = truckReceiptStatus(lines, receiving.trucks[truck.id]);
-        const open = openId === truck.id || (openId == null && manifest.length === 1);
+        const open = openId === truck.id || (openId == null && visibleManifest.length === 1);
         const deptCount = new Set(lines.map((l) => l.dept)).size;
         const pieceCount = lines.reduce((s, l) => s + l.planned + l.extra, 0);
         return (
@@ -96,10 +133,23 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
             </button>
             {open && (
               <div className="border-t border-gray-100">
-                {canEdit && lines.length > 0 && (
+                {/* "Arrived as planned" confirms the WHOLE truck, every department at once
+                    (confirmTruckPatch has no per-department scope) — while a department filter is
+                    active, `lines` only shows THIS truck's filtered department, so a tap here would
+                    silently mark every OTHER department on it arrived too, unseen (owner report
+                    2026-11-24: a dept head filtering to their own department could accidentally
+                    confirm departments they never looked at). Hidden under a filter rather than
+                    relabelled — "View All departments" to confirm is the clearer path than trying
+                    to explain what a differently-worded button would actually do. */}
+                {canEdit && lines.length > 0 && activeFilter === "all" && (
                   <div className="flex gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-100">
                     <button onClick={() => confirmTruck(truck.id)} className="flex-1 h-9 rounded-lg bg-emerald-50 text-emerald-700 text-[12.5px] font-semibold hover:bg-emerald-100">✓ Arrived as planned</button>
                     <button onClick={() => { setOpenId(truck.id); setFlaggingKey(flagKeyOf(truck.id, lines[0])); }} className="flex-1 h-9 rounded-lg bg-white ring-1 ring-gray-200 text-gray-600 text-[12.5px] font-semibold hover:bg-red-50 hover:text-red-700">⚠ Something's wrong</button>
+                  </div>
+                )}
+                {canEdit && lines.length > 0 && activeFilter !== "all" && (
+                  <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 text-[11px] text-gray-400">
+                    Switch to "All departments" to confirm or flag this truck as a whole.
                   </div>
                 )}
                 {lines.map((ln) => {
@@ -164,11 +214,11 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         );
       })}
 
-      {transfers.length > 0 && (
+      {visibleTransfers.length > 0 && (
         <div className="bg-sky-50 rounded-xl p-4">
           <div className="text-[11px] font-bold uppercase tracking-wide text-sky-700 mb-2">Not tied to a truck — reused from another site</div>
           <div className="space-y-1.5">
-            {transfers.map((t, i) => (
+            {visibleTransfers.map((t, i) => (
               <div key={i} className="text-[12px] text-sky-900">↪️ <b>{t.name}</b> ×{t.qty} from {t.fromEvent} ({t.fromDept}){t.vehicle || t.driver ? ` · ${[t.vehicle, t.driver].filter(Boolean).join(" · ")}` : ""}</div>
             ))}
           </div>
