@@ -5284,6 +5284,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     const shownIds = new Set([...addedIds, ...venueSups.map((s) => s.id)]);
                     const saveAdded = (list) => setEventOrders((prev) => prev.map((ev) => ev.id === sel.id ? withAddedSupervisors(ev, list) : ev));
                     const none = !added.length && !venueSups.length;
+                    const canPickSup = isAdmin; // only an Admin adds or removes an event's supervisors (owner ask 2026-11-25); everyone sees the names
                     if (onsiteOnly) return none ? null : (
                       <div className="mt-1 flex items-center gap-1.5 text-xs min-w-0">
                         <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
@@ -5298,14 +5299,14 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         {added.map((s, i) => (
                           <span key={"a" + (s.id ?? s.name) + i} className="inline-flex items-center gap-0.5 font-medium text-gray-700">
                             {s.name}
-                            {canEditPlanning && (
+                            {canPickSup && (
                               <button type="button" aria-label={`Remove ${s.name}`} title="Remove"
                                 onClick={() => saveAdded(added.filter((_, j) => j !== i))}
                                 className="w-4 h-4 inline-flex items-center justify-center rounded text-gray-400 hover:text-red-600 hover:bg-red-50 cursor-pointer leading-none">×</button>
                             )}
                           </span>
                         ))}
-                        {canEditPlanning && (supPickFor === sel.id ? (
+                        {canPickSup && (supPickFor === sel.id ? (
                           <select
                             autoFocus
                             value=""

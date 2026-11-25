@@ -356,7 +356,7 @@ describe("RISKS (documented behaviour, not a spec violation of the listed tiles)
     expect(html).toContain("Deal value");
   });
   it("the role never gets the Site Supervisor dropdown (owner ask 2026-11-20): no select, no 'unassigned'; the assigned name is shown as plain text; everyone else keeps the dropdown", () => {
-    const withSup = (onsiteOnly) => render(base({ onsiteOnly, eventOrders: [ev("E1", "MineWedding", 3, { siteSupervisorId: "S1", siteSupervisorName: "Raju" })] }), F_SEL);
+    const withSup = (onsiteOnly, authUser = { id: "u_admin", role: "Admin", name: "Admin" }) => render(base({ onsiteOnly, authUser, eventOrders: [ev("E1", "MineWedding", 3, { siteSupervisorId: "S1", siteSupervisorName: "Raju" })] }), F_SEL);
     const role = withSup(true);
     expect(role).not.toContain("— unassigned —");
     expect(role).not.toMatch(/<select[^>]*>\s*<option value="">— unassigned/);
@@ -370,10 +370,15 @@ describe("RISKS (documented behaviour, not a spec violation of the listed tiles)
     expect(withSup(false)).toContain(">+ Add supervisor</button>"); // adds one more, never replaces (owner ask 2026-11-25)
     expect(withSup(false)).toContain('aria-label="Remove Raju"');
     expect(withSup(false)).not.toContain("<select");
+    // only an Admin adds or removes (owner ask 2026-11-25): anyone else sees the names, no button, no ×
+    const notAdmin = withSup(false, { id: "u5", role: "Ops", name: "Krati" });
+    expect(notAdmin).toContain(">Raju<");
+    expect(notAdmin).not.toContain("+ Add supervisor");
+    expect(notAdmin).not.toContain('aria-label="Remove Raju"');
     const two = render(base({ onsiteOnly: false, eventOrders: [ev("E1", "MineWedding", 3, { extraSupervisors: [{ id: "S1", name: "Raju" }, { id: "S2", name: "Chandan" }] })] }), F_SEL);
     expect(two).toContain("Raju");
     expect(two).toContain("Chandan");
-    const noneHead = render(base({ onsiteOnly: false, eventOrders: [ev("E1", "MineWedding", 3, {})] }), F_SEL);
+    const noneHead = render(base({ onsiteOnly: false, authUser: { id: "u_admin", role: "Admin", name: "Admin" }, eventOrders: [ev("E1", "MineWedding", 3, {})] }), F_SEL);
     expect(noneHead).toContain("— unassigned —");
     expect(noneHead).toContain(">+ Add supervisor</button>");
   });
