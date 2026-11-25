@@ -1322,6 +1322,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // and the write guards in saveDept/setEventLabourTotal flip live, without anyone needing to
   // refresh right as a booking crosses its lock time.
   const [lockNow, setLockNow] = useState(() => Date.now());
+  // "Changed in the last 48 hours" opens on a tap - shut by default (owner ask 2026-11-25), and shut again on another event
+  const [changesOpen, setChangesOpen] = useState(false);
+  useEffect(() => { setChangesOpen(false); }, [selId]);
   useEffect(() => { const id = setInterval(() => setLockNow(Date.now()), 60000); return () => clearInterval(id); }, []);
   // ── Changed in the last 48 hours (owner ask 2026-11-15) ── per event: its inventory change logs and Dept Ops edits
   // (lib/ims/recentChanges). A ⚠ on the calendar chip, and inside the event a list + a badge on each block that changed.
@@ -5465,7 +5468,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
               return (
                 <div className="rounded-xl bg-white ring-1 ring-amber-300 shadow-[0_1px_2px_rgba(16,24,40,0.05)] overflow-hidden" role="status">
                   {/* the Activity log's own look (owner ask 2026-11-15) - an amber head so it still reads as a warning */}
-                  <div className="px-4 py-2.5 flex items-center gap-2 bg-amber-50 border-b border-amber-200">
+                  {/* the head is the toggle: shut by default (owner ask 2026-11-25), the count says how much is inside */}
+                  <div role="button" tabIndex={0} aria-expanded={changesOpen} onClick={(e) => { if (e.target?.closest?.("button")) return; setChangesOpen(o => !o); }}
+                    onKeyDown={e => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setChangesOpen(o => !o); } }}
+                    className={"px-4 py-2.5 flex items-center gap-2 bg-amber-50 cursor-pointer select-none hover:bg-amber-100/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-400 " + (changesOpen ? "border-b border-amber-200" : "")}>
                     <span aria-hidden="true" className="w-6 h-6 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-[13px]">⚠</span>
                     <span className="text-[14px] font-semibold text-amber-900">Changed in the last 48 hours</span>
                     <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 tabular-nums">{list.length}</span>
@@ -5479,9 +5485,15 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         ✓ OK
                       </button>
                     )}
+                    {/* open / shut, at the right end (after OK when there is one) */}
+                    <span aria-hidden="true" className={"shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 " + (isDeptHead && !onsiteOnly && myDepts.includes(dept) ? "" : "ml-auto")}>
+                      {changesOpen ? "Hide" : "Show"}
+                      <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className={"transition-transform duration-150 " + (changesOpen ? "-rotate-90" : "rotate-90")}><path d="M5 3.5 L8.5 7 L5 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    </span>
                   </div>
                   {/* every entry of the 48 hours, no "show all" - the list scrolls; anything older is in the Activity log. An entry opens
                       the block it changed (goToChange). */}
+                  {changesOpen && (<>
                   <div className="max-h-[360px] overflow-y-auto overscroll-contain px-4 divide-y divide-gray-100">
                     {list.map((c, i) => {
                       const canGo = deptOptions.includes(c.dept);
@@ -5502,6 +5514,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       Older changes → Activity log
                     </button>
                   </div>
+                  </>)}
                 </div>
               );
             })()}

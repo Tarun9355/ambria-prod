@@ -20,6 +20,13 @@ describe("Changed in the last 48 hours - OK", () => {
     expect(src.indexOf("✓ OK")).toBeGreaterThan(head);
     expect(src.indexOf("✓ OK") - head).toBeLessThan(1500);
   });
+  it("the list is shut by default and its head opens it (owner ask 2026-11-25); OK does not toggle it", () => {
+    expect(src).toContain("const [changesOpen, setChangesOpen] = useState(false);");
+    const head = src.indexOf(">Changed in the last 48 hours</span>");
+    const before = src.slice(src.lastIndexOf("aria-expanded={changesOpen}", head), head);
+    expect(before).toContain('if (e.target?.closest?.("button")) return; setChangesOpen(o => !o);');
+    expect(src.indexOf("{changesOpen && (<>", head)).toBeGreaterThan(head);
+  });
   it("downloading the PDF no longer marks anything seen", () => {
     const a = src.indexOf("const exportPdf = async (");
     const body = src.slice(a, src.indexOf("const exportDeptPdf = ", a));

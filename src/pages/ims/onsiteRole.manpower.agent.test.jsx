@@ -90,7 +90,8 @@ const crewEvent = (extra = {}, date = FUT) => ({
 const store0 = (events) => { const st = { events, calls: 0 }; st.set = (u) => { st.calls += 1; st.events = typeof u === "function" ? u(st.events) : u; }; return st; };
 const props = (st, o = {}) => ({ onsiteOnly: true, eventOrders: st.events, setEventOrders: st.set, authUser: me, settings: dihariSettings, supervisors: roster, inventory: [], functions: [], blocks: [], ...o });
 const mount = (p, f = {}) => {
-  rec.els = []; rec.effects = []; forced.map = f;
+  // "Changed in the last 48 hours" is shut by default (owner ask 2026-11-25) - opened here so these tests still read its list
+  rec.els = []; rec.effects = []; forced.map = { "const [changesOpen, setChangesOpen]": true, ...f };
   try {
     const html = renderToString(h(DepartmentOpsTab, p)).replace(/<!-- -->/g, "");
     return { html, els: rec.els.slice(), effects: rec.effects.slice() };

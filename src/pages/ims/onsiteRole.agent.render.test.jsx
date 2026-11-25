@@ -67,7 +67,8 @@ const events = [
 
 const base = (o = {}) => ({ onsiteOnly: true, eventOrders: events, setEventOrders() {}, authUser: me, settings: {}, supervisors: roster, inventory: [], functions: [], blocks: [], ...o });
 const render = (props, f = {}) => {
-  forced.map = f;
+  // "Changed in the last 48 hours" is shut by default (owner ask 2026-11-25) - opened here so these tests still read its list
+  forced.map = { "const [changesOpen, setChangesOpen]": true, ...f };
   try { return renderToString(h(DepartmentOpsTab, props)).replace(/<!-- -->/g, ""); } finally { forced.map = {}; }
 };
 
