@@ -879,6 +879,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const inhouseVenues = useInhouseVenues(true);
   // the properties and in-house venues together - what a supervisor's "fixed at" venues are looked up in
   const venuePlaces = useMemo(() => [...inhouseVenues.properties, ...inhouseVenues.inhouse], [inhouseVenues.properties, inhouseVenues.inhouse]);
+  // The supervisors fixed at this event's venues (Admin → Settings → 👷 Supervisors) - shown in the header when nobody has been picked
+  // for the event (owner ask 2026-11-25), the same people the PDF cover names.
+  const venueSupervisorsOf = (eo) => siteSupervisorsFor(settings, [...(Array.isArray(eo?.functionsDetail) ? eo.functionsDetail.map((f) => f?.venue) : []), eo?.venue], venuePlaces, supervisors, inhouseVenues.inhouse);
   const [search, setSearch] = useState("");
   const [leadEntry, setLeadEntry] = useState(null); // LMS entry no of the lead we arrived from
   // Month shown by the event picker below. Starts on the current month and is nudged, once, to a
@@ -4426,7 +4429,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // for an order with none recorded: the dept plan's last editor, else (combined book) the exporting user.
     preparedBy: opts?.combined ? null : (deptData.updatedBy || null),
     // the supervisors fixed at this event's venue(s) (Admin → Supervisors) - on the cover with their number (owner ask 2026-11-18)
-    siteSupervisors: siteSupervisorsFor(settings, [...(Array.isArray(sel?.functionsDetail) ? sel.functionsDetail.map((f) => f?.venue) : []), sel?.venue], [...inhouseVenues.properties, ...inhouseVenues.inhouse], supervisors, inhouseVenues.inhouse),
+    siteSupervisors: venueSupervisorsOf(sel),
   }, zoneLabels, logos, opts);
 
   // ── THE DOWNLOAD ──
@@ -5269,10 +5272,13 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       event order (siteSupervisorId/Name/Phone) rather than just an id, so Studio
                       can show who's assigned without fetching the supervisor roster itself. */}
                   {/* the Site-Supervisor-view-only role never picks the event's supervisor: no dropdown (owner ask 2026-11-20), the name only when there is one */}
-                  {onsiteOnly ? (sel.siteSupervisorName ? (
+                  {/* nobody picked for the event → the venue's fixed supervisor(s) stand in, marked "fixed at venue" */}
+                  {(() => { const vs = sel.siteSupervisorId || sel.siteSupervisorName ? [] : venueSupervisorsOf(sel); return (
+                  onsiteOnly ? ((sel.siteSupervisorName || vs.length) ? (
                     <div className="mt-1 flex items-center gap-1.5 text-xs">
                       <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
-                      <span className="font-medium text-gray-700 truncate">{sel.siteSupervisorName}</span>
+                      <span className="font-medium text-gray-700 truncate">{sel.siteSupervisorName || vs.map((s) => s.name).join(", ")}</span>
+                      {!sel.siteSupervisorName && <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 rounded px-1 py-px shrink-0">fixed at venue</span>}
                     </div>
                   ) : null) : (
                   <div className="mt-1 flex items-center gap-1.5 text-xs">
@@ -5289,13 +5295,13 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       }}
                       className="min-w-0 border border-gray-200 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-700 bg-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <option value="">— unassigned —</option>
+                      <option value="">{vs.length ? `${vs.map((s) => s.name).join(", ")} (fixed at venue)` : "— unassigned —"}</option>
                       {supervisors.filter((s) => s.active !== false || s.id === sel.siteSupervisorId).map((s) => (
                         <option key={s.id} value={s.id}>{s.name}{s.active === false ? " (inactive)" : ""}</option>
                       ))}
                     </select>
                   </div>
-                  )}
+                  )); })()}
                   {/* Deal value — read-only mirror of Studio's negotiated amount (client_ledger),
                       written whenever Deal Check syncs. It stays frozen once booked by owner decision;
                       "pending" is the live build's drift since booking, shown here so ops sees the same
