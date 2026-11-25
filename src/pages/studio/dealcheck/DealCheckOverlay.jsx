@@ -31,7 +31,7 @@ import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { newSplitGroupId, reconcileDealCheckIntoBuild } from "../../../lib/studio/dealCheckSync.js";
 import { eventOrderFor, ownEventOrderIds } from "../../../lib/studio/eventOrderFor.js";
 import { tripsOf } from "../../../lib/ims/eventTrucks"; // a truck's trips (or its one legacy trip) - for the items IMS added on trucks
-import { truckExtraRowsOf, truckExtraElements, withTruckExtraZone } from "../../../lib/ims/truckExtraBlocks"; // those items as rows: shown on the Inventory tab, costed in the internal cost; and counted in the crew
+import { truckExtraRowsOf, truckExtraElements, withTruckExtraZone, truckExtraFnIdx } from "../../../lib/ims/truckExtraBlocks"; // those items as rows: shown on the Inventory tab, costed in the internal cost; and counted in the crew
 import { reindexFnIdxPrefixedSet } from "../../../lib/studio/dealCheckReindex.js";
 
 // ══ THE PAGE'S GROUND ══
@@ -1649,7 +1649,7 @@ export default function DealCheckOverlay({ ctx }) {
               // and used a looser qty gate (`el.qty || el.count || 1`, defaulting missing/zero qty to
               // 1) instead of the tab's `el.qty || 0` + skip — both directions of drift.
               const walkFn = (fn0, cb) => {
-                const fn = fn0 === fns[0] ? withTruckExtraZone(fn0, dcTruckExtraEls, fn0) : fn0; // the "how" traces see the truck items too
+                const fn = fn0 === fns[truckExtraFnIdx(fns)] ? withTruckExtraZone(fn0, dcTruckExtraEls, fn0) : fn0; // the "how" traces see the truck items too
                 const en = fn.enabledEls || {};
                 const ze = fn.zoneElements || {};
                 Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk]||[]).forEach(el => {
@@ -1692,7 +1692,7 @@ export default function DealCheckOverlay({ ctx }) {
               // Per category, not only the zone toggle: a repeated Elements or Truss & Masking chip drops
               // just that part's crew (freshFnForManpower, lib/studio/pricing.js — shared with the tab).
               // ...and the first function also carries the items added on the trucks (withTruckExtraZone).
-              const freshFnMP = (fn) => { const src = fn?.__mpSrc || fn; const f = freshFnForManpower(fn); return src === fns[0] ? withTruckExtraZone(f, dcTruckExtraEls, src) : f; };
+              const freshFnMP = (fn) => { const src = fn?.__mpSrc || fn; const f = freshFnForManpower(fn); return src === fns[truckExtraFnIdx(fns)] ? withTruckExtraZone(f, dcTruckExtraEls, src) : f; };
               const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
               // ═══ Shared manpower count engine (src/lib/studio/manpowerCount.js) ═══
               // Used to be a hand-rolled copy here, a near-identical one in DCManpowerTab.jsx

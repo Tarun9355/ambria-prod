@@ -7,7 +7,7 @@
 import { useEffect } from "react";
 import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP_BG, INK, INK_2, INK_3, GOLD, GOLD_SOFT, NUM } from "../../../../lib/studio/dcTokens";
 import { freshFnForManpower, scaleTrussPreview } from "../../../../lib/studio/pricing";
-import { withTruckExtraZone } from "../../../../lib/ims/truckExtraBlocks";
+import { withTruckExtraZone, truckExtraFnIdx } from "../../../../lib/ims/truckExtraBlocks";
 import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS, SIT_MULT_DEFAULTS } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat, walkKitUnits, aggregateEventManpower, hasAnyMpEdits } from "../../../../lib/ims/helpers";
@@ -270,7 +270,7 @@ export default function DCManpowerTab({ ctx }) {
                   };
                   // Walk all elements in a fn (mirror of existing flowerist code path)
                   const walkFnElements = (fn0, cb) => {
-                    const fn = fn0 === fns[0] ? withTruckExtraZone(fn0, truckExtraEls, fn0) : fn0;
+                    const fn = fn0 === fns[truckExtraFnIdx(fns)] ? withTruckExtraZone(fn0, truckExtraEls, fn0) : fn0;
                     Object.entries(fn.zoneElements || {}).forEach(([zk, elems]) => {
                       if (!fn.enabledEls?.[zk]) return;
                       (elems || []).forEach(el => {
@@ -314,7 +314,7 @@ export default function DCManpowerTab({ ctx }) {
                   // below still only applies at configured fixed venues (fv truthy); non-fixed → computed only.
                   // Per category too — a repeated Elements or Truss & Masking chip drops just that part's
                   // crew. The same function DealCheckOverlay uses, so the two cannot drift apart.
-                  const freshFnMP = (fn) => { const src = fn?.__mpSrc || fn; const f = freshFnForManpower(fn); return src === fns[0] ? withTruckExtraZone(f, truckExtraEls, src) : f; };
+                  const freshFnMP = (fn) => { const src = fn?.__mpSrc || fn; const f = freshFnForManpower(fn); return src === fns[truckExtraFnIdx(fns)] ? withTruckExtraZone(f, truckExtraEls, src) : f; };
                   const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
                   // Usage-based labour floor: Labours = ceil(Σ sub-cat units ÷ per-unit), per ceremony.
                   // Confirmed live bug (now fixed at calcPeopleTier3Labours' own call site below): this
@@ -863,7 +863,7 @@ export default function DCManpowerTab({ ctx }) {
                             </div>
                             {(truckExtraEls || []).length > 0 && (
                               <div style={{fontSize:11,color:INK_2,marginTop:5}}>
-                                🚛 Includes crew for {truckExtraEls.reduce((s, e) => s + (Number(e.qty) || 0), 0)} pcs added on trucks at dispatch ({truckExtraEls.length} item{truckExtraEls.length === 1 ? "" : "s"}), counted on {fns[0]?.fnType || "the first function"}
+                                🚛 Includes crew for {truckExtraEls.reduce((s, e) => s + (Number(e.qty) || 0), 0)} pcs added on trucks at dispatch ({truckExtraEls.length} item{truckExtraEls.length === 1 ? "" : "s"}), counted on {fns[truckExtraFnIdx(fns)]?.fnType || "the first function"}
                               </div>
                             )}
                           </div>

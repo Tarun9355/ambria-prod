@@ -49,6 +49,14 @@ export function truckExtraElements(trucks, tripsOf) {
   return [...truckExtraQtyByItem(trucks, tripsOf)].map(([invId, qty]) => ({ id: `truckx:${invId}`, invId, qty }));
 }
 
+// Which function carries them: the earliest-dated one (the setup goes first), not just the first in Build order - functions can be
+// reordered or dated out of order. A function with no date never wins over a dated one; all undated → the first.
+export function truckExtraFnIdx(fns) {
+  let best = 0, bestDate = null;
+  (fns || []).forEach((fn, i) => { const d = String(fn?.fnDate || ""); if (d && (bestDate == null || d < bestDate)) { best = i; bestDate = d; } });
+  return best;
+}
+
 // `fn` with the zone added (a copy; `fn` itself untouched). `src` is the deal's own function object the copy stands for, kept on
 // a non-enumerable __mpSrc so a caller that finds a function by identity (fns.indexOf) still can. Adding twice is a no-op.
 export function withTruckExtraZone(fn, els, src) {

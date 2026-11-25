@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TRUCK_EXTRA_SRC, TRUCK_EXTRA_ZONE, truckExtraQtyByItem, truckExtraBlockOps, truckExtraRowsOf, truckExtraElements, withTruckExtraZone } from "./truckExtraBlocks";
+import { TRUCK_EXTRA_SRC, TRUCK_EXTRA_ZONE, truckExtraQtyByItem, truckExtraBlockOps, truckExtraRowsOf, truckExtraElements, withTruckExtraZone, truckExtraFnIdx } from "./truckExtraBlocks";
 import { walkFnElements } from "../studio/manpowerCount";
 import { tripsOf } from "./eventTrucks";
 
@@ -96,5 +96,16 @@ describe("truck extras in the crew count (truckExtraElements + withTruckExtraZon
     const fn = { enabledEls: {} };
     expect(withTruckExtraZone(fn, [], fn)).toBe(fn);
     expect(withTruckExtraZone(fn, undefined, fn)).toBe(fn);
+  });
+});
+
+describe("truckExtraFnIdx (which function's crew takes the truck items)", () => {
+  it("the earliest-dated function, whatever its place in the Build", () => {
+    expect(truckExtraFnIdx([{ fnDate: "2026-12-03" }, { fnDate: "2026-12-01" }, { fnDate: "2026-12-02" }])).toBe(1);
+  });
+  it("an undated function never wins over a dated one; all undated or none → the first", () => {
+    expect(truckExtraFnIdx([{}, { fnDate: "2026-12-05" }])).toBe(1);
+    expect(truckExtraFnIdx([{}, {}])).toBe(0);
+    expect(truckExtraFnIdx([])).toBe(0);
   });
 });

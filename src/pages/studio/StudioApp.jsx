@@ -168,7 +168,7 @@ import { thumbUrl } from "../../lib/studio/thumb.js";
 import { prefetchImages, AVAIL_THUMB } from "../../lib/studio/prefetchImages.js";
 import { eventOrderFor, ownEventOrderIds } from "../../lib/studio/eventOrderFor.js";
 import { tripsOf } from "../../lib/ims/eventTrucks";
-import { truckExtraElements, withTruckExtraZone } from "../../lib/ims/truckExtraBlocks"; // items IMS added on the trucks: crewed on the first function
+import { truckExtraElements, withTruckExtraZone, truckExtraFnIdx } from "../../lib/ims/truckExtraBlocks"; // items IMS added on the trucks: crewed on the first function
 import { zoneSwitchState, planPhotoSwitch, zoneAfterSwitch, zoneCfgSig, stripPhotoStash } from "../../lib/studio/photoStash.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -7692,8 +7692,9 @@ export default function StudioApp() {
     };
     return types.map(type => {
       let best = { count: 0, basis: "", trace: null };
+      const txIdx = truckExtraFnIdx(allFns);
       (allFns || []).forEach((fn, fi) => {
-        const fresh = fi === 0 ? withTruckExtraZone(freshFnForManpower(fn), truckExtraEls, fn) : freshFnForManpower(fn);
+        const fresh = fi === txIdx ? withTruckExtraZone(freshFnForManpower(fn), truckExtraEls, fn) : freshFnForManpower(fn);
         const ctx = mpCtxFor(fresh);
         let count = computePeople(fresh, type, ctx);
         const fv = fixedVenueFor(fvCfgMP, fresh.fnVenue || "");
