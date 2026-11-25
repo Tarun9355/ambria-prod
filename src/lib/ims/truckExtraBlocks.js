@@ -38,6 +38,26 @@ export function truckExtraRowsOf(trucks, inventory, tripsOf) {
   return out;
 }
 
+// Those same items need hands to load, carry and set up (owner ask 2026-11-25), so the crew count reads them too: as one extra,
+// always-on zone of plain inventory elements on the event's FIRST function (a truck goes with the setup; the items are not tied
+// to any one function). The zone has no zoneConfig (no truss / fabric / platform), so only the per-item rules count it -
+// Labours by sub-category, Electricians for lighting, Flowerists for florals - exactly as if the item were in the Build.
+// Only the crew engine is handed this zone; rent stays in Deal Check's truckExtrasCost, never in the client's price.
+export const TRUCK_EXTRA_ZONE = "__truckExtras";
+
+export function truckExtraElements(trucks, tripsOf) {
+  return [...truckExtraQtyByItem(trucks, tripsOf)].map(([invId, qty]) => ({ id: `truckx:${invId}`, invId, qty }));
+}
+
+// `fn` with the zone added (a copy; `fn` itself untouched). `src` is the deal's own function object the copy stands for, kept on
+// a non-enumerable __mpSrc so a caller that finds a function by identity (fns.indexOf) still can. Adding twice is a no-op.
+export function withTruckExtraZone(fn, els, src) {
+  if (!fn || !Array.isArray(els) || !els.length || fn.enabledEls?.[TRUCK_EXTRA_ZONE]) return fn;
+  const out = { ...fn, enabledEls: { ...(fn.enabledEls || {}), [TRUCK_EXTRA_ZONE]: true }, zoneElements: { ...(fn.zoneElements || {}), [TRUCK_EXTRA_ZONE]: els } };
+  Object.defineProperty(out, "__mpSrc", { value: src || fn.__mpSrc || fn, enumerable: false });
+  return out;
+}
+
 // The apply_block_ops ops that make the ledger match `want` (Map<invId, qty>) on each of `dates` for this event: an item whose
 // TRUCK_EXTRA_SRC holds already equal the qty on every date (and on no other date) gets no op; otherwise its holds are replaced
 // (remove that tag on every date, add the qty on each date) - or just removed when nothing of it is on a truck any more.

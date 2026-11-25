@@ -31,7 +31,7 @@ import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { newSplitGroupId, reconcileDealCheckIntoBuild } from "../../../lib/studio/dealCheckSync.js";
 import { eventOrderFor, ownEventOrderIds } from "../../../lib/studio/eventOrderFor.js";
 import { tripsOf } from "../../../lib/ims/eventTrucks"; // a truck's trips (or its one legacy trip) - for the items IMS added on trucks
-import { truckExtraRowsOf } from "../../../lib/ims/truckExtraBlocks"; // those items as rows: shown on the Inventory tab, costed in the internal cost
+import { truckExtraRowsOf, truckExtraElements, withTruckExtraZone } from "../../../lib/ims/truckExtraBlocks"; // those items as rows: shown on the Inventory tab, costed in the internal cost; and counted in the crew
 import { reindexFnIdxPrefixedSet } from "../../../lib/studio/dealCheckReindex.js";
 
 // ══ THE PAGE'S GROUND ══
@@ -776,6 +776,8 @@ export default function DealCheckOverlay({ ctx }) {
         }, [dcActiveTab, anyFnPassedForPL]);
 
         // ═══ Shared cost rollup — single computation used by GYV tab + bottom strip (§26.19) ═══
+        // Items IMS ops added on the trucks (not in the deal) need crew too - counted on the first function (truckExtraBlocks.js).
+        const dcTruckExtraEls = (() => { try { return truckExtraElements(eventOrderFor(eventOrders, activeClientId)?.trucks, tripsOf); } catch { return []; } })();
         const dcCostRollup = (() => {
           const fns = collectAllFunctionData ? collectAllFunctionData() : [];
           let rental = 0, florals = 0, transport = 0, manpower = 0, truss = 0, genset = 0, printCost = 0;
@@ -1646,7 +1648,8 @@ export default function DealCheckOverlay({ ctx }) {
               // ALSO missing the tab's loose florals-name fallback (dropping elements the tab counts)
               // and used a looser qty gate (`el.qty || el.count || 1`, defaulting missing/zero qty to
               // 1) instead of the tab's `el.qty || 0` + skip — both directions of drift.
-              const walkFn = (fn, cb) => {
+              const walkFn = (fn0, cb) => {
+                const fn = fn0 === fns[0] ? withTruckExtraZone(fn0, dcTruckExtraEls, fn0) : fn0; // the "how" traces see the truck items too
                 const en = fn.enabledEls || {};
                 const ze = fn.zoneElements || {};
                 Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk]||[]).forEach(el => {
@@ -1688,7 +1691,8 @@ export default function DealCheckOverlay({ ctx }) {
               const fvCfgMP = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
               // Per category, not only the zone toggle: a repeated Elements or Truss & Masking chip drops
               // just that part's crew (freshFnForManpower, lib/studio/pricing.js — shared with the tab).
-              const freshFnMP = freshFnForManpower;
+              // ...and the first function also carries the items added on the trucks (withTruckExtraZone).
+              const freshFnMP = (fn) => { const src = fn?.__mpSrc || fn; const f = freshFnForManpower(fn); return src === fns[0] ? withTruckExtraZone(f, dcTruckExtraEls, src) : f; };
               const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
               // ═══ Shared manpower count engine (src/lib/studio/manpowerCount.js) ═══
               // Used to be a hand-rolled copy here, a near-identical one in DCManpowerTab.jsx
@@ -1709,7 +1713,7 @@ export default function DealCheckOverlay({ ctx }) {
                 seasonMap: seasonMapMP, sitMults: sitMultsMP, situMultCap, datePricing: dealCheckData?.datePricing,
                 venueDumping: dealCheckData?.venueDumping || {}, fixedVenues: dealCheckData?.fixedVenues || [],
                 venueParents: dealCheckData?.venueParents || {}, heavyElementRanges,
-                cardsForFn: (dcCards || {})[fns.indexOf(fn)], inventory: dealCheckData?.inventory || [],
+                cardsForFn: (dcCards || {})[fns.indexOf(fn?.__mpSrc || fn)], inventory: dealCheckData?.inventory || [],
                 trussInv: dealCheckData?.trussInv, fabricBangaliRanges,
                 fabricRftPerWorker: Number(dealCheckData?.fabricRftPerWorker) || 100, trussLabourRanges,
                 categoryDepartments: dealCheckData?.categoryDepartments || {}, // Labours' department split (manpowerCount makeSubcatDept)
@@ -2059,7 +2063,7 @@ export default function DealCheckOverlay({ ctx }) {
           // ── Per-dept manpower detail (the exact crew rows the head edits in IMS Dept Ops). Built here
           // so the actuals delta below reconciles head edits — count/rate overrides AND day-wise labour —
           // via the SAME formula IMS uses (deptMpReconciled). Reused by buildDeptSnapshot. ──
-          let dcMpPlan = []; try { dcMpPlan = manpowerPlanForBooking ? manpowerPlanForBooking(fns) : []; } catch {}
+          let dcMpPlan = []; try { dcMpPlan = manpowerPlanForBooking ? manpowerPlanForBooking(fns, dcTruckExtraEls) : []; } catch {}
           const dcPlanByType = {}; dcMpPlan.forEach(p => { dcPlanByType[p.type] = p; });
           const SHARED = new Set(["Labours", "Supervisors"]);
           const manpowerDetail = {};
@@ -4633,7 +4637,7 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                 })() : dcActiveTab === "florals" ? (
                   <DCFloralsTab ctx={ctx} />
                 ) : dcActiveTab === "manpower" ? (
-                  <DCManpowerTab ctx={{ ...ctx, manpowerDetail: dcCostRollup.manpowerDetail }} />
+                  <DCManpowerTab ctx={{ ...ctx, manpowerDetail: dcCostRollup.manpowerDetail, truckExtraEls: dcTruckExtraEls }} />
                 ) : dcActiveTab === "truss" ? (
                   <DCTrussTab ctx={ctx} />
                 ) : dcActiveTab === "transport" ? (() => {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { TRUCK_EXTRA_SRC, truckExtraQtyByItem, truckExtraBlockOps, truckExtraRowsOf } from "./truckExtraBlocks";
+import { TRUCK_EXTRA_SRC, TRUCK_EXTRA_ZONE, truckExtraQtyByItem, truckExtraBlockOps, truckExtraRowsOf, truckExtraElements, withTruckExtraZone } from "./truckExtraBlocks";
+import { walkFnElements } from "../studio/manpowerCount";
 import { tripsOf } from "./eventTrucks";
 
 describe("truckExtraRowsOf (Deal Check's 'Added on trucks' rows and its internal cost)", () => {
@@ -70,5 +71,30 @@ describe("truckExtraBlockOps", () => {
   });
   it("no event dates: nothing to write", () => {
     expect(truckExtraBlockOps({}, "E1", [], new Map([["i1", 1]]))).toEqual([]);
+  });
+});
+
+describe("truck extras in the crew count (truckExtraElements + withTruckExtraZone)", () => {
+  const trucks = [{ id: "T1", trips: [{ id: "a", custom: { Furniture: [{ id: "x", invId: "i1", qty: 4 }] } }, { id: "b", custom: { Furniture: [{ id: "y", invId: "i1", qty: 2 }], Lighting: [{ id: "z", invId: "i2", qty: 3 }] } }] }];
+  const inv = [{ id: "i1", name: "Chair", cat: "Furniture", subCat: "Chairs" }, { id: "i2", name: "Par Light", cat: "Lighting", subCat: "Par" }];
+  it("one element per item, qty summed over trucks and trips", () => {
+    expect(truckExtraElements(trucks, tripsOf)).toEqual([{ id: "truckx:i1", invId: "i1", qty: 6 }, { id: "truckx:i2", invId: "i2", qty: 3 }]);
+  });
+  it("adds an always-on zone the crew walker reads, leaves the function itself untouched, keeps its source and never adds twice", () => {
+    const fn = { fnVenue: "V", enabledEls: { z1: true }, zoneElements: { z1: [{ invId: "i1", qty: 1 }] } };
+    const els = truckExtraElements(trucks, tripsOf);
+    const out = withTruckExtraZone(fn, els, fn);
+    expect(fn.enabledEls[TRUCK_EXTRA_ZONE]).toBeUndefined();
+    expect(out.__mpSrc).toBe(fn);
+    expect(Object.keys(out)).not.toContain("__mpSrc"); // non-enumerable: JSON / spreads never carry it
+    expect(withTruckExtraZone(out, els, fn)).toBe(out);
+    const seen = [];
+    walkFnElements(out, inv, ({ rc, qty, zoneKey }) => seen.push([rc.sub, qty, zoneKey]));
+    expect(seen).toEqual([["Chairs", 1, "z1"], ["Chairs", 6, TRUCK_EXTRA_ZONE], ["Par", 3, TRUCK_EXTRA_ZONE]]);
+  });
+  it("no items on trucks: the function as is", () => {
+    const fn = { enabledEls: {} };
+    expect(withTruckExtraZone(fn, [], fn)).toBe(fn);
+    expect(withTruckExtraZone(fn, undefined, fn)).toBe(fn);
   });
 });

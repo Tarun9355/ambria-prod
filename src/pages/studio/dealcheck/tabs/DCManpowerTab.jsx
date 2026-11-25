@@ -7,6 +7,7 @@
 import { useEffect } from "react";
 import { CARD_SHADOW, CARD_BG, CARD_BORDER, HAIRLINE, TILE_BG, TILE_BORDER, CHIP_BG, INK, INK_2, INK_3, GOLD, GOLD_SOFT, NUM } from "../../../../lib/studio/dcTokens";
 import { freshFnForManpower, scaleTrussPreview } from "../../../../lib/studio/pricing";
+import { withTruckExtraZone } from "../../../../lib/ims/truckExtraBlocks";
 import { heavyExtraLabour, eventTimingMultFor, EVENT_TIMINGS, SIT_MULT_DEFAULTS } from "../../../../lib/ims/constants";
 import { standingReductionBySubcat, fixedVenueFor } from "../../../../lib/ims/fixedVenues";
 import { itemImsSubcat, lookupBySubcat, walkKitUnits, aggregateEventManpower, hasAnyMpEdits } from "../../../../lib/ims/helpers";
@@ -177,6 +178,8 @@ export default function DCManpowerTab({ ctx }) {
     // "read-only" tab actually show what ops is planning, not just repeat the system estimate above
     // a label that says the real plan lives elsewhere.
     dcEoActuals, manpowerDetail,
+    // items IMS ops added on the trucks (not in the deal) - crewed on the first function, same as the rollup (truckExtraBlocks.js)
+    truckExtraEls,
   } = ctx;
   // Manpower is editable by everyone now (owner ask 2026-11-13: a salesperson could not lower the fixed-venue minimum crew here) -
   // shift picks, per-shift counts, -1 / dismantle days and Reset. It was Admin-only, with a read-only note for everyone else.
@@ -266,7 +269,8 @@ export default function DCManpowerTab({ ctx }) {
                     return "dinner";
                   };
                   // Walk all elements in a fn (mirror of existing flowerist code path)
-                  const walkFnElements = (fn, cb) => {
+                  const walkFnElements = (fn0, cb) => {
+                    const fn = fn0 === fns[0] ? withTruckExtraZone(fn0, truckExtraEls, fn0) : fn0;
                     Object.entries(fn.zoneElements || {}).forEach(([zk, elems]) => {
                       if (!fn.enabledEls?.[zk]) return;
                       (elems || []).forEach(el => {
@@ -310,7 +314,7 @@ export default function DCManpowerTab({ ctx }) {
                   // below still only applies at configured fixed venues (fv truthy); non-fixed → computed only.
                   // Per category too — a repeated Elements or Truss & Masking chip drops just that part's
                   // crew. The same function DealCheckOverlay uses, so the two cannot drift apart.
-                  const freshFnMP = freshFnForManpower;
+                  const freshFnMP = (fn) => { const src = fn?.__mpSrc || fn; const f = freshFnForManpower(fn); return src === fns[0] ? withTruckExtraZone(f, truckExtraEls, src) : f; };
                   const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
                   // Usage-based labour floor: Labours = ceil(Σ sub-cat units ÷ per-unit), per ceremony.
                   // Confirmed live bug (now fixed at calcPeopleTier3Labours' own call site below): this
@@ -339,7 +343,7 @@ export default function DCManpowerTab({ ctx }) {
                     seasonMap: seasonMapMP, sitMults: sitMultsMP, situMultCap, datePricing: dealCheckData?.datePricing,
                     venueDumping: dealCheckData?.venueDumping || {}, fixedVenues: dealCheckData?.fixedVenues || [],
                     venueParents: dealCheckData?.venueParents || {}, heavyElementRanges,
-                    cardsForFn: (dcCards || {})[fns.indexOf(fn)], inventory: dealCheckData?.inventory || [],
+                    cardsForFn: (dcCards || {})[fns.indexOf(fn?.__mpSrc || fn)], inventory: dealCheckData?.inventory || [],
                     trussInv: dealCheckData?.trussInv, fabricBangaliRanges, fabricRftPerWorker, trussLabourRanges,
                     categoryDepartments: dealCheckData?.categoryDepartments || {}, // Labours' department split (manpowerCount makeSubcatDept)
                   });
@@ -466,7 +470,7 @@ export default function DCManpowerTab({ ctx }) {
                     if (_tu.truss > 0) subCounts["Truss"] = (subCounts["Truss"] || 0) + _tu.truss;
                     if (_tu.platform > 0) subCounts["Platform"] = (subCounts["Platform"] || 0) + _tu.platform;
                     if (_tu.carpet > 0) subCounts["Carpet"] = (subCounts["Carpet"] || 0) + _tu.carpet;
-                    const reductionB = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn)], dealCheckData?.inventory || [], fn.zoneElements);
+                    const reductionB = standingReductionBySubcat({ fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} }, fn.fnVenue || "", (dcCards || {})[fns.indexOf(fn?.__mpSrc || fn)], dealCheckData?.inventory || [], fn.zoneElements);
                     const rows = []; let usageSum = 0, heavyFloor = 0;
                     heavyElementRanges.forEach(her => {
                       const per = Number(her.perCount) || 0; if (per <= 0) return;
@@ -857,6 +861,11 @@ export default function DCManpowerTab({ ctx }) {
                             <div style={{fontSize:19,fontWeight:750,color:INK,letterSpacing:-0.4,lineHeight:1.15}}>
                               {dcShowAllFns ? "Whole booking" : (selectedFn?.fnType || "Function")}
                             </div>
+                            {(truckExtraEls || []).length > 0 && (
+                              <div style={{fontSize:11,color:INK_2,marginTop:5}}>
+                                🚛 Includes crew for {truckExtraEls.reduce((s, e) => s + (Number(e.qty) || 0), 0)} pcs added on trucks at dispatch ({truckExtraEls.length} item{truckExtraEls.length === 1 ? "" : "s"}), counted on {fns[0]?.fnType || "the first function"}
+                              </div>
+                            )}
                           </div>
                           {/* Scope chips. Under "All functions" the ceremony count matters (it is
                               what the MAX rule maxes over); scoped to one function it is always 1,
