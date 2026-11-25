@@ -1389,7 +1389,11 @@ export default function DealCheckOverlay({ ctx }) {
                   const qty = Math.max(1, Math.round(Number(row.plQty) || 1));
                   const sqft = L * W * qty;
                   sqftByFn[fnIdx] = (sqftByFn[fnIdx] || 0) + sqft;
-                  (partsByFn[fnIdx] ||= []).push({ zone: rowsP.length > 1 ? `${zoneLbl} · floor ${rIdx + 1}` : zoneLbl, fn: fns.length > 1 ? (fn.fnType || "") : "", fnIdx, dims: `${L} × ${W}${qty > 1 ? ` ×${qty}` : ""}`, qty: Math.round(sqft * 100) / 100 });
+                  // floorL/floorW/copies: the real numbers, alongside the pre-existing formatted `dims`
+                  // string — platformEngine.js's platformFloorsFromParts reads these to attempt a real
+                  // geometric tiling of the actual floor, not just match its sqft (billing is untouched;
+                  // this is a physical-pieces display only, the same invariant as `dims` always was).
+                  (partsByFn[fnIdx] ||= []).push({ zone: rowsP.length > 1 ? `${zoneLbl} · floor ${rIdx + 1}` : zoneLbl, fn: fns.length > 1 ? (fn.fnType || "") : "", fnIdx, dims: `${L} × ${W}${qty > 1 ? ` ×${qty}` : ""}`, floorL: L, floorW: W, copies: qty, qty: Math.round(sqft * 100) / 100 });
                 });
               });
             });

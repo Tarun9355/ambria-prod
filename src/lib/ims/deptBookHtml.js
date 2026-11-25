@@ -26,6 +26,7 @@ import { elementChoices } from "../studio/elementPrefs";
 import { orderZoneKeys } from "./zoneOrder";
 import { calcZoneFabric, dcFabricMultOf, repeatCatFor, trussInvForMaterial, parseFlowerPalette, parseFabricPalette } from "../studio/pricing";
 import { resolveBeamSegment, resolvePillarHeight } from "./trussEngine";
+import { platformPullPlansByFn } from "./platformEngine";
 import { trussDiagramSvg } from "./trussDiagramSvg";
 import { fitUrl } from "../studio/thumb.js";
 import { matchFlowerPattern, resolveSizeKey, sizeClassToPatternKey, resolveMandiFlower } from "./flowerHelpers";
@@ -851,6 +852,44 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
         trussTableByZone.get(zkey).push({ label: "", chips: rowChips, pillars, beams, battaRft, battaBuf: Number(bBuf) || 0, material: row.trussMaterial || "", topo: pv.topology, matInv });
       });
     }
+
+    // ── PLATFORM PIECES TO PULL ── reuses the exact same engine (and so the exact same answer) as
+    // Dept Ops' own on-screen "To pull from stock" breakdown (owner report 2026-11-25: it never
+    // reached the PDF, only the screen). One plan per function (each function is its own build), from
+    // the SAME held parts the "how?" breakdown reads on screen (sel.deptInventory.Tenting), which
+    // exists in both a single-department book and the combined book. Rows/HTML are built here but
+    // never numbered here — numbering happens once, inline in the final template, via sect().
+    const platformPull = (() => {
+      if (!showTrussTable || !trussInv) return null;
+      const parts = (Array.isArray(sel?.deptInventory?.Tenting) ? sel.deptInventory.Tenting : [])
+        .filter(x => /^platform structure/i.test(String(x?.sub || "").trim()) && Array.isArray(x.parts))
+        .flatMap(x => x.parts);
+      if (!parts.length) return null;
+      const blocks = platformPullPlansByFn(parts, trussInv).filter(b => b.plan.pieces.length);
+      if (!blocks.length) return null;
+      const floorNotes = (floors) => {
+        const seen = new Map();
+        // A floor Build couldn't resolve real L/W for (a legacy sqft-only part) has no size to show —
+        // "· null × null ft" would print literally, so the size suffix is left out entirely for those.
+        const dims = (f) => (f.L != null && f.W != null ? ` · ${f.L} × ${f.W} ft` : "");
+        (floors || []).forEach(f => {
+          const add = (kind, cls, text) => {
+            const key = kind + "|" + f.label + "|" + f.L + "|" + f.W;
+            const ex = seen.get(key);
+            if (ex) ex.n += 1; else seen.set(key, { cls, text, n: 1 });
+          };
+          if (f.mixedThickness) add("mix", "bad", `⚠ ${hn(f.label || t("Floor"))}${dims(f)} — ${t("Mixed thickness — the deck will be uneven, check on site")}`);
+          else if (f.tilingUnresolved) add("unresolved", "bad", `⚠ ${hn(f.label || t("Floor"))}${dims(f)} — ${t("The stocked sizes do not fit this floor evenly — check on site")}`);
+          else if (f.fit === "oversize") add("oversize", "", `${hn(f.label || t("Floor"))} — ${t("Builds as {size} ft", { size: `${f.builtL} × ${f.builtW}` })}`);
+        });
+        return [...seen.values()].map(({ cls, text, n }) => `<p class="meta${cls ? " " + cls : ""}">${esc(n > 1 ? `${text} (×${n})` : text)}</p>`).join("");
+      };
+      return blocks.map(({ fnIdx, fnLabel, plan }) => {
+        const cap = (fns || []).length > 1 ? `<p class="meta"><b>${esc(hn(fns[fnIdx]?.type || fns[fnIdx]?.fnType || fnLabel || ""))}</b></p>` : "";
+        const rows = plan.pieces.map(p => `<tr><td>${esc(hn(p.label))}<div class="sub">${esc(p.material === "wood" ? t("Wood") : t("Iron"))}${p.thicknessIn ? ` · ${esc(p.thicknessIn)}″` : ""}</div>${p.overStock > 0 ? `<div class="sub bad">${esc(t("{n} beyond stock", { n: p.overStock }))}</div>` : ""}</td><td class="n b">${esc(p.qty)}</td></tr>`);
+        return cap + table([t("Piece"), t("Qty")], rows, ["80%", "20%"]) + floorNotes(plan.floors);
+      }).join("");
+    })();
 
     // ── A TRUSS'S CUT LIST ── its pillars, beams and batta side by side, as Planning's Truss plan
     // shows them. Real resolved stock pieces, so a pillar made up with a ground spacer lists that
@@ -2489,6 +2528,7 @@ ${/* No transport in any book (owner ask 2026-11-11): the trucks table (vehicle 
 ${combined ? "" : loadRows.length ? sect(t("Loading list"),
   `<p class="meta">${t("Everything going to site — {items}, {pieces} in total.", { items: t("{n} item|{n} items", { n: blockedItems.length }), pieces: t("{n} piece|{n} pieces", { n: loadUnits }) })}</p>`
     + table([t("Item"), t("Qty")], loadRows, ["80%", "20%"])) : ""}
+${platformPull ? sect(t("Platform pieces to pull"), `<p class="meta">${t("Real Platform Config pieces for each floor — one thickness per floor where stock allows.")}</p>` + platformPull) : ""}
 ${artRows.length ? sect(t("Artificial flowers & greens"), table([t("Item"), t("Bunches"), t("Bunches per kg"), t("Weight")], artRows, ["46%", "16%", "20%", "18%"])
   + (artColourRows.length ? `<p class="meta">${t("Pull these specific bunches")}</p>` + table([t("Colour"), t("Bunches")], artColourRows, ["80%", "20%"]) : "")) : ""}
 ${!combined && moveRows.length ? sect(t("Dismantle routing"), table([t("Item"), t("Goes to"), t("Qty"), t("Logged by")], moveRows, ["38%", "32%", "12%", "18%"])) : ""}

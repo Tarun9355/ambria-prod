@@ -31,7 +31,7 @@ import { dcFabricMultOf, trussInvForMaterial, parseFlowerPalette, repeatCatFor }
 import { trussBaseArea } from "../../lib/studio/taxonomy";
 import { isTrussFoc } from "../../lib/studio/foc.js";
 import { resolveBeamSegment, resolvePillarHeight } from "../../lib/ims/trussEngine";
-import { platformPiecesFor, PLATFORM_MATERIAL_LABEL } from "../../lib/ims/platformEngine";
+import { platformPullPlan, platformPullPlansByFn, platformFloorsFromParts, PLATFORM_MATERIAL_LABEL } from "../../lib/ims/platformEngine";
 import { RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_BOX } from "../../lib/studio/brand.js";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
@@ -6288,26 +6288,54 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           {/* Platform is billed purely by sqft (no per-booking signal for which configured piece size/material
                               fulfils a zone's floor — platformEngine.js's own header comment), but Tenting still has to go pull
                               actual pieces off the rack, not a sqft figure (owner ask 2026-11-23: "we know the sqft needed, we
-                              know the sqft of each piece, so why not just show pieces"). Largest piece first, real Platform
-                              Config stock respected; this is a display-only breakdown of the SAME total above, never a second
-                              number that could disagree with it, and never changes what gets billed. */}
+                              know the sqft of each piece, so why not just show pieces"). This is a display-only breakdown of
+                              the SAME total above, never a second number that could disagree with it, and never changes what
+                              gets billed. platformPullPlan (owner report 2026-11-25) also attempts a real geometric tiling of
+                              each floor's actual L×W, keeps one thickness per floor where stock allows, and flags whatever it
+                              can't resolve cleanly instead of silently presenting a sqft-matched guess. One plan per function
+                              (owner call: each function is its own build), not pooled across the whole deal. */}
                           {it.sub === "platform structure (blended Wood+Iron rate)" && (() => {
-                            // Each ZONE's own floor, not the pooled sumQty above — a physical piece can't be split
-                            // across two different floors, so every floor has to round up on its own (regression
-                            // review, 2026-11-23: three small floors needing one piece each is 3 pieces, not
-                            // ceil(their sum / one piece size), which can undercount).
-                            const pieces = platformPiecesFor(parts.map((pt) => pt.qty), trussInv);
-                            if (!pieces.length) return null;
+                            const blocks = fnSel
+                              ? [{ fnIdx: fnSel?.fnIdx, fnLabel: fnSel?.type || "", plan: platformPullPlan(platformFloorsFromParts(parts), trussInv) }]
+                              : platformPullPlansByFn(parts, trussInv);
+                            const live = blocks.filter((b) => b.plan.pieces.length);
+                            if (!live.length) return null;
+                            const multiFn = live.length > 1;
+                            // Per-floor warnings, collapsed: an identical note on several identical copies of one
+                            // floor prints once with a ×n count, not once per copy.
+                            const floorNotes = (floors) => {
+                              const seen = new Map();
+                              // A floor Build couldn't resolve real L/W for (a legacy sqft-only part) has no size to show —
+                              // "· null × null ft" would print literally, so the size suffix is left out entirely for those.
+                              const dims = (f) => (f.L != null && f.W != null ? ` · ${f.L} × ${f.W} ft` : "");
+                              (floors || []).forEach((f) => {
+                                const add = (kind, cls, text) => {
+                                  const key = kind + "|" + f.label + "|" + f.L + "|" + f.W;
+                                  const ex = seen.get(key);
+                                  if (ex) ex.n += 1; else seen.set(key, { cls, text, n: 1 });
+                                };
+                                if (f.mixedThickness) add("mix", "text-amber-600", `⚠ ${f.label || "Floor"}${dims(f)} — mixed thickness (${(f.thicknessIn || []).filter((t) => t != null).join("″ + ")}″): deck will be uneven, verify on site`);
+                                else if (f.tilingUnresolved) add("unresolved", "text-amber-600", `⚠ ${f.label || "Floor"}${dims(f)} — the stocked piece sizes don't tile this floor evenly; counted by sqft only, verify on site`);
+                                else if (f.fit === "oversize") add("oversize", "text-gray-500", `${f.label || "Floor"}${dims(f)} builds as ${f.builtL} × ${f.builtW} ft with stocked sizes`);
+                              });
+                              return [...seen.values()].map(({ cls, text, n }) => ({ cls, text: n > 1 ? `${text} (×${n})` : text }));
+                            };
                             return (
-                              <div className="border-t border-gray-200 pt-1 space-y-0.5">
-                                <div className="text-gray-500 font-semibold">To pull from stock</div>
-                                {pieces.map((p, pi) => (
-                                  <div key={p.id ?? pi} className="flex items-center justify-between gap-2 text-gray-700">
-                                    <span>{p.label} · {PLATFORM_MATERIAL_LABEL[p.material] || p.material}</span>
-                                    <span className="tabular-nums font-medium">
-                                      ×{p.qty}
-                                      {p.overStock > 0 && <span className="text-amber-600 font-semibold"> ({p.overStock} beyond Config's stock)</span>}
-                                    </span>
+                              <div className="border-t border-gray-200 pt-1 space-y-2">
+                                {live.map((b, bi) => (
+                                  <div key={b.fnIdx ?? bi} className="space-y-0.5">
+                                    {multiFn && <div className="text-gray-400 font-semibold text-[11px]">{b.fnLabel}</div>}
+                                    <div className="text-gray-500 font-semibold">To pull from stock</div>
+                                    {b.plan.pieces.map((p, pi) => (
+                                      <div key={p.id ?? pi} className="flex items-center justify-between gap-2 text-gray-700">
+                                        <span>{p.label} · {PLATFORM_MATERIAL_LABEL[p.material] || p.material}{p.thicknessIn ? ` · ${p.thicknessIn}″` : ""}</span>
+                                        <span className="tabular-nums font-medium">
+                                          ×{p.qty}
+                                          {p.overStock > 0 && <span className="text-amber-600 font-semibold"> ({p.overStock} beyond Config's stock)</span>}
+                                        </span>
+                                      </div>
+                                    ))}
+                                    {floorNotes(b.plan.floors).map((n, ni) => <div key={ni} className={n.cls + " text-[11px] mt-0.5"}>{n.text}</div>)}
                                   </div>
                                 ))}
                               </div>

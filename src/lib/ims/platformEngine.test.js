@@ -11,6 +11,9 @@ import {
   platformStockSqft,
   platformTotalStockSqft,
   platformPiecesFor,
+  platformPullPlan,
+  platformPullPlansByFn,
+  platformFloorsFromParts,
   PLATFORM_POOL_KEY,
 } from "./platformEngine";
 
@@ -316,7 +319,7 @@ describe("platformAvgRatePerSqft — blended billing (owner decision, 2026-11-05
   });
 });
 
-describe("platformPiecesFor — sqft need broken into physical pieces (owner ask, 2026-11-23)", () => {
+describe("platformPiecesFor — sqft-only path (no floor dimensions known), back-compat wrapper over platformPullPlan (owner ask, 2026-11-23)", () => {
   it("one configured size: plain ceiling division", () => {
     const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood" }] };
     expect(platformPiecesFor(100, trussInv)).toEqual([{ id: "a", label: "8×4ft", lengthFt: 8, widthFt: 4, material: "wood", sqftPerPiece: 32, qty: 4 }]); // 100/32 -> 4 pieces
@@ -379,5 +382,230 @@ describe("platformPiecesFor — sqft need broken into physical pieces (owner ask
     expect(platformPiecesFor([30, 30, 30], trussInv)).toEqual([
       { id: "a", label: "8×4ft", lengthFt: 8, widthFt: 4, material: "wood", sqftPerPiece: 32, qty: 3, overStock: 1 },
     ]);
+  });
+});
+
+describe("platformFloorsFromParts — a DealCheckOverlay.jsx part -> floor dims (2026-11-25)", () => {
+  it("uses the real numeric fields when present", () => {
+    expect(platformFloorsFromParts([{ zone: "Stage", fn: "", floorL: 16, floorW: 24, copies: 1, qty: 384 }]))
+      .toEqual([{ L: 16, W: 24, copies: 1, label: "Stage" }]);
+  });
+
+  it("falls back to parsing a legacy 'L × W ×copies' dims string (a part saved before this shipped)", () => {
+    expect(platformFloorsFromParts([{ zone: "Stage", dims: "16 × 24 ×2", qty: 768 }]))
+      .toEqual([{ L: 16, W: 24, copies: 2, label: "Stage" }]);
+    expect(platformFloorsFromParts([{ zone: "Stage", dims: "16 × 24", qty: 384 }]))
+      .toEqual([{ L: 16, W: 24, copies: 1, label: "Stage" }]);
+  });
+
+  it("falls back to sqft-only when dims can't be parsed, or disagree with the billed sqft", () => {
+    expect(platformFloorsFromParts([{ zone: "Stage", dims: "huh", qty: 384 }])).toEqual([{ sqft: 384, label: "Stage" }]);
+    expect(platformFloorsFromParts([{ zone: "Stage", dims: "16 × 24", qty: 500 }])).toEqual([{ sqft: 500, label: "Stage" }]);
+  });
+});
+
+describe("platformPullPlan — real geometric tiling (owner report, 2026-11-25)", () => {
+  it("tiles a floor exactly when its own L×W divides evenly by a configured size", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood", thicknessIn: 4 }] };
+    const plan = platformPullPlan([{ L: 16, W: 24 }], trussInv);
+    expect(plan.pieces[0].qty).toBe(12);
+    expect(plan.floors[0].fit).toBe("exact");
+    expect(plan.floors[0].builtL).toBe(16);
+    expect(plan.floors[0].builtW).toBe(24);
+  });
+
+  it("tries the floor rotated 90° too", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood" }] };
+    expect(platformPullPlan([{ L: 4, W: 8 }], trussInv).floors[0].fit).toBe("exact");
+    const plan = platformPullPlan([{ L: 24, W: 16 }], trussInv);
+    expect(plan.floors[0].fit).toBe("exact");
+    expect(plan.pieces[0].qty).toBe(12);
+  });
+
+  it("owner's example: a 10×10 floor can't be tiled by an 8×4 piece even though the sqft divides - flagged, never empty", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood" }] };
+    const plan = platformPullPlan([{ L: 10, W: 10 }], trussInv);
+    expect(plan.floors[0].fit).toBe("unresolved");
+    expect(plan.floors[0].tilingUnresolved).toBe(true);
+    expect(plan.flags.tilingUnresolved).toBe(true);
+    expect(plan.pieces.reduce((s, p) => s + p.qty, 0)).toBe(4); // still a concrete pull list, never nothing
+  });
+
+  it("a mix of sizes can tile an otherwise-awkward floor exactly", () => {
+    const trussInv = { platforms: [
+      { id: "big", lengthFt: 8, widthFt: 4, stock: 10, material: "Iron" },
+      { id: "mid", lengthFt: 2, widthFt: 4, stock: 10, material: "Iron" },
+      { id: "small", lengthFt: 2, widthFt: 2, stock: 10, material: "Iron" },
+    ] };
+    const plan = platformPullPlan([{ L: 10, W: 10 }], trussInv);
+    expect(plan.floors[0].fit).toBe("exact");
+    expect(plan.pieces.reduce((s, p) => s + p.qty * p.sqftPerPiece, 0)).toBe(100);
+  });
+
+  it("builds up to PLATFORM_OVERSIZE_MAX_FT bigger per side rather than flagging unresolved, when that's enough", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood" }] };
+    const plan = platformPullPlan([{ L: 7, W: 8 }], trussInv);
+    expect(plan.floors[0].fit).toBe("oversize");
+    expect(plan.floors[0].builtL).toBe(8);
+    expect(plan.floors[0].builtW).toBe(8);
+    expect(plan.pieces.reduce((s, p) => s + p.qty, 0)).toBe(2);
+  });
+
+  // Regression (Opus review, 2026-11-25): the copy fast path reused the PREVIOUS floor's layout
+  // whenever a later floor happened to share its exact L×W, not just for genuine copies of ONE
+  // floor - and reported the floor's own requested size as "built", not the oversize layout's real
+  // built size. Two different zones (different labels) that happen to share an awkward size exposed
+  // this: the second zone's note read "builds as 7 × 15 ft" (its own request) instead of the actual
+  // 8 × 16 ft the reused layout was built at.
+  it("a later floor sharing an earlier one's size (but a different zone) reports its OWN actual built size, not the earlier floor's request", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood" }] };
+    const plan = platformPullPlan([{ L: 7, W: 15, label: "Stage" }, { L: 7, W: 15, label: "Dance Floor" }], trussInv);
+    expect(plan.floors[0].fit).toBe("oversize");
+    expect(plan.floors[1].fit).toBe("oversize");
+    expect(plan.floors[1].builtL).toBe(plan.floors[0].builtL);
+    expect(plan.floors[1].builtW).toBe(plan.floors[0].builtW);
+    // Both must report the SAME real built size, bigger than what was asked for, never "builds as 7 x 15"
+    expect(plan.floors[1].builtL * plan.floors[1].builtW).toBeGreaterThan(7 * 15);
+  });
+});
+
+describe("platformPullPlan — thickness-safe grouping, fix #1 (owner report, 2026-11-25)", () => {
+  it("avoids a scarce thickness when a plentiful one of the same footprint can cover the whole floor alone", () => {
+    const trussInv = { platforms: [
+      { id: "t4", lengthFt: 8, widthFt: 4, stock: 5, material: "Iron", thicknessIn: 4 },
+      { id: "t25", lengthFt: 8, widthFt: 4, stock: 100, material: "Iron", thicknessIn: 2.5 },
+    ] };
+    const plan = platformPullPlan([{ L: 16, W: 24 }], trussInv);
+    expect(plan.pieces.find((p) => p.id === "t25")?.qty).toBe(12);
+    expect(plan.pieces.find((p) => p.id === "t4")).toBeUndefined();
+    expect(plan.floors[0].mixedThickness).toBe(false);
+  });
+
+  it("flags mixedThickness when neither thickness alone can cover the floor", () => {
+    const trussInv = { platforms: [
+      { id: "t4", lengthFt: 8, widthFt: 4, stock: 6, material: "Iron", thicknessIn: 4 },
+      { id: "t25", lengthFt: 8, widthFt: 4, stock: 6, material: "Iron", thicknessIn: 2.5 },
+    ] };
+    const plan = platformPullPlan([{ L: 16, W: 24 }], trussInv);
+    expect(plan.pieces.reduce((s, p) => s + p.qty, 0)).toBe(12);
+    expect(plan.floors[0].mixedThickness).toBe(true);
+    expect(plan.flags.mixedThickness).toBe(true);
+    expect(plan.floors[0].thicknessIn.slice().sort()).toEqual([2.5, 4]);
+  });
+
+  it("stays single-thickness (flagged overStock) even when short, rather than mixing for no gain", () => {
+    const trussInv = { platforms: [
+      { id: "t4", lengthFt: 8, widthFt: 4, stock: 2, material: "Iron", thicknessIn: 4 },
+      { id: "t25", lengthFt: 8, widthFt: 4, stock: 2, material: "Iron", thicknessIn: 2.5 },
+    ] };
+    const plan = platformPullPlan([{ L: 16, W: 24 }], trussInv);
+    expect(plan.floors[0].mixedThickness).toBe(false);
+    expect(plan.floors[0].overStock).toBeGreaterThan(0);
+    expect(plan.flags.overStock).toBe(true);
+  });
+
+  it("the same fix applies on the sqft-only path too (no floor dims known)", () => {
+    const trussInv = { platforms: [
+      { id: "t4", lengthFt: 8, widthFt: 4, stock: 1, material: "Iron", thicknessIn: 4 },
+      { id: "t25", lengthFt: 8, widthFt: 4, stock: 10, material: "Iron", thicknessIn: 2.5 },
+    ] };
+    const out = platformPiecesFor(100, trussInv);
+    expect(out.find((p) => p.id === "t25")?.qty).toBe(4);
+    expect(out.find((p) => p.id === "t4")).toBeUndefined();
+  });
+
+  it("two rows of the same footprint and thickness but different material are NOT flagged mixed", () => {
+    const trussInv = { platforms: [
+      { id: "wood", lengthFt: 8, widthFt: 4, stock: 6, material: "Wood", thicknessIn: 4 },
+      { id: "iron", lengthFt: 8, widthFt: 4, stock: 6, material: "Iron", thicknessIn: 4 },
+    ] };
+    const plan = platformPullPlan([{ L: 16, W: 24 }], trussInv);
+    expect(plan.floors[0].mixedThickness).toBe(false);
+    expect(plan.pieces).toHaveLength(2);
+    expect(plan.pieces.every((p) => p.qty === 6)).toBe(true);
+  });
+});
+
+describe("platformPullPlan / platformPiecesFor — best-fit remainder, fix #2 (owner report, 2026-11-25)", () => {
+  it("never reaches for a size that has zero real stock when a covering combination exists elsewhere", () => {
+    const trussInv = { platforms: [
+      { id: "big", lengthFt: 8, widthFt: 4, stock: 10, material: "Iron" }, // 32 sqft
+      { id: "mid", lengthFt: 4, widthFt: 4, stock: 10, material: "Iron" }, // 16 sqft
+      { id: "zero", lengthFt: 2, widthFt: 2, stock: 0, material: "Iron" }, // 4 sqft, no stock
+    ] };
+    const out = platformPiecesFor(100, trussInv);
+    expect(out.find((p) => p.id === "zero")).toBeUndefined();
+    expect(out.find((p) => p.id === "big")?.qty).toBe(3);
+    expect(out.find((p) => p.id === "mid")?.qty).toBe(1);
+    expect(out.some((p) => p.overStock)).toBe(false);
+  });
+
+  it("the waste the owner reported (128 sqft pulled for a 100 sqft need) is unavoidable when truly no smaller size is configured", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood" }] };
+    expect(platformPiecesFor(100, trussInv)).toEqual([
+      { id: "a", label: "8×4ft", lengthFt: 8, widthFt: 4, material: "wood", sqftPerPiece: 32, qty: 4 },
+    ]);
+  });
+});
+
+describe("platformPullPlan — stock sharing across copies of the same floor", () => {
+  it("shares one stock pool across every copy, each copy still rounding/tiling on its own", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 20, material: "Iron", thicknessIn: 4 }] };
+    const plan = platformPullPlan([{ L: 16, W: 24, copies: 2 }], trussInv);
+    expect(plan.floors).toHaveLength(2);
+    expect(plan.pieces[0].qty).toBe(24);
+    expect(plan.pieces[0].overStock).toBe(4);
+    expect(plan.floors[0].fit).toBe("exact");
+  });
+});
+
+describe("platformPullPlan / platformPiecesFor — back-compat and safety", () => {
+  it("platformPiecesFor is exactly platformPullPlan(...).pieces", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood" }] };
+    expect(platformPiecesFor([{ L: 16, W: 24 }], trussInv)).toEqual(platformPullPlan([{ L: 16, W: 24 }], trussInv).pieces);
+  });
+
+  it("accepts a mixed array of bare numbers and floor objects", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood" }] };
+    const out = platformPiecesFor([100, { L: 16, W: 24 }], trussInv);
+    expect(out.reduce((s, p) => s + p.qty, 0)).toBe(4 + 12); // 100 sqft alone against only a 32-sqft size needs 4, same unavoidable-waste case above
+  });
+
+  it("never mutates the trussInv it was given (billing/allocation must never see stale/altered stock)", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 20, material: "Iron", thicknessIn: 4 }] };
+    const before = JSON.stringify(trussInv);
+    platformPullPlan([{ L: 16, W: 24 }], trussInv);
+    expect(JSON.stringify(trussInv)).toBe(before);
+  });
+
+  it("the real production fixture (PROD_PLATFORMS) tiles a clean 16×24 floor from one thickness group (it has three; the 4in group alone suffices)", () => {
+    const plan = platformPullPlan([{ L: 16, W: 24 }], { platforms: PROD_PLATFORMS });
+    expect(plan.floors[0].fit).toBe("exact");
+    expect(plan.floors[0].mixedThickness).toBe(false);
+  });
+
+  it("30 awkward floors against a realistic multi-size config: never throws, always answers, stays fast", () => {
+    const trussInv = { platforms: PROD_PLATFORMS };
+    const floors = [];
+    for (let i = 0; i < 30; i++) floors.push({ L: 13.5 + (i % 5), W: 17 + (i % 7) });
+    const t0 = Date.now();
+    const plan = platformPullPlan(floors, trussInv);
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(plan.floors).toHaveLength(30);
+    expect(plan.floors.every((f) => !!f.fit)).toBe(true);
+  });
+});
+
+describe("platformPullPlansByFn — one plan per function (owner call, 2026-11-25: plan each function separately, not pooled)", () => {
+  it("groups parts by fnIdx and plans each group independently", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood", thicknessIn: 4 }] };
+    const parts = [
+      { zone: "Haldi stage", fn: "Haldi", fnIdx: 0, floorL: 16, floorW: 24, copies: 1, qty: 384 },
+      { zone: "Wedding stage", fn: "Wedding", fnIdx: 1, floorL: 20, floorW: 32, copies: 1, qty: 640 },
+    ];
+    const byFn = platformPullPlansByFn(parts, trussInv);
+    expect(byFn).toHaveLength(2);
+    expect(byFn.find((b) => b.fnIdx === 0).plan.pieces[0].qty).toBe(12); // 384/32
+    expect(byFn.find((b) => b.fnIdx === 1).plan.pieces[0].qty).toBe(20); // 640/32
   });
 });
