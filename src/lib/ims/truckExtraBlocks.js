@@ -16,6 +16,28 @@ export function truckExtraQtyByItem(trucks, tripsOf) {
   return m;
 }
 
+// Every row added on a truck, for showing and costing (Studio's Deal Check): one per row as added, with its inventory item's
+// photo and rent (price ?? rentalCost, as the rest of the app reads it). Rows with no qty are left out.
+export function truckExtraRowsOf(trucks, inventory, tripsOf) {
+  const out = [];
+  (Array.isArray(trucks) ? trucks : []).forEach((t) => {
+    if (!t) return;
+    const trips = tripsOf ? tripsOf(t) : t.trips || [];
+    trips.forEach((tr, tri) => Object.entries(tr?.custom || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach((c) => {
+      const q = Number(c?.qty) || 0;
+      if (q <= 0) return;
+      const inv = (inventory || []).find((x) => String(x.id) === String(c.invId));
+      const rate = Number(inv?.price ?? inv?.rentalCost) || 0;
+      out.push({
+        key: `${t.id}|${tr.id}|${c.id}`, name: inv?.name || c.name, sub: c.sub || inv?.subCat || "", dept: d, qty: q, rate, total: Math.round(rate * q),
+        photo: inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || "",
+        where: [t.vehicle || "Truck", trips.length > 1 ? `Trip ${tri + 1}` : "", t.driver || ""].filter(Boolean).join(" · "), status: tr.status || "loading",
+      });
+    })));
+  });
+  return out;
+}
+
 // The apply_block_ops ops that make the ledger match `want` (Map<invId, qty>) on each of `dates` for this event: an item whose
 // TRUCK_EXTRA_SRC holds already equal the qty on every date (and on no other date) gets no op; otherwise its holds are replaced
 // (remove that tag on every date, add the qty on each date) - or just removed when nothing of it is on a truck any more.

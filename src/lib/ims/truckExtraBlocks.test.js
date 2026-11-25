@@ -1,5 +1,26 @@
 import { describe, it, expect } from "vitest";
-import { TRUCK_EXTRA_SRC, truckExtraQtyByItem, truckExtraBlockOps } from "./truckExtraBlocks";
+import { TRUCK_EXTRA_SRC, truckExtraQtyByItem, truckExtraBlockOps, truckExtraRowsOf } from "./truckExtraBlocks";
+import { tripsOf } from "./eventTrucks";
+
+describe("truckExtraRowsOf (Deal Check's 'Added on trucks' rows and its internal cost)", () => {
+  const inv = [{ id: "i1", name: "Cocktail Chair", price: 1250, img: "p.jpg" }, { id: "i2", name: "Buffee Table", rentalCost: 2000 }];
+  it("prices each row at the item's rent and names its truck / trip; skips qty 0 and a null truck", () => {
+    const trucks = [
+      null,
+      { id: "T1", vehicle: "DL1", driver: "Maanik", custom: { Furniture: [{ id: "a", invId: "i1", qty: 2 }, { id: "z", invId: "i2", qty: 0 }] } }, // legacy one-trip shape
+      { id: "T2", vehicle: "DL2", trips: [{ id: "r1", status: "dispatched", custom: { Furniture: [{ id: "b", invId: "i2", qty: 1 }] } }, { id: "r2", custom: { Tenting: [{ id: "c", invId: "gone", name: "Old item", qty: 3 }] } }] },
+    ];
+    const rows = truckExtraRowsOf(trucks, inv, tripsOf);
+    expect(rows.map(r => [r.name, r.qty, r.total, r.where])).toEqual([
+      ["Cocktail Chair", 2, 2500, "DL1 · Maanik"],
+      ["Buffee Table", 1, 2000, "DL2 · Trip 1"],
+      ["Old item", 3, 0, "DL2 · Trip 2"],
+    ]);
+    expect(rows.reduce((s, r) => s + r.total, 0)).toBe(4500);
+    expect(new Set(rows.map(r => r.key)).size).toBe(rows.length);
+  });
+  it("no trucks: nothing", () => { expect(truckExtraRowsOf(undefined, inv, tripsOf)).toEqual([]); });
+});
 
 const trips = (t) => t.trips;
 const truck = (custom) => ({ id: "t1", trips: [{ id: "tr1", custom }] });

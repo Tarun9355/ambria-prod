@@ -31,6 +31,7 @@ import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { newSplitGroupId, reconcileDealCheckIntoBuild } from "../../../lib/studio/dealCheckSync.js";
 import { eventOrderFor, ownEventOrderIds } from "../../../lib/studio/eventOrderFor.js";
 import { tripsOf } from "../../../lib/ims/eventTrucks"; // a truck's trips (or its one legacy trip) - for the items IMS added on trucks
+import { truckExtraRowsOf } from "../../../lib/ims/truckExtraBlocks"; // those items as rows: shown on the Inventory tab, costed in the internal cost
 import { reindexFnIdxPrefixedSet } from "../../../lib/studio/dealCheckReindex.js";
 
 // ══ THE PAGE'S GROUND ══
@@ -2119,8 +2120,18 @@ export default function DealCheckOverlay({ ctx }) {
           // genset (our genset cost, the Power tab) is part of what the deal costs us - it was worked out for the Power tab's
           // pill only and left out of the total (owner report 2026-11-03: "power is not added in the overall cost"). It sits in
           // the Lighting department (dept.power), so the departments still add up to this base.
-          const base = rental + florals + transport + genset + manpower + truss + buyTotal + produceTotal;
-          const baseActual = rental + effFlorals + transport + genset + effManpower + truss + buyTotal + produceTotal + actualExpenses;
+          // Items IMS ops added on a truck at dispatch (not in the deal) - their rent is a cost of doing this event, so it is in
+          // the internal cost (and so in the margin), never in what the client is billed (owner ask 2026-11-25: "internal cost
+          // mai jod do"). Same rows the Inventory tab's "Added on trucks at dispatch" box lists (lib/ims/truckExtraBlocks).
+          const truckExtrasCost = (() => {
+            try {
+              const eoTrucks = eventOrderFor(eventOrders, activeClientId)?.trucks;
+              const inv = (dealCheckData?.inventory?.length > 0) ? dealCheckData.inventory : (dcInventoryCache || []);
+              return truckExtraRowsOf(eoTrucks, inv, tripsOf).reduce((s, r) => s + r.total, 0);
+            } catch { return 0; }
+          })();
+          const base = rental + florals + transport + genset + manpower + truss + buyTotal + produceTotal + truckExtrasCost;
+          const baseActual = rental + effFlorals + transport + genset + effManpower + truss + buyTotal + produceTotal + actualExpenses + truckExtrasCost;
           const gyvFixed = Math.round((hasActuals ? baseActual : base) * 0.05);
           const bufferCost = Math.round((hasActuals ? baseActual : base) * 0.03);
           const grand = base + Math.round(base * 0.05) + Math.round(base * 0.03);
@@ -2243,7 +2254,7 @@ export default function DealCheckOverlay({ ctx }) {
           // — a one-way "quote moved, so commission follows" step, not fed back into the solve above.
           const liveQuote = smartQuoteActive ? smartRevisedQuote : dealAmount;
           const liveCommissionTotal = (smartQuoteActive && dealAmount > 0) ? Math.round(commissionTotal * (liveQuote / dealAmount)) : commissionTotal;
-          return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, venueDiscount, agencyFee, agencyFeePct, dealAmount, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType, byFn,
+          return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, truckExtrasCost, base, gyvFixed, bufferCost, grand, clientRevenue, venueDiscount, agencyFee, agencyFeePct, dealAmount, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType, byFn,
             mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal, manpowerDetail, manpowerPlan: dcMpPlan,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta, deptActual,
             commissionByVenue, commissionTotal,
@@ -3223,20 +3234,7 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                   // ── ADDED ON TRUCKS AT DISPATCH ── (owner ask 2026-11-25) items IMS ops put on a truck with "Add an item not in this
                   // deal" (event_orders.trucks[].trips[].custom[dept]) - so sales sees them too: which item, how many, on which
                   // vehicle / trip, by which department, at its rent. Read-only; not part of this deal's price (IMS blocks them in stock).
-                  const truckExtras = (() => {
-                    const eo = eventOrderFor(eventOrders, activeClientId);
-                    const out = [];
-                    (Array.isArray(eo?.trucks) ? eo.trucks : []).forEach(t => tripsOf(t).forEach((tr, tri, all) => Object.entries(tr.custom || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach(c => {
-                      const q = Number(c?.qty) || 0;
-                      if (q <= 0) return;
-                      const inv = dealCheckInventory.find(x => String(x.id) === String(c.invId));
-                      const rate = Number(inv?.price ?? inv?.rentalCost) || 0;
-                      out.push({ key: `${t.id}|${tr.id}|${c.id}`, name: inv?.name || c.name, sub: c.sub || inv?.subCat || "", dept: d, qty: q, rate, total: Math.round(rate * q),
-                        photo: inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || "",
-                        where: [t.vehicle || "Truck", all.length > 1 ? `Trip ${tri + 1}` : "", t.driver || ""].filter(Boolean).join(" · "), status: tr.status || "loading" });
-                    }))));
-                    return out;
-                  })();
+                  const truckExtras = truckExtraRowsOf(eventOrderFor(eventOrders, activeClientId)?.trucks, dealCheckInventory, tripsOf);
                   const truckExtrasTotal = truckExtras.reduce((s, r) => s + r.total, 0);
                   // shown on every function's tab, also one with nothing matched yet - it is the whole event's, not one function's
                   const truckExtrasPanel = truckExtras.length > 0 ? (
@@ -5542,7 +5540,7 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                   );
                 })() : dcActiveTab === "gyv" ? (() => {
                   // ═══ GYV FIXED & BUFFER COST TAB — reads from shared dcCostRollup ═══
-                  const { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, venueDiscount, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta, smartQuoteActive, smartOrigProfitPct, smartDesiredPct, liveQuote, liveCommissionTotal } = dcCostRollup;
+                  const { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, truckExtrasCost, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, venueDiscount, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta, smartQuoteActive, smartOrigProfitPct, smartDesiredPct, liveQuote, liveCommissionTotal } = dcCostRollup;
                   const baseCost = hasActuals ? baseActual : baseProj;
                   // Project total = production cost + GYV/buffer + venue commission. Commission used
                   // to be excluded here (a "company-level payout" kept out of "what building this event
@@ -5571,6 +5569,8 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                       note: mpDelta ? `dept heads changed the crew · projected ${fmt(manpower)}` : null },
                     { icon: "🛒", label: "Buying",     value: buyTotal },
                     { icon: "🏭", label: "Production", value: produceTotal },
+                    // items IMS ops added on trucks at dispatch (not in the deal): our cost, not the client's
+                    ...(truckExtrasCost > 0 ? [{ icon: "🚛", label: "Added on trucks", value: truckExtrasCost, note: "items ops added at dispatch · not billed" }] : []),
                     ...(actualExpenses > 0 ? [{ icon: "🧾", label: "On-site expenses", value: actualExpenses, flag: "actual", note: "billed on site" }] : []),
                     // GYV fixed + buffer used to sit in their own "Overheads" card further down —
                     // moved in as ordinary lines here so the whole cost side (production cost AND
