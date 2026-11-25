@@ -223,7 +223,7 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
   const dayLabel = pickDay ? new Date(pickDay + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "";
 
   return (
-    <div className="space-y-3 max-w-3xl">
+    <div className="space-y-3 w-full min-w-0">
       <input value={q} onChange={(e) => { setQ(e.target.value); setPickDay(null); }} placeholder="🔍 Search by client or venue…"
         className="w-full h-10 rounded-xl border border-gray-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
       <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
