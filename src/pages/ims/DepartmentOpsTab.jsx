@@ -7180,8 +7180,13 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             {!locked && deptInventoryBySub.size > 0 && (
                               <button type="button"
                                 onClick={() => setAddItemModal({ truckId: t.id, tripId: trip.id, title: `Truck ${truckNumById.get(t.id)}${t.trips.length > 1 ? ` · Trip ${tripI + 1}` : ""}`, sub: "", invId: "", qty: 1, q: "", added: [] })}
-                                className="w-full h-9 inline-flex items-center justify-center gap-1.5 rounded-lg ring-1 ring-dashed ring-gray-300 text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-50 transition-colors">
-                                <span aria-hidden="true" className="text-sm leading-none">+</span> {"Add an item not in this deal"}
+                                // coloured and plain to spot (owner ask 2026-11-25) - a grey dashed strip read as empty space
+                                className="group w-full min-h-11 px-3 py-2 inline-flex items-center justify-center gap-2.5 rounded-xl border-2 border-dashed border-blue-300 bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 text-blue-700 hover:border-blue-400 hover:from-blue-100 hover:via-indigo-100 hover:to-blue-100 active:scale-[0.99] transition-[background-color,border-color,transform] duration-150">
+                                <span aria-hidden="true" className="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-base leading-none shadow-[0_2px_6px_-1px_rgba(37,99,235,0.5)] group-hover:scale-110 transition-transform">+</span>
+                                <span className="text-left leading-tight">
+                                  <span className="block text-[13px] font-semibold">{"Add an item not in this deal"}</span>
+                                  <span className="block text-[10.5px] font-normal text-blue-600/80">{"spares or extras — goes on the challan"}</span>
+                                </span>
                               </button>
                             )}
                             {/* Already-added ad-hoc items stay visible (and on the challan) once a trip
