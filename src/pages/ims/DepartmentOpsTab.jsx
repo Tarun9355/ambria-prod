@@ -1566,6 +1566,111 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // ── Blocked inventory: prefer the Deal Check snapshot; fall back to IMS blocks if not synced ──
   // GROUPED view (kit as one line + its components) — used for the inventory/income display.
   // blockedGroupedOf(d, swaps): any department's list - the shared Fabric & Tenting book reads both.
+  // Inventory Blocked's own request (owner ask, 2026-11-26): "I need 50 pc of platform 8x4 and 20 pc
+  // of 6x4 — show me 2 rows", not one pooled sqft line. DISPLAY ONLY (regression review,
+  // 2026-11-26 finding #2): this must never touch blockedGroupedOf/blockedItems/blockedFlatOf
+  // themselves - those feed truck loading, the challan, receiving and dismantle, all keyed off the
+  // ORIGINAL pooled row's identity (truckKey/"inv:"+id/movement records). Splitting there would
+  // silently orphan a load or movement already saved against the pooled row. This runs only on the
+  // list Inventory Blocked itself renders from (invBase, below) - trucks/PDF/etc keep the one row.
+  //
+  // Built from platformPullPlansByFn, not platformPullPlan (finding #1) - the SAME per-function,
+  // independent-stock-each-time plan the on-screen "how" breakdown and the PDF already use (owner
+  // call, 2026-11-25: "plan each function separately, not pooled"), so this never shows a "beyond
+  // stock" warning the PDF doesn't also show for the same event, or a different piece mix.
+  //
+  // `qty`/`rentalQty`/`unit` on each new row stay in SQFT, not pieces, and `unit` is ₹/sqft - the
+  // SAME semantics every other row's `unit` already has (not a per-piece rate): Deal Check's own
+  // truck-fill sizing for Platform is computed in sqft, and the owner confirmed Admin Settings'
+  // truck capacity for Platform is ALSO sqft-based (2026-11-26) - keeping unit/qty in sqft means
+  // every existing ≠-badge/💡-How/truck-share calc that reads `it.unit * it.rentalQty` stays
+  // correct with ZERO special-casing (finding #4 - an earlier draft used a per-piece rate here,
+  // which broke those). `pieceQty` (+ `sqftPerPiece`, needed to re-derive a function's own scoped
+  // piece count below) carries the real count for DISPLAY only.
+  //
+  // Each function's own real billed share (row.byFn[fn].total - already carries THAT function's own
+  // fixed-venue discount, finding #6) is spread across just that function's own pieces by sqft share,
+  // largest-remainder so it sums to EXACTLY that function's total with nothing ever going negative
+  // (finding #8) - never a single blended rate across the whole event. A piece type used by more than
+  // one function sums those functions' own shares into its one row.
+  //
+  // No per-zone "how" drill-down on these rows (parts: null) - a piece type isn't 1:1 with one floor.
+  const largestRemainderSplit = (total, weights) => {
+    const sumW = weights.reduce((s, w) => s + w, 0);
+    if (sumW <= 0) return weights.map(() => 0);
+    const raw = weights.map((w) => (total * w) / sumW);
+    const floors = raw.map((v) => Math.floor(v));
+    let remainder = Math.round(total - floors.reduce((s, v) => s + v, 0));
+    const order = raw.map((v, i) => ({ i, frac: v - floors[i] })).sort((a, b) => b.frac - a.frac);
+    const out = floors.slice();
+    for (let k = 0; k < order.length && remainder > 0; k++, remainder--) out[order[k].i] += 1;
+    return out;
+  };
+  const splitPlatformRows = (rows) => {
+    if (!trussInv) return rows;
+    const out = [];
+    rows.forEach((row) => {
+      if (!/^platform structure/i.test(String(row.sub || "").trim()) || !Array.isArray(row.parts) || !row.parts.length) { out.push(row); return; }
+      let blocks;
+      try { blocks = platformPullPlansByFn(row.parts, trussInv); } catch { out.push(row); return; }
+      const live = blocks.filter((b) => b.plan.pieces.length);
+      if (!live.length) { out.push(row); return; }
+      const merged = new Map(); // piece key -> { ...piece fields, qty, overStock, byFn: Map<fnIdx, {pieceQty, sqft, total}> }
+      live.forEach(({ fnIdx, plan }) => {
+        const fnTotal = row.byFn?.[fnIdx] ? (Number(row.byFn[fnIdx].total) || 0)
+          // Defensive fallback only - real Platform rows always carry a byFn entry per contributing
+          // function (every part DealCheckOverlay pushes carries a real fnIdx); this just avoids a
+          // ₹0 blackout on an unexpected legacy shape, not something exact reconciliation is owed.
+          : (Number(row.qty) > 0 ? (Number(row.total) || 0) * plan.pieces.reduce((s, p) => s + p.qty * p.sqftPerPiece, 0) / Number(row.qty) : 0);
+        const weights = plan.pieces.map((p) => p.qty * p.sqftPerPiece);
+        const shares = largestRemainderSplit(Math.round(fnTotal), weights);
+        plan.pieces.forEach((p, pi) => {
+          const key = p.id ?? `${p.label}|${p.material}|${p.thicknessIn ?? ""}`;
+          if (!merged.has(key)) merged.set(key, { id: p.id, label: p.label, lengthFt: p.lengthFt, widthFt: p.widthFt, material: p.material, sqftPerPiece: p.sqftPerPiece, thicknessIn: p.thicknessIn, qty: 0, overStock: 0, byFn: new Map() });
+          const m = merged.get(key);
+          m.qty += p.qty;
+          m.overStock += p.overStock || 0;
+          m.byFn.set(fnIdx, { pieceQty: p.qty, sqft: Math.round(p.qty * p.sqftPerPiece * 100) / 100, total: shares[pi] });
+        });
+      });
+      [...merged.values()].forEach((p, pi) => {
+        const sqft = Math.round(p.qty * p.sqftPerPiece * 100) / 100;
+        const total = [...p.byFn.values()].reduce((s, v) => s + v.total, 0);
+        const byFn = {};
+        p.byFn.forEach((v, fn) => { byFn[fn] = { qty: v.sqft, rentalQty: v.sqft, total: v.total, pieceQty: v.pieceQty }; });
+        out.push({
+          ...row,
+          id: row.id + "__p" + (p.id ?? pi),
+          invId: null,
+          name: `${p.label} · ${PLATFORM_MATERIAL_LABEL[p.material] || p.material}${p.thicknessIn ? ` · ${p.thicknessIn}″` : ""}`,
+          photo: "",
+          qty: sqft,
+          rentalQty: sqft,
+          total,
+          // The pooled row's OWN blended ₹/sqft (not a re-derived total÷sqft) - every piece bills at
+          // this same rate, so it matches the pooled row exactly, any fixed-venue discount note
+          // included, and the "≠" check (unit × rentalQty vs total) stays meaningful rather than
+          // just re-proving itself (regression review follow-up, 2026-11-26).
+          unit: row.unit,
+          qtyUnit: "sqft", // labels the Rate/Rental-qty/date-column/"Other" figures below, which stay in sqft
+          sqftPerPiece: p.sqftPerPiece,
+          byFn,
+          parts: null,
+          // The original pooled row's own `calc` (how ITS whole total was worked out) does not describe
+          // this one piece-type row's own, reallocated total - null falls back to the generic "rate ×
+          // quantity" breakdown below (💡 How), which IS still correct since unit/rentalQty stay sqft.
+          // pieceRow marks it so that fallback never shows the (wrong, for this row) "synced before
+          // the breakdown existed" message a genuinely-stale legacy row's own null calc would.
+          calc: null,
+          pieceRow: true,
+          isKit: false, components: null, recipeParts: null, kitPartsTotal: 0,
+          pieceQty: p.qty,
+          pieceOverStock: p.overStock || 0,
+        });
+      });
+    });
+    return out;
+  };
   const blockedGroupedOf = (d, swaps) => {
     if (!sel) return [];
     const snapD = (sel?.deptInventory && Array.isArray(sel.deptInventory[d])) ? sel.deptInventory[d] : null;
@@ -1630,6 +1735,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const blockedItemsGrouped = useMemo(() => blockedGroupedOf(dept, swapInfo), [sel, blocks, inventory, dept, swapInfo, mappedStockRows]);
+  // Inventory Blocked's OWN display list only (trucks/PDF/receiving/dismantle all keep reading
+  // blockedItemsGrouped/blockedItems directly, untouched — see splitPlatformRows above).
+  const invBase = useMemo(() => dept === "Tenting" ? splitPlatformRows(blockedItemsGrouped) : blockedItemsGrouped, [blockedItemsGrouped, trussInv, dept]);
   // What this department is short of (owner ask 2026-11-15): named in red on the Inventory blocked tile and atop its panel.
   const invShortItems = useMemo(() => blockedItemsGrouped.filter(it => Number(it.shortQty) > 0), [blockedItemsGrouped]);
   const shortNames = (list, max) => list.slice(0, max).map(it => `${it.name} ×${it.shortQty}`).join(", ") + (list.length > max ? ` +${list.length - max} more` : "");
@@ -2015,7 +2123,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const rentalDiffers = (it) => Number(it.rentalQty ?? it.qty) !== (Number(it.qty) || 0)
     || (dateCols.length > 0 && !invScoped && dateCols.reduce((sum, c) => sum + qtyOnDate(c, it), 0) + otherQty(it) !== (Number(it.rentalQty ?? it.qty) || 0));
   const invShown = invScoped
-    ? blockedItemsGrouped.map(it => {
+    ? invBase.map(it => {
         const q = rowNeeds(it).get(String(mpFns[invFn]?.fnIdx ?? invFn)) || 0;
         if (!q) return null;
         // byFn[invFn] (Deal Check's own per-function record, dealcheck/DealCheckOverlay.jsx's cost
@@ -2059,10 +2167,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
             load = top.key === fnKey ? Math.min(q, loadOnDate([chain], fnDate, needOfFn(it))) : 0;
           }
         }
-        return { ...it, src: it, qty: load, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q), calc: fnRow ? (fnRow.calc || null) : null };
+        // pieceQty scales with LOAD, not the function's own raw need (fnRow.pieceQty) — a function
+        // whose pieces are already standing at the venue from the day before loads 0 even though it
+        // still NEEDS q of them (the date-sharing rule just above), and before this fix the piece
+        // count kept showing the full need regardless, while every other figure on the row (qty,
+        // rentalQty) correctly dropped to 0 (regression review finding #5, 2026-11-26).
+        const pieceQty = it.sqftPerPiece > 0 ? Math.round(load / it.sqftPerPiece) : (fnRow?.pieceQty ?? it.pieceQty ?? null);
+        return { ...it, src: it, qty: load, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q), calc: fnRow ? (fnRow.calc || null) : null, pieceQty };
       }).filter(Boolean)
-    : blockedItemsGrouped;
-  const invWholeOnly = invScoped ? blockedItemsGrouped.length - invShown.length : 0;
+    : invBase;
+  const invWholeOnly = invScoped ? invBase.length - invShown.length : 0;
   // Overlays and cushion covers with choices: the list is filed under sales' 1st design, so what Planning decided (Fabric plan) is shown on the card - live,
   // since it reads the same decisions the Fabric plan saves. Display only: the line's own quantity, price and id are untouched.
   const choiceView = (dept === "Fabric" && sel) ? choiceNotesForRows(invShown, elementPlanOf().rows.filter(r => !invScoped || r.fi === (mpFns[invFn]?.fnIdx ?? invFn)))
@@ -5649,7 +5763,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   const bad = rows.filter(r => r.status === "short").length;
                   return { k: "fabreq", icon: "🧵", title: "Fabric plan", sub: bad ? <span className="text-red-600 font-semibold">{bad} need{bad === 1 ? "s" : ""} attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
                 })(),
-                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held" + (truckExtraRows.length ? ` · +${n(truckExtraRows.length, "item")} on trucks` : ""), value: fmt(invBlockedTotal + truckExtraTotal), shortList: invShortItems },
+                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(invBase.length, "item") + " held" + (truckExtraRows.length ? ` · +${n(truckExtraRows.length, "item")} on trucks` : ""), value: fmt(invBlockedTotal + truckExtraTotal), shortList: invShortItems },
                 dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
                   const rows = carpetPlanOf().rows;
                   const decided = rows.filter(r => r.status === "decided").length;
@@ -6175,7 +6289,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             ); })()}
                             {/* with a column per date the single To load figure is left out: each date says what loads on it */}
                             {!showDates && (<StatCell label={showRentalQty ? "To load" : "Qty"} w={STAT_W.qty}>
-                              <span className="text-sm font-semibold text-gray-700 tabular-nums">×{qtyShown(it.qty, it.qtyUnit)}{it.qtyUnit ? <span className="ml-0.5 text-xs font-normal text-gray-400">{it.qtyUnit}</span> : null}</span>
+                              {/* Platform's own piece-type rows (owner ask, 2026-11-26): the headline figure is the real
+                                  piece count ("×50 pc"), not the sqft that still drives rate/total/truck-fill math
+                                  underneath (it.qty stays sqft for every other purpose — see splitPlatformRows above). */}
+                              {it.pieceQty != null
+                                ? <span className="text-sm font-semibold text-gray-700 tabular-nums" title={`${it.qty} sqft`}>×{it.pieceQty}<span className="ml-0.5 text-xs font-normal text-gray-400">pc</span>{it.pieceOverStock > 0 && <span className="ml-1 text-amber-600 font-semibold text-xs">({it.pieceOverStock} beyond stock)</span>}</span>
+                                : <span className="text-sm font-semibold text-gray-700 tabular-nums">×{qtyShown(it.qty, it.qtyUnit)}{it.qtyUnit ? <span className="ml-0.5 text-xs font-normal text-gray-400">{it.qtyUnit}</span> : null}</span>}
                               {it.mappedPart && <div className="text-[10px] text-gray-400 tabular-nums mt-0.5" title={`${it.billQty} used in Build + ${it.mappedPart.qty} as the artificial version of ${it.mappedPart.mappedFor}`}>{it.billQty} + {it.mappedPart.qty} 🔗</div>}
                             </StatCell>)}
                             {/* Reserved whenever ANY row in this list needs it (anyRentalQty), not just
@@ -6238,7 +6357,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               </div>
                             ))}
                             <div className="flex items-baseline justify-between gap-3 py-1 text-[12px]">
-                              <span className="font-semibold text-gray-900">Line total{!c ? <span className="text-gray-400 font-normal"> · synced before the breakdown existed — sync this event to see every step</span> : null}</span>
+                              <span className="font-semibold text-gray-900">Line total{!c && !it.pieceRow ? <span className="text-gray-400 font-normal"> · synced before the breakdown existed — sync this event to see every step</span> : null}</span>
                               <span className="tabular-nums font-bold text-gray-900">{fmt(it.total)}</span>
                             </div>
                             {/* the same item's Mapping-flower pieces, merged into this row: loaded with it, costed in the artificial total */}

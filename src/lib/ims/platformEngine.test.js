@@ -596,6 +596,36 @@ describe("platformPullPlan / platformPiecesFor — back-compat and safety", () =
   });
 });
 
+describe("platformPullPlan — per-piece byFn attribution (owner ask, 2026-11-26: Inventory Blocked splits Platform into one row per piece type, each tracking its own per-function share)", () => {
+  it("a piece's byFn totals each function's own share of that piece type, pooled across one shared stock call", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood", thicknessIn: 4 }] };
+    const parts = [
+      { zone: "Haldi stage", fn: "Haldi", fnIdx: 0, floorL: 16, floorW: 24, copies: 1, qty: 384 },
+      { zone: "Wedding stage", fn: "Wedding", fnIdx: 1, floorL: 20, floorW: 32, copies: 1, qty: 640 },
+    ];
+    const plan = platformPullPlan(platformFloorsFromParts(parts), trussInv);
+    const piece = plan.pieces[0];
+    expect(piece.qty).toBe(32);
+    expect(piece.byFn).toEqual({ 0: 12, 1: 20 });
+  });
+
+  it("byFn totals still sum to the piece's own qty even when thickness ends up mixed across functions", () => {
+    const trussInv = { platforms: [
+      { id: "t4", lengthFt: 8, widthFt: 4, stock: 6, material: "Iron", thicknessIn: 4 },
+      { id: "t25", lengthFt: 8, widthFt: 4, stock: 6, material: "Iron", thicknessIn: 2.5 },
+    ] };
+    const plan = platformPullPlan([{ L: 16, W: 24, copies: 1, label: "Stage", fnIdx: 0 }], trussInv);
+    const sumByFn = plan.pieces.reduce((s, p) => s + (p.byFn?.[0] || 0), 0);
+    const sumQty = plan.pieces.reduce((s, p) => s + p.qty, 0);
+    expect(sumByFn).toBe(sumQty);
+  });
+
+  it("no byFn field at all when no floor carries an fnIdx (bare sqft calls, the back-compat path)", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood" }] };
+    expect(platformPullPlan(100, trussInv).pieces[0].byFn).toBeUndefined();
+  });
+});
+
 describe("platformPullPlansByFn — one plan per function (owner call, 2026-11-25: plan each function separately, not pooled)", () => {
   it("groups parts by fnIdx and plans each group independently", () => {
     const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood", thicknessIn: 4 }] };
