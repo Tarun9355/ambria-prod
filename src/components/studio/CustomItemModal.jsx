@@ -34,7 +34,7 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
   const label = isProduction ? "Production" : "Buying";
   const color = isProduction ? "#A855F7" : "#F59E0B";
   const existing = editId ? customItems.find(x => x.id === editId) : null;
-  const [cForm, setCForm] = useState(existing || { qty: 1, dims: { l: "", w: "", h: "" }, notes: "", photo: zonePhoto || "" });
+  const [cForm, setCForm] = useState(existing || { qty: 0, dims: { l: "", w: "", h: "" }, notes: "", photo: zonePhoto || "" });
   const [cPhotoUploading, setCPhotoUploading] = useState(false);
   const [cManualPrice, setCManualPrice] = useState(existing?.manualPrice || "");
   const [cShowManual, setCShowManual] = useState(!!existing?.manualPrice);
@@ -129,12 +129,16 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
   // case outright (owner report, 2026-11-10: "not able to add production item"). A typed name with
   // no match now saves fine, as long as a real price is given — there's no reference price to fall
   // back on without a match, so that's still required.
-  const canSave = (!!cSelectedItem || cSearch.trim().length > 0) && Number(cForm.qty) > 0 && finalPrice > 0;
+  // Buying specifically no longer requires even a typed name (owner ask, 2026-11-25) — a quick
+  // placeholder line (price + notes, named later) shouldn't be blocked on an item lookup. Production
+  // keeps the name requirement: its reference photo is what the production team actually builds
+  // from, so an unnamed row with nothing to go on isn't a usable instruction for them.
+  const canSave = (isProduction ? (!!cSelectedItem || cSearch.trim().length > 0) : true) && Number(cForm.qty) > 0 && finalPrice > 0;
   const onSave = () => {
     const item = {
       id: editId || `custom-${Date.now()}`,
       fnIdx, zoneKey, type,
-      name: cSelectedItem ? cSelectedItem.name : cSearch.trim(),
+      name: cSelectedItem ? cSelectedItem.name : (cSearch.trim() || label + " Item"),
       cat: cSelectedItem ? imsField.category(cSelectedItem) : "",
       subCat: cSelectedItem ? imsField.subcategory(cSelectedItem) : "",
       qty: Number(cForm.qty) || 1,
@@ -192,7 +196,7 @@ export default function CustomItemModal({ config, customItems, setCustomItems, i
           {/* ═══ ITEM — search by name, same as Build's "+ Add element" ═══ */}
           <div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-              <div style={{fontSize:10,color:textS,fontWeight:600}}>Item *</div>
+              <div style={{fontSize:10,color:textS,fontWeight:600}}>{isProduction ? "Item *" : "Item (optional)"}</div>
               {/* Opens IMS's own Inventory tab in a new browser tab so a salesperson who doesn't know
                   an item's exact name can look it up there, then come back and search by name here —
                   without losing this modal or the build underneath it. */}
