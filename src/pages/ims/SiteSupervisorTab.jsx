@@ -12,6 +12,7 @@ import { addedSupervisorsOf, isMyEvent, fixedAtVenue, supervisorIdsOfUser } from
 import { useInhouseVenues } from "./SupervisorVenues.jsx";
 
 const PICK_KEY = "ambria-ims-site-event";
+const MY_ONLY_KEY = "ambria-ims-site-my-events";
 const SECTIONS = [
   { id: "receiving", label: "🚛 Receiving" },
   { id: "crew", label: "👷 Crew" },
@@ -60,7 +61,7 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
   if (!sel) return <EventPicker eventOrders={eventOrders} settings={settings} onPick={pick} authUser={authUser} supervisors={supervisors} />;
 
   return (
-    <div className="space-y-4 max-w-3xl">
+    <div className="space-y-4 w-full min-w-0">
       <div className="bg-white rounded-xl border border-gray-100 p-4">
         <div className="flex items-start justify-between gap-3">
           <button onClick={() => pick("")} className="shrink-0 w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-gray-100 flex items-center justify-center">‹</button>
@@ -137,11 +138,16 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
   const [pickDay, setPickDay] = useState(null);
   // "👷 My events" (owner ask 2026-11-25): only the functions at the venues this supervisor is fixed at (Admin → Settings → Supervisors)
   // and the events they were added on (Dept Ops header) - the same rule as Dept Ops' own My events (lib/ims/mySupervisorEvents).
-  const [myOnly, setMyOnly] = useState(false);
+  // Kept for the session (sessionStorage, like the picked event): opening an event and coming back keeps it on.
+  const [myOnly, setMyOnlyRaw] = useState(() => { try { return sessionStorage.getItem(MY_ONLY_KEY) === "1"; } catch { return false; } });
+  const setMyOnly = (fn) => setMyOnlyRaw((v) => { const nv = typeof fn === "function" ? fn(v) : fn; try { sessionStorage.setItem(MY_ONLY_KEY, nv ? "1" : "0"); } catch { /* private mode */ } return nv; });
   // The Planning calendar's venue colours and legend (owner ask 2026-11-25): each event coloured by THIS date's function's venue
   // (lib/ims/fixedVenues venueCalendarColor), and a legend that filters to one venue when tapped.
   const [venueFilter, setVenueFilter] = useState(null);
   const inhouseVenues = useInhouseVenues(myOnly);
+  // who is fixed where comes from the database once My events is on - until it is in, the grid waits (with a note) rather than
+  // flash "nothing at your venues"
+  const venuesLoading = myOnly && !inhouseVenues.loaded;
   const venuePlaces = useMemo(() => [...inhouseVenues.properties, ...inhouseVenues.inhouse], [inhouseVenues.properties, inhouseVenues.inhouse]);
   const myIds = useMemo(() => supervisorIdsOfUser(authUser, supervisors), [authUser, supervisors]);
   const fnOn = (eo, d) => { const fns = Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : []; return fns.find((f) => String(f?.date || "").slice(0, 10) === d) || fns[0] || null; };
@@ -194,14 +200,14 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
         const [y, m] = d.split("-").map(Number);
         if (y !== pickMonth.y || m !== pickMonth.m + 1) return;
         if (venueFilter && venueCalendarColor(settings, fnOn(eo, d)?.venue || eo.venue || "").code !== venueFilter) return;
+        if (venuesLoading) return;
         if (myOnly && !isMyEvent(eo, authUser, supervisors)
           && !fixedAtVenue(authUser, fnOn(eo, d)?.venue || eo.venue || "", settings, venuePlaces, supervisors, inhouseVenues.inhouse)) return;
         (out[d] = out[d] || []).push(eo);
       });
     });
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events, pickMonth, myOnly, venueFilter, authUser, supervisors, settings, venuePlaces, inhouseVenues.inhouse]);
+  }, [events, pickMonth, myOnly, venuesLoading, venueFilter, authUser, supervisors, settings, venuePlaces, inhouseVenues.inhouse]);
 
   const { y, m } = pickMonth;
   const first = new Date(y, m, 1);
@@ -376,7 +382,7 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
         </div>
         {monthTotal === 0 && (
           <div className="px-4 py-3 text-center text-[11px] text-gray-400">
-            {venueFilter && !myOnly ? (
+            {venuesLoading ? "Loading your venues…" : venueFilter && !myOnly ? (
               <>No {VENUE_CALENDAR_LEGEND.find((v) => v.code === venueFilter)?.label || venueFilter} events this month — other venues may still have some.{" "}
                 <button onClick={() => setVenueFilter(null)} className="font-semibold text-blue-600 hover:text-blue-800">Clear filter</button>
               </>

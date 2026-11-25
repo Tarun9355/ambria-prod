@@ -912,6 +912,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // on an event synced before Studio sent each function's own gensets (lib/ims/gensetPlan). Read with truckCap below.
   const [trVenues, setTrVenues] = useState([]);
   const [supPickFor, setSupPickFor] = useState(null); // the event whose Site Supervisor picker is open (header: name + "Add supervisor" button)
+  // closed when another event is opened - an unmounted <select> never blurs, so going back would reopen it
+  useEffect(() => { setSupPickFor(null); }, [selId]);
   const [opsViewRaw, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
   // onsiteOnly (Planning sub-tab "Dept Ops: Site Supervisor view only"): the department bar stays; each department shows its Inventory blocked tile (no income, changes, fixed-venue stock or other planning tiles) AND the on-site cards (Receiving, Dismantle & routing, On-site crew) together, with the Department Head / Site Supervisor switch hidden
   const opsView = opsViewRaw;
@@ -4713,7 +4715,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         but that row scrolls off the top the moment you start reading, and the switch
         was gone exactly when you wanted it. */}
     {/* ── STATUS TAGS, NOT A SEGMENTED TRACK ──
-        Two standalone tags per the design system: the one you are on is filled soft blue with
+        (Only Department Head is left - the Site Supervisor tag went to the sidebar's Site page, 2026-11-25; the notes below are
+        from when there were two.) Two standalone tags per the design system: the one you are on is filled soft blue with
         blue-700 text, the other is plain. The grey track they used to share made this read as a
         setting with an on and an off position; as two tags it reads as two places, which is
         what it is.
@@ -5295,7 +5298,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       <div className="mt-1 flex items-center gap-1.5 text-xs min-w-0 flex-wrap">
                         <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
                         {none && <span className="text-gray-400">— unassigned —</span>}
-                        {venueSups.map((s) => <span key={"v" + s.id} className="font-medium text-gray-700">{s.name}</span>)}
+                        {venueSups.map((s, i) => <span key={"v" + (s.id ?? s.name) + i} className="font-medium text-gray-700">{s.name}</span>)}
                         {added.map((s, i) => (
                           <span key={"a" + (s.id ?? s.name) + i} className="inline-flex items-center gap-0.5 font-medium text-gray-700">
                             {s.name}

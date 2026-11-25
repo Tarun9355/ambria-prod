@@ -16,7 +16,7 @@ const settings = { venueParents: { Aura: "Exotica", Valencia: "Pushpanjali" } };
 describe("site supervisors for an event's venue", () => {
   it("by the property's own name, active only, in roster order", () => {
     expect(siteSupervisorsFor(settings, ["Pushpanjali"], props, sups)).toEqual([
-      { name: "Raju", phone: "8447505495" }, { name: "Raja", phone: "7607225147" },
+      { id: "1", name: "Raju", phone: "8447505495" }, { id: "2", name: "Raja", phone: "7607225147" },
     ]);
   });
   it("a sub-venue finds its parent property; 'Ambria ' and a name carrying the property match too", () => {
