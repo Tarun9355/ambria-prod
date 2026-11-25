@@ -53,6 +53,7 @@ Fill this truck ¦ यह ट्रक भरें
 Fill this first ¦ पहले इसे भरें
 Add new truck anyway ¦ फिर भी नया ट्रक जोड़ें
 Save this truck first, then add the next one. ¦ पहले यह ट्रक सेव करें, फिर अगला जोड़ें।
+Fill this truck's details first, then add the next one. ¦ पहले इस ट्रक की जानकारी भरें, फिर अगला ट्रक जोड़ें।
 Remove truck ¦ ट्रक हटाएँ
 Adjust crew per day and per shift (e.g. drop the evening, or keep 1 in evening) ¦ हर दिन और शिफ़्ट का क्रू बदलें (जैसे शाम हटाएँ, या शाम में 1 रखें)
 Another department has items on this truck ¦ इस ट्रक पर दूसरे विभाग का सामान भी है

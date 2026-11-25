@@ -2714,17 +2714,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const [truckDrafts, setTruckDrafts] = useState([]); // [{ key, vehicle, driver, phone }]
   const draftRefs = useRef({});
   const [draftFlash, setDraftFlash] = useState(null); // the key of the form just added, lit for a moment
-  const addTruckNow = () => {
-    setTruckSpaceHint(null);
-    const key = "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-    setTruckDrafts(list => [{ key, vehicle: "", driver: "", phone: "" }, ...list]);
-    setDraftFlash(key);
-    setTimeout(() => {
-      const el = draftRefs.current[key];
-      el?.scrollIntoView({ behavior: "smooth", block: "center" });
-      el?.querySelector("input")?.focus({ preventScroll: true });
-    }, 0);
-  };
+  const [draftNeed, setDraftNeed] = useState(null); // the form "+ Add truck" stopped at - its note stays until its details are in
   useEffect(() => {
     if (!draftFlash) return;
     const t = setTimeout(() => setDraftFlash(null), 1400);
@@ -2734,18 +2724,47 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const dropDraft = (key) => setTruckDrafts(list => list.filter(d => d.key !== key));
   const saveTruckDraft = (key) => {
     const d = truckDrafts.find(x => x.key === key);
-    if (!d) return;
+    if (!d) return false;
     const clean = { vehicle: String(d.vehicle || "").trim(), driver: String(d.driver || "").trim(), phone: String(d.phone || "").replace(/\D/g, "").slice(0, 10) };
-    if (truckMissingOf(clean).length) return;
+    if (truckMissingOf(clean).length) return false;
     // the same vehicle as a truck already on this event: one real vehicle is one truck, it makes another trip instead
     const dupIdx = eventTruckList.findIndex(t => String(t.vehicle || "").trim().toLowerCase() === clean.vehicle.toLowerCase());
-    if (dupIdx >= 0) { const no = truckNumById.get(eventTruckList[dupIdx].id); alert(`Truck ${no} already has this vehicle (${clean.vehicle}). Open Truck ${no} and use "+ Add trip" there instead of a new truck.`); return; }
-    const id = "trk_" + Date.now();
+    if (dupIdx >= 0) { const no = truckNumById.get(eventTruckList[dupIdx].id); alert(`Truck ${no} already has this vehicle (${clean.vehicle}). Open Truck ${no} and use "+ Add trip" there instead of a new truck.`); return false; }
+    // unique even when several new trucks are saved in one click
+    const id = "trk_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     // New truck goes to the top (owner ask, 2026-11-23) - the one you just added, about to be
     // filled in, is what you want in front of you, not a new "Truck N" at the bottom of a long list.
     saveEventTrucks(list => [{ id, ...clean, trips: [newTrip()] }, ...list]);
     dropDraft(key);
     setOpenTruck(id);
+    return true;
+  };
+  const addTruckNow = () => {
+    setTruckSpaceHint(null);
+    // No next truck while a new one still lacks its details (owner 2026-11-25: "jab tak driver details / truck details na ho,
+    // new truck add na ho"): that form is lit, says so, and gets the cursor. A new truck whose details ARE all in is saved
+    // (registered) right here, and the next form opens - so trucks still go in one after another without an extra click.
+    const pending = truckDrafts.find(d => truckMissingOf(d).length);
+    if (pending) {
+      setDraftFlash(pending.key);
+      setDraftNeed(pending.key);
+      setTimeout(() => {
+        const el = draftRefs.current[pending.key];
+        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+        const box = el && [...el.querySelectorAll("input")].find(i => !i.value);
+        (box || el?.querySelector("input"))?.focus({ preventScroll: true });
+      }, 0);
+      return;
+    }
+    if (!truckDrafts.every(d => saveTruckDraft(d.key))) return; // one couldn't be saved (same vehicle as a truck already here): it stays open, no new form
+    const key = "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    setTruckDrafts(list => [{ key, vehicle: "", driver: "", phone: "" }, ...list]);
+    setDraftFlash(key);
+    setTimeout(() => {
+      const el = draftRefs.current[key];
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      el?.querySelector("input")?.focus({ preventScroll: true });
+    }, 0);
   };
   // forms belong to the event on screen - another event starts with none
   useEffect(() => { setTruckDrafts([]); }, [selId]);
@@ -6901,6 +6920,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                       <span className="shrink-0 text-sm font-semibold text-gray-900">New truck</span>
                       <span className="text-[11px] text-gray-500">saved once vehicle no., driver and phone are filled</span>
+                      {/* "+ Add truck" pressed while this one is still missing details */}
+                      {draftNeed === dk && miss.length > 0 && <span className="text-[11px] font-semibold text-red-700">{"Fill this truck's details first, then add the next one."}</span>}
                     </div>
                     {eventTrucks.length > 0 && (
                       <div>
