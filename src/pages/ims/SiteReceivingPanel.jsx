@@ -1,6 +1,8 @@
-import { useState } from "react";
-import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks } from "../../lib/ims/eventTrucks";
+import { useEffect, useState } from "react";
+import { supabase } from "../../lib/supabase";
+import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks, labelForLoadKey } from "../../lib/ims/eventTrucks";
 import { FLAG_REASONS, receivingOf, lineReceipt, setItemReceiptPatch, clearItemReceiptPatch } from "../../lib/ims/receiving";
+import { catToDept } from "../../lib/ims/deptClassify";
 import { thumbUrl } from "../../lib/studio/thumb.js";
 import { actualsLockState } from "../../lib/ims/actualsLock";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
@@ -19,16 +21,38 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // department on it, but a dept head who only wants to confirm THEIR OWN pieces arrived (owner ask
   // 2026-11-24) needs to cut the noise of every other department's lines on the same shared truck.
   const [deptFilter, setDeptFilter] = useState("all");
+  // Shows what Studio's own build says this event needs but nobody has put on ANY truck at all yet
+  // (owner report 2026-11-25: "if they dont load any item, i see none in the receiving tab" — this
+  // panel is built entirely from what IS on a truck, so an item dept ops simply forgot to load was
+  // invisible here with no hint anything was missing). Off by default — most of the time every item
+  // dept heads need IS loaded, and nobody wants a long "needed" list in front of the real receiving
+  // work every time this screen opens.
+  const [showMissing, setShowMissing] = useState(false);
+  // The `functions` table's own `data.items` (per function, invId+qty, FOC items already split into
+  // a separate `focItems` array by Studio's own reconcile — see StudioApp.jsx's reconcileSoldInventoryBlocks
+  // — so nothing here needs to re-exclude them) is the same flat, kit-walked quantity list Studio
+  // keeps resynced for this exact event, independent of DepartmentOpsTab's own much heavier live
+  // Deal-Check recompute — reusing it here needs no new sync path, just a read.
+  const [fnItems, setFnItems] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    // Cleared IMMEDIATELY on every event switch, not just once the new fetch resolves — this panel
+    // isn't remounted when the event picker above changes `sel` (regression review, 2026-11-25): on
+    // a slow connection, the previous event's needs would otherwise still be showing against the
+    // NEW event's (empty) trucks, forcing the missing section open with the wrong items in it.
+    setFnItems([]);
+    if (!sel?.id) return;
+    supabase.from("functions").select("data").contains("data", { eventOrderId: sel.id }).then(({ data, error }) => {
+      if (cancelled) return;
+      if (error) { console.error("[site-receiving] functions fetch failed:", error.message); setFnItems([]); return; }
+      setFnItems((data || []).flatMap((r) => (Array.isArray(r.data?.items) ? r.data.items : [])));
+    });
+    return () => { cancelled = true; };
+  }, [sel?.id]);
 
   const manifest = truckManifest(sel, inventory);
   const transfers = incomingTransfersFor(eventOrders, sel?.id);
   const receiving = receivingOf(sel);
-  const allDepts = [...new Set([...manifest.flatMap((m) => m.lines.map((l) => l.dept)), ...transfers.map((t) => t.fromDept)])].filter(Boolean).sort();
-  // Falls back to "all" the instant the picked department doesn't exist on THIS event (switching to
-  // a different event in the picker above doesn't remount this panel, so a stale filter from the
-  // last event — one this event may not even have — would otherwise hide every item here with no
-  // obvious reason why, same for a department's last line simply being removed while looking at it).
-  const activeFilter = deptFilter === "all" || allDepts.includes(deptFilter) ? deptFilter : "all";
   // Flattened — every line carries its OWN truck back-reference, so the list is items-first; a
   // truck with nothing loaded contributes no rows to this (nothing to show "about" an empty truck
   // in an items list). allLines is the UNFILTERED flat list — used below for the top-level empty
@@ -36,10 +60,52 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // 2026-11-24: the old check read the grouped `manifest`, which still counts an empty truck as one
   // entry, so the panel rendered a blank page instead of either empty-state message).
   const allLines = manifest.flatMap(({ truck, lines }) => lines.map((ln) => ({ ...ln, truck })));
+  // Every item id Studio's build needs for this event, summed across every function, against how
+  // much of it has actually gone out on ANY truck OR arrived by inter-event transfer — whatever's
+  // needed and genuinely never accounted for by either path is the gap this feature surfaces. A
+  // partly-loaded item (some qty loaded, just short of what's needed) is NOT caught here — that's a
+  // real gap this screen still doesn't show (regression review, 2026-11-25); the per-line "Short"
+  // badge below only compares what's RECEIVED against what's LOADED, never against what's NEEDED.
+  const neededByInvId = new Map(); // invId -> { qty, dept }
+  fnItems.forEach((it) => {
+    if (!it?.invId || !(Number(it.qty) > 0)) return;
+    const invId = String(it.invId);
+    const cur = neededByInvId.get(invId) || { qty: 0, dept: it.dept || "" };
+    cur.qty += Number(it.qty) || 0;
+    neededByInvId.set(invId, cur);
+  });
+  const loadedByInvId = new Map();
+  allLines.forEach((ln) => { if (ln.invId) loadedByInvId.set(String(ln.invId), (loadedByInvId.get(String(ln.invId)) || 0) + Number(ln.planned || 0) + Number(ln.extra || 0)); });
+  // Same-day reuse from another event (incomingTransfersFor) never rides on one of THIS event's own
+  // trucks, so it was never going to show up in allLines above — without counting it too, an item
+  // genuinely arriving this way would wrongly read "need N · arriving 0 · short N" right next to the
+  // very transfer line (below) that says otherwise (regression review, 2026-11-25).
+  transfers.forEach((t) => { if (t.invId) loadedByInvId.set(String(t.invId), (loadedByInvId.get(String(t.invId)) || 0) + (Number(t.qty) || 0)); });
+  const missingItems = [...neededByInvId.entries()]
+    .filter(([invId]) => !(loadedByInvId.get(invId) > 0))
+    .map(([invId, { qty, dept }]) => {
+      // The LIVE inventory category, not the snapshot `dept` saved onto this item the first time
+      // Studio ever synced it (regression review, 2026-11-25: that snapshot is never refreshed by a
+      // later category edit) — and WITHOUT settings.categoryDepartments, matching how
+      // DepartmentOpsTab.jsx's own catToDept(cat) calls resolve a truck line's department (no admin-
+      // override config there either), so a missing item lands under the same chip a dept head
+      // already sees it under everywhere else.
+      const inv = (inventory || []).find((i) => String(i.id) === invId);
+      return { invId, qty, dept: catToDept(inv?.cat || inv?.category || dept), ...labelForLoadKey("inv:" + invId, inventory) };
+    })
+    .sort((a, b) => String(a.label || "").localeCompare(String(b.label || "")) || String(a.dept || "").localeCompare(String(b.dept || "")));
+
+  const allDepts = [...new Set([...manifest.flatMap((m) => m.lines.map((l) => l.dept)), ...transfers.map((t) => t.fromDept), ...missingItems.map((m) => m.dept)])].filter(Boolean).sort();
+  // Falls back to "all" the instant the picked department doesn't exist on THIS event (switching to
+  // a different event in the picker above doesn't remount this panel, so a stale filter from the
+  // last event — one this event may not even have — would otherwise hide every item here with no
+  // obvious reason why, same for a department's last line simply being removed while looking at it).
+  const activeFilter = deptFilter === "all" || allDepts.includes(deptFilter) ? deptFilter : "all";
   const flatLines = allLines
     .filter((ln) => activeFilter === "all" || ln.dept === activeFilter)
     .sort((a, b) => String(a.label || "").localeCompare(String(b.label || "")) || String(a.dept || "").localeCompare(String(b.dept || "")));
   const visibleTransfers = activeFilter === "all" ? transfers : transfers.filter((t) => t.fromDept === activeFilter);
+  const visibleMissing = missingItems.filter((m) => activeFilter === "all" || m.dept === activeFilter);
   // Post-event actuals lock (lib/ims/actualsLock.js) — every write this panel makes is a receiving
   // actual, so once locked the whole panel is read-only.
   const lock = actualsLockState(sel, settings);
@@ -68,7 +134,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // usable on a locked event.
   const canEdit = mode === "actual" && !lock.locked && canSiteEdit;
 
-  if (allLines.length === 0 && transfers.length === 0) {
+  if (allLines.length === 0 && transfers.length === 0 && missingItems.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-100 p-8 text-center text-sm text-gray-400">
         {hasUnmigratedLegacyTrucks(sel)
@@ -77,6 +143,16 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
       </div>
     );
   }
+  // Nothing loaded on any truck at all, but Studio's build says items ARE needed — the exact "if
+  // they dont load any item, i see none in the receiving tab" gap this feature closes. Surfacing the
+  // missing list automatically here (not just leaving a toggle the supervisor has to discover) means
+  // this screen is never a dead end when dept ops simply hasn't loaded anything yet. Same logic one
+  // level down: a department filter can hide every LOADED line for that department while that same
+  // department still has its own missing items — without this, the empty-state message below would
+  // read as "X is fine", with the real gap sitting invisible behind an off toggle (regression review,
+  // 2026-11-25).
+  const effectiveShowMissing = showMissing || (allLines.length === 0 && missingItems.length > 0)
+    || (activeFilter !== "all" && flatLines.length === 0 && visibleMissing.length > 0);
 
   return (
     <div className="space-y-3">
@@ -90,17 +166,53 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           👁 View only — your access to Site doesn't include editing
         </div>
       )}
-      {allDepts.length > 0 && (
+      {(allDepts.length > 0 || missingItems.length > 0) && (
         <div className="flex gap-1.5 flex-wrap">
-          <button onClick={() => setDeptFilter("all")}
-            className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (activeFilter === "all" ? "bg-gray-900 text-white border-transparent" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50")}>
-            All departments
-          </button>
-          {allDepts.map((d) => (
-            <button key={d} onClick={() => setDeptFilter(d)}
-              className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (activeFilter === d ? "bg-gray-900 text-white border-transparent" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50")}>
-              {DEPT_ICON[d] || ""} {d}
+          {allDepts.length > 0 && (
+            <>
+              <button onClick={() => setDeptFilter("all")}
+                className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (activeFilter === "all" ? "bg-gray-900 text-white border-transparent" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50")}>
+                All departments
+              </button>
+              {allDepts.map((d) => (
+                <button key={d} onClick={() => setDeptFilter(d)}
+                  className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (activeFilter === d ? "bg-gray-900 text-white border-transparent" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50")}>
+                  {DEPT_ICON[d] || ""} {d}
+                </button>
+              ))}
+            </>
+          )}
+          {/* What Studio's build needs that's never gone out on ANY truck at all (owner ask
+              2026-11-25) — a separate toggle, not folded into the department chips above, since it's
+              a different question ("what's missing") from "which department's loaded items do I want
+              to see". Auto-on (and un-clickable off) when nothing is loaded at all — see
+              effectiveShowMissing above. */}
+          {missingItems.length > 0 && (
+            <button onClick={() => setShowMissing((v) => !v)} disabled={allLines.length === 0}
+              className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors disabled:cursor-default " + (effectiveShowMissing ? "bg-red-600 text-white border-transparent" : "bg-white text-red-600 border-red-200 hover:bg-red-50")}>
+              ⚠ Not loaded ({missingItems.length})
             </button>
+          )}
+        </div>
+      )}
+      {/* Mirrors DepartmentOpsTab.jsx's own "Receiving — sources per item" shortfall row (its ops-side
+          counterpart) — same need/arriving/short line, same "No truck assigned yet." subtitle, so a
+          supervisor reading this screen and a dept head reading theirs see the same shape for the
+          same kind of gap (owner ask 2026-11-25, shown by screenshot of that exact reference). */}
+      {effectiveShowMissing && visibleMissing.length > 0 && (
+        <div className="bg-rose-50 rounded-xl overflow-hidden divide-y divide-rose-100">
+          <div className="px-4 py-2.5 bg-rose-100/70 text-sm font-bold text-rose-800">⚠ Not loaded on any truck yet</div>
+          {visibleMissing.map((m) => (
+            <div key={m.invId} className="px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2.5 min-w-0">
+                {m.photo ? <img src={thumbUrl(m.photo, 32)} loading="lazy" alt="" className="w-8 h-8 rounded object-cover border border-rose-100 shrink-0" /> : <div className="w-8 h-8 rounded bg-rose-100 flex items-center justify-center text-rose-300 text-xs shrink-0">📦</div>}
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-sky-800 truncate">{m.label}</div>
+                  <div className="text-[11px] text-gray-400 mt-0.5">No truck assigned yet.</div>
+                </div>
+              </div>
+              <div className="text-[12px] font-bold text-red-600 shrink-0 text-right">need {Math.round(m.qty * 100) / 100} · arriving 0 · short {Math.round(m.qty * 100) / 100}</div>
+            </div>
           ))}
         </div>
       )}
@@ -108,7 +220,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           genuinely has nothing to receive yet, and the panel's own top-level empty state (manifest
           and transfers both empty) already covers that; this message must never replace the
           transfers list below when an event has transfers but no trucks at all. */}
-      {activeFilter !== "all" && flatLines.length === 0 && (
+      {activeFilter !== "all" && flatLines.length === 0 && !(effectiveShowMissing && visibleMissing.length > 0) && (
         <div className="bg-white rounded-xl border border-gray-100 p-6 text-center text-sm text-gray-400">
           Nothing for {activeFilter} on any truck for this event.
         </div>
