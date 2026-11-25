@@ -5571,9 +5571,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   const left = hasReturn ? blockedItems.filter(it => unroutedQty(it) > 0).length : 0;
                   const returnTxt = !hasReturn ? "nothing to route" : left ? n(left, "item") + " left to route" : "all routed";
                   return { k: "truck", also: ["dism"], icon: "🚚", title: "Trucks & dismantle", sub: (
-                    <span className="block space-y-0.5">
-                      <span className="flex items-baseline gap-1.5"><span className="shrink-0 w-12 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{"Going"}</span><span>{goingTxt}</span></span>
-                      <span className="flex items-baseline gap-1.5"><span className="shrink-0 w-12 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{"Dismantle"}</span><span className={left ? "text-amber-700 font-semibold" : ""}>{returnTxt}</span></span>
+                    // a two-column grid: the label column is as wide as its longest word ("DISMANTLE" ran into its text in a fixed 3rem)
+                    <span className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-2 gap-y-0.5">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 whitespace-nowrap">{"Going"}</span><span>{goingTxt}</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 whitespace-nowrap">{"Dismantle"}</span><span className={left ? "text-amber-700 font-semibold" : ""}>{returnTxt}</span>
                     </span>
                   ) };
                 })(),
