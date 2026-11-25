@@ -2683,8 +2683,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // One truck open at a time: opening another closes the last, so the next truck's header is on
   // screen at once instead of below a screen of the previous truck's items.
   const [openTruck, setOpenTruck] = useState(null);
-  // Per-trip "add an item not from Build" picker state — keyed by trip id, { sub, invId, qty }.
-  const [addPicker, setAddPicker] = useState({});
+  // "Add an item not in this deal" opens in a modal (owner ask 2026-11-25) - its sub-category chips ran three rows across every
+  // open truck. { truckId, tripId, title, sub, invId, qty, q, added } while open.
+  const [addItemModal, setAddItemModal] = useState(null);
   // Which ONE trip is showing for a given truck (owner ask, 2026-11-23: tabs, not every trip
   // stacked one after another - a truck with several trips used to grow the page's own scroll with
   // each one added). Keyed by truck id -> trip id; falls back to the truck's first trip below
@@ -7175,51 +7176,13 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                 item, so a spare panel or an outside-the-deal extra can still ride on a
                                 truck and still show up on its challan. Hidden once this trip is locked -
                                 it already left, there's nothing left to add to it. */}
-                            {!locked && (
-                            <div className="rounded-lg ring-1 ring-dashed ring-gray-300 p-2.5 space-y-2">
-                              <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Add an item not in this deal</div>
-                              <div className="flex flex-wrap gap-1.5">
-                                {[...deptInventoryBySub.keys()].sort().map(s => {
-                                  const on = addPicker[trip.id]?.sub === s;
-                                  return (
-                                    <button key={s} type="button" onClick={() => setAddPicker(p => ({ ...p, [trip.id]: on ? null : { sub: s, invId: "", qty: 1 } }))} aria-pressed={on}
-                                      className={"px-2.5 py-1 rounded-full text-[11px] font-medium ring-1 transition-colors " + (on ? "bg-blue-600 text-white ring-blue-600" : "bg-white text-gray-700 ring-gray-200 hover:bg-gray-50")}>
-                                      {s}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                              {/* Picked by a thumbnail grid, not a name-only dropdown (owner ask, 2026-11-22) -
-                                  a sub-category can hold several near-identical-sounding items, and the photo
-                                  is how the floor actually tells them apart. */}
-                              {addPicker[trip.id]?.sub && (
-                                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-64 overflow-y-auto p-1 rounded-lg bg-gray-50">
-                                  {(deptInventoryBySub.get(addPicker[trip.id].sub) || []).map(i => {
-                                    const on = addPicker[trip.id]?.invId === i.id;
-                                    const ph = i.img || (Array.isArray(i.photoUrls) && i.photoUrls[0]) || "";
-                                    return (
-                                      <button key={i.id} type="button" onClick={() => setAddPicker(p => ({ ...p, [trip.id]: { ...p[trip.id], invId: i.id } }))} aria-pressed={on}
-                                        className={"flex flex-col items-center gap-1 p-1.5 rounded-lg ring-1 bg-white transition-colors " + (on ? "ring-blue-400 ring-2" : "ring-gray-200 hover:bg-gray-50")}>
-                                        {ph ? <img src={thumbUrl(ph, 112)} loading="lazy" decoding="async" alt="" className="w-full aspect-square rounded-md object-cover" onError={e => { e.target.style.display = "none"; }} />
-                                          : <div className="w-full aspect-square rounded-md bg-gray-100 flex items-center justify-center text-gray-300 text-2xl">📦</div>}
-                                        <span className="w-full text-[10.5px] text-gray-700 text-center leading-snug line-clamp-2" title={i.name}>{i.name}</span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                              {addPicker[trip.id]?.invId && (
-                                <div className="flex items-center gap-2">
-                                  <input type="number" min="1" value={addPicker[trip.id]?.qty ?? 1} onChange={e => setAddPicker(p => ({ ...p, [trip.id]: { ...p[trip.id], qty: e.target.value } }))} aria-label="Quantity to add"
-                                    className="h-8 w-16 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                                  <button onClick={() => {
-                                    const pick = addPicker[trip.id];
-                                    const inv = (deptInventoryBySub.get(pick.sub) || []).find(i => i.id === pick.invId);
-                                    if (inv) { addTripCustomItem(t.id, trip.id, inv, pick.qty); setAddPicker(p => ({ ...p, [trip.id]: null })); }
-                                  }} className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold">+ Add</button>
-                                </div>
-                              )}
-                            </div>
+                            {/* one button; the sub-category chips, the photo grid and the qty open in a modal (owner ask 2026-11-25) */}
+                            {!locked && deptInventoryBySub.size > 0 && (
+                              <button type="button"
+                                onClick={() => setAddItemModal({ truckId: t.id, tripId: trip.id, title: `Truck ${truckNumById.get(t.id)}${t.trips.length > 1 ? ` · Trip ${tripI + 1}` : ""}`, sub: "", invId: "", qty: 1, q: "", added: [] })}
+                                className="w-full h-9 inline-flex items-center justify-center gap-1.5 rounded-lg ring-1 ring-dashed ring-gray-300 text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-50 transition-colors">
+                                <span aria-hidden="true" className="text-sm leading-none">+</span> {"Add an item not in this deal"}
+                              </button>
                             )}
                             {/* Already-added ad-hoc items stay visible (and on the challan) once a trip
                                 locks - just no longer editable, same as everything else on it. */}
@@ -8375,6 +8338,95 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         </div>,
         document.body
       )}
+      {/* ── ADD AN ITEM NOT IN THIS DEAL ── (owner ask 2026-11-25: a modal, not three rows of chips inside every truck) search or
+          pick a sub-category, pick the item by its photo, the qty, Add - it stays open so several can go on one after another;
+          what was added shows at its top. Same writer as before (addTripCustomItem), so the trip lock / truck-details gate apply. */}
+      {addItemModal && createPortal((() => {
+        const m = addItemModal;
+        const set = (patch) => setAddItemModal(x => (x ? { ...x, ...patch } : x));
+        const close = () => setAddItemModal(null);
+        const subs = [...deptInventoryBySub.keys()].sort();
+        const q = String(m.q || "").trim().toLowerCase();
+        // a search looks through every sub-category; otherwise the chosen sub-category's items
+        const items = q
+          ? subs.flatMap(s => (deptInventoryBySub.get(s) || []).map(i => ({ ...i, _sub: s }))).filter(i => String(i.name || "").toLowerCase().includes(q))
+          : m.sub ? (deptInventoryBySub.get(m.sub) || []).map(i => ({ ...i, _sub: m.sub })) : [];
+        const picked = m.invId ? items.find(i => i.id === m.invId) || subs.flatMap(s => deptInventoryBySub.get(s) || []).find(i => i.id === m.invId) : null;
+        const qtyOk = Number(m.qty) > 0;
+        const add = () => {
+          if (!picked || !qtyOk) return;
+          addTripCustomItem(m.truckId, m.tripId, picked, m.qty);
+          set({ invId: "", qty: 1, added: [...(m.added || []), `${picked.name} ×${Number(m.qty)}`] });
+        };
+        return (
+          <div data-hi-scope onClick={close} onKeyDown={e => { if (e.key === "Escape") close(); }} className="fixed inset-0 z-[9999] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div role="dialog" aria-modal="true" aria-label="Add an item not in this deal" onClick={e => e.stopPropagation()}
+              className="bg-white w-full sm:w-[min(760px,100%)] max-h-[92vh] sm:max-h-[88vh] flex flex-col overflow-hidden rounded-t-2xl sm:rounded-2xl shadow-2xl">
+              <div className="px-4 sm:px-5 py-3.5 border-b border-gray-100 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-semibold text-gray-900">{"Add an item not in this deal"}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{m.title} · {"goes on this trip and its challan"}</p>
+                </div>
+                <button type="button" onClick={close} aria-label="Close" className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-800 hover:bg-gray-100">
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
+                </button>
+              </div>
+              <div className="px-4 sm:px-5 pt-3 pb-2 space-y-2.5 border-b border-gray-100">
+                {m.added?.length > 0 && (
+                  <div className="rounded-lg bg-emerald-50 ring-1 ring-emerald-200 px-3 py-1.5 text-xs text-emerald-800">✓ {"Added"}: {m.added.join(", ")}</div>
+                )}
+                <input autoFocus value={m.q} onChange={e => set({ q: e.target.value, invId: "" })} placeholder="Search items…"
+                  className="w-full h-9 rounded-lg bg-white ring-1 ring-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                {!q && (
+                  <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                    {subs.map(s => {
+                      const on = m.sub === s;
+                      return (
+                        <button key={s} type="button" onClick={() => set({ sub: on ? "" : s, invId: "" })} aria-pressed={on}
+                          className={"px-2.5 py-1 rounded-full text-[11px] font-medium ring-1 transition-colors " + (on ? "bg-blue-600 text-white ring-blue-600" : "bg-white text-gray-700 ring-gray-200 hover:bg-gray-50")}>
+                          {s}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              {/* the photo grid - a sub-category can hold several near-identical names; the photo is how the floor tells them apart */}
+              <div className="flex-1 min-h-[160px] overflow-y-auto px-4 sm:px-5 py-3 bg-gray-50">
+                {items.length > 0 ? (
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                    {items.map(i => {
+                      const on = m.invId === i.id;
+                      const ph = i.img || (Array.isArray(i.photoUrls) && i.photoUrls[0]) || "";
+                      return (
+                        <button key={i.id} type="button" onClick={() => set({ invId: on ? "" : i.id })} aria-pressed={on}
+                          className={"flex flex-col items-center gap-1 p-1.5 rounded-lg bg-white transition-colors " + (on ? "ring-2 ring-blue-500" : "ring-1 ring-gray-200 hover:bg-gray-50")}>
+                          {ph ? <img src={thumbUrl(ph, 112)} loading="lazy" decoding="async" alt="" className="w-full aspect-square rounded-md object-cover" onError={e => { e.target.style.display = "none"; }} />
+                            : <div className="w-full aspect-square rounded-md bg-gray-100 flex items-center justify-center text-gray-300 text-2xl">📦</div>}
+                          <span className="w-full text-[10.5px] text-gray-700 text-center leading-snug line-clamp-2" title={i.name}>{i.name}</span>
+                          {q && <span className="w-full text-[9.5px] text-gray-400 text-center truncate">{i._sub}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="h-full min-h-[140px] flex items-center justify-center text-xs text-gray-400 text-center px-6">
+                    {q ? "No item matches this search." : "Pick a sub-category above, or search."}
+                  </div>
+                )}
+              </div>
+              <div className="px-4 sm:px-5 py-3 border-t border-gray-100 flex items-center gap-2">
+                <div className="min-w-0 flex-1 text-xs text-gray-600 truncate">{picked ? <b className="text-gray-900">{picked.name}</b> : <span className="text-gray-400">{"No item picked"}</span>}</div>
+                <input type="number" min="1" value={m.qty ?? 1} onChange={e => set({ qty: e.target.value })} onKeyDown={e => { if (e.key === "Enter") add(); }} aria-label="Quantity to add" disabled={!picked}
+                  className="h-9 w-16 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50" />
+                <button type="button" onClick={add} disabled={!picked || !qtyOk}
+                  className="h-9 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors">+ {"Add"}</button>
+                <button type="button" onClick={close} className="h-9 px-3 rounded-lg bg-white ring-1 ring-gray-200 hover:bg-gray-50 text-xs font-semibold text-gray-700">{"Done"}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })(), document.body)}
       {/* A fabric colour, large — a 14px square is enough to tell colours apart, not to match a bolt against. */}
       {/* 🔁 Mandi swap — what was bought instead of a flower the mandi did not have (saveMandiSwap). */}
       {mandiSwap && mandiRows[mandiSwap.i] && createPortal((() => {
