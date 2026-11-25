@@ -161,19 +161,23 @@ const normSizes = (trussInv) => {
 // an expected path).
 export const platformFloorsFromParts = (parts) => (Array.isArray(parts) ? parts : []).map((pt) => {
   const label = [pt?.zone, pt?.fn].filter(Boolean).join(" · ");
+  const fnIdx = pt?.fnIdx;
   let L = Number(pt?.floorL), W = Number(pt?.floorW), copies = Math.round(Number(pt?.copies)) || 1;
   if (!(L > 0 && W > 0)) {
     const m = /^\s*(\d+(?:\.\d+)?)\s*[×x]\s*(\d+(?:\.\d+)?)(?:\s*[×x]\s*(\d+))?\s*$/i.exec(String(pt?.dims || ""));
     if (m) { L = +m[1]; W = +m[2]; copies = m[3] ? +m[3] : 1; }
   }
   const sqft = Number(pt?.qty) || 0;
-  if (L > 0 && W > 0 && (sqft <= 0 || Math.abs(L * W * copies - sqft) <= 0.5)) return { L, W, copies: Math.max(1, copies), label };
-  return { sqft, label };
+  if (L > 0 && W > 0 && (sqft <= 0 || Math.abs(L * W * copies - sqft) <= 0.5)) return { L, W, copies: Math.max(1, copies), label, fnIdx };
+  return { sqft, label, fnIdx };
 });
 
 // One call's input, normalised to one entry PER PHYSICAL FLOOR (a floor with `copies: 3` becomes
 // three separate floor entries — a piece can't be split across two different floors, and each must
 // round/tile on its own; stock is still one pool shared and drawn down across all of them, in order).
+// `fnIdx` rides along (when the caller's entry carries one) purely so platformPullPlan can attribute
+// each committed piece back to the function it was pulled for (its own `byFn` on the aggregate pieces
+// list) — it plays no part in the tiling/stock-sharing itself, which stays whole-call, in order.
 const normFloors = (input) => {
   const out = [];
   (Array.isArray(input) ? input : [input]).forEach((entry) => {
@@ -186,11 +190,11 @@ const normFloors = (input) => {
     const L = Number(entry.L), W = Number(entry.W);
     if (L > 0 && W > 0) {
       const copies = Math.max(1, Math.round(Number(entry.copies)) || 1);
-      for (let k = 0; k < copies; k++) out.push({ sqft: L * W, hasDims: true, L, W, lIn: toIn(L), wIn: toIn(W), copy: k + 1, copies, label: entry.label || "" });
+      for (let k = 0; k < copies; k++) out.push({ sqft: L * W, hasDims: true, L, W, lIn: toIn(L), wIn: toIn(W), copy: k + 1, copies, label: entry.label || "", fnIdx: entry.fnIdx });
       return;
     }
     const sqft = Math.max(0, Number(entry.sqft ?? entry.qty) || 0);
-    if (sqft > PIECE_EPS) out.push({ sqft, hasDims: false, label: entry.label || "" });
+    if (sqft > PIECE_EPS) out.push({ sqft, hasDims: false, label: entry.label || "", fnIdx: entry.fnIdx });
   });
   return out;
 };
@@ -398,7 +402,14 @@ const commit = (fpCount, poolRows, stockLeft, groupStockByTKey, allowOver) => {
 // size" (which wasted sqft whenever a different, still-stocked size would have finished the job with
 // less overage, or simply didn't exist as a smaller option at all).
 const bestFitTopUp = (rem, rowsWithStock) => {
-  const sorted = [...rowsWithStock].sort((a, b) => b.sqftPerPiece - a.sqftPerPiece);
+  // Stock as a tie-break (not just sqftPerPiece) when two rows share a footprint (same thickness
+  // group, different material - e.g. Wood 8×4×4" and Iron 8×4×4") - otherwise a tie falls back to
+  // raw config-array order, which can hand a fallback piece to a near-empty row while a still-
+  // plentiful one of the identical size sits unused (owner report, 2026-11-25: BTR's sqft-fallback
+  // piece landed on Iron with 80 left while Wood still had 110, splitting one floor across two
+  // materials for no reason). Mirrors commit()'s own per-row stock tie-break above, so both of this
+  // file's "which concrete row absorbs this piece" decisions agree.
+  const sorted = [...rowsWithStock].sort((a, b) => b.sqftPerPiece - a.sqftPerPiece || (b.stock || 0) - (a.stock || 0));
   let best = null, nodes = 0;
   const dfs = (i, total, qty) => {
     if (++nodes > TOPUP_NODE_CAP) return;
@@ -425,7 +436,9 @@ const bestFitTopUp = (rem, rowsWithStock) => {
 // shortfall — if even the best-fit search can't finish it from real stock — land on the single
 // least-wasteful row, flagged overStock, rather than reporting nothing.
 const greedyTopUp = (need, rows, stockLeft, allowOver) => {
-  const sorted = [...rows].sort((a, b) => b.sqftPerPiece - a.sqftPerPiece);
+  // Same stock tie-break as bestFitTopUp/commit (see bestFitTopUp's own comment) - the largest-first
+  // floored pass below must also prefer the row with more left when two tie on sqftPerPiece.
+  const sorted = [...rows].sort((a, b) => b.sqftPerPiece - a.sqftPerPiece || (stockLeft.get(b._row) || 0) - (stockLeft.get(a._row) || 0));
   const used = new Map();
   let remaining = need;
   sorted.forEach((r) => {
@@ -495,8 +508,16 @@ export const platformPullPlan = (input, trussInv) => {
     if (!bySize.has(r._row)) bySize.set(r._row, { id: r.id, label: r.label, lengthFt: r.lengthFt, widthFt: r.widthFt, material: r.material, sqftPerPiece: r.sqftPerPiece, qty: 0, ...(r.thicknessIn != null ? { thicknessIn: r.thicknessIn } : {}) });
     return bySize.get(r._row);
   };
-  const applyRowQty = (rowQty, rowOver) => {
-    rowQty.forEach((n, _row) => { entryFor(sizes.find((s) => s._row === _row)).qty += n; });
+  // `fnIdx`: which function this particular floor's pieces were pulled for (when known) — accumulated
+  // per piece size as `byFn[fnIdx]`, a plain piece count, so a caller that needs "how many of THIS
+  // size came from THIS function" (e.g. Dept Ops' Inventory Blocked, scoping one function's own
+  // share) doesn't have to re-derive it from the floors list itself.
+  const applyRowQty = (rowQty, rowOver, fnIdx) => {
+    rowQty.forEach((n, _row) => {
+      const e = entryFor(sizes.find((s) => s._row === _row));
+      e.qty += n;
+      if (fnIdx != null) { e.byFn = e.byFn || {}; e.byFn[fnIdx] = (e.byFn[fnIdx] || 0) + n; }
+    });
     rowOver.forEach((n, _row) => { const e = entryFor(sizes.find((s) => s._row === _row)); e.overStock = (e.overStock || 0) + n; });
   };
   const groupList = [...groups.entries()].map(([tKey, rows]) => ({ tKey, rows }));
@@ -533,7 +554,7 @@ export const platformPullPlan = (input, trussInv) => {
       }
     }
     chosen.dry.forEach((v, k) => stockLeft.set(k, v));
-    applyRowQty(chosen.res.used, chosen.res.overStock);
+    applyRowQty(chosen.res.used, chosen.res.overStock, floor.fnIdx);
     const tUsed = thicknessesOf([...chosen.res.used.keys()]);
     const mixed = tUsed.length > 1;
     if (mixed) flags.mixedThickness = true;
@@ -547,7 +568,7 @@ export const platformPullPlan = (input, trussInv) => {
     };
   };
 
-  const floorRecordFromCommit = (fit, r, poolRows, overAllowed) => {
+  const floorRecordFromCommit = (fit, r, poolRows, overAllowed, fnIdx) => {
     // Dry copy, merged back only on success — the solver guarantees T1-T4's fpCount never exceeds
     // availOf for these same rows, and T5 always passes overAllowed:true, so commit should never
     // actually throw here; this just means a THROW (an absurd/huge dimension, a future bug) can never
@@ -555,7 +576,7 @@ export const platformPullPlan = (input, trussInv) => {
     const dry = new Map(stockLeft);
     const { rowQty, rowOver } = commit(r.fpCount, poolRows, dry, groupStockMap(), overAllowed);
     dry.forEach((v, k) => stockLeft.set(k, v));
-    applyRowQty(rowQty, rowOver);
+    applyRowQty(rowQty, rowOver, fnIdx);
     const tUsed = thicknessesOf([...rowQty.keys()]);
     const mixed = tUsed.length > 1;
     if (mixed) flags.mixedThickness = true;
@@ -582,7 +603,7 @@ export const platformPullPlan = (input, trussInv) => {
     if (globalBudget.left <= 0) return sqftRecord(floor, "unresolved", true);
 
     const finish = (fit, r, poolRows, overAllowed) => {
-      const c = floorRecordFromCommit(fit, r, poolRows, overAllowed);
+      const c = floorRecordFromCommit(fit, r, poolRows, overAllowed, floor.fnIdx);
       const rec = {
         label: floor.label, L: floor.L, W: floor.W, copy: floor.copy, copies: floor.copies, sqft: floor.sqft,
         fit, builtL: Math.round((c.built[0] / 12) * 100) / 100, builtW: Math.round((c.built[1] / 12) * 100) / 100,
@@ -605,7 +626,7 @@ export const platformPullPlan = (input, trussInv) => {
         const dry = new Map(stockLeft);
         const { rowQty, rowOver } = commit(lastResult.fpCount, lastResult.poolRows, dry, groupStockMap(), false);
         dry.forEach((v, k) => stockLeft.set(k, v));
-        applyRowQty(rowQty, rowOver);
+        applyRowQty(rowQty, rowOver, floor.fnIdx);
         const tUsed = thicknessesOf([...rowQty.keys()]);
         if (tUsed.length > 1) flags.mixedThickness = true;
         return {

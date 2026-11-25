@@ -21,13 +21,6 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // department on it, but a dept head who only wants to confirm THEIR OWN pieces arrived (owner ask
   // 2026-11-24) needs to cut the noise of every other department's lines on the same shared truck.
   const [deptFilter, setDeptFilter] = useState("all");
-  // Shows what Studio's own build says this event needs but nobody has put on ANY truck at all yet
-  // (owner report 2026-11-25: "if they dont load any item, i see none in the receiving tab" — this
-  // panel is built entirely from what IS on a truck, so an item dept ops simply forgot to load was
-  // invisible here with no hint anything was missing). Off by default — most of the time every item
-  // dept heads need IS loaded, and nobody wants a long "needed" list in front of the real receiving
-  // work every time this screen opens.
-  const [showMissing, setShowMissing] = useState(false);
   // The `functions` table's own `data.items` (per function, invId+qty, FOC items already split into
   // a separate `focItems` array by Studio's own reconcile — see StudioApp.jsx's reconcileSoldInventoryBlocks
   // — so nothing here needs to re-exclude them) is the same flat, kit-walked quantity list Studio
@@ -39,7 +32,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
     // Cleared IMMEDIATELY on every event switch, not just once the new fetch resolves — this panel
     // isn't remounted when the event picker above changes `sel` (regression review, 2026-11-25): on
     // a slow connection, the previous event's needs would otherwise still be showing against the
-    // NEW event's (empty) trucks, forcing the missing section open with the wrong items in it.
+    // NEW event's (empty) trucks, putting the wrong items' need/arriving/short rows into the list.
     setFnItems([]);
     if (!sel?.id) return;
     supabase.from("functions").select("data").contains("data", { eventOrderId: sel.id }).then(({ data, error }) => {
@@ -61,11 +54,10 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // entry, so the panel rendered a blank page instead of either empty-state message).
   const allLines = manifest.flatMap(({ truck, lines }) => lines.map((ln) => ({ ...ln, truck })));
   // Every item id Studio's build needs for this event, summed across every function, against how
-  // much of it has actually gone out on ANY truck OR arrived by inter-event transfer — whatever's
-  // needed and genuinely never accounted for by either path is the gap this feature surfaces. A
-  // partly-loaded item (some qty loaded, just short of what's needed) is NOT caught here — that's a
-  // real gap this screen still doesn't show (regression review, 2026-11-25); the per-line "Short"
-  // badge below only compares what's RECEIVED against what's LOADED, never against what's NEEDED.
+  // much of it has actually gone out on ANY truck OR arrived by inter-event transfer. Feeds both the
+  // "never loaded at all" rows below AND the need/arriving/short line now shown on every loaded line
+  // too (owner ask 2026-11-25) — so a PARTLY-loaded item (some qty loaded, short of what's needed)
+  // is visible right on its own truck line, not just the fully-unloaded case this started as.
   const neededByInvId = new Map(); // invId -> { qty, dept }
   fnItems.forEach((it) => {
     if (!it?.invId || !(Number(it.qty) > 0)) return;
@@ -143,16 +135,16 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
       </div>
     );
   }
-  // Nothing loaded on any truck at all, but Studio's build says items ARE needed — the exact "if
-  // they dont load any item, i see none in the receiving tab" gap this feature closes. Surfacing the
-  // missing list automatically here (not just leaving a toggle the supervisor has to discover) means
-  // this screen is never a dead end when dept ops simply hasn't loaded anything yet. Same logic one
-  // level down: a department filter can hide every LOADED line for that department while that same
-  // department still has its own missing items — without this, the empty-state message below would
-  // read as "X is fine", with the real gap sitting invisible behind an off toggle (regression review,
-  // 2026-11-25).
-  const effectiveShowMissing = showMissing || (allLines.length === 0 && missingItems.length > 0)
-    || (activeFilter !== "all" && flatLines.length === 0 && visibleMissing.length > 0);
+  // One merged, sorted list — a loaded truck line and a never-loaded item sort together by label/dept
+  // instead of living in two separate sections (owner ask 2026-11-25: no dedicated "not loaded"
+  // pill/section, show it in the list itself).
+  const combinedRows = [
+    ...flatLines.map((ln) => ({ kind: "line", label: ln.label, dept: ln.dept, ln })),
+    ...visibleMissing.map((m) => ({ kind: "missing", label: m.label, dept: m.dept, m })),
+    // Two-key compare (label, then dept), matching flatLines'/missingItems' own sort above — a
+    // single joined "label|dept" string sorts differently under ICU collation (regression review,
+    // 2026-11-25: e.g. "Chair" vs "Chair Cover" can interleave wrongly against the joined form).
+  ].sort((a, b) => String(a.label || "").localeCompare(String(b.label || "")) || String(a.dept || "").localeCompare(String(b.dept || "")));
 
   return (
     <div className="space-y-3">
@@ -166,53 +158,17 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           👁 View only — your access to Site doesn't include editing
         </div>
       )}
-      {(allDepts.length > 0 || missingItems.length > 0) && (
+      {allDepts.length > 0 && (
         <div className="flex gap-1.5 flex-wrap">
-          {allDepts.length > 0 && (
-            <>
-              <button onClick={() => setDeptFilter("all")}
-                className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (activeFilter === "all" ? "bg-gray-900 text-white border-transparent" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50")}>
-                All departments
-              </button>
-              {allDepts.map((d) => (
-                <button key={d} onClick={() => setDeptFilter(d)}
-                  className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (activeFilter === d ? "bg-gray-900 text-white border-transparent" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50")}>
-                  {DEPT_ICON[d] || ""} {d}
-                </button>
-              ))}
-            </>
-          )}
-          {/* What Studio's build needs that's never gone out on ANY truck at all (owner ask
-              2026-11-25) — a separate toggle, not folded into the department chips above, since it's
-              a different question ("what's missing") from "which department's loaded items do I want
-              to see". Auto-on (and un-clickable off) when nothing is loaded at all — see
-              effectiveShowMissing above. */}
-          {missingItems.length > 0 && (
-            <button onClick={() => setShowMissing((v) => !v)} disabled={allLines.length === 0}
-              className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors disabled:cursor-default " + (effectiveShowMissing ? "bg-red-600 text-white border-transparent" : "bg-white text-red-600 border-red-200 hover:bg-red-50")}>
-              ⚠ Not loaded ({missingItems.length})
+          <button onClick={() => setDeptFilter("all")}
+            className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (activeFilter === "all" ? "bg-gray-900 text-white border-transparent" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50")}>
+            All departments
+          </button>
+          {allDepts.map((d) => (
+            <button key={d} onClick={() => setDeptFilter(d)}
+              className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (activeFilter === d ? "bg-gray-900 text-white border-transparent" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50")}>
+              {DEPT_ICON[d] || ""} {d}
             </button>
-          )}
-        </div>
-      )}
-      {/* Mirrors DepartmentOpsTab.jsx's own "Receiving — sources per item" shortfall row (its ops-side
-          counterpart) — same need/arriving/short line, same "No truck assigned yet." subtitle, so a
-          supervisor reading this screen and a dept head reading theirs see the same shape for the
-          same kind of gap (owner ask 2026-11-25, shown by screenshot of that exact reference). */}
-      {effectiveShowMissing && visibleMissing.length > 0 && (
-        <div className="bg-rose-50 rounded-xl overflow-hidden divide-y divide-rose-100">
-          <div className="px-4 py-2.5 bg-rose-100/70 text-sm font-bold text-rose-800">⚠ Not loaded on any truck yet</div>
-          {visibleMissing.map((m) => (
-            <div key={m.invId} className="px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2.5 min-w-0">
-                {m.photo ? <img src={thumbUrl(m.photo, 32)} loading="lazy" alt="" className="w-8 h-8 rounded object-cover border border-rose-100 shrink-0" /> : <div className="w-8 h-8 rounded bg-rose-100 flex items-center justify-center text-rose-300 text-xs shrink-0">📦</div>}
-                <div className="min-w-0">
-                  <div className="text-[13px] font-semibold text-sky-800 truncate">{m.label}</div>
-                  <div className="text-[11px] text-gray-400 mt-0.5">No truck assigned yet.</div>
-                </div>
-              </div>
-              <div className="text-[12px] font-bold text-red-600 shrink-0 text-right">need {Math.round(m.qty * 100) / 100} · arriving 0 · short {Math.round(m.qty * 100) / 100}</div>
-            </div>
           ))}
         </div>
       )}
@@ -220,12 +176,41 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           genuinely has nothing to receive yet, and the panel's own top-level empty state (manifest
           and transfers both empty) already covers that; this message must never replace the
           transfers list below when an event has transfers but no trucks at all. */}
-      {activeFilter !== "all" && flatLines.length === 0 && !(effectiveShowMissing && visibleMissing.length > 0) && (
+      {activeFilter !== "all" && combinedRows.length === 0 && visibleTransfers.length === 0 && (
         <div className="bg-white rounded-xl border border-gray-100 p-6 text-center text-sm text-gray-400">
-          Nothing for {activeFilter} on any truck for this event.
+          Nothing for {activeFilter} for this event yet.
         </div>
       )}
-      {flatLines.map((ln) => {
+      {combinedRows.map((row) => {
+        // What Studio's build needs that's never gone out on ANY truck at all (owner ask
+        // 2026-11-25), merged directly into the same list every loaded item renders in — not a
+        // separate toggle/section (owner ask 2026-11-25, follow-up: "show me in the list itself").
+        if (row.kind === "missing") {
+          const m = row.m;
+          return (
+            <div key={"missing|" + m.invId} className="bg-white rounded-xl border border-gray-100 shadow-[0_2px_4px_rgba(15,23,42,0.06)] px-4 py-3">
+              <div className="flex items-center gap-2.5">
+                {m.photo ? <img src={thumbUrl(m.photo, 40)} loading="lazy" alt="" className="w-10 h-10 rounded-lg object-cover border border-gray-100 shrink-0" /> : <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center text-gray-300 text-sm shrink-0">📦</div>}
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13.5px] font-semibold text-gray-900 truncate flex items-center gap-1.5 flex-wrap">
+                    {m.label}
+                    <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">Not loaded</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap mt-0.5 text-[10.5px]">
+                    <span className="font-bold text-gray-500 bg-gray-50 rounded px-1.5 py-0.5">{DEPT_ICON[m.dept] || ""} {m.dept}</span>
+                    <span className="text-gray-500">No truck assigned yet.</span>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-2 ml-[50px]">
+                <span className="inline-block text-[13px] font-bold px-2.5 py-1 rounded-lg bg-red-50 text-red-700">
+                  need {Math.round(m.qty * 100) / 100} · arriving 0 · short {Math.round(m.qty * 100) / 100}
+                </span>
+              </div>
+            </div>
+          );
+        }
+        const ln = row.ln;
         const r = lineReceipt(receiving.trucks[ln.truck.id], ln.dept, ln.key);
         const got = r.got != null ? r.got : (ln.planned + ln.extra);
         const short = mode === "actual" && Number(got) < ln.planned + ln.extra;
@@ -236,6 +221,14 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         const confirmed = !r.flag && !short && (r.got != null || !!receiving.trucks[ln.truck.id]?.confirmedAt);
         const fk = flagKeyOf(ln.truck.id, ln);
         const showIssue = canEdit && (flaggingKey === fk || !!r.flag);
+        // Against what Studio's build NEEDS overall (not what's on THIS line/truck) — same figure a
+        // multi-truck split of the same item shows on every one of its lines, matching how the
+        // merged "missing" rows above state it (owner ask 2026-11-25: "for each item, even it is
+        // loaded or not loaded" — so a line loaded beyond/outside what Studio's build asked for
+        // still gets a "need 0" row, not silence). Only skipped for a custom/named truck line with
+        // no inventory id at all — there's no Studio quantity to compare it against.
+        const need = ln.invId ? (neededByInvId.get(String(ln.invId))?.qty ?? 0) : null;
+        const arriving = ln.invId ? (loadedByInvId.get(String(ln.invId)) || 0) : null;
         return (
           <div key={ln.truck.id + "|" + ln.dept + "|" + ln.key} className="bg-white rounded-xl border border-gray-100 shadow-[0_2px_4px_rgba(15,23,42,0.06)] px-4 py-3">
             <div className="flex items-center gap-2.5">
@@ -261,6 +254,13 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                     <a href={`tel:${ln.truck.phone}`} className="font-semibold text-blue-600 hover:underline">📞 Call{ln.truck.driver ? ` ${ln.truck.driver}` : ""}</a>
                   )}
                 </div>
+                {need != null && (
+                  <div className="mt-1.5">
+                    <span className={"inline-block text-[13px] font-bold px-2.5 py-1 rounded-lg " + (Math.max(0, need - arriving) > 0 ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700")}>
+                      need {Math.round(need * 100) / 100} · arriving {Math.round(arriving * 100) / 100} · short {Math.round(Math.max(0, need - arriving) * 100) / 100}
+                    </span>
+                  </div>
+                )}
               </div>
               {canEdit ? (
                 <div className="flex items-center gap-1.5 shrink-0">

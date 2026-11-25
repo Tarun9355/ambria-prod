@@ -546,6 +546,35 @@ describe("platformPullPlan / platformPiecesFor — best-fit remainder, fix #2 (o
       { id: "a", label: "8×4ft", lengthFt: 8, widthFt: 4, material: "wood", sqftPerPiece: 32, qty: 4 },
     ]);
   });
+
+  // Regression (owner report, kanishk_test deal, 2026-11-25): commit()'s own row-pick already broke a
+  // footprint tie by remaining stock, but greedyTopUp's largest-first pass and bestFitTopUp's DFS only
+  // sorted by sqftPerPiece - two rows sharing a footprint (same thickness, different material - Wood
+  // and Iron both 8×4×4") fell back to raw config-array order on the tie, so a floor that dropped to
+  // the sqft-only path (BTR 10×10, which can't tile 8×4 pieces even oversize) could get handed to a
+  // near-empty material while a still-plentiful row of the IDENTICAL size sat unused - splitting one
+  // deal's pull across two materials for no real reason.
+  it("prefers the row with more stock left when two rows tie on sqftPerPiece (same footprint, different material)", () => {
+    const trussInv = { platforms: [
+      { id: "iron", label: "8x4x4in Iron", lengthFt: 8, widthFt: 4, stock: 80, material: "Iron", thicknessIn: 4 },
+      { id: "wood", label: "8x4x4in Wood", lengthFt: 8, widthFt: 4, stock: 110, material: "Wood", thicknessIn: 4 },
+    ] };
+    const out = platformPiecesFor(100, trussInv);
+    expect(out.find((p) => p.id === "wood")?.qty).toBe(4);
+    expect(out.find((p) => p.id === "iron")).toBeUndefined();
+  });
+
+  it("the full kanishk_test shape: four exact-tileable 16×20 floors plus one unresolved 10×10 (BTR) stay single-material", () => {
+    const trussInv = { platforms: [
+      { id: "iron", label: "8x4x4in Iron", lengthFt: 8, widthFt: 4, stock: 80, material: "Iron", thicknessIn: 4 },
+      { id: "wood", label: "8x4x4in Wood", lengthFt: 8, widthFt: 4, stock: 150, material: "Wood", thicknessIn: 4 },
+    ] };
+    const floors = [{ L: 16, W: 20 }, { L: 16, W: 20 }, { L: 16, W: 20 }, { L: 16, W: 20 }, { L: 10, W: 10 }];
+    const plan = platformPullPlan(floors, trussInv);
+    expect(plan.pieces.find((p) => p.id === "iron")).toBeUndefined();
+    expect(plan.pieces.find((p) => p.id === "wood")?.qty).toBe(44); // 4×10 (the 16×20 floors) + 4 (BTR's sqft fallback)
+    expect(plan.floors[4].tilingUnresolved).toBe(true); // BTR 10×10 can't tile 8×4 even oversize
+  });
 });
 
 describe("platformPullPlan — stock sharing across copies of the same floor", () => {
@@ -593,6 +622,36 @@ describe("platformPullPlan / platformPiecesFor — back-compat and safety", () =
     expect(Date.now() - t0).toBeLessThan(5000);
     expect(plan.floors).toHaveLength(30);
     expect(plan.floors.every((f) => !!f.fit)).toBe(true);
+  });
+});
+
+describe("platformPullPlan — per-piece byFn attribution (owner ask, 2026-11-26: Inventory Blocked splits Platform into one row per piece type, each tracking its own per-function share)", () => {
+  it("a piece's byFn totals each function's own share of that piece type, pooled across one shared stock call", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood", thicknessIn: 4 }] };
+    const parts = [
+      { zone: "Haldi stage", fn: "Haldi", fnIdx: 0, floorL: 16, floorW: 24, copies: 1, qty: 384 },
+      { zone: "Wedding stage", fn: "Wedding", fnIdx: 1, floorL: 20, floorW: 32, copies: 1, qty: 640 },
+    ];
+    const plan = platformPullPlan(platformFloorsFromParts(parts), trussInv);
+    const piece = plan.pieces[0];
+    expect(piece.qty).toBe(32);
+    expect(piece.byFn).toEqual({ 0: 12, 1: 20 });
+  });
+
+  it("byFn totals still sum to the piece's own qty even when thickness ends up mixed across functions", () => {
+    const trussInv = { platforms: [
+      { id: "t4", lengthFt: 8, widthFt: 4, stock: 6, material: "Iron", thicknessIn: 4 },
+      { id: "t25", lengthFt: 8, widthFt: 4, stock: 6, material: "Iron", thicknessIn: 2.5 },
+    ] };
+    const plan = platformPullPlan([{ L: 16, W: 24, copies: 1, label: "Stage", fnIdx: 0 }], trussInv);
+    const sumByFn = plan.pieces.reduce((s, p) => s + (p.byFn?.[0] || 0), 0);
+    const sumQty = plan.pieces.reduce((s, p) => s + p.qty, 0);
+    expect(sumByFn).toBe(sumQty);
+  });
+
+  it("no byFn field at all when no floor carries an fnIdx (bare sqft calls, the back-compat path)", () => {
+    const trussInv = { platforms: [{ id: "a", lengthFt: 8, widthFt: 4, stock: 100, material: "Wood" }] };
+    expect(platformPullPlan(100, trussInv).pieces[0].byFn).toBeUndefined();
   });
 });
 
