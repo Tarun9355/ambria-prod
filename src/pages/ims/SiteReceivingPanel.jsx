@@ -202,8 +202,10 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                   </div>
                 </div>
               </div>
-              <div className="mt-1.5 ml-[50px] text-[11px] font-semibold text-red-600">
-                need {Math.round(m.qty * 100) / 100} · arriving 0 · short {Math.round(m.qty * 100) / 100}
+              <div className="mt-2 ml-[50px]">
+                <span className="inline-block text-[13px] font-bold px-2.5 py-1 rounded-lg bg-red-50 text-red-700">
+                  need {Math.round(m.qty * 100) / 100} · arriving 0 · short {Math.round(m.qty * 100) / 100}
+                </span>
               </div>
             </div>
           );
@@ -253,10 +255,9 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                   )}
                 </div>
                 {need != null && (
-                  <div className="mt-0.5 text-[10.5px] font-semibold text-gray-500">
-                    need {Math.round(need * 100) / 100} · arriving {Math.round(arriving * 100) / 100} · short{" "}
-                    <span className={Math.max(0, need - arriving) > 0 ? "text-red-600" : "text-emerald-600"}>
-                      {Math.round(Math.max(0, need - arriving) * 100) / 100}
+                  <div className="mt-1.5">
+                    <span className={"inline-block text-[13px] font-bold px-2.5 py-1 rounded-lg " + (Math.max(0, need - arriving) > 0 ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700")}>
+                      need {Math.round(need * 100) / 100} · arriving {Math.round(arriving * 100) / 100} · short {Math.round(Math.max(0, need - arriving) * 100) / 100}
                     </span>
                   </div>
                 )}
