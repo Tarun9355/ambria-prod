@@ -6817,21 +6817,21 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   <div role="alert" className="ui-reveal-in mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-red-50 ring-1 ring-red-300 px-3 py-2">
                     <span aria-hidden="true" className="text-base leading-none">🚫</span>
                     <div className="min-w-[13rem] flex-1 text-xs text-red-900">
-                      <b>Fill Truck {truckSpaceHint.no}'s details first</b> — {truckSpaceHint.missing.join(", ")} {truckSpaceHint.missing.length === 1 ? "is" : "are"} missing. A new truck can be added once they are in.
+                      <b>{`Truck ${truckSpaceHint.no}`}</b>{" — "}{"Fill these first:"} {truckSpaceHint.missing.join(", ")}{". "}{"A new truck can be added after that."}
                     </div>
                     <button onClick={() => truckRefs.current[truckSpaceHint.id]?.scrollIntoView({ behavior: "smooth", block: "center" })}
-                      className="h-7 px-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold transition-colors">Go to Truck {truckSpaceHint.no}</button>
+                      className="h-7 px-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold transition-colors">{"Open truck"}</button>
                   </div>
                 )}
                 {truckSpaceHint && truckSpaceHint.kind !== "details" && (
                   <div role="status" className="ui-reveal-in mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-amber-50 ring-1 ring-amber-300 px-3 py-2">
                     <span aria-hidden="true" className="text-base leading-none">⚠️</span>
                     <div className="min-w-[13rem] flex-1 text-xs text-amber-900">
-                      <b>Truck {truckSpaceHint.no} still has space</b> (about {truckSpaceHint.freePct}% free) — fill it before adding another truck.
+                      <b>{`Truck ${truckSpaceHint.no}`} {"still has space"}</b>{` (~${truckSpaceHint.freePct}%)`}{" — "}{"fill it before adding another truck."}
                     </div>
                     <div className="flex items-center gap-2">
                       <button onClick={() => { setTruckSpaceHint(null); truckRefs.current[truckSpaceHint.id]?.scrollIntoView({ behavior: "smooth", block: "center" }); }}
-                        className="h-7 px-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold transition-colors">Fill Truck {truckSpaceHint.no}</button>
+                        className="h-7 px-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold transition-colors">{"Fill this truck"}</button>
                       <button onClick={addTruckNow}
                         className="h-7 px-2.5 rounded-lg bg-white ring-1 ring-amber-300 hover:bg-amber-100 text-amber-800 text-xs font-semibold transition-colors">Add new truck anyway</button>
                     </div>
@@ -6913,7 +6913,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       })}
                     </div>
                     <div className="flex items-center justify-end gap-2">
-                      {miss.length > 0 && <span className="mr-auto text-[11px] text-red-600">Fill {miss.join(", ")} to save</span>}
+                      {miss.length > 0 && <span className="mr-auto text-[11px] text-red-600">{"Fill these first:"} {miss.join(", ")}</span>}
                       <button type="button" onClick={() => setTruckDraft(null)} className="h-8 px-3 rounded-lg bg-white ring-1 ring-gray-200 hover:bg-gray-50 text-xs font-semibold text-gray-700 transition-colors">Cancel</button>
                       <button type="button" onClick={saveTruckDraft} disabled={miss.length > 0}
                         className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors">Save truck</button>
@@ -7074,7 +7074,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             {gated && (
                               <div role="alert" className="flex items-start gap-2 rounded-lg bg-red-50 ring-1 ring-red-200 px-3 py-2 text-xs text-red-800">
                                 <span aria-hidden="true" className="leading-none mt-px">🚫</span>
-                                <span><b>Fill {truckMissing(t).join(", ")} above first.</b> Nothing can be loaded on this truck until its vehicle no., driver and phone are in.</span>
+                                {/* pieces the Hindi screen (lib/ims/uiHindiMore) finds whole: "Fill these first:" + the fields, never a
+                                    sentence with the field names inside it (it read "फ़िल्ल ... अबोव फ़र्स्ट") */}
+                                <span><b>{"Fill these first:"} {truckMissing(t).join(", ")}</b>{" — "}{"nothing can be loaded on this truck until they are filled."}</span>
                               </div>
                             )}
                             {/* ── WHO FILLS THIS TRIP ── the bar itself is in the header above; opened, it
