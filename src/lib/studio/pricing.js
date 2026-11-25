@@ -1040,6 +1040,8 @@ export const calcZoneFabric = (zc, trussInv, drapeDensity) => {
     // the running feet of the walls actually masked in fabric, for ONE truss (Deal Check's "RFT ÷ 13" note) - before
     // trussQty / No-fabric; maskingPieces above is the answer
     maskRft: Math.round(rft * 100) / 100,
+    maskExtPieces: extMaskingPieces * fab, // the front extension's own wall pieces, per truss (added on top of maskRft ÷ 13)
+    maskQty: qty,                          // × this many trusses
     lizaKg: Math.round(lizaKg * qty * fab * lz * 100) / 100,            // total (wrap + ceiling)
     lizaWrapKg: Math.round(lizaWrapKg * qty * fab * lz * 100) / 100,    // wrap component (always present for any truss)
     lizaCeilingKg: Math.round(lizaCeilingKg * qty * fab * lz * 100) / 100, // ceiling component (Full Box only, else 0)

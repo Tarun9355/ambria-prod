@@ -2518,8 +2518,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // "+ Add truck" (see truckSpaceHint above): the first truck still loading with room left is filled first
   const addTruck = () => {
     const roomy = eventTruckList
-      .map((t, i) => ({ t, no: i + 1, used: truckOccs[t.id]?.used || 0 }))
-      .find(x => (x.t.status || "loading") === "loading" && x.used < 0.999);
+      .map((t, i) => ({ t, no: i + 1, used: truckOccs[t.id]?.used || 0, unknown: truckOccs[t.id]?.unknown || 0 }))
+      // a truck carrying items with no truck capacity set can't be judged (its fill reads low), so it is never the one named
+      .find(x => (x.t.status || "loading") === "loading" && x.used < 0.999 && !x.unknown);
     if (!roomy) { addTruckNow(); return; }
     setTruckSpaceHint({ id: roomy.t.id, no: roomy.no, freePct: Math.max(1, Math.round((1 - roomy.used) * 100)) });
     setOpenTruck(roomy.t.id);
@@ -2527,6 +2528,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     clearTimeout(truckSpaceTimer.current);
     truckSpaceTimer.current = setTimeout(() => setTruckSpaceHint(null), 12000); // the light fades on its own
   };
+  // the note goes as soon as its truck is gone, full, or no longer loading - it named a truck that had already left
+  const hintTruck = truckSpaceHint ? eventTruckList.find(t => t.id === truckSpaceHint.id) : null;
+  const hintStale = !!truckSpaceHint && (!hintTruck || (hintTruck.status || "loading") !== "loading" || (truckOccs[hintTruck.id]?.used || 0) >= 0.999);
+  useEffect(() => { if (hintStale) setTruckSpaceHint(null); }, [hintStale]);
   const DEPT_BAR = { Furniture: "bg-amber-500", Floral: "bg-pink-500", Structure: "bg-slate-500", Tenting: "bg-emerald-500", Transport: "bg-orange-500", Lighting: "bg-yellow-400", Fabric: "bg-violet-500" };
   // A short "Can be made" line on a challan says where its units come from - "600 = 500 in stock + 100 outsourced" - so the
   // challan does not read as if all 600 were ours or all made in-house. Empty for every other line.
