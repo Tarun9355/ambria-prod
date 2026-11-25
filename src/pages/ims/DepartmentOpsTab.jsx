@@ -2709,32 +2709,31 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // fill na kre tab tak na register ho") "+ Add truck" opens a form at the top - pick from the fleet or type vehicle no.,
   // driver and a 10-digit phone - and the truck is saved (registered for every department) only on "Save truck". Nothing
   // half-filled is ever saved, so no truck sits on the event with no number or driver.
-  const [truckDraft, setTruckDraft] = useState(null); // { vehicle, driver, phone } while the form is open
-  const truckDraftRef = useRef(null);
-  const [draftFlash, setDraftFlash] = useState(0); // bumped to light the open form again
+  // Every click of "+ Add truck" adds another New truck form (owner 2026-11-25: "ek hi baar add hora hai" - several trucks
+  // are often set up together); each is saved on its own "Save truck", newest at the top.
+  const [truckDrafts, setTruckDrafts] = useState([]); // [{ key, vehicle, driver, phone }]
+  const draftRefs = useRef({});
+  const [draftFlash, setDraftFlash] = useState(null); // the key of the form just added, lit for a moment
   const addTruckNow = () => {
     setTruckSpaceHint(null);
-    if (truckDraft) {
-      // the form is already open (owner 2026-11-25: "ek hi baar add hora hai" - a second click did nothing you could see):
-      // bring it into view, light it and put the cursor in its first empty box - save this truck, then add the next
-      setDraftFlash(n => n + 1);
-      setTimeout(() => {
-        const el = truckDraftRef.current;
-        el?.scrollIntoView({ behavior: "smooth", block: "center" });
-        const box = el && [...el.querySelectorAll("input")].find(i => !i.value);
-        (box || el?.querySelector("input"))?.focus({ preventScroll: true });
-      }, 0);
-      return;
-    }
-    setTruckDraft({ vehicle: "", driver: "", phone: "" });
+    const key = "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    setTruckDrafts(list => [{ key, vehicle: "", driver: "", phone: "" }, ...list]);
+    setDraftFlash(key);
+    setTimeout(() => {
+      const el = draftRefs.current[key];
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      el?.querySelector("input")?.focus({ preventScroll: true });
+    }, 0);
   };
   useEffect(() => {
     if (!draftFlash) return;
-    const t = setTimeout(() => setDraftFlash(0), 1400);
+    const t = setTimeout(() => setDraftFlash(null), 1400);
     return () => clearTimeout(t);
   }, [draftFlash]);
-  const saveTruckDraft = () => {
-    const d = truckDraft;
+  const setTruckDraftField = (key, patch) => setTruckDrafts(list => list.map(d => d.key === key ? { ...d, ...patch } : d));
+  const dropDraft = (key) => setTruckDrafts(list => list.filter(d => d.key !== key));
+  const saveTruckDraft = (key) => {
+    const d = truckDrafts.find(x => x.key === key);
     if (!d) return;
     const clean = { vehicle: String(d.vehicle || "").trim(), driver: String(d.driver || "").trim(), phone: String(d.phone || "").replace(/\D/g, "").slice(0, 10) };
     if (truckMissingOf(clean).length) return;
@@ -2745,9 +2744,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // New truck goes to the top (owner ask, 2026-11-23) - the one you just added, about to be
     // filled in, is what you want in front of you, not a new "Truck N" at the bottom of a long list.
     saveEventTrucks(list => [{ id, ...clean, trips: [newTrip()] }, ...list]);
-    setTruckDraft(null);
+    dropDraft(key);
     setOpenTruck(id);
   };
+  // forms belong to the event on screen - another event starts with none
+  useEffect(() => { setTruckDrafts([]); }, [selId]);
   // Refuses to give a truck the same vehicle number as ANOTHER truck already on this event (owner
   // report, 2026-11-23: users were ending up with two separate truck cards for one real vehicle,
   // via "Pick from fleet" or just retyping its number) - matched the same way eventTruckList's own
@@ -6890,15 +6891,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 </div>
               )}
               {/* ── NEW TRUCK (a draft until saved) ── vehicle no., driver and phone first; "Save truck" registers it */}
-              {truckDraft && (() => {
+              {truckDrafts.map((truckDraft) => {
+                const dk = truckDraft.key;
                 const miss = truckMissingOf(truckDraft);
-                const onEvent = new Set(eventTruckList.map(t => String(t.vehicle || "").trim().toLowerCase()).filter(Boolean));
+                // vehicles already a truck on this event, or already picked in ANOTHER open form, can't be picked here
+                const onEvent = new Set([...eventTruckList.map(t => t.vehicle), ...truckDrafts.filter(x => x.key !== dk).map(x => x.vehicle)].map(v => String(v || "").trim().toLowerCase()).filter(Boolean));
                 return (
-                  <div ref={truckDraftRef} className={"ui-reveal-in mx-3 sm:mx-4 mt-3 rounded-xl ring-2 p-3 space-y-2.5 scroll-mt-4 transition-[background-color,box-shadow] duration-500 " + (draftFlash ? "ring-blue-500 bg-blue-100/70 shadow-[0_0_0_5px_rgba(59,130,246,0.25)]" : "ring-blue-300 bg-blue-50/40")}>
+                  <div key={dk} ref={el => { draftRefs.current[dk] = el; }} className={"ui-reveal-in mx-3 sm:mx-4 mt-3 rounded-xl ring-2 p-3 space-y-2.5 scroll-mt-4 transition-[background-color,box-shadow] duration-500 " + (draftFlash === dk ? "ring-blue-500 bg-blue-100/70 shadow-[0_0_0_5px_rgba(59,130,246,0.25)]" : "ring-blue-300 bg-blue-50/40")}>
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                       <span className="shrink-0 text-sm font-semibold text-gray-900">New truck</span>
                       <span className="text-[11px] text-gray-500">saved once vehicle no., driver and phone are filled</span>
-                      {draftFlash > 0 && <span className="text-[11px] font-semibold text-blue-700">{"Save this truck first, then add the next one."}</span>}
                     </div>
                     {eventTrucks.length > 0 && (
                       <div>
@@ -6906,10 +6908,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         <div className="mt-1 flex flex-wrap gap-1.5">
                           {eventTrucks.map(f => {
                             const on = truckDraft.vehicle === f.vehicle && truckDraft.driver === f.driver;
-                            const used = onEvent.has(String(f.vehicle || "").trim().toLowerCase()); // already a truck on this event: add a trip there
+                            const used = !on && onEvent.has(String(f.vehicle || "").trim().toLowerCase()); // already a truck / in another form: one vehicle, one truck
                             return (
-                              <button key={f.id} type="button" disabled={used} title={used ? "Already a truck on this event — open it and use “+ Add trip”" : undefined}
-                                onClick={() => setTruckDraft({ vehicle: f.vehicle || "", driver: f.driver || "", phone: String(f.phone || "").replace(/\D/g, "").slice(0, 10) })} aria-pressed={on}
+                              <button key={f.id} type="button" disabled={used} title={used ? "Already a truck on this event (or in another new truck) — use “+ Add trip” on that truck" : undefined}
+                                onClick={() => setTruckDraftField(dk, { vehicle: f.vehicle || "", driver: f.driver || "", phone: String(f.phone || "").replace(/\D/g, "").slice(0, 10) })} aria-pressed={on}
                                 className={"text-left px-2.5 py-1.5 rounded-lg ring-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed " + (on ? "bg-blue-50 ring-blue-300" : "bg-white ring-gray-200 hover:bg-gray-50")}>
                                 <span className={"block text-[11px] font-semibold tabular-nums " + (on ? "text-blue-700" : "text-gray-800")}>{f.vehicle || f.driver}</span>
                                 {f.vehicle && f.driver && <span className={"block text-[10px] capitalize " + (on ? "text-blue-600" : "text-gray-500")}>{used ? "on this event" : String(f.driver).toLowerCase()}</span>}
@@ -6925,9 +6927,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         return (
                           <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}>
                             <label className={"block text-[10px] font-semibold uppercase tracking-[0.06em] " + (m ? "text-red-600" : "text-gray-400")}>{l}{m && " *"}</label>
-                            <input value={truckDraft[k] || ""} autoFocus={k === "vehicle"}
-                              onChange={e => { const v = k === "phone" ? phone10(e.target.value) : e.target.value; setTruckDraft(d => ({ ...d, [k]: v })); }}
-                              onKeyDown={e => { if (e.key === "Enter") saveTruckDraft(); if (e.key === "Escape") setTruckDraft(null); }}
+                            <input value={truckDraft[k] || ""}
+                              onChange={e => { const v = k === "phone" ? phone10(e.target.value) : e.target.value; setTruckDraftField(dk, { [k]: v }); }}
+                              onKeyDown={e => { if (e.key === "Enter") saveTruckDraft(dk); if (e.key === "Escape") dropDraft(dk); }}
                               {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })}
                               className={"mt-1 w-full h-9 rounded-lg bg-white ring-1 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 " + (m ? "ring-red-300" : "ring-gray-200")} />
                           </div>
@@ -6936,15 +6938,14 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     </div>
                     <div className="flex items-center justify-end gap-2">
                       {miss.length > 0 && <span className="mr-auto text-[11px] text-red-600">{"Fill these first:"} {miss.join(", ")}</span>}
-                      <button type="button" onClick={() => setTruckDraft(null)} className="h-8 px-3 rounded-lg bg-white ring-1 ring-gray-200 hover:bg-gray-50 text-xs font-semibold text-gray-700 transition-colors">Cancel</button>
-                      <button type="button" onClick={saveTruckDraft} disabled={miss.length > 0}
+                      <button type="button" onClick={() => dropDraft(dk)} className="h-8 px-3 rounded-lg bg-white ring-1 ring-gray-200 hover:bg-gray-50 text-xs font-semibold text-gray-700 transition-colors">Cancel</button>
+                      <button type="button" onClick={() => saveTruckDraft(dk)} disabled={miss.length > 0}
                         className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors">Save truck</button>
                     </div>
                   </div>
                 );
-              })()}
-              {/* Trucks */}
-              {trucks.length === 0 && truckDraft ? null : trucks.length === 0 ? (
+              })}              {/* Trucks */}
+              {trucks.length === 0 && truckDrafts.length ? null : trucks.length === 0 ? (
                 /* An empty state that says what to do, not a sentence floating in white space. */
                 <div className="px-4 py-7 flex flex-col items-center text-center">
                   <span aria-hidden="true" className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-lg leading-none">🚛</span>
