@@ -19,6 +19,11 @@ describe("labelForLoadKey", () => {
   it("title-cases an 'nm:' key (an item with no inventory id, e.g. a folded fabric colour)", () => {
     expect(labelForLoadKey("nm:liza drape - ivory", inventory)).toEqual({ label: "Liza Drape - Ivory", photo: "", invId: null });
   });
+
+  it("splits an 'nm:<name>|<photo>' key (Carpet New's own colour photo) into a clean label and the photo", () => {
+    expect(labelForLoadKey("nm:carpet new|https://res.cloudinary.com/red.jpg", inventory))
+      .toEqual({ label: "Carpet New", photo: "https://res.cloudinary.com/red.jpg", invId: null });
+  });
 });
 
 describe("truckManifest", () => {

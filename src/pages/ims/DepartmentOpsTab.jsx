@@ -2538,7 +2538,15 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const flatDeptItems = (d) => d === dept ? blockedItems : blockedFlatOf(blockedGroupedOf(d, swapInfoOf(d)), d);
   // What a truck load is keyed by. The list ids above are positions in Deal Check's snapshot and move
   // when it is re-synced, so a load saved on the event is keyed by the inventory id (or the name).
-  const truckKey = (it) => it.invId ? "inv:" + it.invId + (it.kitOf ? "@" + String(it.kitOf).toLowerCase() : "") : "nm:" + String(it.name || "").trim().toLowerCase();
+  // An item with no invId (Carpet New, a print job, an unmatched Production/Buying item…) has no
+  // real stock identity, so two of them sharing a name are not necessarily the same truck load —
+  // the dedup fix above (DealCheckOverlay's merge key) now keeps a Carpet New floor's own colour
+  // photo on its own line rather than folding it into whichever same-named line loaded first, and a
+  // truck key of just the name would immediately undo that by sending both colours' loads to one
+  // key. The photo only joins the key when there is one, so every item that never carried one
+  // (Platform, Batta, Fabric, Print, Truss pieces — all pushed with photo:"") keeps the exact key a
+  // truck load was already saved under.
+  const truckKey = (it) => it.invId ? "inv:" + it.invId + (it.kitOf ? "@" + String(it.kitOf).toLowerCase() : "") : "nm:" + String(it.name || "").trim().toLowerCase() + (it.photo ? "|" + it.photo : "");
   // Per department: itemKey → { perUnit (share of one truck per piece), perTruck, basis } or null.
   const truckShares = useMemo(() => {
     const out = {};
