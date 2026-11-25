@@ -365,7 +365,13 @@ describe("RISKS (documented behaviour, not a spec violation of the listed tiles)
     const none = render(base({ onsiteOnly: true, eventOrders: [ev("E1", "MineWedding", 3, {})] }), F_SEL);
     expect(none).not.toContain("— unassigned —");
     expect(none).not.toContain("👷 Site Supervisor");
-    expect(withSup(false)).toContain("— unassigned —"); // control: the Department Head still picks the supervisor
+    // control: the Department Head still picks the supervisor - the name as text with a "Change" button (the picker opens on tap)
+    expect(withSup(false)).toContain("Raju");
+    expect(withSup(false)).toContain(">Change</button>");
+    expect(withSup(false)).not.toContain("<select");
+    const noneHead = render(base({ onsiteOnly: false, eventOrders: [ev("E1", "MineWedding", 3, {})] }), F_SEL);
+    expect(noneHead).toContain("— unassigned —");
+    expect(noneHead).toContain(">+ Add supervisor</button>");
   });
   it("Paint department: the planning panel (PaintDeptView with its ₹ paint costs) is not gated on onsiteOnly", () => {
     const paintSrc = SRC.match(/\{dept === PAINT && <PaintDeptView[^\n]*/)[0];

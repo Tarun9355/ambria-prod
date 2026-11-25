@@ -911,6 +911,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // Admin → Transport's venue list (one settings row): the venue's standard genset counts, for the Lighting book's Power page
   // on an event synced before Studio sent each function's own gensets (lib/ims/gensetPlan). Read with truckCap below.
   const [trVenues, setTrVenues] = useState([]);
+  const [supPickFor, setSupPickFor] = useState(null); // the event whose Site Supervisor picker is open (header: name + "Add supervisor" button)
   const [opsViewRaw, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
   // onsiteOnly (Planning sub-tab "Dept Ops: Site Supervisor view only"): the department bar stays; each department shows its Inventory blocked tile (no income, changes, fixed-venue stock or other planning tiles) AND the on-site cards (Receiving, Dismantle & routing, On-site crew) together, with the Department Head / Site Supervisor switch hidden
   const opsView = opsViewRaw;
@@ -5280,25 +5281,40 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       <span className="font-medium text-gray-700 truncate">{sel.siteSupervisorName || vs.map((s) => s.name).join(", ")}</span>
                     </div>
                   ) : null) : (
-                  <div className="mt-1 flex items-center gap-1.5 text-xs">
+                  /* The name as plain text and an "Add supervisor" button beside it; the picker shows only once that is tapped
+                     (owner ask 2026-11-25) - a dropdown always on screen read as a form field to fill in. */
+                  <div className="mt-1 flex items-center gap-1.5 text-xs min-w-0">
                     <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
-                    <select
-                      value={sel.siteSupervisorId || ""}
-                      disabled={!canEditPlanning}
-                      title={canEditPlanning ? undefined : "View only — your access to Planning doesn't include editing"}
-                      onChange={(e) => {
-                        if (!canEditPlanning) return;
-                        const id = e.target.value;
-                        const sup = supervisors.find((s) => s.id === id);
-                        setEventOrders((prev) => prev.map((ev) => ev.id === sel.id ? { ...ev, siteSupervisorId: id || null, siteSupervisorName: sup?.name || null, siteSupervisorPhone: sup?.phone || null } : ev));
-                      }}
-                      className="min-w-0 border border-gray-200 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-700 bg-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <option value="">{vs.length ? vs.map((s) => s.name).join(", ") : "— unassigned —"}</option>
-                      {supervisors.filter((s) => s.active !== false || s.id === sel.siteSupervisorId).map((s) => (
-                        <option key={s.id} value={s.id}>{s.name}{s.active === false ? " (inactive)" : ""}</option>
-                      ))}
-                    </select>
+                    {supPickFor === sel.id && canEditPlanning ? (
+                      <select
+                        autoFocus
+                        value={sel.siteSupervisorId || ""}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          const sup = supervisors.find((s) => s.id === id);
+                          setEventOrders((prev) => prev.map((ev) => ev.id === sel.id ? { ...ev, siteSupervisorId: id || null, siteSupervisorName: sup?.name || null, siteSupervisorPhone: sup?.phone || null } : ev));
+                          setSupPickFor(null);
+                        }}
+                        onBlur={() => setSupPickFor(null)}
+                        onKeyDown={(e) => { if (e.key === "Escape") setSupPickFor(null); }}
+                        className="min-w-0 border border-gray-200 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-700 bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200"
+                      >
+                        <option value="">{sel.siteSupervisorId ? "— remove —" : "— choose —"}</option>
+                        {supervisors.filter((s) => s.active !== false || s.id === sel.siteSupervisorId).map((s) => (
+                          <option key={s.id} value={s.id}>{s.name}{s.active === false ? " (inactive)" : ""}</option>
+                        ))}
+                      </select>
+                    ) : (<>
+                      <span className={"truncate " + (sel.siteSupervisorName || vs.length ? "font-medium text-gray-700" : "text-gray-400")}>
+                        {sel.siteSupervisorName || (vs.length ? vs.map((s) => s.name).join(", ") : "— unassigned —")}
+                      </span>
+                      {canEditPlanning && (
+                        <button type="button" onClick={() => setSupPickFor(sel.id)}
+                          className="shrink-0 inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 cursor-pointer transition-colors">
+                          {sel.siteSupervisorId ? "Change" : "+ Add supervisor"}
+                        </button>
+                      )}
+                    </>)}
                   </div>
                   )); })()}
                   {/* Deal value — read-only mirror of Studio's negotiated amount (client_ledger),
