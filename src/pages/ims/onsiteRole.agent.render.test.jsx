@@ -367,8 +367,12 @@ describe("RISKS (documented behaviour, not a spec violation of the listed tiles)
     expect(none).not.toContain("👷 Site Supervisor");
     // control: the Department Head still picks the supervisor - the name as text with a "Change" button (the picker opens on tap)
     expect(withSup(false)).toContain("Raju");
-    expect(withSup(false)).toContain(">Change</button>");
+    expect(withSup(false)).toContain(">+ Add supervisor</button>"); // adds one more, never replaces (owner ask 2026-11-25)
+    expect(withSup(false)).toContain('aria-label="Remove Raju"');
     expect(withSup(false)).not.toContain("<select");
+    const two = render(base({ onsiteOnly: false, eventOrders: [ev("E1", "MineWedding", 3, { extraSupervisors: [{ id: "S1", name: "Raju" }, { id: "S2", name: "Chandan" }] })] }), F_SEL);
+    expect(two).toContain("Raju");
+    expect(two).toContain("Chandan");
     const noneHead = render(base({ onsiteOnly: false, eventOrders: [ev("E1", "MineWedding", 3, {})] }), F_SEL);
     expect(noneHead).toContain("— unassigned —");
     expect(noneHead).toContain(">+ Add supervisor</button>");

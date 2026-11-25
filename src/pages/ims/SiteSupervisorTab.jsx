@@ -8,6 +8,7 @@ import { Modal } from "../../components/ui";
 import SiteReceivingPanel from "./SiteReceivingPanel.jsx";
 import SiteCrewPanel from "./SiteCrewPanel.jsx";
 import SitePdfButton from "./SitePdfButton.jsx";
+import { addedSupervisorsOf } from "../../lib/ims/mySupervisorEvents";
 
 const PICK_KEY = "ambria-ims-site-event";
 const SECTIONS = [
@@ -64,7 +65,7 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
           <button onClick={() => pick("")} className="shrink-0 w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-gray-100 flex items-center justify-center">‹</button>
           <div className="min-w-0 flex-1">
             <div className="text-[16px] font-bold text-gray-900 truncate">{sel.clientName || "Event"}</div>
-            <div className="text-[12px] text-gray-500 mt-0.5">{fnDate(sel) || "no date"} · {venueWithParent(settings, sel.venue) || "—"}{sel.siteSupervisorName ? ` · Supervisor: ${sel.siteSupervisorName}` : ""}</div>
+            <div className="text-[12px] text-gray-500 mt-0.5">{fnDate(sel) || "no date"} · {venueWithParent(settings, sel.venue) || "—"}{addedSupervisorsOf(sel).length ? ` · Supervisor: ${addedSupervisorsOf(sel).map((s) => s.name).join(", ")}` : ""}</div>
           </div>
         </div>
 

@@ -53,7 +53,7 @@ import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActual
 import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeLogs } from "../../lib/ims/recentChanges";
 import { tripsOf } from "../../lib/ims/eventTrucks";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
-import { isMyEvent, supervisorIdsOfUser, fixedAtVenue } from "../../lib/ims/mySupervisorEvents";
+import { isMyEvent, supervisorIdsOfUser, fixedAtVenue, addedSupervisorsOf, withAddedSupervisors } from "../../lib/ims/mySupervisorEvents";
 import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
@@ -4430,7 +4430,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // for an order with none recorded: the dept plan's last editor, else (combined book) the exporting user.
     preparedBy: opts?.combined ? null : (deptData.updatedBy || null),
     // the supervisors fixed at this event's venue(s) (Admin → Supervisors) - on the cover with their number (owner ask 2026-11-18)
-    siteSupervisors: venueSupervisorsOf(sel),
+    // the PDF cover's "Site supervisor": the venue's fixed ones and the ones added on the event
+    siteSupervisors: (() => { const added = addedSupervisorsOf(sel); const ids = new Set(added.map((s) => s.id)); return [...venueSupervisorsOf(sel).filter((s) => !ids.has(s.id)), ...added.map((s) => supervisors.find((r) => r.id === s.id) || s)]; })(),
   }, zoneLabels, logos, opts);
 
   // ── THE DOWNLOAD ──
@@ -5273,50 +5274,64 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       event order (siteSupervisorId/Name/Phone) rather than just an id, so Studio
                       can show who's assigned without fetching the supervisor roster itself. */}
                   {/* the Site-Supervisor-view-only role never picks the event's supervisor: no dropdown (owner ask 2026-11-20), the name only when there is one */}
-                  {/* nobody picked for the event → the venue's fixed supervisor(s) show, just by name (owner ask 2026-11-25) */}
-                  {(() => { const vs = sel.siteSupervisorId || sel.siteSupervisorName ? [] : venueSupervisorsOf(sel); return (
-                  onsiteOnly ? ((sel.siteSupervisorName || vs.length) ? (
-                    <div className="mt-1 flex items-center gap-1.5 text-xs">
-                      <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
-                      <span className="font-medium text-gray-700 truncate">{sel.siteSupervisorName || vs.map((s) => s.name).join(", ")}</span>
-                    </div>
-                  ) : null) : (
-                  /* The name as plain text and an "Add supervisor" button beside it; the picker shows only once that is tapped
-                     (owner ask 2026-11-25) - a dropdown always on screen read as a form field to fill in. */
-                  <div className="mt-1 flex items-center gap-1.5 text-xs min-w-0">
-                    <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
-                    {supPickFor === sel.id && canEditPlanning ? (
-                      <select
-                        autoFocus
-                        value={sel.siteSupervisorId || ""}
-                        onChange={(e) => {
-                          const id = e.target.value;
-                          const sup = supervisors.find((s) => s.id === id);
-                          setEventOrders((prev) => prev.map((ev) => ev.id === sel.id ? { ...ev, siteSupervisorId: id || null, siteSupervisorName: sup?.name || null, siteSupervisorPhone: sup?.phone || null } : ev));
-                          setSupPickFor(null);
-                        }}
-                        onBlur={() => setSupPickFor(null)}
-                        onKeyDown={(e) => { if (e.key === "Escape") setSupPickFor(null); }}
-                        className="min-w-0 border border-gray-200 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-700 bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200"
-                      >
-                        <option value="">{sel.siteSupervisorId ? "— remove —" : "— choose —"}</option>
-                        {supervisors.filter((s) => s.active !== false || s.id === sel.siteSupervisorId).map((s) => (
-                          <option key={s.id} value={s.id}>{s.name}{s.active === false ? " (inactive)" : ""}</option>
+                  {/* The event's supervisors: the ones fixed at its venue (Admin → Settings → Supervisors) and the ones added here -
+                      "+ Add supervisor" adds one more, it never replaces (owner ask 2026-11-25). Names as text; the picker shows only
+                      once the button is tapped; an added one has a × to take it off (a venue's one is changed in Admin). */}
+                  {(() => {
+                    const added = addedSupervisorsOf(sel);
+                    const addedIds = new Set(added.map((s) => s.id).filter((x) => x != null && x !== ""));
+                    const venueSups = venueSupervisorsOf(sel).filter((s) => !addedIds.has(s.id));
+                    const shownIds = new Set([...addedIds, ...venueSups.map((s) => s.id)]);
+                    const saveAdded = (list) => setEventOrders((prev) => prev.map((ev) => ev.id === sel.id ? withAddedSupervisors(ev, list) : ev));
+                    const none = !added.length && !venueSups.length;
+                    if (onsiteOnly) return none ? null : (
+                      <div className="mt-1 flex items-center gap-1.5 text-xs min-w-0">
+                        <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
+                        <span className="font-medium text-gray-700 truncate">{[...venueSups, ...added].map((s) => s.name).join(", ")}</span>
+                      </div>
+                    );
+                    return (
+                      <div className="mt-1 flex items-center gap-1.5 text-xs min-w-0 flex-wrap">
+                        <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
+                        {none && <span className="text-gray-400">— unassigned —</span>}
+                        {venueSups.map((s) => <span key={"v" + s.id} className="font-medium text-gray-700">{s.name}</span>)}
+                        {added.map((s, i) => (
+                          <span key={"a" + (s.id ?? s.name) + i} className="inline-flex items-center gap-0.5 font-medium text-gray-700">
+                            {s.name}
+                            {canEditPlanning && (
+                              <button type="button" aria-label={`Remove ${s.name}`} title="Remove"
+                                onClick={() => saveAdded(added.filter((_, j) => j !== i))}
+                                className="w-4 h-4 inline-flex items-center justify-center rounded text-gray-400 hover:text-red-600 hover:bg-red-50 cursor-pointer leading-none">×</button>
+                            )}
+                          </span>
                         ))}
-                      </select>
-                    ) : (<>
-                      <span className={"truncate " + (sel.siteSupervisorName || vs.length ? "font-medium text-gray-700" : "text-gray-400")}>
-                        {sel.siteSupervisorName || (vs.length ? vs.map((s) => s.name).join(", ") : "— unassigned —")}
-                      </span>
-                      {canEditPlanning && (
-                        <button type="button" onClick={() => setSupPickFor(sel.id)}
-                          className="shrink-0 inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 cursor-pointer transition-colors">
-                          {sel.siteSupervisorId ? "Change" : "+ Add supervisor"}
-                        </button>
-                      )}
-                    </>)}
-                  </div>
-                  )); })()}
+                        {canEditPlanning && (supPickFor === sel.id ? (
+                          <select
+                            autoFocus
+                            value=""
+                            onChange={(e) => {
+                              const sup = supervisors.find((s) => s.id === e.target.value);
+                              if (sup) saveAdded([...added, { id: sup.id, name: sup.name || "", phone: sup.phone || "" }]);
+                              setSupPickFor(null);
+                            }}
+                            onBlur={() => setSupPickFor(null)}
+                            onKeyDown={(e) => { if (e.key === "Escape") setSupPickFor(null); }}
+                            className="min-w-0 border border-gray-200 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-700 bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200"
+                          >
+                            <option value="">— choose —</option>
+                            {supervisors.filter((s) => s.active !== false && !shownIds.has(s.id)).map((s) => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <button type="button" onClick={() => setSupPickFor(sel.id)}
+                            className="shrink-0 inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 cursor-pointer transition-colors">
+                            + Add supervisor
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   {/* Deal value — read-only mirror of Studio's negotiated amount (client_ledger),
                       written whenever Deal Check syncs. It stays frozen once booked by owner decision;
                       "pending" is the live build's drift since booking, shown here so ops sees the same

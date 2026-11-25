@@ -481,8 +481,6 @@ Your login is not on the Site Supervisor list (Admin → Settings → Supervisor
 No functions at your venues this month, and none you are the Site Supervisor of - page to another month. ¦ इस महीने आपके वेन्यू पर कोई फ़ंक्शन नहीं है, और कोई इवेंट आपके नाम पर नहीं - दूसरे महीने पर जाएँ।
 + Add supervisor ¦ + सुपरवाइज़र जोड़ें
 — choose — ¦ — चुनें —
-— remove — ¦ — हटाएँ —
-Change ¦ बदलें
 `;
 
 export const UI_HI_MORE = Object.fromEntries(LIST.split("\n").map(l => l.split(" ¦ ")).filter(p => p.length === 2 && p[0].trim()).map(([en, hi]) => [en.trim(), hi.trim()]));

@@ -32,15 +32,33 @@ export function fixedAtVenue(user, venueName, settings, places, supervisors, inh
   return siteSupervisorsFor(settings, [v], places, supervisors, inhouse).some((s) => samePerson(user, s));
 }
 
-// is this event order one of this login's? Its picked supervisor's id is one of theirs, or - when that supervisor has since left the
-// roster - the name / phone the event kept (siteSupervisorName / siteSupervisorPhone) is theirs.
+// The supervisors added on an event (Dept Ops header "+ Add supervisor"), beside the ones fixed at its venue - several now (owner ask
+// 2026-11-25: adding one adds, it does not replace). Stored as extraSupervisors [{ id, name, phone }]; an event saved before that
+// has just the one siteSupervisorId / Name / Phone, read as a list of one. withAddedSupervisors writes the list and keeps those three
+// fields as its first entry, so every older reader (Studio's summary, the Site page) still shows someone.
+export function addedSupervisorsOf(eo) {
+  if (Array.isArray(eo?.extraSupervisors)) return eo.extraSupervisors.filter((s) => s && ((s.id != null && s.id !== "") || s.name));
+  if ((eo?.siteSupervisorId != null && eo.siteSupervisorId !== "") || eo?.siteSupervisorName) return [{ id: eo.siteSupervisorId ?? null, name: eo.siteSupervisorName || "", phone: eo.siteSupervisorPhone || "" }];
+  return [];
+}
+export function withAddedSupervisors(eo, list) {
+  const l = Array.isArray(list) ? list : [];
+  const f = l[0];
+  return { ...eo, extraSupervisors: l, siteSupervisorId: f?.id ?? null, siteSupervisorName: f?.name || null, siteSupervisorPhone: f?.phone || null };
+}
+
+// is this event order one of this login's? One of its added supervisors' ids is one of theirs, or - when that supervisor has since left
+// the roster - the name / phone the event kept for them is theirs.
 export function isMyEvent(eo, user, supervisors) {
   if (!eo) return false;
-  if (eo.siteSupervisorId != null && eo.siteSupervisorId !== "") {
-    if (supervisorIdsOfUser(user, supervisors).includes(eo.siteSupervisorId)) return true;
-    const onRoster = (Array.isArray(supervisors) ? supervisors : []).some((s) => s && s.id === eo.siteSupervisorId);
-    if (onRoster) return false; // a supervisor on the roster who is somebody else
-  }
-  if (!eo.siteSupervisorName && !eo.siteSupervisorPhone) return false;
-  return samePerson(user, { name: eo.siteSupervisorName, phone: eo.siteSupervisorPhone });
+  const roster = Array.isArray(supervisors) ? supervisors : [];
+  const mine = supervisorIdsOfUser(user, roster);
+  return addedSupervisorsOf(eo).some((s) => {
+    if (s.id != null && s.id !== "") {
+      if (mine.includes(s.id)) return true;
+      if (roster.some((r) => r && r.id === s.id)) return false; // a supervisor on the roster who is somebody else
+    }
+    if (!s.name && !s.phone) return false;
+    return samePerson(user, { name: s.name, phone: s.phone });
+  });
 }
