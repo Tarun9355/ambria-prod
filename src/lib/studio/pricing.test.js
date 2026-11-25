@@ -539,6 +539,24 @@ describe("calcZoneFabric — Wall Masking fabric only for walls masked in fabric
     expect(mixed).toBeLessThan(all);
     expect(mixed).toBeGreaterThan(0);
   });
+
+  // Regression (owner report 2026-11-24): a Full Box's Width field is "W" in zc.dims, Depth is "L"
+  // (StudioBuild.jsx's own ["W","Width"],["L","Depth"] labels) — left/right walls must take the
+  // DEPTH (L), never the WIDTH (W), matching what Build's own wall picker and trussRowCost's masking
+  // ₹ cost already show.
+  it("Full Box: left/right walls take the DEPTH (dims.L), never the WIDTH (dims.W)", () => {
+    const sides = (L) => calcZoneFabric({ dims: { W: 24, L, H: 12 }, trT: "box", mkOn: true, mkT: "fabric", mkWalls: { left: true, right: true } }, trussInv).maskingPieces;
+    // Shrinking ONLY the depth (dims.L, 8 → 2) while the width (dims.W=24) stays fixed must shrink
+    // left/right's own masking piece count — proving they read L, never the untouched W.
+    expect(sides(2)).toBeLessThan(sides(8));
+  });
+
+  it("Full Box: the back wall takes the WIDTH (dims.W), not the DEPTH (dims.L)", () => {
+    const back = (L) => calcZoneFabric({ dims: { W: 24, L, H: 12 }, trT: "box", mkOn: true, mkT: "fabric", mkWalls: { back: true } }, trussInv).maskingPieces;
+    // Changing ONLY the depth (dims.L, 8 vs 20) must not move the back wall's own masking piece
+    // count at all — it never reads L.
+    expect(back(8)).toBe(back(20));
+  });
 });
 
 describe("buildPlatformPlan — platform material (Wood/Iron) is independent of truss material (owner decision, 2026-11-05)", () => {

@@ -28,6 +28,7 @@ import { dcFabricMultOf, trussInvForMaterial, parseFlowerPalette, repeatCatFor }
 import { trussBaseArea } from "../../lib/studio/taxonomy";
 import { isTrussFoc } from "../../lib/studio/foc.js";
 import { resolveBeamSegment, resolvePillarHeight } from "../../lib/ims/trussEngine";
+import { platformPiecesFor, PLATFORM_MATERIAL_LABEL } from "../../lib/ims/platformEngine";
 import { RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_BOX } from "../../lib/studio/brand.js";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
@@ -47,6 +48,7 @@ import { renderDeptBook, loadPdfLibs, loadPdfLogosOnce, isStaleChunk, reloadForU
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
 import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeLogs } from "../../lib/ims/recentChanges";
+import { tripsOf } from "../../lib/ims/eventTrucks";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { isMyEvent, supervisorIdsOfUser, fixedAtVenue } from "../../lib/ims/mySupervisorEvents";
 import { logWrite } from "../../lib/studio/userActions";
@@ -672,7 +674,9 @@ function seedRowsFromFlowers(flowersArr) {
     return { name: f.name, unit: f.unit || "", projQty: Number(f.qty) || 0, projCost: Number(f.cost) || 0, qty: Number(f.qty) || 0, price, colorVariant: f.colorVariant || null, colorPrefs: f.colorPrefs || null };
   });
 }
-function mandiRealTotalOf(rows) { return (Array.isArray(rows) ? rows : []).reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0); }
+// A reuse-transfer row (`reuse: true`) carries a flat signed `amount` (in, +; out, −) instead of
+// qty × price — flowers moved from one function to another, not bought (addReuseTransfer below).
+function mandiRealTotalOf(rows) { return (Array.isArray(rows) ? rows : []).reduce((s, r) => s + (r.reuse ? (Number(r.amount) || 0) : (Number(r.qty) || 0) * (Number(r.price) || 0)), 0); }
 
 // A SINGLE pure function of (deptData, fp) — the department's own saved data and Studio's floral
 // plan — computing every tab, which rows belong to which, and the one grand total every other figure
@@ -1109,7 +1113,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const [actualsPdfBusy, setActualsPdfBusy] = useState(false);
   const [laboursHow, setLaboursHow] = useState({});
   const [trussFabEdit, setTrussFabEdit] = useState(null); // "zoneKey|part" whose fabric colours are being edited in the Truss plan // "type|date" → the carry-over breakdown is open
-  const [challanPdfBusy, setChallanPdfBusy] = useState(null); // id of the truck whose challan PDF is being made
+  const [challanPdfBusy, setChallanPdfBusy] = useState(null); // id of the trip whose challan PDF is being made
   // Fetch the PDF libraries a few seconds after the tab opens, while the page's own files are
   // still the deployed ones — see loadPdfLibs.
   useEffect(() => { const t = setTimeout(() => { loadPdfLibs().catch(() => {}); }, 3000); return () => clearTimeout(t); }, []);
@@ -1157,6 +1161,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return (Array.isArray(c?.colorVariants) ? c.colorVariants : []).filter(v => v && (v.name || v.label));
   };
   const [colourPickRow, setColourPickRow] = useState(null); // index of the mandi row whose colour picker is open
+  const [reusePicker, setReusePicker] = useState({ fromEventId: "", fromFnIdx: "", amount: "" }); // 🔄 reuse-transfer picker — source deal, then its function
 
   const eventDate = (eo) => eo?.functionsDetail?.[0]?.date || eo?.date || eo?.eventDate || "";
   // The event's venue with its property — "Valencia › Poolside", not a bare "Poolside".
@@ -2194,7 +2199,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const mandiShopped = Array.isArray(activeStoredLines);
   // This OPEN TAB's own totals — the editing table's footer below must match the rows actually on
   // screen, never the grand total across every tab (mandiGrandReal/mandiGrandTotal, further below).
-  const mandiActualReal = mandiRows.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0);
+  const mandiActualReal = mandiRealTotalOf(mandiRows);
   // Real flowers only (owner ask 2026-11-11): artificial bunches come out of our own stock, so they are not an actual spend - they
   // show, with their kg and ₹, under Inventory blocked instead. (Was real + the artificial projection.)
   const mandiActualTotal = mandiActualReal;
@@ -2251,6 +2256,125 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // A planned flower removed on purpose leaves a hidden marker, or the live plan would add it straight back.
     saveMandi(Number(row.projQty) > 0 && !row.swapFor ? [...kept, dismissMarker(row)] : kept);
   };
+  // ── 🔄 REUSE: FLOWERS MOVED FROM ANOTHER FUNCTION — THIS DEAL, OR ANY OTHER CLIENT'S DEAL ──
+  // A rupee value, not a flower — some of what was bought for function A is physically being used
+  // here instead, so A's own real spend goes DOWN by that much and this function's goes UP by the
+  // same amount, each as its own flagged row (owner ask, 2026-11-22/23; widened to any past deal,
+  // not just this one, 2026-11-23). The source function can be ANOTHER CLIENT'S event entirely —
+  // the two sides then live in two different event_orders rows, so this can no longer always go
+  // through writeDept (scoped to `sel` alone). Same-event stays on the original, proven path
+  // (one patch, straight through saveDept); cross-event builds each side's patch independently
+  // against ITS OWN event's current Floral deptOps, then lands both in ONE setEventOrders update
+  // so neither side can land without the other.
+  // Same identity-safety saveMandi already applies per key (archive a disowned/orphaned entry rather
+  // than silently overwrite it, stamp the function's current date+venue+label) - applied here per
+  // TOUCHED key/event, since this writes two keys (possibly two different events) at once where
+  // saveMandi only ever writes its own tab's one.
+  const addReuseTransfer = (fromEventId, fromFnIdx, amount) => {
+    if (!canEditPlanning || !sel) return;
+    const toFnIdx = activeMandiTab?.fnIdx;
+    if (!(Number(amount) > 0) || !fromEventId || fromFnIdx == null || toFnIdx == null) return;
+    if (actualsLockState(sel, settings, Date.now()).locked) return; // explicit, symmetric with the fromEvent check below - the fieldset is today's only caller, but this must never depend on staying that way
+    const sameEvent = fromEventId === sel.id;
+    if (sameEvent && String(fromFnIdx) === String(toFnIdx)) return;
+    const toFn = liveFnByIdx.get(String(toFnIdx));
+    if (!toFn) return;
+    const fromEvent = sameEvent ? sel : (eventOrders || []).find(e => e.id === fromEventId);
+    if (!fromEvent) return;
+    // Another client's deal has no live Deal Check run happening here (liveFloral is this event's
+    // own hook) - its function list comes from its own last-synced floralPlan.byFn, same fallback
+    // this component already uses for ITS OWN event when there's no live run available.
+    const fromFn = sameEvent
+      ? liveFnByIdx.get(String(fromFnIdx))
+      : (Array.isArray(fromEvent.floralPlan?.byFn) ? fromEvent.floralPlan.byFn : []).find(x => String(x.fnIdx) === String(fromFnIdx));
+    if (!fromFn) return;
+    if (!sameEvent && actualsLockState(fromEvent, settings, Date.now()).locked) return;
+    const pairId = "reuse_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    const at = Date.now(), by = authUser?.name || authUser?.username || "";
+    const fromLabel = fromFn.fnLabel + (sameEvent ? "" : ` (${fromEvent.clientName || fromEvent.name || "another deal"})`);
+    const toLabel = toFn.fnLabel;
+    if (sameEvent) {
+      let nextByFn = { ...mandiLinesByFn };
+      let nextArchived = mandiLinesArchived;
+      const nextMeta = { ...mandiLinesByFnMeta };
+      [[toFnIdx, toFn, "in", fromLabel], [fromFnIdx, fromFn, "out", toLabel]].forEach(([fnIdx, liveFn, dir, otherLabel]) => {
+        const existing = nextByFn[fnIdx];
+        const mustArchive = Array.isArray(existing) && existing.length > 0 && !ownsStoredEntry(fnIdx);
+        if (mustArchive) nextArchived = [...nextArchived, { fnIdx, meta: mandiLinesByFnMeta[fnIdx] || null, rows: existing, archivedAt: at }];
+        const base = mustArchive ? [] : (Array.isArray(existing) ? existing : []);
+        nextByFn = { ...nextByFn, [fnIdx]: [...base, { reuse: true, pairId, dir, amount: Number(amount), otherLabel, at, by }] };
+        nextMeta[fnIdx] = { date: liveFn.fnDate || "", venue: liveFn.fnVenue || "", label: liveFn.fnLabel || "" };
+      });
+      const patch = { mandiLinesByFn: nextByFn, mandiLinesByFnMeta: nextMeta, ...(nextArchived !== mandiLinesArchived ? { mandiLinesArchived: nextArchived } : {}) };
+      const { mandiGrandReal: nextGrandReal } = deriveMandiView({ ...deptData, ...patch }, fp);
+      saveDept({ ...patch, realMandi: nextGrandReal });
+      return;
+    }
+    // Cross-deal: build each side's patch against ITS OWN event's current Floral deptOps (never the
+    // other event's — `deptData`/`mandiLinesByFn` above are `sel`'s own and must never be read for
+    // `fromEvent`), then write both event_orders rows in one functional update.
+    const buildSide = (targetEvent, fnIdx, liveFn, dir, otherLabel, otherEventId) => {
+      const floral = targetEvent.deptOps?.Floral || {};
+      const curByFn = (floral.mandiLinesByFn && typeof floral.mandiLinesByFn === "object") ? floral.mandiLinesByFn : {};
+      const curMeta = (floral.mandiLinesByFnMeta && typeof floral.mandiLinesByFnMeta === "object") ? floral.mandiLinesByFnMeta : {};
+      const curArchived = Array.isArray(floral.mandiLinesArchived) ? floral.mandiLinesArchived : [];
+      const meta = curMeta[fnIdx];
+      const owns = !meta || (meta.date === (liveFn.fnDate || "") && meta.venue === (liveFn.fnVenue || "") && meta.label === (liveFn.fnLabel || ""));
+      const existing = curByFn[fnIdx];
+      const mustArchive = Array.isArray(existing) && existing.length > 0 && !owns;
+      const nextArchived = mustArchive ? [...curArchived, { fnIdx, meta: curMeta[fnIdx] || null, rows: existing, archivedAt: at }] : curArchived;
+      const base = mustArchive ? [] : (Array.isArray(existing) ? existing : []);
+      const nextByFn = { ...curByFn, [fnIdx]: [...base, { reuse: true, pairId, dir, amount: Number(amount), otherLabel, otherEventId, at, by }] };
+      const nextMeta = { ...curMeta, [fnIdx]: { date: liveFn.fnDate || "", venue: liveFn.fnVenue || "", label: liveFn.fnLabel || "" } };
+      const patch = { mandiLinesByFn: nextByFn, mandiLinesByFnMeta: nextMeta, ...(mustArchive ? { mandiLinesArchived: nextArchived } : {}) };
+      // No live Deal Check run for the OTHER event here - its own last-synced floralPlan stands in,
+      // same fallback this file already uses for its own event when liveFloral isn't available.
+      const fpForTotal = targetEvent.id === sel.id ? fp : (targetEvent.floralPlan || {});
+      const { mandiGrandReal: nextGrandReal } = deriveMandiView({ ...floral, ...patch }, fpForTotal);
+      return { ...patch, realMandi: nextGrandReal };
+    };
+    const toPatch = buildSide(sel, toFnIdx, toFn, "in", fromLabel, fromEvent.id);
+    const fromPatch = buildSide(fromEvent, fromFnIdx, fromFn, "out", toLabel, sel.id);
+    setEventOrders(prev => prev.map(e => {
+      const patch = e.id === sel.id ? toPatch : e.id === fromEvent.id ? fromPatch : null;
+      if (!patch) return e;
+      if (patchTouchesActuals(patch) && actualsLockState(e, settings, Date.now()).locked) return e;
+      const ops = { ...(e.deptOps || {}) };
+      ops.Floral = { ...(ops.Floral || {}), ...patch, updatedAt: at, updatedBy: by, changes: stampDeptChanges(ops.Floral?.changes, patch, at, by) };
+      return { ...e, deptOps: ops };
+    }));
+  };
+  // Removes BOTH sides of a transfer at once (matched by their shared pairId), in whichever one or
+  // two events they live in - a one-sided leftover would silently misstate either function's real
+  // spend, so there is no "remove just mine" option. `otherEventId` is only set on a cross-deal row
+  // (added 2026-11-23); an older same-event row has none, and sel.id alone already covers both its
+  // sides, so this stays backward-compatible with every reuse row written before cross-deal existed.
+  const removeReuseTransfer = (pairId, otherEventId) => {
+    if (!canEditPlanning || !sel) return;
+    const at = Date.now(), by = authUser?.name || authUser?.username || "—";
+    const targetIds = new Set([sel.id, otherEventId].filter(Boolean));
+    setEventOrders(prev => prev.map(e => {
+      if (!targetIds.has(e.id)) return e;
+      const floral = e.deptOps?.Floral || {};
+      const curByFn = (floral.mandiLinesByFn && typeof floral.mandiLinesByFn === "object") ? floral.mandiLinesByFn : {};
+      let changed = false;
+      const nextByFn = {};
+      Object.keys(curByFn).forEach(k => {
+        const rows = curByFn[k];
+        if (Array.isArray(rows) && rows.some(r => r.reuse && r.pairId === pairId)) { changed = true; nextByFn[k] = rows.filter(r => !(r.reuse && r.pairId === pairId)); }
+        else nextByFn[k] = rows;
+      });
+      if (!changed) return e;
+      if (actualsLockState(e, settings, Date.now()).locked) return e;
+      const fpForTotal = e.id === sel.id ? fp : (e.floralPlan || {});
+      const patch = { mandiLinesByFn: nextByFn };
+      const { mandiGrandReal: nextGrandReal } = deriveMandiView({ ...floral, ...patch }, fpForTotal);
+      const fullPatch = { ...patch, realMandi: nextGrandReal };
+      const ops = { ...(e.deptOps || {}) };
+      ops.Floral = { ...floral, ...fullPatch, updatedAt: at, updatedBy: by, changes: stampDeptChanges(floral.changes, fullPatch, at, by) };
+      return { ...e, deptOps: ops };
+    }));
+  };
   // ── 🔁 SWAP: NOT IN THE MANDI TODAY ──
   // The shopper puts 0 against a flower (or taps 🔁) and records what was bought instead. The
   // original row stays, at qty 0, marked swappedTo; the replacement is its own row right under it,
@@ -2289,8 +2413,14 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const num = (v) => { const n = Number(v) || 0; return String(Math.round(n * 100) / 100); };
     // Each flower with its photo, so the shopper can match it at the stall (mandiPhotoOf above).
+    // A 🔄 reuse-transfer row is a rupee value, not a flower — nothing to go buy, so it never prints
+    // here; the footer total below is summed from this same filtered list, never mandiActualReal
+    // (which DOES include any reuse adjustment), so the printed total always matches the rows a
+    // shopper/accountant can actually add up by hand.
     const photoOf = mandiPhotoOf;
-    const rows = mandiRows.map((r, i) => {
+    const printedRows = mandiRows.filter(r => !r.reuse);
+    const printedTotal = printedRows.reduce((s, r) => s + (Number(r.qty) || 0) * (Number(r.price) || 0), 0);
+    const rows = printedRows.map((r, i) => {
       const sub = [
         r.colorOverride?.label ? `🎨 ${esc(r.colorOverride.label)} (was ${esc(r.colorOverride.fromLabel || "Deal Check's colour")})` : r.colorVariant?.label ? `🎨 ${esc(r.colorVariant.label)}` : "",
         Array.isArray(r.colorPrefs) && r.colorPrefs.length > 1 ? `if not at the mandi: ${esc(r.colorPrefs.slice(1).map(p => p.label).join(", "))}` : "",
@@ -2308,7 +2438,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       <h2>🌸 Ambria — Mandi Shopping List${mandiTabs.length > 1 && activeMandiTab ? ` — ${esc(activeMandiTab.label)}` : ""}</h2>
       <p>Event: ${esc(sel?.clientName || "-")} &nbsp;|&nbsp; ${esc(dateVenueLineOf(sel) || "-")}</p>
       <table><tr><th class="c">#</th><th class="c">Photo</th><th>Flower</th><th class="r">Planned</th><th class="r">To buy</th><th class="r">₹/unit</th><th class="r">Total</th><th>Bought qty</th><th>Paid ₹/unit</th></tr>${rows || '<tr><td colspan="9" style="text-align:center;color:#999">No flowers on the list</td></tr>'}
-      <tfoot><tr><td colspan="6">Total (real flowers)</td><td class="r">₹${num(mandiActualReal)}</td><td></td><td></td></tr></tfoot></table>
+      <tfoot><tr><td colspan="6">Total (real flowers)</td><td class="r">₹${num(printedTotal)}</td><td></td><td></td></tr></tfoot></table>
       <br><p>Bought by: _______________ &nbsp;&nbsp; Checked by: _______________</p>
       <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
       <button onclick="window.print()">🖨️ Print</button></body></html>`);
@@ -2393,16 +2523,19 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return sb;
   };
   // A department's flat item list, with the same ids its own Inventory list uses (kit shell + parts).
-  const flatDeptItems = (d) => {
-    if (d === dept) return blockedItems;
-    const out = [];
-    (Array.isArray(sel?.deptInventory?.[d]) ? sel.deptInventory[d] : []).forEach((x, i) => {
-      const base = { id: x.name + i, invId: x.imsId || null, name: x.name, qty: Number(x.qty) || 0, sub: x.sub || "" };
-      out.push(base);
-      if (x.isKit && Array.isArray(x.components)) x.components.filter(cp => kitPartOfDept(cp, x.name, d)).forEach((cp, ci) => out.push({ id: base.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, qty: Number(cp.qty) || 0, sub: cp.sub || "", kitOf: x.name }));
-    });
-    return out;
-  };
+  // For the CURRENTLY OPEN department this is just the already-memoized blockedItems; for any OTHER
+  // department it must still be built the SAME rich way (blockedGroupedOf/blockedFlatOf/swapInfoOf
+  // are already generic over `d`, not hardcoded to the open tab) rather than a lighter, separate
+  // reconstruction straight off sel.deptInventory[d] - that lighter version used to produce a
+  // DIFFERENT invId/kit-part resolution (and so a different truckKey) than the one the OTHER
+  // department's own screen produces for the exact same physical item, which is what a truck's
+  // loads are actually keyed by. Two real bugs traced back to this (owner reports, 2026-11-23): a
+  // shared truck's fill % reading differently depending on which department's tab was open (each
+  // only got the rich treatment for ITS OWN items), and a third department's screen (e.g. Tenting,
+  // carrying neither load itself) showing every item on a shared truck as "no truck capacity set"
+  // because NEITHER contributor got it. Recomputed fresh each call for a non-open department (not
+  // memoized) - the same cost this already paid via the lighter path, just the correct one now.
+  const flatDeptItems = (d) => d === dept ? blockedItems : blockedFlatOf(blockedGroupedOf(d, swapInfoOf(d)), d);
   // What a truck load is keyed by. The list ids above are positions in Deal Check's snapshot and move
   // when it is re-synced, so a load saved on the event is keyed by the inventory id (or the name).
   const truckKey = (it) => it.invId ? "inv:" + it.invId + (it.kitOf ? "@" + String(it.kitOf).toLowerCase() : "") : "nm:" + String(it.name || "").trim().toLowerCase();
@@ -2426,38 +2559,128 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     });
     return out;
   }, [sel, blockedItems, capBySub, dept]);
-  // Trucks saved before they were shared lived in each department's own deptOps; until the event has
-  // a list of its own, they are read from there (every department's) and become the list on the
-  // first change, loads re-keyed from list positions to inventory ids.
-  const eventTruckList = Array.isArray(sel?.trucks) ? sel.trucks : Object.entries(sel?.deptOps || {}).flatMap(([d, od]) =>
-    (Array.isArray(od?.trucks) ? od.trucks : []).map(t => {
-      const items = flatDeptItems(d), ld = {};
-      Object.entries(t.items || {}).forEach(([k, q]) => { const it = items.find(x => "inv:" + x.id === k); if (it && Number(q) > 0) ld[truckKey(it)] = Number(q); });
-      return { id: t.id, vehicle: t.vehicle || "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } };
-    }));
+  // Trucks saved before they were shared lived in each department's own deptOps; any such row not
+  // yet folded into the event's own shared list (sel.trucks) is backfilled in here, matched by
+  // vehicle number. This has to run on EVERY render, not just while sel.trucks is still completely
+  // empty - a department only ever starts contributing to a shared truck once it's actually been
+  // through the new shared UI itself, so a department whose old per-dept row was never touched there
+  // stays un-migrated even after some OTHER department already created that same shared truck (owner
+  // report, 2026-11-23: Furniture had already added "DL1LAJ1250" as a shared truck from its own
+  // screen before this fix existed, so an all-or-nothing "only while sel.trucks has nothing at all"
+  // version of this backfill could never run again for this event - Structure's own old, separate
+  // row for the identical vehicle stayed invisible forever, even after merging the TRULY unmigrated
+  // case). A legacy row only ever backfills a department's `loads[d]` while that key is completely
+  // ABSENT from the shared truck - once a department has touched a shared truck for real (even with
+  // nothing loaded, an explicit {}), that's authoritative and is never overwritten by stale array
+  // data. A legacy row with no vehicle typed yet has nothing to match by and surfaces as its own,
+  // separate truck, same as before any of this existed.
+  const eventTruckList = (() => {
+    // flatDeptItems(d) now does real work (the same rich blockedGroupedOf/blockedFlatOf pipeline a
+    // department's own screen uses, not a cheap one-off reconstruction) - cached per department HERE
+    // so a department with several old legacy truck rows only pays for it once, not once per row.
+    const itemsByDept = new Map();
+    const itemsOf = (d) => { if (!itemsByDept.has(d)) itemsByDept.set(d, flatDeptItems(d)); return itemsByDept.get(d); };
+    const legacyByPlate = new Map(); // vehicle number (trimmed, lowercase) -> { ...truck fields, byDept }
+    const noPlate = [];
+    Object.entries(sel?.deptOps || {}).forEach(([d, od]) => {
+      (Array.isArray(od?.trucks) ? od.trucks : []).forEach(t => {
+        const items = itemsOf(d), ld = {};
+        Object.entries(t.items || {}).forEach(([k, q]) => { const it = items.find(x => "inv:" + x.id === k); if (it && Number(q) > 0) ld[truckKey(it)] = Number(q); });
+        const plateKey = String(t.vehicle || "").trim().toLowerCase();
+        if (!plateKey) { noPlate.push({ id: t.id, vehicle: "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } }); return; }
+        if (!legacyByPlate.has(plateKey)) legacyByPlate.set(plateKey, { id: t.id, vehicle: t.vehicle || "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", byDept: {} });
+        legacyByPlate.get(plateKey).byDept[d] = ld;
+      });
+    });
+    const usedPlates = new Set();
+    const base = (Array.isArray(sel?.trucks) ? sel.trucks : []).map(t => {
+      const plateKey = String(t.vehicle || "").trim().toLowerCase();
+      const legacy = plateKey ? legacyByPlate.get(plateKey) : null;
+      if (!legacy) return t;
+      usedPlates.add(plateKey);
+      // Already split into trips - legacy data predates trips entirely, so a still-missing
+      // department folds onto trip 1 (never a new trip of its own); a department already present on
+      // ANY trip is left alone, same "never overwrite real data" rule as the pre-trips version.
+      if (Array.isArray(t.trips) && t.trips.length) {
+        const missing = {};
+        let changed = false;
+        Object.entries(legacy.byDept).forEach(([d, ld]) => { if (!t.trips.some(tr => tr.loads?.[d])) { missing[d] = ld; changed = true; } });
+        if (!changed) return t;
+        return { ...t, trips: t.trips.map((tr, i) => i === 0 ? { ...tr, loads: { ...(tr.loads || {}), ...missing } } : tr) };
+      }
+      let loads = t.loads || {}, changed = false;
+      Object.entries(legacy.byDept).forEach(([d, ld]) => { if (!loads[d]) { loads = { ...loads, [d]: ld }; changed = true; } });
+      return changed ? { ...t, loads } : t;
+    });
+    legacyByPlate.forEach((legacy, plateKey) => { if (!usedPlates.has(plateKey)) base.push({ id: legacy.id, vehicle: legacy.vehicle, driver: legacy.driver, phone: legacy.phone, status: legacy.status, loads: legacy.byDept }); });
+    return [...base, ...noPlate];
+  })();
   const saveEventTrucks = (fn) => {
     if (!sel || !canEditPlanning) return;
     const next = fn(eventTruckList);
     setEventOrders(prev => prev.map(e => e.id === sel.id ? { ...e, trucks: next } : e));
   };
+  // Every item in THIS department's own inventory (not just what Build/Deal Check blocked for this
+  // deal), grouped by sub-category - so a truck can carry something that was never part of the deal
+  // at all (owner ask, 2026-11-22: a spare panel, an outside-the-build extra). Same department rule
+  // every other inventory-ownership check in IMS uses (InventoryTab's own visibleInventory).
+  const deptInventoryBySub = useMemo(() => {
+    const m = new Map();
+    (inventory || []).forEach(i => {
+      if (catToDept(i.cat || i.category) !== dept) return;
+      const sub = String(i.subCat || i.subcategory || "").trim() || "Other";
+      if (!m.has(sub)) m.set(sub, []);
+      m.get(sub).push(i);
+    });
+    return m;
+  }, [inventory, dept, settings?.categoryDepartments]); // eslint-disable-line react-hooks/exhaustive-deps
   // This department's view of the shared trucks, in the shape the rest of the tab already reads —
   // items keyed "inv:"+listId — so the challans, the PDF and Receiving carry on unchanged.
   const keyByListId = new Map(blockedItems.map(it => ["inv:" + it.id, truckKey(it)]));
-  // `extras` is the overload: pieces put on a truck BEYOND what the item needs (spares), kept apart
-  // from the normal load (truck.extra[dept], same keys) so "10 of 10" stays true and the extra shows
-  // as its own "+2 extra". It still takes room, so it counts toward how full the truck is; the
-  // truck's capacity itself is never changed by it.
+  // A physical truck can leave the warehouse, come back, and load again for a second run (owner ask,
+  // 2026-11-23: "the same truck makes multiple trips") - each trip gets its own status, items and
+  // challan; only vehicle/driver/phone stay truck-level, shared by every trip of it. `extras` is the
+  // overload: pieces put on a trip BEYOND what the item needs (spares), kept apart from the normal
+  // load (trip.extra[dept], same keys) so "10 of 10" stays true and the extra shows as its own "+2
+  // extra". It still takes room, so it counts toward how full THAT TRIP is; the trip's capacity
+  // itself is never changed by it.
   const trucks = eventTruckList.map(t => {
-    const mine = t.loads?.[dept] || {}, mineX = t.extra?.[dept] || {}, items = {}, extras = {};
-    blockedItems.forEach(it => {
-      const q = mine[truckKey(it)]; if (Number(q) > 0) items["inv:" + it.id] = q;
-      const x = mineX[truckKey(it)]; if (Number(x) > 0) extras["inv:" + it.id] = x;
+    const trips = tripsOf(t).map(trip => {
+      const mine = trip.loads?.[dept] || {}, mineX = trip.extra?.[dept] || {}, items = {}, extras = {};
+      blockedItems.forEach(it => {
+        const q = mine[truckKey(it)]; if (Number(q) > 0) items["inv:" + it.id] = q;
+        const x = mineX[truckKey(it)]; if (Number(x) > 0) extras["inv:" + it.id] = x;
+      });
+      // Items added straight from this department's own inventory, never in Build/Deal Check's own
+      // list (owner ask, 2026-11-22) - a flat array, not keyed by truckKey, since there is no Deal
+      // Check row for these to match against at all.
+      const custom = Array.isArray(trip.custom?.[dept]) ? trip.custom[dept] : [];
+      return { ...trip, items, extras, custom };
     });
-    return { ...t, items, extras };
+    return { ...t, trips };
   });
+  // A truck's own number is its creation order (oldest = Truck 1), never its position in the list -
+  // a new truck goes to the TOP of the list (owner ask, 2026-11-23: it's the one about to be filled
+  // in, not a new entry buried at the bottom) without renumbering every truck already in place, so
+  // the newest one reads "Truck 2" above "Truck 1", not the reverse. Shared with the Receiving
+  // reconciliation view's own "Truck N" label (sourceRows/whTrucks) so the two screens never disagree
+  // on which truck is which number.
+  const truckNumOf = (id) => {
+    const n = Number(String(id || "").replace(/^trk_/, ""));
+    return Number.isFinite(n) ? n : 0;
+  };
+  const truckNumById = new Map([...eventTruckList].sort((a, b) => truckNumOf(a.id) - truckNumOf(b.id)).map((t, i) => [t.id, i + 1]));
   // One truck open at a time: opening another closes the last, so the next truck's header is on
   // screen at once instead of below a screen of the previous truck's items.
   const [openTruck, setOpenTruck] = useState(null);
+  // Per-trip "add an item not from Build" picker state — keyed by trip id, { sub, invId, qty }.
+  const [addPicker, setAddPicker] = useState({});
+  // Which ONE trip is showing for a given truck (owner ask, 2026-11-23: tabs, not every trip
+  // stacked one after another - a truck with several trips used to grow the page's own scroll with
+  // each one added). Keyed by truck id -> trip id; falls back to the truck's first trip below
+  // whenever the stored id isn't (or is no longer) one of its trips, so a removed/not-yet-picked
+  // trip can never leave nothing showing.
+  const [activeTrip, setActiveTrip] = useState({});
   const truckRefs = useRef({});
   const toggleTruck = (id) => {
     const next = openTruck === id ? null : id;
@@ -2465,42 +2688,126 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     if (next) setTimeout(() => truckRefs.current[next]?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 0);
   };
   // ── FILL ONE TRUCK BEFORE STARTING THE NEXT ── (owner ask 2026-11-25: people added truck after truck while the
-  // last one was still part-empty.) "+ Add truck" first looks for a truck still LOADING with room left; if there is one
-  // it does not add - it opens that truck, scrolls to it and lights it, and says how much room it has, with
-  // "Add a new truck anyway" for when that truck really can't take more (a different route, the driver left...).
+  // last one was still part-empty.) "+ Add truck" first looks for a truck whose current (newest) trip is still LOADING
+  // with room left; if there is one it does not add - it opens that truck, scrolls to it and lights it, and says how much
+  // room it has, with "Add a new truck anyway" for when that truck really can't take more (a different route...).
   const [truckSpaceHint, setTruckSpaceHint] = useState(null); // { id, no, freePct } - the truck with room, while the nudge shows
   const truckSpaceTimer = useRef(null);
   useEffect(() => () => clearTimeout(truckSpaceTimer.current), []);
+  const newTrip = () => ({ id: "trip_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), status: "loading", loads: {}, extra: {}, custom: {} });
   const addTruckNow = () => {
     const id = "trk_" + Date.now();
-    saveEventTrucks(list => [...list, { id, vehicle: "", driver: "", phone: "", status: "loading", loads: {} }]);
+    // New truck goes to the top (owner ask, 2026-11-23) - the one you just added, about to be
+    // filled in, is what you want in front of you, not a new "Truck N" at the bottom of a long list.
+    saveEventTrucks(list => [{ id, vehicle: "", driver: "", phone: "", trips: [newTrip()] }, ...list]);
     setOpenTruck(id);
     setTruckSpaceHint(null);
   };
-  const setTruck = (id, patch) => saveEventTrucks(list => list.map(t => t.id === id ? { ...t, ...patch } : t));
-  const setTruckItem = (id, key, qty) => {
+  // Refuses to give a truck the same vehicle number as ANOTHER truck already on this event (owner
+  // report, 2026-11-23: users were ending up with two separate truck cards for one real vehicle,
+  // via "Pick from fleet" or just retyping its number) - matched the same way eventTruckList's own
+  // legacy-plate merge already does (trimmed, lowercased). The fix is to add another TRIP to the
+  // existing truck, not a second truck - this just says so instead of silently allowing the
+  // duplicate for someone to notice later.
+  const setTruck = (id, patch) => {
+    if (patch.vehicle != null && String(patch.vehicle).trim()) {
+      const plateKey = String(patch.vehicle).trim().toLowerCase();
+      const dupIdx = eventTruckList.findIndex(t => t.id !== id && String(t.vehicle || "").trim().toLowerCase() === plateKey);
+      if (dupIdx >= 0) { alert(`Truck ${dupIdx + 1} already has this vehicle (${patch.vehicle}). Open Truck ${dupIdx + 1} and use "+ Add trip" there instead of a new truck.`); return; }
+    }
+    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, ...patch } : t));
+  };
+  const delTruck = async (id, n) => {
+    if (!(await askDelete(`Remove Truck ${n}?`, "Removes it for every department sharing this event's trucks - anything loaded on any of its trips goes with it."))) return;
+    saveEventTrucks(list => list.filter(t => t.id !== id));
+  };
+  // Replaces a truck's whole `trips` array with the result of `fn(tripsOf(t))` - migrates the legacy
+  // implicit trip-1 shape (a truck saved before trips existed, see tripsOf) into a real `trips` array
+  // the first time any trip is touched, and drops the truck's own now-redundant top-level
+  // loads/extra/custom/status once migrated, so there is only ever ONE place a trip's data lives
+  // from here on - never a stale duplicate copy.
+  const setTrips = (id, fn) => saveEventTrucks(list => list.map(t => {
+    if (t.id !== id) return t;
+    const trips = fn(tripsOf(t));
+    const { loads: _l, extra: _e, custom: _c, status: _s, ...rest } = t;
+    return { ...rest, trips };
+  }));
+  // A truck only ever starts a second trip because the first one already left (owner ask,
+  // 2026-11-23) - the trip that was last (now no longer the newest) gets bumped out of "Loading"
+  // into "Dispatched" so nobody has to remember to do it by hand, and is locked from further
+  // editing below (see `locked` in the trip render) - never downgraded if it was already further
+  // along (at-site/returned) than that.
+  const addTrip = (id) => {
+    const trip = newTrip();
+    setTrips(id, trips => [
+      ...trips.map((tr, i) => i === trips.length - 1 && (tr.status || "loading") === "loading" ? { ...tr, status: "dispatched" } : tr),
+      trip,
+    ]);
+    setActiveTrip(p => ({ ...p, [id]: trip.id }));
+  };
+  // At least one trip must always remain - removing the last one would leave a truck with nowhere
+  // to load anything, which this screen has no way to recover from short of deleting the truck.
+  const removeTrip = async (id, tripId, n) => {
+    if (!(await askDelete(`Remove Trip ${n}?`, "Removes everything loaded on this trip - it won't be recoverable."))) return;
+    setTrips(id, trips => trips.length > 1 ? trips.filter(tr => tr.id !== tripId) : trips);
+  };
+  // A trip is only ever editable while it's the NEWEST one on its truck - once a later trip exists,
+  // it's already dispatched (see addTrip) and locked. The UI already disables every control that
+  // reaches these writers, but this refuses the write itself too, so a future control (or anything
+  // else that ends up calling one of these) can never quietly bypass that just by skipping the
+  // disabled prop - same defense-in-depth saveDept's own canEditPlanning check already is for this
+  // file's other gated writes, not left as UI-only.
+  const isActiveTrip = (id, tripId) => {
+    const t = eventTruckList.find(tt => tt.id === id);
+    const trips = t && tripsOf(t);
+    return !!trips && trips.length > 0 && trips[trips.length - 1].id === tripId;
+  };
+  const setTripStatus = (id, tripId, status) => { if (!isActiveTrip(id, tripId)) return; setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, status } : tr)); };
+  const setTripItem = (id, tripId, key, qty) => {
+    if (!isActiveTrip(id, tripId)) return;
     const k = keyByListId.get(key);
     if (!k) return;
-    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, loads: { ...(t.loads || {}), [dept]: { ...((t.loads || {})[dept] || {}), [k]: qty } } } : t));
+    setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, loads: { ...(tr.loads || {}), [dept]: { ...((tr.loads || {})[dept] || {}), [k]: qty } } } : tr));
   };
-  const setTruckExtra = (id, key, qty) => {
+  const setTripExtra = (id, tripId, key, qty) => {
+    if (!isActiveTrip(id, tripId)) return;
     const k = keyByListId.get(key);
     if (!k) return;
-    saveEventTrucks(list => list.map(t => t.id === id ? { ...t, extra: { ...(t.extra || {}), [dept]: { ...((t.extra || {})[dept] || {}), [k]: qty } } } : t));
+    setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, extra: { ...(tr.extra || {}), [dept]: { ...((tr.extra || {})[dept] || {}), [k]: qty } } } : tr));
   };
-  const delTruck = (id) => saveEventTrucks(list => list.filter(t => t.id !== id));
-  const truckLoadedQty = (key) => trucks.reduce((s, t) => s + (Number(t.items?.[key]) || 0), 0); // total loaded across all trucks
-  const truckExtraQty = (key) => trucks.reduce((s, t) => s + (Number(t.extras?.[key]) || 0), 0); // overload across all trucks
+  // Items picked straight from this department's own inventory (deptInventoryBySub), never a Build/Deal
+  // Check row — kept as a flat array, not truckKey'd, since there is nothing in the deal to match
+  // against. Each gets its own small id (not an array index) so editing/removing one never shifts
+  // under an in-flight edit to another.
+  const addTripCustomItem = (id, tripId, invItem, qty) => {
+    if (!isActiveTrip(id, tripId) || !invItem || !(Number(qty) > 0)) return;
+    const row = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), invId: invItem.id, name: invItem.name, sub: invItem.subCat || invItem.subcategory || "", qty: Number(qty) };
+    setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, custom: { ...(tr.custom || {}), [dept]: [...((tr.custom || {})[dept] || []), row] } } : tr));
+  };
+  const setTripCustomQty = (id, tripId, rowId, qty) => {
+    if (!isActiveTrip(id, tripId)) return;
+    setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, custom: { ...(tr.custom || {}), [dept]: ((tr.custom || {})[dept] || []).map(r => r.id === rowId ? { ...r, qty: Math.max(0, Number(qty) || 0) } : r) } } : tr));
+  };
+  const removeTripCustomItem = (id, tripId, rowId) => {
+    if (!isActiveTrip(id, tripId)) return;
+    setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, custom: { ...(tr.custom || {}), [dept]: ((tr.custom || {})[dept] || []).filter(r => r.id !== rowId) } } : tr));
+  };
+  // Across every trip of every truck - what matters for "how much of item X is left to send out" is
+  // the total already on its way, whichever trip or truck carries it (owner ask, 2026-11-23: a
+  // second trip must only ever offer what the first trip didn't already take).
+  const truckLoadedQty = (key) => trucks.reduce((s, t) => s + t.trips.reduce((s2, tr) => s2 + (Number(tr.items?.[key]) || 0), 0), 0);
+  const truckExtraQty = (key) => trucks.reduce((s, t) => s + t.trips.reduce((s2, tr) => s2 + (Number(tr.extras?.[key]) || 0), 0), 0);
   const TRUCK_STATUS_LABEL = { loading: "Loading", dispatched: "Dispatched", "at-site": "At site", returned: "Returned" };
   const TRUCK_STATUS_CLS = { loading: "bg-blue-50 text-blue-700 ring-blue-200", dispatched: "bg-amber-50 text-amber-700 ring-amber-200", "at-site": "bg-emerald-50 text-emerald-700 ring-emerald-200", returned: "bg-gray-100 text-gray-600 ring-gray-200" };
-  // How full each truck is: every department's loads, each piece counted at its share of a truck.
-  const truckOcc = (t) => {
+  // How full a TRIP is: every department's loads on it, each piece counted at its share of a truck —
+  // fill is per-trip now, not per-truck (each trip is its own run, owner ask 2026-11-23).
+  const truckOcc = (trip) => {
     let used = 0, unknown = 0;
     const byDept = [];
-    const depts = [...new Set([...Object.keys(t.loads || {}), ...Object.keys(t.extra || {})])];
+    const depts = [...new Set([...Object.keys(trip.loads || {}), ...Object.keys(trip.extra || {})])];
     depts.forEach(d => {
       const ld = {};
-      [t.loads?.[d] || {}, t.extra?.[d] || {}].forEach(src => Object.entries(src).forEach(([k, q]) => { ld[k] = (ld[k] || 0) + (Number(q) || 0); }));
+      [trip.loads?.[d] || {}, trip.extra?.[d] || {}].forEach(src => Object.entries(src).forEach(([k, q]) => { ld[k] = (ld[k] || 0) + (Number(q) || 0); }));
       let du = 0;
       Object.entries(ld).forEach(([k, q]) => {
         const qn = Number(q) || 0;
@@ -2513,24 +2820,29 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     });
     return { used, byDept, unknown };
   };
-  const truckOccs = Object.fromEntries(eventTruckList.map(t => [t.id, truckOcc(t)]));
-  const fullTrucks = eventTruckList.filter(t => truckOccs[t.id].used >= 0.999).length;
-  // "+ Add truck" (see truckSpaceHint above): the first truck still loading with room left is filled first
+  const truckOccs = Object.fromEntries(eventTruckList.flatMap(t => tripsOf(t).map(tr => [tr.id, truckOcc(tr)])));
+  const fullTrucks = eventTruckList.reduce((s, t) => s + tripsOf(t).filter(tr => (truckOccs[tr.id]?.used || 0) >= 0.999).length, 0);
+  // A truck "has room" when its current (newest) trip is still loading and not full - an earlier trip has already left.
+  // A trip carrying items with no truck capacity set can't be judged (its fill reads low), so it is never the one named.
+  const truckRoomOf = (t) => {
+    const trips = tripsOf(t);
+    const cur = trips[trips.length - 1];
+    if (!cur || (cur.status || "loading") !== "loading") return null;
+    const oc = truckOccs[cur.id] || { used: 0, unknown: 0 };
+    return oc.used < 0.999 && !oc.unknown ? oc.used : null;
+  };
+  // "+ Add truck" (see truckSpaceHint above): a truck still loading with room left is filled first
   const addTruck = () => {
-    const roomy = eventTruckList
-      .map((t, i) => ({ t, no: i + 1, used: truckOccs[t.id]?.used || 0, unknown: truckOccs[t.id]?.unknown || 0 }))
-      // a truck carrying items with no truck capacity set can't be judged (its fill reads low), so it is never the one named
-      .find(x => (x.t.status || "loading") === "loading" && x.used < 0.999 && !x.unknown);
+    const roomy = eventTruckList.map(t => ({ t, used: truckRoomOf(t) })).find(x => x.used != null);
     if (!roomy) { addTruckNow(); return; }
-    setTruckSpaceHint({ id: roomy.t.id, no: roomy.no, freePct: Math.max(1, Math.round((1 - roomy.used) * 100)) });
+    setTruckSpaceHint({ id: roomy.t.id, no: truckNumById.get(roomy.t.id), freePct: Math.max(1, Math.round((1 - roomy.used) * 100)) });
     setOpenTruck(roomy.t.id);
     setTimeout(() => truckRefs.current[roomy.t.id]?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
     clearTimeout(truckSpaceTimer.current);
     truckSpaceTimer.current = setTimeout(() => setTruckSpaceHint(null), 12000); // the light fades on its own
   };
-  // the note goes as soon as its truck is gone, full, or no longer loading - it named a truck that had already left
-  const hintTruck = truckSpaceHint ? eventTruckList.find(t => t.id === truckSpaceHint.id) : null;
-  const hintStale = !!truckSpaceHint && (!hintTruck || (hintTruck.status || "loading") !== "loading" || (truckOccs[hintTruck.id]?.used || 0) >= 0.999);
+  // the note goes as soon as its truck is gone, full, or its trip has left - it named a truck that had already gone
+  const hintStale = !!truckSpaceHint && truckRoomOf(eventTruckList.find(t => t.id === truckSpaceHint.id) || {}) == null;
   useEffect(() => { if (hintStale) setTruckSpaceHint(null); }, [hintStale]);
   const DEPT_BAR = { Furniture: "bg-amber-500", Floral: "bg-pink-500", Structure: "bg-slate-500", Tenting: "bg-emerald-500", Transport: "bg-orange-500", Lighting: "bg-yellow-400", Fabric: "bg-violet-500" };
   // A short "Can be made" line on a challan says where its units come from - "600 = 500 in stock + 100 outsourced" - so the
@@ -2541,19 +2853,61 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return shortfallLine(shortfallBreakdown({ booked: Number(base.rentalQty ?? base.qty) || 0, short: Number(base.shortQty) || 0 }, shortAlloc[allocKeyOf(base)]));
   };
   const challanSrcNote = (it) => { const line = challanSrcText(it); return line ? `<div style="font-size:11px;color:#92400e;margin-top:2px">${line}</div>` : ""; };
-  const printTruckChallan = (truck, n) => {
+  // Every department's own slice of ONE TRIP, combined (owner ask, 2026-11-22, trip-scoped 2026-11-23):
+  // a truck is shared by the whole event, so the driver's "Download PDF" challan should say everything
+  // physically riding on THIS RUN, not just the one department's slice that happened to generate it (a
+  // Floral user downloading it used to get only Floral's items, even when the same truck also carried
+  // Tenting's) - and not some OTHER trip's items, now that one truck can make more than one run.
+  // Looked up from eventTruckList's raw record (its own trips' `loads`/`extra` still carry every
+  // department's map), not the `trucks` array this component otherwise renders with, which is already
+  // filtered down to `dept`. Each row keeps its own department (a "Dept" column) so whoever unloads it
+  // still knows whose item is whose. shownName()'s Fabric design-choice override only applies to this
+  // tab's OWN department's rows (it is keyed by blockedItems' ids, which a different department's
+  // flatDeptItems() ids can collide with) - another department's rows print their plain saved name
+  // instead.
+  const combinedTruckItems = (truckId, tripId) => {
+    const raw = eventTruckList.find(t => t.id === truckId);
+    const trip = raw && tripsOf(raw).find(tr => tr.id === tripId);
+    if (!trip) return [];
+    const out = [];
+    Object.keys(trip.loads || {}).forEach(d => {
+      const mine = trip.loads?.[d] || {}, mineX = trip.extra?.[d] || {};
+      flatDeptItems(d).forEach(it => {
+        const q = Number(mine[truckKey(it)]) || 0, x = Number(mineX[truckKey(it)]) || 0;
+        if (q <= 0 && x <= 0) return;
+        // An item with no truck-capacity rule (Planning → 🚚 Truck) already rode on the challan same
+        // as any other loaded item - this just flags it there too, not only in the loading screen's
+        // own "no truck capacity set" note, since that fill % silently leaving it out is exactly the
+        // kind of gap a driver/loader should be told about, not have it just quietly not count (owner
+        // ask, 2026-11-23: "ignoring it completely is problematic").
+        out.push({ dept: d, name: d === dept ? shownName(it) : (it.name || ""), sub: it.sub || "", qty: q, fullQty: it.qty, extra: x, src: it, noCap: !truckShares[d]?.get(truckKey(it)) });
+      });
+    });
+    // Items added straight from a department's own inventory (trip.custom[dept]) - no Deal Check
+    // row to match against, so these ride along by department alone, not by truckKey.
+    Object.keys(trip.custom || {}).forEach(d => {
+      (trip.custom[d] || []).forEach(c => {
+        if (!(Number(c.qty) > 0)) return;
+        out.push({ dept: d, name: c.name, sub: c.sub || "", qty: Number(c.qty), fullQty: Number(c.qty), extra: 0, src: null });
+      });
+    });
+    return out;
+  };
+  const printTruckChallan = (truck, tripId, n, tripN) => {
     const w = window.open("", "_blank");
     if (!w) return;
-    const rows = loadItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0)
-      .map(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; return `<tr><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}</td></tr>`; }).join("");
-    const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
-    w.document.write(`<html><head><title>Challan — ${dept} — Truck ${n}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
-      <h2>${DEPT_ICON[dept]} Ambria — ${dept} Challan · Truck ${n}</h2>
+    // Combined across every department sharing this trip (owner ask, 2026-11-23) - same source as
+    // the Download PDF (combinedTruckItems), so the two agree; each row keeps its own Dept column.
+    const rows = combinedTruckItems(truck.id, tripId)
+      .map(it => `<tr><td>${it.name}${it.src === null ? ` <span style="font-size:11px;color:#92400e">(added, not in Build)</span>` : challanSrcNote(it.src)}${it.noCap ? `<div style="font-size:11px;color:#b45309">⚠ truck capacity not set for this item - count it manually</div>` : ""}</td><td>${it.dept}</td><td style="text-align:center">${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}</td></tr>`).join("");
+    const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
+    w.document.write(`<html><head><title>Combined Challan — Truck ${n} · Trip ${tripN}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
+      <h2>🚚 Ambria — Combined Challan · Truck ${n} · Trip ${tripN}</h2>
       <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${dateVenueLineOf(sel) || "-"}</p>
       <p>Vehicle: ${truck.vehicle || "______"} &nbsp;|&nbsp; Driver: ${truck.driver || "______"} &nbsp;|&nbsp; Phone: ${truck.phone || "______"}</p>
-      <h4>Inventory on this truck</h4>
-      <table><tr><th>Item</th><th>Type</th><th>Qty</th></tr>${rows || '<tr><td colspan="3" style="text-align:center;color:#999">No items assigned to this truck</td></tr>'}</table>
-      ${toolRows ? `<h4>Essentials / tools</h4><table><tr><th>Item</th><th>Type</th><th>Qty</th></tr>${toolRows}</table>` : ""}
+      <h4>Inventory on this trip — every department</h4>
+      <table><tr><th>Item</th><th>Dept</th><th>Qty</th></tr>${rows || '<tr><td colspan="3" style="text-align:center;color:#999">No items assigned to this trip</td></tr>'}</table>
+      ${toolRows ? `<h4>Essentials / tools — ${dept}</h4><table><tr><th>Item</th><th>Qty</th></tr>${toolRows}</table>` : ""}
       <br><p>Dispatched by: _______________ &nbsp;&nbsp; Received by: _______________</p>
       <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
       <button onclick="window.print()">🖨️ Print</button></body></html>`);
@@ -2562,14 +2916,14 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // The same challan as a downloaded PDF, for when no printer is at hand — it can be shared on
   // WhatsApp or printed later. Plain jsPDF text like the Actuals PDF; its built-in font has no
   // emoji, so the icons from the printed version are left out.
-  const downloadTruckChallanPdf = async (truck, n) => {
+  const downloadTruckChallanPdf = async (truck, tripId, n, tripN) => {
     if (!sel || challanPdfBusy) return;
-    setChallanPdfBusy(truck.id);
+    setChallanPdfBusy(tripId);
     try {
       const [{ jsPDF }] = await loadPdfLibs();
       const pdf = new jsPDF({ unit: "pt", format: "a4" });
       const W = pdf.internal.pageSize.getWidth(), H = pdf.internal.pageSize.getHeight(), M = 40;
-      const cx = { name: M + 6, type: M + 300, qty: W - M - 6 };
+      const cx = { name: M + 6, dept: M + 250, type: M + 330, qty: W - M - 6 };
       let y = M;
       const room = (h) => { if (y + h > H - M) { pdf.addPage(); y = M; } };
       const row = (cells, { bold = false, fill = null, h = 20 } = {}) => {
@@ -2580,7 +2934,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         cells.forEach(([t, x, align]) => pdf.text(String(t ?? ""), x, y, { align: align || "left", maxWidth: align === "right" ? undefined : 280 }));
         y += h;
       };
-      const header = () => row([["Item", cx.name], ["Type", cx.type], ["Qty", cx.qty, "right"]], { bold: true, fill: [243, 244, 246] });
+      const header = () => row([["Item", cx.name], ["Dept", cx.dept], ["Type", cx.type], ["Qty", cx.qty, "right"]], { bold: true, fill: [243, 244, 246] });
       // The Ambria Design & Decor mark at the head of the challan — the dark version (black wordmark,
       // gold "DESIGN & DECOR"), since the page is white. Sized off the crop's own proportions; a
       // logo that fails to load just leaves the title where it was.
@@ -2591,16 +2945,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         y += lh + 18;
       }
       pdf.setFont("helvetica", "bold"); pdf.setFontSize(16); pdf.setTextColor(79, 70, 229);
-      pdf.text(`Ambria - ${dept} Challan - Truck ${n}`, M, y); y += 22;
+      pdf.text(`Ambria - Combined Challan - Truck ${n} - Trip ${tripN}`, M, y); y += 22;
       pdf.setTextColor(17); pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
       pdf.text(`Event: ${sel.clientName || "-"}  |  ${dateVenueLineOf(sel) || "-"}`, M, y); y += 16;
       pdf.text(`Vehicle: ${truck.vehicle || "______"}  |  Driver: ${truck.driver || "______"}  |  Phone: ${truck.phone || "______"}`, M, y); y += 26;
       pdf.setFontSize(9.5);
-      pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this truck", M, y); y += 16;
+      pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this trip — every department", M, y); y += 16;
       header();
-      const items = loadItems.filter(it => (Number(truck.items?.["inv:" + it.id]) || 0) > 0 || (Number(truck.extras?.["inv:" + it.id]) || 0) > 0);
-      if (items.length) items.forEach(it => { const x = Number(truck.extras?.["inv:" + it.id]) || 0; row([[shownName(it) + (challanSrcText(it) ? ` (${challanSrcText(it)})` : ""), cx.name], [it.sub || "-", cx.type], [`${Number(truck.items?.["inv:" + it.id]) || 0} of ${it.qty}${x ? ` + ${x} extra` : ""}`, cx.qty, "right"]]); });
-      else row([["No items assigned to this truck", cx.name]]);
+      const items = combinedTruckItems(truck.id, tripId);
+      if (items.length) items.forEach(it => row([[it.name + (it.src === null ? " (added, not in Build)" : challanSrcText(it.src) ? ` (${challanSrcText(it.src)})` : "") + (it.noCap ? " [truck capacity not set - count manually]" : ""), cx.name], [it.dept, cx.dept], [it.sub || "-", cx.type], [`${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}`, cx.qty, "right"]]));
+      else row([["No items assigned to this trip", cx.name]]);
       if (deptTools.length) {
         y += 12; room(36);
         pdf.setFont("helvetica", "bold"); pdf.text("Essentials / tools", M, y); y += 16;
@@ -2614,7 +2968,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       pdf.setFontSize(8); pdf.setTextColor(120);
       pdf.text(`Generated ${new Date().toLocaleString("en-IN")} - ${authUser?.name || "-"}`, M, H - 20);
       const safe = (t) => String(t || "").replace(/[\\/:*?"<>|]+/g, "-").trim();
-      pdf.save(`Challan - ${safe(dept)} - Truck ${n} - ${safe(sel.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`);
+      pdf.save(`Challan - Combined - Truck ${n} - Trip ${tripN} - ${safe(sel.clientName || "Event")} - ${safe(selDateStr || "no date")}.pdf`);
     } catch (err) {
       if (isStaleChunk(err)) { reloadForUpdate(); return; }
       alert(`Could not make the challan PDF.\n\n${err?.message || err}`);
@@ -2980,7 +3334,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       if (it.foc) return; // left at the venue — never trucked in, so never a Receiving shortfall
       const key = itemKeyFor(it.invId, it.name); used.add(key);
       const inc = incomingByItem[key]; const reused = inc?.total || 0;
-      const whTrucks = trucks.map((t, ti) => ({ id: t.id, n: ti + 1, vehicle: t.vehicle, driver: t.driver, phone: t.phone || "", qty: Number(t.items?.["inv:" + it.id]) || 0 })).filter(x => x.qty > 0);
+      const whTrucks = trucks.map(t => ({ id: t.id, n: truckNumById.get(t.id), vehicle: t.vehicle, driver: t.driver, phone: t.phone || "", qty: t.trips.reduce((s, tr) => s + (Number(tr.items?.["inv:" + it.id]) || 0), 0) })).filter(x => x.qty > 0);
       const whQty = whTrucks.reduce((s, x) => s + x.qty, 0);
       const totalIn = whQty + reused;
       if (it.qty > 0 || totalIn > 0) rows.push({ name: it.name, photo: it.photo || "", required: it.qty, reused, whTrucks, whQty, totalIn, shortfall: Math.max(0, it.qty - totalIn), over: Math.max(0, totalIn - it.qty), sources: inc?.sources || [] });
@@ -4597,13 +4951,21 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               // Ambria's own venues gets that venue's color, a client's own outdoor
                               // venue gets "ADD"'s color (lib/ims/fixedVenues.js's venueCalendarColor).
                               // THIS cell's own date's function — see fnForDate's comment.
-                              const vc = venueCalendarColor(settings, fnForDate(eo, ds)?.venue || eo.venue || "");
+                              const dayFn = fnForDate(eo, ds);
+                              const vc = venueCalendarColor(settings, dayFn?.venue || eo.venue || "");
+                              // Session (shift) — the phone/day-detail list below already shows this
+                              // ("Venue and shift, because that is what an event_order actually
+                              // carries") but the desktop month grid never did (owner ask, 2026-11-22).
+                              const shift = dayFn?.shift || eo.shift || "";
                               return (
-                                <button key={eo.id} onClick={() => setSelId(eo.id)} title={deptChangesOf(eo.id).length ? changeTip(deptChangesOf(eo.id)) : `Plan ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
-                                  className={`w-full flex items-center gap-1 text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
-                                  <span className="shrink-0 text-[9px] font-bold opacity-70">{vc.code}</span>
-                                  <span className="min-w-0 truncate">{eo.clientName || "Event"}</span>
-                                  {deptChangesOf(eo.id).length > 0 && <ChangedMark tip={changeTip(deptChangesOf(eo.id))} />}
+                                <button key={eo.id} onClick={() => setSelId(eo.id)} title={deptChangesOf(eo.id).length ? changeTip(deptChangesOf(eo.id)) : `Plan ${eo.clientName || "Event"}${shift ? ` · ${shift}` : ""}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
+                                  className={`w-full text-left pl-2 pr-1.5 py-1 rounded-md border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
+                                  <span className="flex items-center gap-1 text-[11px] font-medium leading-tight">
+                                    <span className="shrink-0 text-[9px] font-bold opacity-70">{vc.code}</span>
+                                    <span className="min-w-0 truncate">{eo.clientName || "Event"}</span>
+                                    {deptChangesOf(eo.id).length > 0 && <ChangedMark tip={changeTip(deptChangesOf(eo.id))} />}
+                                  </span>
+                                  {shift && <span className="block text-[9.5px] font-normal opacity-70 truncate leading-tight">{shift}</span>}
                                 </button>
                               );
                             })}
@@ -5722,6 +6084,34 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             <span className={"hidden sm:block shrink-0 " + STAT_W.rate} />
                             <span className={"shrink-0 font-bold text-gray-900 text-right tabular-nums " + STAT_W.total}>{fmt(parts.reduce((a, pt) => a + (Number(pt.total) || 0), 0))}</span>
                           </div>
+                          {/* Platform is billed purely by sqft (no per-booking signal for which configured piece size/material
+                              fulfils a zone's floor — platformEngine.js's own header comment), but Tenting still has to go pull
+                              actual pieces off the rack, not a sqft figure (owner ask 2026-11-23: "we know the sqft needed, we
+                              know the sqft of each piece, so why not just show pieces"). Largest piece first, real Platform
+                              Config stock respected; this is a display-only breakdown of the SAME total above, never a second
+                              number that could disagree with it, and never changes what gets billed. */}
+                          {it.sub === "platform structure (blended Wood+Iron rate)" && (() => {
+                            // Each ZONE's own floor, not the pooled sumQty above — a physical piece can't be split
+                            // across two different floors, so every floor has to round up on its own (regression
+                            // review, 2026-11-23: three small floors needing one piece each is 3 pieces, not
+                            // ceil(their sum / one piece size), which can undercount).
+                            const pieces = platformPiecesFor(parts.map((pt) => pt.qty), trussInv);
+                            if (!pieces.length) return null;
+                            return (
+                              <div className="border-t border-gray-200 pt-1 space-y-0.5">
+                                <div className="text-gray-500 font-semibold">To pull from stock</div>
+                                {pieces.map((p, pi) => (
+                                  <div key={p.id ?? pi} className="flex items-center justify-between gap-2 text-gray-700">
+                                    <span>{p.label} · {PLATFORM_MATERIAL_LABEL[p.material] || p.material}</span>
+                                    <span className="tabular-nums font-medium">
+                                      ×{p.qty}
+                                      {p.overStock > 0 && <span className="text-amber-600 font-semibold"> ({p.overStock} beyond Config's stock)</span>}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
                         </div>
                         );
                       })()}
@@ -6094,6 +6484,21 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         ) : (
                           <div className="">
                             {mandiRows.map((r, i) => {
+                              // 🔄 Reuse-transfer row (addReuseTransfer): a flat ₹ value moved to/from
+                              // another function, never a flower to shop for - its own simple layout,
+                              // no photo/colour/qty/price/swap, and removing it takes BOTH sides with it.
+                              if (r.reuse) return (
+                                <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 px-3 py-1.5 items-center bg-amber-50/40">
+                                  <div className="min-w-0 text-xs text-amber-800">
+                                    🔄 {r.dir === "in" ? `Reused from ${r.otherLabel || "another function"}` : `Reused to ${r.otherLabel || "another function"}`}
+                                  </div>
+                                  <div className="text-right w-28 text-xs text-gray-300">—</div>
+                                  <div className="flex items-center justify-end gap-1 w-[264px]">
+                                    <span className={"shrink-0 text-sm font-semibold " + (r.dir === "in" ? "text-emerald-600" : "text-red-500")}>{r.dir === "in" ? "+" : "−"}{fmt(Number(r.amount) || 0)}</span>
+                                    <button onClick={() => removeReuseTransfer(r.pairId, r.otherEventId)} title="Remove this reuse transfer on both functions" className="shrink-0 text-red-300 hover:text-red-500 text-xs ml-1">×</button>
+                                  </div>
+                                </div>
+                              );
                               const lineActual = (Number(r.qty) || 0) * (Number(r.price) || 0);
                               const lineVar = lineActual - (Number(r.projCost) || 0);
                               return (
@@ -6245,6 +6650,62 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         )}
                         {mandiQuery.trim() && mandiSuggest.length === 0 && <div className="absolute z-20 left-0 right-0 mt-1 bg-white border rounded-lg shadow-lg px-3 py-2 text-xs text-gray-400">No match in Mandi Prices. <button onClick={() => addMandi({ name: mandiQuery.trim(), unit: "bundle", currentPrice: 0 })} className="text-emerald-600 font-medium">Add "{mandiQuery.trim()}" anyway</button></div>}
                       </div>
+                      {/* 🔄 Reuse flowers already bought for another function — this same deal, or any
+                          other client's deal entirely (owner ask, 2026-11-22/23, widened 2026-11-23:
+                          "i can take flower reuse from client A function and add it to client B deal")
+                          - a rupee value, not a flower: moves real spend from the source function's
+                          own tab to this one, so each function's actual cost says what it actually
+                          got, not just where the money was first spent. Only offered on a genuine
+                          live function tab (not "Already logged"/Unmatched/Archived) - a flat/legacy
+                          tab has no stable fnIdx of its own to attribute either side to. */}
+                      {activeMandiTab?.fnIdx != null && !activeMandiTab.orphaned && !activeMandiTab.archived && (() => {
+                        const sameDealFnOptions = mandiTabs.filter(t => t.fnIdx != null && !t.orphaned && !t.archived && t.key !== activeMandiTabKey).map(t => ({ fnIdx: t.fnIdx, label: t.label }));
+                        const otherDealEvents = (eventOrders || [])
+                          .filter(e => e.id !== sel.id && Array.isArray(e.floralPlan?.byFn) && e.floralPlan.byFn.length > 0)
+                          .map(e => ({ id: e.id, label: `${e.clientName || e.name || "Event"} — ${eventDate(e) || "no date"}`, date: eventDate(e) }))
+                          .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+                        const sourceEvents = [
+                          ...(sameDealFnOptions.length ? [{ id: sel.id, label: "This deal — other functions" }] : []),
+                          ...otherDealEvents,
+                        ];
+                        if (!sourceEvents.length) return null;
+                        const fnOptions = !reusePicker.fromEventId ? [] : reusePicker.fromEventId === sel.id ? sameDealFnOptions : (() => {
+                          const ev = (eventOrders || []).find(e => e.id === reusePicker.fromEventId);
+                          return (Array.isArray(ev?.floralPlan?.byFn) ? ev.floralPlan.byFn : []).map(e => ({ fnIdx: e.fnIdx, label: e.fnLabel + (e.fnVenue ? ` · ${e.fnVenue}` : "") + (e.fnDate ? ` · ${e.fnDate}` : "") }));
+                        })();
+                        // A cross-deal source's own Actuals may be locked even though THIS event's
+                        // fieldset (which gates this whole picker) only reflects sel's own lock -
+                        // addReuseTransfer already refuses that write silently; surface it here too,
+                        // rather than a "+ Add" that visibly does nothing (2026-11-23 review finding).
+                        const fromEventLocked = reusePicker.fromEventId && reusePicker.fromEventId !== sel.id
+                          ? actualsLockState((eventOrders || []).find(e => e.id === reusePicker.fromEventId), settings, Date.now()).locked
+                          : false;
+                        const canAdd = reusePicker.fromEventId && reusePicker.fromFnIdx !== "" && Number(reusePicker.amount) > 0 && !fromEventLocked;
+                        return (
+                          <div className="rounded-lg ring-1 ring-dashed ring-amber-300 bg-amber-50/40 p-2.5 space-y-2">
+                            <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-amber-700">🔄 Reuse flowers from another function</div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <select value={reusePicker.fromEventId} onChange={e => setReusePicker(p => ({ ...p, fromEventId: e.target.value, fromFnIdx: "" }))}
+                                className="h-8 min-w-[160px] flex-1 rounded-lg bg-white ring-1 ring-amber-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400">
+                                <option value="">From which deal…</option>
+                                {sourceEvents.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
+                              </select>
+                              <select value={reusePicker.fromFnIdx} onChange={e => setReusePicker(p => ({ ...p, fromFnIdx: e.target.value }))} disabled={!reusePicker.fromEventId}
+                                className="h-8 min-w-[160px] flex-1 rounded-lg bg-white ring-1 ring-amber-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:opacity-50">
+                                <option value="">From which function…</option>
+                                {fnOptions.map(t => <option key={t.fnIdx} value={t.fnIdx}>{t.label}</option>)}
+                              </select>
+                              <span className="text-[11px] text-amber-700">₹</span>
+                              <input type="number" min="1" value={reusePicker.amount} onChange={e => setReusePicker(p => ({ ...p, amount: e.target.value }))} placeholder="value" aria-label="Reused flower value"
+                                className="h-8 w-24 rounded-lg bg-white ring-1 ring-amber-200 px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-amber-400" />
+                              <button onClick={() => { if (canAdd) { addReuseTransfer(reusePicker.fromEventId, reusePicker.fromFnIdx, reusePicker.amount); setReusePicker({ fromEventId: "", fromFnIdx: "", amount: "" }); } }}
+                                disabled={!canAdd}
+                                className="h-8 px-3 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold">+ Add</button>
+                            </div>
+                            {fromEventLocked && <div className="text-[10px] text-red-600">That deal's Actuals are locked (past event, no reopen) — ask an admin to reopen it before reusing from this function.</div>}
+                          </div>
+                        );
+                      })()}
                       {mandiActualReal > 0 && projectedTotal > 0 && (
                         <div className={"text-xs font-semibold " + (variance > 0 ? "text-red-600" : "text-emerald-700")}>
                           {variance > 0 ? "▲ Over" : variance < 0 ? "▼ Under" : "On"} plan by {fmt(Math.abs(variance))} (this tab) — salesperson's P&L uses the combined real {fmt(mandiGrandReal)}.
@@ -6304,7 +6765,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   </button>
                 </div>
                 <div className="mt-1.5 flex items-center justify-between gap-3">
-                  <span className="text-xs text-gray-500">Trucks are shared by every department on this event. Each prints its own challan.</span>
+                  <span className="text-xs text-gray-500">Trucks are shared by every department on this event — every challan lists everything on the truck.</span>
                   <button onClick={() => setShowFleet(v => !v)} aria-expanded={showFleet}
                     className={"shrink-0 text-xs font-semibold transition-colors " + (showFleet ? "text-gray-900" : "text-blue-600 hover:text-blue-800")}>
                     {showFleet ? "Done" : "Manage fleet"}
@@ -6366,7 +6827,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 </div>
               ) : (
                 <div className="px-3 sm:px-4 py-3 space-y-3">
-                  {trucks.map((t, ti) => (
+                  {trucks.map((t) => (
                     /* Each truck is its own card. Stacked in bare padding they ran into each
                        other, and nothing marked where one truck's items stopped. */
                     <div key={t.id} ref={el => { truckRefs.current[t.id] = el; }}
@@ -6374,71 +6835,52 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       className={"rounded-xl ring-1 p-3 space-y-2.5 scroll-mt-4 transition-[background-color,box-shadow] duration-500 " + (truckSpaceHint?.id === t.id ? "ring-2 ring-amber-400 bg-amber-50/60 shadow-[0_0_0_4px_rgba(251,191,36,0.25)]" : openTruck === t.id ? "ring-blue-200" : "ring-gray-200")}>
                       {/* ── THE HEADER IS THE TRUCK, OPEN OR SHUT ──
                           Everything needed to tell trucks apart without opening one: number, plate,
-                          driver, phone, status and how full it is. Tapping it opens this truck and
-                          closes whichever was open. */}
+                          driver, phone, and each trip's own status and how full IT is (a truck can
+                          make more than one run, owner ask 2026-11-23 - fill is per trip, not per
+                          truck). Tapping it opens this truck and closes whichever was open. */}
                       <div className="flex items-start justify-between gap-2">
-                        {(() => {
-                          const oc = truckOccs[t.id] || { used: 0 };
-                          const pct = Math.round(oc.used * 100), over = oc.used > 1.005, full = oc.used >= 0.999;
-                          const st = t.status || "loading";
-                          return (
-                            <button type="button" onClick={() => toggleTruck(t.id)} aria-expanded={openTruck === t.id} className="min-w-0 flex-1 text-left cursor-pointer">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span aria-hidden="true" className={"shrink-0 text-gray-400 transition-transform duration-150 " + (openTruck === t.id ? "rotate-90" : "")}>
-                                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L8.5 7 L5 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                                </span>
-                                <span className="text-sm font-semibold text-gray-900 shrink-0">Truck {ti + 1}</span>
-                                <span className="min-w-0 truncate text-[12px] text-gray-500">{[t.vehicle, t.driver].filter(Boolean).join(" · ") || "no vehicle yet"}</span>
-                                {truckSpaceHint?.id === t.id && <span className="shrink-0 ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-white">Fill this first</span>}
-                                <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ring-1 " + (truckSpaceHint?.id === t.id ? "" : "ml-auto ") + (TRUCK_STATUS_CLS[st] || TRUCK_STATUS_CLS.loading)}>{TRUCK_STATUS_LABEL[st] || st}</span>
-                              </div>
-                              <div className="mt-1.5 pl-5 flex items-center gap-2">
-                                {t.phone ? <span className="shrink-0 text-[11px] text-gray-500 tabular-nums">📞 {t.phone}</span> : null}
-                                <div className={"min-w-0 flex-1 h-1.5 rounded-full overflow-hidden flex " + (over ? "bg-red-100" : "bg-gray-100")}>
-                                  {(oc.byDept || []).map(b => <div key={b.dept} className={DEPT_BAR[b.dept] || "bg-gray-400"} style={{ width: `${Math.min(100, b.used * 100)}%` }} />)}
+                        <button type="button" onClick={() => toggleTruck(t.id)} aria-expanded={openTruck === t.id} className="min-w-0 flex-1 text-left cursor-pointer">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span aria-hidden="true" className={"shrink-0 text-gray-400 transition-transform duration-150 " + (openTruck === t.id ? "rotate-90" : "")}>
+                              <svg width="12" height="12" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L8.5 7 L5 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            </span>
+                            <span className="text-sm font-semibold text-gray-900 shrink-0">Truck {truckNumById.get(t.id)}</span>
+                            <span className="min-w-0 truncate text-[12px] text-gray-500">{[t.vehicle, t.driver].filter(Boolean).join(" · ") || "no vehicle yet"}</span>
+                            {truckSpaceHint?.id === t.id && <span className="shrink-0 ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-white">Fill this first</span>}
+                            {t.trips.length > 1 && <span className={"shrink-0 text-[10px] font-semibold text-gray-400 " + (truckSpaceHint?.id === t.id ? "" : "ml-auto")}>{t.trips.length} trips</span>}
+                          </div>
+                          <div className="mt-1.5 pl-5 space-y-1">
+                            {t.phone && <span className="block text-[11px] text-gray-500 tabular-nums">📞 {t.phone}</span>}
+                            {t.trips.map((trip, tripI) => {
+                              const oc = truckOccs[trip.id] || { used: 0 };
+                              const pct = Math.round(oc.used * 100), over = oc.used > 1.005, full = oc.used >= 0.999;
+                              const st = trip.status || "loading";
+                              return (
+                                <div key={trip.id} className="flex items-center gap-2">
+                                  {t.trips.length > 1 && <span className="shrink-0 text-[10px] font-semibold text-gray-400 w-10">Trip {tripI + 1}</span>}
+                                  <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ring-1 " + (TRUCK_STATUS_CLS[st] || TRUCK_STATUS_CLS.loading)}>{TRUCK_STATUS_LABEL[st] || st}</span>
+                                  <div className={"min-w-0 flex-1 h-1.5 rounded-full overflow-hidden flex " + (over ? "bg-red-100" : "bg-gray-100")}>
+                                    {(oc.byDept || []).map(b => <div key={b.dept} className={DEPT_BAR[b.dept] || "bg-gray-400"} style={{ width: `${Math.min(100, b.used * 100)}%` }} />)}
+                                  </div>
+                                  <span className={"shrink-0 text-[11px] font-bold tabular-nums " + (over || full ? "text-red-600" : pct >= 80 ? "text-amber-600" : "text-gray-700")}>{over ? `Over ${pct}%` : full ? "Full" : `${pct}% full`}</span>
                                 </div>
-                                <span className={"shrink-0 text-[11px] font-bold tabular-nums " + (over || full ? "text-red-600" : pct >= 80 ? "text-amber-600" : "text-gray-700")}>{over ? `Over ${pct}%` : full ? "Full" : `${pct}% full`}</span>
-                              </div>
-                            </button>
-                          );
-                        })()}
+                              );
+                            })}
+                          </div>
+                        </button>
                         {/* Removing a truck removes it for every department, so it is held back while
-                            another department still has items on it. */}
-                        <button onClick={() => delTruck(t.id)} disabled={Object.entries(t.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))}
-                          aria-label={`Remove truck ${ti + 1}`} title={Object.entries(t.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0)) ? "Another department has items on this truck" : "Remove truck"}
+                            another department has items on ANY of its trips. */}
+                        <button onClick={() => delTruck(t.id, truckNumById.get(t.id))} disabled={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0)))}
+                          aria-label={`Remove truck ${truckNumById.get(t.id)}`} title={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))) ? "Another department has items on this truck" : "Remove truck"}
                           className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors">
                           <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
                         </button>
                       </div>
                       {openTruck === t.id && (<>
-                      {/* ── WHO FILLS IT ── the bar itself is in the header above; opened, the truck adds
-                          each department's share of it and what to do when it is full. */}
-                      {(() => {
-                        const oc = truckOccs[t.id] || { used: 0, byDept: [], unknown: 0 };
-                        const pct = Math.round(oc.used * 100);
-                        const over = oc.used > 1.005, full = oc.used >= 0.999;
-                        if (!oc.byDept.length && !oc.unknown) return null;
-                        return (
-                          <div>
-                            {(over || full) && <div className="text-[11px] font-bold text-red-600">{over ? `Over by ${pct - 100}% — move items to another truck` : "Full — no space left"}</div>}
-                            {oc.byDept.length > 0 && (
-                              <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-500">
-                                {oc.byDept.map(b => <span key={b.dept} className={"inline-flex items-center gap-1 " + (b.dept === dept ? "font-semibold text-gray-800" : "")}><span className={"w-2 h-2 rounded-sm " + (DEPT_BAR[b.dept] || "bg-gray-400")} />{b.dept} {Math.round(b.used * 100)}%</span>)}
-                              </div>
-                            )}
-                            {oc.unknown > 0 && <div className="mt-0.5 text-[10px] text-gray-400">{oc.unknown} item{oc.unknown === 1 ? " has" : "s have"} no truck capacity set — not counted. Set it in Planning → 🚚 Truck.</div>}
-                          </div>
-                        );
-                      })()}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <select value={t.status || "loading"} onChange={e => setTruck(t.id, { status: e.target.value })} className="h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs font-medium capitalize focus:outline-none focus:ring-2 focus:ring-blue-400">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
-                        {t.phone && <a href={"tel:" + t.phone} className="h-8 inline-flex items-center text-xs font-semibold text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 rounded-lg px-2.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>Call {t.phone}</a>}
-                        <button onClick={() => downloadTruckChallanPdf(t, ti + 1)} disabled={!!challanPdfBusy} className="h-8 ml-auto text-xs font-semibold bg-white ring-1 ring-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-60 px-3 rounded-lg transition-colors">{challanPdfBusy === t.id ? "Making PDF…" : "Download PDF"}</button>
-                        <button onClick={() => printTruckChallan(t, ti + 1)} className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg transition-colors">Print challan</button>
-                      </div>
                       {/* Labelled, so the chips read as "pick one of these" rather than as tags
                           already applied to the truck. Vehicle and driver stacked in the chip,
-                          not joined by a dot, so the plate number leads. */}
+                          not joined by a dot, so the plate number leads. Truck-level - shared by
+                          every trip it makes. */}
                       {eventTrucks.length > 0 && (
                         <div>
                           <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Pick from fleet</div>
@@ -6460,43 +6902,189 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className="block text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{l}</label><TruckTextBox value={t[k] || ""} clean={k === "phone" ? phone10 : undefined} onCommit={v => setTruck(t.id, { [k]: v })} {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })} className="mt-1 w-full h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></div>
                         ))}
                       </div>
-                      {loadItems.length > 0 ? (
-                        /* One line per item: name over its loaded status, the "on this truck" box
-                           at the right. As a flex-wrap row the status and the box broke onto
-                           lines of their own at any width under ~500px. Only what is to be loaded:
-                           fixed / repeat items are listed apart below, not filled in (atVenueOf). */
-                        <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
-                          {loadItems.map(it => { const k = "inv:" + it.id; const onThis = Number(t.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const extraHere = Number(t.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
-                            <div key={k} className="flex items-center gap-2.5 px-2.5 py-2">
-                              {(() => { const cv = choiceViewAll.get(it.id); const ph = cv?.name ? cv.photo : it.photo; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : it.hex ? <div aria-hidden="true" className="w-8 h-8 rounded-lg ring-1 ring-black/10 shrink-0" style={{ background: it.hex }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
-                              <div className="min-w-0 flex-1">
-                                <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={choiceViewAll.get(it.id)?.name || it.name}>{choiceViewAll.get(it.id)?.name || it.name}</div>
-                                {/* a kit's part is loaded as its own piece - say which kit it goes with */}
-                                {(it.kitOf || it.fromKit) && <div className="text-[10px] text-blue-600 truncate">part of {it.kitOf || it.fromKit}</div>}
-                                <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty}{it.qtyUnit ? ` ${it.qtyUnit}` : ""} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
-                                {/* This item's share of the truck, and how many more of it the space left takes. */}
-                                {(() => {
-                                  const sh = truckShares[dept]?.get(truckKey(it));
-                                  if (!sh) return <div className="text-[10px] text-gray-400">no truck capacity set</div>;
-                                  const left = Math.max(0, 1 - (truckOccs[t.id]?.used || 0));
-                                  return <div className="text-[10px] text-gray-500 tabular-nums">{onThis > 0 ? `${Math.round(onThis * sh.perUnit * 100)}% of this truck · ` : ""}{left > 0 ? `fits ~${Math.floor(left / sh.perUnit + 1e-9)} more` : "no space left"} · ~{Math.round(sh.perTruck)} per truck</div>;
-                                })()}
+                      <button onClick={() => addTrip(t.id)} className="h-8 px-3 rounded-lg ring-1 ring-dashed ring-gray-300 text-gray-500 hover:text-gray-700 hover:ring-gray-400 text-xs font-semibold transition-colors">+ Add trip</button>
+                      {/* ── EACH TRIP IS ITS OWN RUN ── its own status, its own challan, its own items
+                          (owner ask, 2026-11-23: "the same truck makes multiple trips... for trip 2,
+                          dont show me items that have already fully gone out for trip 1"). Only the
+                          vehicle/driver/phone above are shared; everything below is per trip. Shown
+                          one at a time behind tabs (owner ask, 2026-11-23: several trips stacked one
+                          after another grew the page's own scroll with every trip added) - tabs only
+                          appear once there's more than one trip to choose between. */}
+                      {(() => {
+                        // Falls back to the NEWEST trip, not the first - that's the one still being
+                        // loaded (every earlier one is locked, see `locked` below), so landing there
+                        // by default (first open, or after removing whichever trip WAS showing) means
+                        // never landing on a read-only tab with the one actually in progress a click away.
+                        const activeTripId = (activeTrip[t.id] && t.trips.some(tr => tr.id === activeTrip[t.id])) ? activeTrip[t.id] : t.trips[t.trips.length - 1]?.id;
+                        const trip = t.trips.find(tr => tr.id === activeTripId) || t.trips[0];
+                        const tripI = t.trips.findIndex(tr => tr.id === trip.id);
+                        const multi = t.trips.length > 1;
+                        // Only the NEWEST trip is still being loaded - every earlier one already left
+                        // the moment a later trip started (owner ask, 2026-11-23), so it's locked from
+                        // further editing here (its status was already bumped to Dispatched in addTrip).
+                        const locked = tripI !== t.trips.length - 1;
+                        const oc = truckOccs[trip.id] || { used: 0, byDept: [], unknown: 0 };
+                        const pct = Math.round(oc.used * 100);
+                        const over = oc.used > 1.005, full = oc.used >= 0.999;
+                        // Hidden once nothing is left to send out anywhere AND this trip itself has
+                        // none of its own loaded - an earlier trip that already took it all shouldn't
+                        // clutter a later one, but a row already partly on THIS trip stays editable.
+                        const visibleLoadItems = loadItems.filter(it => {
+                          const k = "inv:" + it.id;
+                          const onThis = Number(trip.items?.[k]) || 0;
+                          return onThis > 0 || truckLoadedQty(k) < (Number(it.qty) || 0);
+                        });
+                        return (<>
+                          {multi && (
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {t.trips.map((tr, i) => {
+                                const on = tr.id === trip.id;
+                                const trOc = truckOccs[tr.id] || { used: 0 };
+                                const trFlag = trOc.used >= 0.999 || trOc.used > 1.005;
+                                const trLocked = i !== t.trips.length - 1;
+                                return (
+                                  <button key={tr.id} type="button" onClick={() => setActiveTrip(p => ({ ...p, [t.id]: tr.id }))} aria-pressed={on}
+                                    className={"h-8 px-3 rounded-lg text-xs font-semibold ring-1 transition-colors " + (on ? "bg-blue-600 text-white ring-blue-600" : "bg-white text-gray-700 ring-gray-200 hover:bg-gray-50")}>
+                                    {trLocked && "🔒 "}Trip {i + 1}{trFlag && <span className={on ? "text-red-200" : "text-red-500"}> ●</span>}
+                                  </button>
+                                );
+                              })}
+                              <button onClick={() => removeTrip(t.id, trip.id, tripI + 1)} disabled={locked || Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))}
+                                aria-label={`Remove trip ${tripI + 1}`} title={locked ? "Already dispatched - can't remove" : "Remove this trip"}
+                                className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors">
+                                <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
+                              </button>
+                            </div>
+                          )}
+                          <div className="space-y-2.5">
+                            {/* ── WHO FILLS THIS TRIP ── the bar itself is in the header above; opened, it
+                                adds each department's share of it and what to do when it is full. */}
+                            {(oc.byDept.length > 0 || oc.unknown > 0) && (
+                              <div>
+                                {(over || full) && <div className="text-[11px] font-bold text-red-600">{over ? `Over by ${pct - 100}% — move items to another trip` : "Full — no space left"}</div>}
+                                {oc.byDept.length > 0 && (
+                                  <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-500">
+                                    {oc.byDept.map(b => <span key={b.dept} className={"inline-flex items-center gap-1 " + (b.dept === dept ? "font-semibold text-gray-800" : "")}><span className={"w-2 h-2 rounded-sm " + (DEPT_BAR[b.dept] || "bg-gray-400")} />{b.dept} {Math.round(b.used * 100)}%</span>)}
+                                  </div>
+                                )}
+                                {oc.unknown > 0 && <div className="mt-0.5 text-[10px] text-gray-400">{oc.unknown} item{oc.unknown === 1 ? " has" : "s have"} no truck capacity set — not counted. Set it in Planning → 🚚 Truck.</div>}
                               </div>
-                              {/* Normal load, capped at what the item still needs across all trucks. Once it is
-                                  fully loaded, the amber box takes any extra (overload) on this truck. */}
-                              <TruckTextBox type="number" min="0" max={maxHere} value={onThis || ""} onCommit={v => setTruckItem(t.id, k, v === "" ? "" : Math.min(maxHere, Math.max(0, Number(v) || 0)))} placeholder="0" aria-label={`${it.name} on this truck`} title={`On this truck (up to ${maxHere})`}
-                                className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                              {(totalLoaded >= (Number(it.qty) || 0) || extraHere > 0) && (
-                                <label className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-700" title="Extra pieces on this truck beyond what the item needs (overload)">
-                                  +
-                                  <TruckTextBox type="number" min="0" value={extraHere || ""} onCommit={v => setTruckExtra(t.id, k, v === "" ? "" : Math.max(0, Number(v) || 0))} placeholder="extra" aria-label={`${it.name} extra on this truck`}
-                                    className="w-14 h-8 rounded-lg bg-amber-50 ring-1 ring-amber-300 px-1.5 text-sm text-center font-semibold tabular-nums text-amber-800 placeholder:font-normal placeholder:text-[10px] placeholder:text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400" />
-                                </label>
+                            )}
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <select value={trip.status || "loading"} onChange={e => setTripStatus(t.id, trip.id, e.target.value)} disabled={locked} className="h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs font-medium capitalize focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60 disabled:cursor-not-allowed">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
+                              {locked && <span className="text-[10px] text-gray-400">🔒 already dispatched - a later trip exists</span>}
+                              {t.phone && <a href={"tel:" + t.phone} className="h-8 inline-flex items-center text-xs font-semibold text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 rounded-lg px-2.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>Call {t.phone}</a>}
+                              <button onClick={() => downloadTruckChallanPdf(t, trip.id, truckNumById.get(t.id), tripI + 1)} disabled={!!challanPdfBusy} className="h-8 ml-auto text-xs font-semibold bg-white ring-1 ring-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-60 px-3 rounded-lg transition-colors">{challanPdfBusy === trip.id ? "Making PDF…" : "Download PDF"}</button>
+                              <button onClick={() => printTruckChallan(t, trip.id, truckNumById.get(t.id), tripI + 1)} className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg transition-colors">Print challan</button>
+                            </div>
+                            {/* Add an item from this department's own inventory that never came from
+                                Build/Deal Check (owner ask, 2026-11-22) - picked by sub-category, then by
+                                item, so a spare panel or an outside-the-deal extra can still ride on a
+                                truck and still show up on its challan. Hidden once this trip is locked -
+                                it already left, there's nothing left to add to it. */}
+                            {!locked && (
+                            <div className="rounded-lg ring-1 ring-dashed ring-gray-300 p-2.5 space-y-2">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Add an item not in this deal</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {[...deptInventoryBySub.keys()].sort().map(s => {
+                                  const on = addPicker[trip.id]?.sub === s;
+                                  return (
+                                    <button key={s} type="button" onClick={() => setAddPicker(p => ({ ...p, [trip.id]: on ? null : { sub: s, invId: "", qty: 1 } }))} aria-pressed={on}
+                                      className={"px-2.5 py-1 rounded-full text-[11px] font-medium ring-1 transition-colors " + (on ? "bg-blue-600 text-white ring-blue-600" : "bg-white text-gray-700 ring-gray-200 hover:bg-gray-50")}>
+                                      {s}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              {/* Picked by a thumbnail grid, not a name-only dropdown (owner ask, 2026-11-22) -
+                                  a sub-category can hold several near-identical-sounding items, and the photo
+                                  is how the floor actually tells them apart. */}
+                              {addPicker[trip.id]?.sub && (
+                                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-64 overflow-y-auto p-1 rounded-lg bg-gray-50">
+                                  {(deptInventoryBySub.get(addPicker[trip.id].sub) || []).map(i => {
+                                    const on = addPicker[trip.id]?.invId === i.id;
+                                    const ph = i.img || (Array.isArray(i.photoUrls) && i.photoUrls[0]) || "";
+                                    return (
+                                      <button key={i.id} type="button" onClick={() => setAddPicker(p => ({ ...p, [trip.id]: { ...p[trip.id], invId: i.id } }))} aria-pressed={on}
+                                        className={"flex flex-col items-center gap-1 p-1.5 rounded-lg ring-1 bg-white transition-colors " + (on ? "ring-blue-400 ring-2" : "ring-gray-200 hover:bg-gray-50")}>
+                                        {ph ? <img src={thumbUrl(ph, 112)} loading="lazy" decoding="async" alt="" className="w-full aspect-square rounded-md object-cover" onError={e => { e.target.style.display = "none"; }} />
+                                          : <div className="w-full aspect-square rounded-md bg-gray-100 flex items-center justify-center text-gray-300 text-2xl">📦</div>}
+                                        <span className="w-full text-[10.5px] text-gray-700 text-center leading-snug line-clamp-2" title={i.name}>{i.name}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                              {addPicker[trip.id]?.invId && (
+                                <div className="flex items-center gap-2">
+                                  <input type="number" min="1" value={addPicker[trip.id]?.qty ?? 1} onChange={e => setAddPicker(p => ({ ...p, [trip.id]: { ...p[trip.id], qty: e.target.value } }))} aria-label="Quantity to add"
+                                    className="h-8 w-16 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                                  <button onClick={() => {
+                                    const pick = addPicker[trip.id];
+                                    const inv = (deptInventoryBySub.get(pick.sub) || []).find(i => i.id === pick.invId);
+                                    if (inv) { addTripCustomItem(t.id, trip.id, inv, pick.qty); setAddPicker(p => ({ ...p, [trip.id]: null })); }
+                                  }} className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold">+ Add</button>
+                                </div>
                               )}
                             </div>
-                          ); })}
-                        </div>
-                      ) : <div className="text-xs text-gray-400">{blockedItems.length ? "Nothing to load - everything is already at the venue." : "No inventory blocked for this department."}</div>}
+                            )}
+                            {/* Already-added ad-hoc items stay visible (and on the challan) once a trip
+                                locks - just no longer editable, same as everything else on it. */}
+                            {trip.custom.length > 0 && (
+                              <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
+                                {trip.custom.map(c => (
+                                  <div key={c.id} className="flex items-center gap-2.5 px-2.5 py-2">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2">{c.name}</div>
+                                      <div className="mt-0.5 text-[10px] text-amber-700">{c.sub || "—"} · not in Build/Deal Check</div>
+                                    </div>
+                                    <TruckTextBox type="number" min="0" value={c.qty || ""} onCommit={v => setTripCustomQty(t.id, trip.id, c.id, v)} disabled={locked} aria-label={`${c.name} on this trip`}
+                                      className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60 disabled:cursor-not-allowed" />
+                                    {!locked && <button onClick={() => removeTripCustomItem(t.id, trip.id, c.id)} aria-label={`Remove ${c.name}`} title="Remove" className="shrink-0 text-gray-400 hover:text-red-600 text-sm px-1.5">×</button>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {visibleLoadItems.length > 0 ? (
+                              /* One line per item: name over its loaded status, the "on this trip" box
+                                 at the right. As a flex-wrap row the status and the box broke onto
+                                 lines of their own at any width under ~500px. Only what is to be loaded:
+                                 fixed / repeat items are listed apart below, not filled in (atVenueOf). */
+                              <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
+                                {visibleLoadItems.map(it => { const k = "inv:" + it.id; const onThis = Number(trip.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const extraHere = Number(trip.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
+                                  <div key={k} className="flex items-center gap-2.5 px-2.5 py-2">
+                                    {(() => { const cv = choiceViewAll.get(it.id); const ph = cv?.name ? cv.photo : it.photo; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : it.hex ? <div aria-hidden="true" className="w-8 h-8 rounded-lg ring-1 ring-black/10 shrink-0" style={{ background: it.hex }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={choiceViewAll.get(it.id)?.name || it.name}>{choiceViewAll.get(it.id)?.name || it.name}</div>
+                                      {/* a kit's part is loaded as its own piece - say which kit it goes with */}
+                                      {(it.kitOf || it.fromKit) && <div className="text-[10px] text-blue-600 truncate">part of {it.kitOf || it.fromKit}</div>}
+                                      <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty}{it.qtyUnit ? ` ${it.qtyUnit}` : ""} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
+                                      {/* This item's share of the trip, and how many more of it the space left takes. */}
+                                      {(() => {
+                                        const sh = truckShares[dept]?.get(truckKey(it));
+                                        if (!sh) return <div className="text-[10px] text-gray-400">no truck capacity set</div>;
+                                        const left = Math.max(0, 1 - (truckOccs[trip.id]?.used || 0));
+                                        return <div className="text-[10px] text-gray-500 tabular-nums">{onThis > 0 ? `${Math.round(onThis * sh.perUnit * 100)}% of this trip · ` : ""}{left > 0 ? `fits ~${Math.floor(left / sh.perUnit + 1e-9)} more` : "no space left"} · ~{Math.round(sh.perTruck)} per truck</div>;
+                                      })()}
+                                    </div>
+                                    {/* Normal load, capped at what the item still needs across every trip of every
+                                        truck. Once it is fully loaded, the amber box takes any extra (overload). */}
+                                    <TruckTextBox type="number" min="0" max={maxHere} value={onThis || ""} onCommit={v => setTripItem(t.id, trip.id, k, v === "" ? "" : Math.min(maxHere, Math.max(0, Number(v) || 0)))} disabled={locked} placeholder="0" aria-label={`${it.name} on this trip`} title={`On this trip (up to ${maxHere})`}
+                                      className="shrink-0 w-14 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center font-semibold tabular-nums placeholder:font-normal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60 disabled:cursor-not-allowed" />
+                                    {(totalLoaded >= (Number(it.qty) || 0) || extraHere > 0) && (
+                                      <label className="shrink-0 inline-flex items-center gap-0.5 text-[11px] font-bold text-amber-700" title="Extra pieces on this trip beyond what the item needs (overload)">
+                                        +
+                                        <TruckTextBox type="number" min="0" value={extraHere || ""} onCommit={v => setTripExtra(t.id, trip.id, k, v === "" ? "" : Math.max(0, Number(v) || 0))} disabled={locked} placeholder="extra" aria-label={`${it.name} extra on this trip`}
+                                          className="w-14 h-8 rounded-lg bg-amber-50 ring-1 ring-amber-300 px-1.5 text-sm text-center font-semibold tabular-nums text-amber-800 placeholder:font-normal placeholder:text-[10px] placeholder:text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:opacity-60 disabled:cursor-not-allowed" />
+                                      </label>
+                                    )}
+                                  </div>
+                                ); })}
+                              </div>
+                            ) : <div className="text-xs text-gray-400">{blockedItems.length ? (loadItems.length ? "Nothing left to load — it's all gone out on another trip." : "Nothing to load - everything is already at the venue.") : "No inventory blocked for this department."}</div>}
+                          </div>
+                        </>);
+                      })()}
                       </>)}
                     </div>
                   ))}

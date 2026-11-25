@@ -4,6 +4,7 @@ import { useAuth } from "./lib/AuthContext";
 import { landingPath, userApps } from "./lib/auth";
 import { useVersionCheck } from "./lib/useVersionCheck";
 import { flushBeforeReload } from "./lib/pendingSaveRegistry";
+import { armBackGestureTrap } from "./lib/backGestureTrap";
 import { canvaHandleOAuthRedirect } from "./lib/canva";
 import SaveHealthBanner from "./components/shared/SaveHealthBanner.jsx";
 import StockShortfallBanner from "./components/studio/StockShortfallBanner.jsx";
@@ -124,6 +125,12 @@ export default function App() {
     document.addEventListener("wheel", onWheel, { passive: true });
     return () => document.removeEventListener("wheel", onWheel);
   }, []);
+  // Only once logged in — a /login visitor keeps ordinary back behavior. Keyed on a plain boolean,
+  // not `user` itself — AuthContext replaces that object on every token refresh/realtime update to
+  // the user's own row, which would re-arm (and push another guard entry) each time for no reason
+  // (regression review, 2026-11-23).
+  const loggedIn = !!user;
+  useEffect(() => { if (loggedIn) return armBackGestureTrap(); }, [loggedIn]);
   return (
     <>
       <Suspense fallback={<RouteFallback />}>

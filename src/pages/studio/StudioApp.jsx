@@ -2795,6 +2795,12 @@ export default function StudioApp() {
   // stale-save conflict dialog above it, not a quick confirmation, so it gets the same centred,
   // dimmed-backdrop modal treatment rather than the auto-dismissing toast. { message } or null.
   const [dealOpenConflict, setDealOpenConflict] = useState(null);
+  // One-shot: loadClientSession flips this true the moment it forces landingStep to Event Info
+  // because the client's OWN saved venue didn't resolve to a priced entry (see its own comment) —
+  // StudioEventInfo.jsx reads it once on arrival to pop a modal naming what's missing (not just a
+  // quiet inline status line, which is easy to land on without noticing why), then clears it back to
+  // false so it doesn't reappear on every subsequent re-render of the same visit.
+  const [venueRedirectNotice, setVenueRedirectNotice] = useState(false);
 
   // MEMOIZED, and it has to be. As a plain function this got a new identity on every render, and
   // that identity is load-bearing: saveClientLedger is useCallback(..., [showMsg]), so it churned
@@ -3077,6 +3083,11 @@ export default function StudioApp() {
   // if one's open, else step back one Studio screen (Summary → Build → Browse → Event Info); only
   // once neither applies does Back actually leave the app.
   useEffect(() => {
+    // Never inside a hidden same-origin iframe (the headless studio-sweep shards, AutoPlanningSync.jsx,
+    // and the PDF-run frame) — a pushState in there lands on the TOP-level tab's own history, so the
+    // next real back gesture pops the frame's dead entry instead of doing anything visible (regression
+    // review, 2026-11-23, off the mobile back-gesture trap in backGestureTrap.js).
+    if (window.top !== window.self) return;
     window.history.pushState({ studioNavGuard: true }, "");
     const onPopState = () => {
       if (dcFullPageOpen) { closeDealCheck(); window.history.pushState({ studioNavGuard: true }, ""); return; }
@@ -7415,6 +7426,22 @@ export default function StudioApp() {
         lines: [...(e.realLines || []).map(l => ({ name: l.name, qty: Number(l.qty) || 0, unit: l.unit || "" })),
           ...(e.artLines || []).filter(l => l.invItem).map(l => ({ name: l.name, qty: Number(l.qty) || 0, unit: l.unit || "" }))].filter(l => l.qty > 0) }))
         .filter(z => z.lines.length),
+      // A "mapping" flower's artificial pieces per element row, with its zone (snapshot v29) - one line per MAPPED
+      // inventory item, summed across however many recipe ingredients map to it (two recipe slots, e.g. a "3ft" and a
+      // "Ladi" form, both substituted with the same artificial product, print as one combined piece count instead of
+      // two - owner report, 2026-11-22: the Dept Ops PDF printed "Rajnigandha 3ft - 720 piece" and "Rajnigandha 2ft
+      // Ladi - 720 piece" as if they were two different things to source, when both are the same physical item).
+      mappedZones: eb.filter(e => (e.artLines || []).some(l => l.isMapped)).map(e => {
+        const byItem = new Map();
+        (e.artLines || []).forEach(al => {
+          if (!al.isMapped) return;
+          const key = al.mappedItemId || al.mappedName || al.name;
+          const prev = byItem.get(key);
+          if (prev) prev.qty += al.mappedPcs || 0;
+          else byItem.set(key, { name: al.mappedName || al.name, mappedItemId: al.mappedItemId || null, unit: "pc", qty: al.mappedPcs || 0 });
+        });
+        return { zone: e.zoneKey, el: e.name, kitParent: e.kitParent || null, qty: rnd(e.qty), lines: [...byItem.values()].map(l => ({ ...l, qty: rnd(l.qty) })).filter(l => l.qty > 0) };
+      }).filter(z => z.lines.length),
       uncosted: (r.uncosted || []).map(u => ({ name: u.name, zone: u.zoneKey, qty: u.qty, reason: u.reason })),
       elements: elements.map(g => ({ ...g, zones: [...new Set(g.zones)], qty: rnd(g.qty), real: Math.round(g.real), art: Math.round(g.art), total: Math.round(g.total), invCost: Math.round(g.invCost) })),
     };
@@ -10961,6 +10988,42 @@ export default function StudioApp() {
     // the gate would check the WRONG name's pricing, and typing into the still-stale field would
     // overwrite this client's real venue (owner report, 2026-11-16, regression review).
     setClientVenueOther("");
+    // Event Info's own Continue gate (needsCustomVenueSetup, StudioEventInfo.jsx) only ever runs
+    // while someone is actually ON that screen — a "Load →" of an EXISTING client with an existing
+    // build skips straight past it to landingStep (Browse/Build), which is exactly how a deal saved
+    // with its venue left as an unpriced "Others" (name typed but never priced, or never even named)
+    // got all the way into a live build with ₹0 transport (owner report, 2026-11-22). Force landing
+    // on Event Info instead whenever this client's OWN saved venue doesn't resolve — same check the
+    // gate itself uses, so the two can never disagree about what counts as "still unpriced".
+    //
+    // pricingReady-gated (regression review): trVenues/venueParents still hold their boot-time
+    // defaults (TR_DV, {}) for the first instant of every mount — the SEPARATE mount-restore effect
+    // (which brings back a deal already open across a refresh/Studio↔IMS switch) also calls this
+    // function then, before pricingReady has had a chance to turn true, so this check is skipped for
+    // that one restore every time — a genuinely-unpriced deal reopened this way is NOT caught until
+    // the next explicit "Load →"/LMS load, or the next planning sweep (which does wait on
+    // pricingReady). Accepted, bounded gap — not "checked at least once per mount" as an earlier
+    // version of this comment incorrectly claimed; deferring restore itself on pricingReady would
+    // fix it but noticeably delays every refresh (pricingReady waits on the heaviest reads, rate_card
+    // + inventory) for a comparatively rare edge case.
+    //
+    // allInhouseVenues excluded deliberately: an Ambria-owned sub-venue missing its OWN trVenues row
+    // is an admin data gap (a property never given a rate, or a failed venues load), not something
+    // typable here — bouncing it to Event Info would show a pointless "already in your venue list,
+    // pick it from the dropdown" dead end for a venue that's already exactly what the dropdown shows
+    // selected (regression review). Only a genuinely new/outdoor/custom venue goes through this gate.
+    //
+    // othersVenueName also seeded here (regression review): the gate's own precondition is
+    // `venue === "Others" || !!othersVenueName` — a venue saved as a plain TYPED name (not the
+    // literal sentinel) left `clientVenueOther` at the "" just set above, so the gate's precondition
+    // was false and Event Info showed nothing to fill in even after landing there. Restoring the
+    // saved name into clientVenueOther (instead of leaving it blank) satisfies that precondition AND
+    // pre-fills the venue-name field with what's already known, rather than asking it to be retyped.
+    if (pricingReady && client.venue && !allInhouseVenues.includes(client.venue) && !resolveTrVenue(trVenues, client.venue, venueParents)) {
+      landingStep = 0;
+      if (client.venue !== "Others") setClientVenueOther(client.venue);
+      setVenueRedirectNotice(true);
+    }
     setFn(client.fn || "");
     setClientShift(client.shift || "");
     setClientPax(client.pax || "");
@@ -11192,7 +11255,7 @@ export default function StudioApp() {
     setStep(landingStep);
     // The single-function path's toast, gone for the reason given on the multi-function one above.
     return mergeResult;
-  }, [events, allVideos, ytVideoTags]);
+  }, [events, allVideos, ytVideoTags, trVenues, venueParents, pricingReady, allInhouseVenues]);
 
   // ── STOP A SECOND LIVE EDITOR ON THE SAME DEAL — EVEN THE SAME PERSON'S OWN OTHER DEVICE ──
   // Confirmed race-condition risk (Sangeeta, 2026-11-03) — two concurrent editors on the same
@@ -11442,6 +11505,93 @@ export default function StudioApp() {
     // disagree (see loadClientSession's own comment on this).
     loadClientSession(client, session, landingStep, { isNewVisit: false, landingFnIdx: savedFn });
   }, [clientLedger, activeClientId, loadClientSession]);
+
+  // ── RE-CHECK VENUE PRICING ONCE REAL DATA LANDS (owner report, 2026-11-22) ──
+  // loadClientSession's own venue-pricing check (its own comment has the full reasoning) is
+  // pricingReady-gated — correct for avoiding a false bounce against boot-time placeholder data, but
+  // it means the restore-on-mount path above (a hard refresh, or a Studio↔IMS switch that finds
+  // activeClientId already set and never calls loadClientSession at all — see its own early return)
+  // skips the check entirely for that one restore. A genuinely unpriced deal reopened exactly that
+  // way — the single most common way anyone reopens a deal they were already working on — slipped
+  // straight back into Build with nothing flagged, which defeats the whole point of the gate. This
+  // re-runs the identical check once pricingReady actually turns true, independent of HOW
+  // activeClientId got set, so it catches that gap the moment real data is in rather than waiting for
+  // the next explicit "Load →"/LMS load or the periodic planning sweep.
+  const venueRecheckedRef = useRef(false);
+  useEffect(() => {
+    if (venueRecheckedRef.current) return;
+    if (!pricingReady || !activeClientId) return;
+    venueRecheckedRef.current = true;
+    const client = (clientLedger || []).find(c => c.id === activeClientId);
+    if (!client?.venue) return;
+    if (allInhouseVenues.includes(client.venue)) return;
+    if (resolveTrVenue(trVenues, client.venue, venueParents)) return;
+    if (client.venue !== "Others") setClientVenueOther(client.venue);
+    setVenueRedirectNotice(true);
+    setStep(0);
+  }, [pricingReady, activeClientId, clientLedger, allInhouseVenues, trVenues, venueParents]);
+
+  // ── RE-CLAIM "SOMEONE ELSE IS EDITING THIS" PRESENCE AFTER A RESTORE (owner report, 2026-11-22) ──
+  // loadClientSessionGuarded (claimDealPresence + dealOpenConflict, above) only ever runs from Event
+  // Info's explicit "Load →" — deliberately, per its own comment: the mount-restore path (a hard
+  // refresh — and, since /studio and /ims are separate Routes that fully unmount each other, a
+  // Studio↔IMS switch takes this SAME path too, not the "a live deal is already open" early-return
+  // just above, which in practice only ever sees activeClientId null at this point) calls
+  // loadClientSession directly and never claims presence for the restored deal at all. This tab then
+  // edits it invisibly — nothing tells anyone it's here — so a second person's "Load →" moments later
+  // sees no one on the deal and walks right in, recreating the exact two-editors collision this
+  // feature exists to prevent (same root shape as the venue-pricing gap just above: a safety check
+  // that only ever ran through the explicit-Load path, silently absent after a refresh).
+  // window.__AMBRIA_SWEEP__ (set once in main.jsx, same flag saveSession's own sweep guard reads):
+  // never claims inside the hidden planning-sweep frame — that's an automated process re-opening
+  // booked deals headlessly to sync their Deal Check snapshot, not a second editor, and claiming
+  // presence for it would make every deal it touches falsely read as "already being edited" to a real
+  // salesperson trying to open one while a sweep is running.
+  //
+  // Known accepted gap (regression review): clicking "Load →" on this SAME deal, or a different one,
+  // in the narrow window before this effect's own claim below has resolved can still race it (the
+  // channel-dedup/one-shot machinery here isn't coordinated with loadClientSessionGuarded's own
+  // claim) — requires re-clicking Load within roughly a second of the page restoring that exact deal,
+  // not fixed here; the staleness check below at least stops a LATE-resolving claim from landing on
+  // whatever deal is active by the time it finishes, which is the part that could otherwise leak a
+  // channel or falsely lock an abandoned deal for someone else.
+  const presenceReclaimedRef = useRef(false);
+  useEffect(() => {
+    if (presenceReclaimedRef.current || (typeof window !== "undefined" && window.__AMBRIA_SWEEP__)) return;
+    if (!activeClientId || !authUser?.id || dealPresenceRef.current) return;
+    presenceReclaimedRef.current = true;
+    const claimedForId = activeClientId;
+    (async () => {
+      const { channel, others, selfElsewhere } = await claimDealPresence(claimedForId, { id: authUser.id, name: authUser.name || "Someone" });
+      // Stale by the time this resolves — the user has already moved off this deal (a new deal
+      // started/loaded, or this tab left Studio entirely) or something else already claimed it
+      // (loadClientSessionGuarded, mid-race) while this was in flight. Release rather than act on a
+      // deal that's no longer the live one, or overwrite a claim that's already correct.
+      if (activeClientIdRef.current !== claimedForId || dealPresenceRef.current) {
+        try { supabase.removeChannel(channel); } catch { /* ignore */ }
+        return;
+      }
+      if (others.length) {
+        try { supabase.removeChannel(channel); } catch { /* ignore */ }
+        const who = others.map(o => o?.userName || "Someone").join(", ");
+        setDealOpenConflict({ message: `${who} ${others.length > 1 ? "are" : "is"} already editing this deal right now — your changes here could conflict with theirs.` });
+        return;
+      }
+      // selfElsewhere deliberately stays silent here (unlike loadClientSessionGuarded's own, which
+      // DOES warn) — a stale leftover entry from this SAME user (a crashed tab, sleep, a network
+      // change; claimDealPresence's own comment documents a confirmed case surviving from a prior
+      // day) used to only ever surface on an explicit Load →; checking it on every single refresh
+      // instead would repeat a false "you already have this open" on every reload until the leftover
+      // ages out server-side, with no retry to recover from it (regression review). Simply not
+      // claiming here — same as before this effect existed — is the safer failure mode; a GENUINE
+      // second live tab of this same user is still caught the moment either of them next uses Load →.
+      if (selfElsewhere) {
+        try { supabase.removeChannel(channel); } catch { /* ignore */ }
+        return;
+      }
+      dealPresenceRef.current = { channel, clientId: claimedForId };
+    })();
+  }, [activeClientId, authUser]);
 
   // ── IMS PLANNING SWEEP: BOOKED DEALS CATCH UP WITH IMS SETTINGS ──
   // Planning shows each booked deal's Deal Check snapshot, and Deal Check only runs in a browser, so
@@ -16116,7 +16266,7 @@ export default function StudioApp() {
     // deal check
     dealCheckData, setDealCheckData, dealCheckLoading, setDealCheckLoading, dealCheckError, setDealCheckError, catDeptMap, saveCatDeptMap,
     // mount-loaded fallbacks so Build works before Deal Check opens (fixed-venue Repeat chip, floral auto-derive)
-    studioFloralData, sharedFloralSettings, venueParents, resolveTrVenue,
+    studioFloralData, sharedFloralSettings, venueParents, resolveTrVenue, venueRedirectNotice, setVenueRedirectNotice,
     imsColourCatalogue, setImsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, paletteCatalogueLoaded, imsPaintableCategories, setImsPaintableCategories,
     imsDefaultPaintCost, setImsDefaultPaintCost, savePaletteData, paintPickerTarget, setPaintPickerTarget, fabricPickerTarget, setFabricPickerTarget,
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,

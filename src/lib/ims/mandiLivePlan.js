@@ -54,19 +54,22 @@ export function withLivePlan(storedRows, seedRows, { append = true } = {}) {
   // list order), then a name-only fallback may take a plan row nobody claimed; a row left without one
   // is unplanned ("extra").
   const covered = new Set(); // seed rows some logged row already stands for
+  // A reuse-transfer row (`reuse: true`) is never a flower - it has no recipe plan to match against,
+  // real or by name, and must never be reconciled against one (see addReuseTransfer/removeReuseTransfer,
+  // DepartmentOpsTab.jsx), same bypass `swapFor`'s own replacement row already gets.
   const claim = stored.map((r) => {
-    if (!r || r.swapFor) return null;
+    if (!r || r.swapFor || r.reuse) return null;
     const s = byKey.get(mandiRowKey(r));
     if (s && !covered.has(s)) { covered.add(s); return s; }
     return null;
   });
   stored.forEach((r, i) => {
-    if (!r || r.swapFor || claim[i]) return;
+    if (!r || r.swapFor || r.reuse || claim[i]) return;
     const s = byName.get(nameKey(r.name));
     if (s && !covered.has(s)) { covered.add(s); claim[i] = s; }
   });
   const refreshed = stored.map((r, i) => {
-    if (!r || r.swapFor) return r;
+    if (!r || r.swapFor || r.reuse) return r;
     const s = claim[i];
     if (!s) return (Number(r.projQty) || 0) > 0 || (Number(r.projCost) || 0) > 0 ? { ...r, projQty: 0, projCost: 0 } : r;
     const next = { ...r, projQty: Number(s.projQty) || 0, projCost: Number(s.projCost) || 0 };

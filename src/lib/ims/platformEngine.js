@@ -80,6 +80,83 @@ export const platformAvgRatePerSqft = (trussInv, material) => {
   return sqftSum > 0 ? costSum / sqftSum : 0;
 };
 
+// Breaks a sqft need into the actual physical pieces a Tenting head would go pull off the rack
+// (owner ask 2026-11-23: "we know the sqft needed, we know the sqft of each piece, so why not just
+// show pieces"). Platform Config can hold SEVERAL distinct L×W/material rows at once — unlike a truss
+// pillar/beam, which is a specific named size a zone's own height band resolves to directly, a
+// platform floor is only ever specified as a plain sqft figure (this file's own header comment), so
+// there is no single "the" piece size to divide by.
+//
+// sqftNeeds: one number (a single combined need), or an array — one entry per PHYSICAL FLOOR. Every
+// floor is rounded up on ITS OWN (a piece can't be split across two different floors, regression
+// review 2026-11-23 finding 2b: pooling every floor into one number before rounding undercounts —
+// three 16-sqft floors against only a 32-sqft piece size need 3 pieces, not ceil(48/32)=2). Stock is
+// still shared and drawn down ACROSS floors in this one call, in the order given — two floors can't
+// both claim the same physical pieces.
+//
+// Within one floor: largest piece first (fewest pieces, fewest seams), FLOORED at every size except
+// the floor's own final remainder (regression review finding 2a: ceiling at every step over-pulls a
+// scarce large size when a smaller size could finish the job instead — 101 sqft against a 100-sqft
+// and a 16-sqft size must round to one of each, not two of the 100). Once a floor's own remainder
+// can't be fully met from any size's remaining real stock, it's still reported against the SMALLEST
+// configured size (rounded up) so ops gets a concrete "go get N more of this size" number instead of
+// the shortfall silently vanishing — whether that stock genuinely exists is a separate question this
+// file's own feasibility check (computePlatformPoolFeasibility) already answers; this is a physical-
+// pieces DISPLAY only and never changes what gets billed (platformAvgRatePerSqft's blended rate, and
+// every real allocation/feasibility check in this file, are untouched).
+//
+// Returns [{ id, label, lengthFt, widthFt, material, sqftPerPiece, qty, overStock }], largest first,
+// only for sizes actually used (qty > 0). `overStock` is how much of that row's OWN qty goes beyond
+// what Config says is really in stock (matched by the row itself, not by `id` — two rows can share an
+// id, or have none, regression review finding 2c).
+const PIECE_EPS = 1e-6;
+export const platformPiecesFor = (sqftNeeds, trussInv) => {
+  const floors = (Array.isArray(sqftNeeds) ? sqftNeeds : [sqftNeeds])
+    .map((n) => Math.max(0, Number(n) || 0))
+    .filter((n) => n > PIECE_EPS);
+  const sizes = platformsForMaterial(trussInv, null)
+    .map((r, i) => ({ ...r, _row: i, sqftPerPiece: (Number(r.lengthFt) || 0) * (Number(r.widthFt) || 0) }))
+    .filter((r) => (Number(r.lengthFt) || 0) > 0 && (Number(r.widthFt) || 0) > 0 && r.sqftPerPiece > 0)
+    .sort((a, b) => b.sqftPerPiece - a.sqftPerPiece);
+  if (!floors.length || !sizes.length) return [];
+  const labelOf = (r) => (r.label && String(r.label).trim()) || `${r.lengthFt}×${r.widthFt}ft`;
+  const smallest = sizes[sizes.length - 1];
+  // Real stock, shared and drawn down across every floor this call processes.
+  const stockLeft = new Map(sizes.map((r) => [r._row, Math.max(0, Math.floor(Number(r.stock) || 0))]));
+  const bySize = new Map(); // _row -> { id, label, …, qty, overStock }
+  const entryFor = (r) => bySize.get(r._row) || bySize.set(r._row, { id: r.id, label: labelOf(r), lengthFt: r.lengthFt, widthFt: r.widthFt, material: platformMaterialOf(r), sqftPerPiece: r.sqftPerPiece, qty: 0 }).get(r._row);
+  floors.forEach((need) => {
+    let remaining = need;
+    sizes.forEach((r) => {
+      if (remaining <= PIECE_EPS) return;
+      const avail = stockLeft.get(r._row) || 0;
+      if (avail <= 0) return;
+      // Floored, never the floor's full remaining need in one size — a smaller size afterward may
+      // finish the job without wasting a scarce larger piece on a fraction it doesn't need.
+      const want = Math.floor(remaining / r.sqftPerPiece + PIECE_EPS);
+      const used = Math.min(avail, want);
+      if (used <= 0) return;
+      stockLeft.set(r._row, avail - used);
+      entryFor(r).qty += used;
+      remaining = Math.max(0, remaining - used * r.sqftPerPiece);
+    });
+    if (remaining > PIECE_EPS) {
+      // This one floor's own final fraction, rounded up to ONE more piece of the smallest configured
+      // size — never pooled with a different floor's own leftover fraction. Drawn from whatever real
+      // stock of that size is still left; only the part still beyond that is flagged overStock.
+      const extra = Math.ceil(remaining / smallest.sqftPerPiece - PIECE_EPS);
+      const avail = stockLeft.get(smallest._row) || 0;
+      const fromStock = Math.min(avail, extra);
+      const over = extra - fromStock;
+      stockLeft.set(smallest._row, avail - fromStock);
+      const entry = entryFor(smallest);
+      entry.qty += extra;
+      if (over > 0) entry.overStock = (entry.overStock || 0) + over;
+    }
+  });
+  return sizes.filter((r) => bySize.has(r._row)).map((r) => bySize.get(r._row));
+};
+
 // ─── Layer 4.2-equivalent — one event's platform sqft demand, combined pool ──────────────────
 // Mirrors trussEngine.js's buildEventAllocation, but the "allocator" here is just arithmetic
 // (sqft = L × W × qty) instead of a pillar/beam topology resolve — there's no structural layout to

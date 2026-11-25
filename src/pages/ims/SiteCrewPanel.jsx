@@ -79,7 +79,7 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
   const canSiteEdit = hasTabPerm(authUser, settings, "ims", "site", "edit");
   const canSiteDel = hasTabPerm(authUser, settings, "ims", "site", "del");
   // Only gates WRITE controls — opening a department/row, the day pills and "By day / shift" stay
-  // usable on a locked event, same as they already are in Planned mode.
+  // usable on a locked event.
   const canEdit = mode === "actual" && !lock.locked && canSiteEdit;
 
   const write = (dept, patch) => setEventOrders((prev) => prev.map((e) => {

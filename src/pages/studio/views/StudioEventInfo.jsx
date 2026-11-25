@@ -172,6 +172,16 @@ export default function StudioEventInfo({ ctx }) {
   // Pending function-removal — holds a snapshot of what's being removed so the dialog can
   // show it. null = no dialog open. Replaces the native confirm() this used to fire.
   const [confirmRemove, setConfirmRemove] = useState(null);
+  // Popped once, right after loadClientSession forces this screen open because the loaded client's
+  // own saved venue never resolved to a priced entry (StudioApp.jsx's venueRedirectNotice) — landing
+  // here silently, with only the small inline "Missing — …" status line near Continue, is easy to
+  // not notice at all (owner ask, 2026-11-22: tell them explicitly what to fix, not just block them).
+  // The effect itself lives BELOW the ctx destructuring further down (not here) — its dependency
+  // array reads venueRedirectNotice/setVenueRedirectNotice, and a dep array is evaluated immediately
+  // at render time, not deferred like the effect body; putting it here, before ctx is destructured,
+  // read both names before their own `const` initialized — "Cannot access … before initialization"
+  // on literally every render of this component (confirmed live, 2026-11-22, a full Studio crash).
+  const [showMissingModal, setShowMissingModal] = useState(false);
   // LMS leads and Studio clients default to "mine only" (see the salesperson filter below) —
   // this is the escape hatch for sitting in on a colleague's meeting. Resets to false each time
   // the component mounts fresh (not persisted), so nobody is silently stuck in "all" mode later.
@@ -198,9 +208,16 @@ export default function StudioEventInfo({ ctx }) {
     customTripRate, setCustomTripRate, customGensets, setCustomGensets,
     setFilterFn, setBrowseVenues, setVenueGroup,
     allInhouseVenues, allOutdoorDB, allInhouseGroups, autoPersistCustomVenue,
-    trVenues, venueParents, resolveTrVenue,
+    trVenues, venueParents, resolveTrVenue, venueRedirectNotice, setVenueRedirectNotice,
     mode, setMode, canManageAny,
   } = ctx;
+  // showMissingModal's own one-shot trigger — see its useState's comment above for why this effect
+  // has to live down here, after venueRedirectNotice/setVenueRedirectNotice are actually in scope.
+  useEffect(() => {
+    if (!venueRedirectNotice) return;
+    setShowMissingModal(true);
+    setVenueRedirectNotice(false); // one-shot — consumed so it doesn't reappear on a later re-render of this same visit
+  }, [venueRedirectNotice, setVenueRedirectNotice]);
   // Search runs on the clients alone while their saved builds still download (StudioApp's clientsLite); a Load only once
   // the builds are in (sessionsReady) - loading a deal from a session-less copy would open it empty.
   const sessionsReady = ledgerReady && !ledgerLoadError;
@@ -2037,6 +2054,34 @@ export default function StudioEventInfo({ ctx }) {
         snap={confirmRemove} onCancel={cancelRemove} onConfirm={commitRemove}
         S={S} sheet={sheet} hairline={hairline} textP={textP} textM={textM} isDark={isDark}
       />
+
+      {showMissingModal && missing.length > 0 && (
+        <div style={S.overlay} onClick={() => setShowMissingModal(false)}>
+          <div
+            role="dialog" aria-modal="true" aria-labelledby="ei-missing-title" aria-describedby="ei-missing-body"
+            onClick={e => e.stopPropagation()}
+            style={{...sheet,position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",
+              zIndex:200,width:"min(430px, calc(100vw - 32px))"}}>
+            <div style={{padding:"24px 26px 20px"}}>
+              <div id="ei-missing-title" style={{fontSize:16,fontWeight:700,color:textP,letterSpacing:-0.3,lineHeight:1.25}}>This deal needs a few details before it can be opened</div>
+              <div id="ei-missing-body" style={{fontSize:12.5,color:textM,marginTop:7,lineHeight:1.55}}>
+                Something here was never fully set up, so Build can't price it correctly yet. Fill in what's listed below, then Continue.
+              </div>
+              <div style={{marginTop:15,padding:"11px 13px",borderRadius:11,border:`1px solid ${hairline}`,background:isDark?"rgba(255,255,255,0.025)":"#FAFAFB",display:"flex",flexDirection:"column",gap:7}}>
+                {missing.map((m, i) => (
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5,color:textP,fontWeight:600}}>
+                    <span style={{color:C.red,fontSize:16,lineHeight:1}}>•</span>{m}
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"flex",justifyContent:"flex-end",marginTop:20}}>
+                <button className="ei-btn ei-solid" autoFocus onClick={() => setShowMissingModal(false)}
+                  style={{fontSize:12.5,fontWeight:600,padding:"9px 20px",borderRadius:10,border:"none",background:accent,color:isDark?"#1a1a2e":"#fff",cursor:"pointer"}}>Got it</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
