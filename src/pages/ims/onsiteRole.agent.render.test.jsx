@@ -176,7 +176,7 @@ describe("event opened - onsiteOnly", () => {
     expect(html).toContain("Inventory blocked");
     expect(html).toContain("Dismantle &amp; routing");
     // tile titles only (a hidden panel block carries its own heading text, e.g. the Manpower plan block, in the DOM)
-    for (const t of ["Actuals", "Truck planning", "Carpet plan", "Truss plan", "Fabric plan", "Dismantle plan"]) expect(html).not.toContain(`leading-snug">${t}<`);
+    for (const t of ["Actuals", "Trucks &amp; return", "Truck planning", "Carpet plan", "Truss plan", "Fabric plan", "Dismantle plan"]) expect(html).not.toContain(`leading-snug">${t}<`);
     expect(html).toContain('leading-snug">Inventory blocked<');
     // the Department Head's own Manpower plan tile is there (owner ask 2026-11-20), the on-site crew tile is not
     expect(html).toContain('leading-snug">Manpower plan<');
@@ -202,7 +202,7 @@ describe("event opened - everyone else is unchanged", () => {
   });
   it("planning tiles present, no extra PDF row, no My events", () => {
     expect(html).toContain('leading-snug">Manpower plan<');
-    expect(html).toContain('leading-snug">Truck planning<');
+    expect(html).toContain('leading-snug">Trucks &amp; return<'); // Truck planning + Dismantle plan, one tile (owner ask 2026-11-25)
     expect(html).toContain("Inventory blocked");
     expect(html).not.toContain("All departments PDF");
     expect(html).not.toContain("Floral PDF");

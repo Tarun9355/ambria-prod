@@ -5563,8 +5563,20 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 dept === "Tenting" && trussPlanOf().length > 0 && { k: "truss", icon: "🏗️", title: "Truss plan", sub: n(trussPlanOf().length, "truss") + " · pillars, beams, fabric" },
                 { k: "mp", icon: "👷", title: "Manpower plan", sub: mpChanged ? <span className="text-red-600 font-semibold">⚠ Changed since you last looked · {fmt(Number(mpSeen.cost) || 0)} → {fmt(mpSnapCost)}</span> : mpRows.length ? n(mpRows.length, "crew line") : "no crew assigned", value: fmt(mpCost), ...(mpChanged ? { tone: "bg-red-50", alert: true } : {}) },
                 { k: "actuals", icon: "🧾", title: "Actuals", sub: hasActuals ? "real spend logged" : "nothing logged yet", value: hasActuals ? fmt(actualCost) : null },
-                { k: "truck", icon: "🚚", title: "Truck planning", sub: trucks.length ? n(trucks.length, "truck") + (fullTrucks ? ` · ${fullTrucks} full` : "") : "no trucks yet" },
-                SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && { k: "dism", icon: "🔁", title: "Dismantle plan", sub: "where each item goes after" },
+                // ── TRUCKS & RETURN ── (owner ask 2026-11-25) Truck planning and the Dismantle plan were two tiles for one journey -
+                // out to the event and back. One tile now, saying where both stand; it opens on "Going" with a "Return" tab beside it.
+                (() => {
+                  const goingTxt = trucks.length ? n(trucks.length, "truck") + (fullTrucks ? ` · ${fullTrucks} full` : "") : "no trucks yet";
+                  const hasReturn = SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0;
+                  const left = hasReturn ? blockedItems.filter(it => unroutedQty(it) > 0).length : 0;
+                  const returnTxt = !hasReturn ? "nothing to route" : left ? n(left, "item") + " left to route" : "all routed";
+                  return { k: "truck", also: ["dism"], icon: "🚚", title: "Trucks & return", sub: (
+                    <span className="block space-y-0.5">
+                      <span className="flex items-baseline gap-1.5"><span className="shrink-0 w-12 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{"Going"}</span><span>{goingTxt}</span></span>
+                      <span className="flex items-baseline gap-1.5"><span className="shrink-0 w-12 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{"Return"}</span><span className={left ? "text-amber-700 font-semibold" : ""}>{returnTxt}</span></span>
+                    </span>
+                  ) };
+                })(),
               ].filter((t) => t && (!onsiteOnly || t.k === "inv" || t.k === "mp")); // Site-Supervisor-view-only: Inventory blocked and the Manpower plan (the Department Head's own panel) only
               return (
                 <div className={GRID}>
@@ -5577,8 +5589,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       /* Clicking the open tile again closes it — with the block inline, the tile
                          is a toggle, not a launcher. The open one is ringed so you can tell at a
                          glance which of the five the panel below belongs to. */
-                      onClickCapture={e => { if (modal === t.k) { e.stopPropagation(); setModal(null); } }}
-                      className={"group text-left rounded-xl p-3 sm:p-3.5 h-full flex flex-col transition-[transform,box-shadow] duration-150 shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] hover:-translate-y-0.5 hover:shadow-[0_4px_8px_rgba(15,23,42,0.1),0_22px_40px_-12px_rgba(15,23,42,0.45)] " + (modal === t.k ? "ring-2 ring-blue-500 " + (t.tone || "bg-white/90") : (t.tone || GLASS))}>
+                      // a tile also stands for the blocks in t.also (Trucks & return: its "Return" tab is the dismantle block)
+                      onClickCapture={e => { if (modal === t.k || (t.also || []).includes(modal)) { e.stopPropagation(); setModal(null); } }}
+                      className={"group text-left rounded-xl p-3 sm:p-3.5 h-full flex flex-col transition-[transform,box-shadow] duration-150 shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] hover:-translate-y-0.5 hover:shadow-[0_4px_8px_rgba(15,23,42,0.1),0_22px_40px_-12px_rgba(15,23,42,0.45)] " + (modal === t.k || (t.also || []).includes(modal) ? "ring-2 ring-blue-500 " + (t.tone || "bg-white/90") : (t.tone || GLASS))}>
                       {/* Icon above the title on a phone, beside it from sm. Two to a row a tile
                           is ~170px; with a 36px icon beside it the title had ~110px and
                           "Inventory blocked" broke over two lines. Stacked, the title gets the
@@ -6844,6 +6857,19 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
 
             {/* Loading / dispatch — cross-check inventory + essentials while loading the truck.
                 Opens under the Truck planning tile; the dismantle plan has its own tile. */}
+            {/* ── TRUCKS & RETURN: GOING | RETURN ── one tile, two blocks (owner ask 2026-11-25): the loading block and the
+                dismantle block each stay exactly as they were; this switch sits above whichever of the two is open */}
+            {(modal === "truck" || modal === "dism") && SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && (
+              <div role="tablist" aria-label="Trucks and return" className="inline-flex p-1 rounded-lg bg-gray-100 text-xs font-semibold">
+                {[["truck", "🚚", "Going", "Going · Loading & dispatch"], ["dism", "🔁", "Return", "Return · Dismantle & routing"]].map(([k, ic, short, label]) => (
+                  <button key={k} type="button" role="tab" aria-selected={modal === k} onClick={() => setModal(k)}
+                    className={"px-3 py-1.5 rounded-md inline-flex items-center gap-1.5 whitespace-nowrap transition-colors " + (modal === k ? "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.12)] text-gray-900" : "text-gray-500 hover:text-gray-800")}>
+                    {/* phone: the short word; from sm the block's full name */}
+                    <span aria-hidden="true">{ic}</span><span className="sm:hidden">{short}</span><span className="hidden sm:inline">{label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("truck")}>
               {/* Same header shape as the other blocks: icon tile, title, primary action at the
                   right end, a one-line caption under it with the secondary action beside it. */}

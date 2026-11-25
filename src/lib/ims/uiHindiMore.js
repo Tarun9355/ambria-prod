@@ -37,6 +37,13 @@ Add crew type ¦ क्रू टाइप जोड़ें
 Add on-site expense ¦ साइट का खर्च जोड़ें
 Add truck ¦ ट्रक जोड़ें
 Add trip ¦ ट्रिप जोड़ें
+Trucks & return ¦ ट्रक और वापसी
+Going ¦ जाना
+Return ¦ वापसी
+Going · Loading & dispatch ¦ जाना · लोडिंग और डिस्पैच
+Return · Dismantle & routing ¦ वापसी · डिसमेंटल और रूटिंग
+all routed ¦ सब भेज दिया
+no trucks yet ¦ अभी कोई ट्रक नहीं
 New truck ¦ नया ट्रक
 Save truck ¦ ट्रक सेव करें
 Cancel ¦ रद्द करें

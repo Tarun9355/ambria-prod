@@ -213,7 +213,7 @@ describe("1b. everyone else is unchanged", () => {
   });
   it("a Department Head with Planning edit but no Site-Supervisor-only sub-tab (any non-role) keeps the full tile set", () => {
     const { html } = mount(props(st(), { onsiteOnly: false, authUser: { ...me, role: "Floral Head", departments: ["Floral"] } }), FSEL);
-    for (const t of ["Inventory blocked", "Manpower plan", "Actuals", "Truck planning"]) expect(tileTitles(html)).toContain(t);
+    for (const t of ["Inventory blocked", "Manpower plan", "Actuals", "Trucks &amp; return"]) expect(tileTitles(html)).toContain(t); // Truck planning + Dismantle plan are one tile now
   });
 });
 
