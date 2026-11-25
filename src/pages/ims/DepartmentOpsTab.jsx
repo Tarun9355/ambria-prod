@@ -208,14 +208,6 @@ const IconClipboard = ({ s = 14 }) => (
     <path d="M2.75 6.25h10.5M5.75 2v2.5M10.25 2v2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
   </svg>
 );
-const IconTruck = ({ s = 14 }) => (
-  <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-    <path d="M1.75 4.5h7v6.25h-7z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-    <path d="M8.75 7h2.6l2.9 2.2v1.55h-5.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-    <circle cx="4.75" cy="11.75" r="1.25" stroke="currentColor" strokeWidth="1.4" />
-    <circle cx="11.25" cy="11.75" r="1.25" stroke="currentColor" strokeWidth="1.4" />
-  </svg>
-);
 
 // One glyph per income head, keyed on the label the rows are built with (see `rows` in the
 // readout). Keyed on the label rather than an index so reordering the heads — or a department
@@ -4725,7 +4717,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         read as clutter rather than as three controls. Unringed, the inactive tag is just a
         label until you want it, and the one that is outlined is the one that means something.
         28px tall, matching the bell. */}
-    {!onsiteOnly && [["planning", "Department Head", IconClipboard], ["onsite", "Site Supervisor", IconTruck]].map(([k, label, Icon]) => {
+    {/* The "Site Supervisor" tag is gone from here (owner ask 2026-11-25): the sidebar's own Site page is where on-site work
+        lives now. The on-site view itself stays reachable from a "changed in the last 48 hours" line (goToChange), and
+        Department Head brings you back from it. */}
+    {!onsiteOnly && [["planning", "Department Head", IconClipboard]].map(([k, label, Icon]) => {
       const on = opsView === k;
       return (
         <button key={k} onClick={() => setOpsView(k)} aria-pressed={on}

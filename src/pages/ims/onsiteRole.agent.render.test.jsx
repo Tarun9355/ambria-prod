@@ -195,8 +195,9 @@ describe("event opened - onsiteOnly", () => {
 
 describe("event opened - everyone else is unchanged", () => {
   const html = render(sel({ onsiteOnly: false }), F_SEL);
-  it("Department Head | Site Supervisor switch, bar Download PDF, Sync present", () => {
+  it("Department Head tag (no Site Supervisor tag any more - the sidebar's Site page has it), bar Download PDF, Sync present", () => {
     expect(html).toContain("Department Head");
+    expect(html).not.toContain(">Site Supervisor</button>");
     expect(html).toContain("One PDF with all");
     expect(html).toContain("SYNC-BUTTON");
   });
