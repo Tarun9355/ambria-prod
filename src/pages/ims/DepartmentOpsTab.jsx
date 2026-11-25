@@ -5649,7 +5649,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   const bad = rows.filter(r => r.status === "short").length;
                   return { k: "fabreq", icon: "🧵", title: "Fabric plan", sub: bad ? <span className="text-red-600 font-semibold">{bad} need{bad === 1 ? "s" : ""} attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
                 })(),
-                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(invBlockedTotal), shortList: invShortItems },
+                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held" + (truckExtraRows.length ? ` · +${n(truckExtraRows.length, "item")} on trucks` : ""), value: fmt(invBlockedTotal + truckExtraTotal), shortList: invShortItems },
                 dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
                   const rows = carpetPlanOf().rows;
                   const decided = rows.filter(r => r.status === "decided").length;
@@ -5796,10 +5796,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-sm leading-none">📦</span>
                   <div className="min-w-0">
                     <div className="text-[13px] font-semibold text-gray-900 leading-snug sm:truncate">Inventory blocked for {dept}</div>
-                    <div className="text-[10px] text-gray-500 truncate">{invShown.length} item{invShown.length === 1 ? "" : "s"} held for {invScoped ? "this function" : "this event"}</div>
+                    <div className="text-[10px] text-gray-500 truncate">{invShown.length} item{invShown.length === 1 ? "" : "s"} held for {invScoped ? "this function" : "this event"}{!invScoped && truckExtraTotal > 0 ? ` · incl. ${fmt(truckExtraTotal)} added on trucks` : ""}</div>
                   </div>
                 </div>
-                <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(invScoped ? invShownTotal : invBlockedTotal)}</div>
+                <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{/* the event's total takes in what was added on trucks (owner 2026-11-25: "overall cost update ni kr ra"); a function's view leaves them out - they are not tied to one function */}{fmt(invScoped ? invShownTotal : invBlockedTotal + truckExtraTotal)}</div>
               </div>
               {/* what is short, first thing under the head (owner ask 2026-11-15) - each item and how many are missing */}
               {invShortItems.length > 0 && (
@@ -6341,7 +6341,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
               {/* ── ADDED ON TRUCKS, NOT IN THE DEAL ── (owner ask 2026-11-25) what this department put on its trucks with "Add an
                   item not in this deal": blocked in stock for the event's dates, priced at the item's rent - an internal cost,
                   not billed to the client (the deal does not have them). Event-wide, every function. */}
-              {truckExtraRows.length > 0 && (
+              {truckExtraRows.length > 0 && !invScoped && (
                 <div className="m-2.5 mt-1 rounded-xl ring-1 ring-blue-200 bg-blue-50/40 overflow-hidden">
                   <div className="px-3 py-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 bg-blue-50 border-b border-blue-100">
                     <span aria-hidden="true">🚚</span>
