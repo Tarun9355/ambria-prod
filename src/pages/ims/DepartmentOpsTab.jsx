@@ -2707,10 +2707,29 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // driver and a 10-digit phone - and the truck is saved (registered for every department) only on "Save truck". Nothing
   // half-filled is ever saved, so no truck sits on the event with no number or driver.
   const [truckDraft, setTruckDraft] = useState(null); // { vehicle, driver, phone } while the form is open
+  const truckDraftRef = useRef(null);
+  const [draftFlash, setDraftFlash] = useState(0); // bumped to light the open form again
   const addTruckNow = () => {
-    setTruckDraft(d => d || { vehicle: "", driver: "", phone: "" });
     setTruckSpaceHint(null);
+    if (truckDraft) {
+      // the form is already open (owner 2026-11-25: "ek hi baar add hora hai" - a second click did nothing you could see):
+      // bring it into view, light it and put the cursor in its first empty box - save this truck, then add the next
+      setDraftFlash(n => n + 1);
+      setTimeout(() => {
+        const el = truckDraftRef.current;
+        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+        const box = el && [...el.querySelectorAll("input")].find(i => !i.value);
+        (box || el?.querySelector("input"))?.focus({ preventScroll: true });
+      }, 0);
+      return;
+    }
+    setTruckDraft({ vehicle: "", driver: "", phone: "" });
   };
+  useEffect(() => {
+    if (!draftFlash) return;
+    const t = setTimeout(() => setDraftFlash(0), 1400);
+    return () => clearTimeout(t);
+  }, [draftFlash]);
   const saveTruckDraft = () => {
     const d = truckDraft;
     if (!d) return;
@@ -6862,10 +6881,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 const miss = truckMissingOf(truckDraft);
                 const onEvent = new Set(eventTruckList.map(t => String(t.vehicle || "").trim().toLowerCase()).filter(Boolean));
                 return (
-                  <div className="ui-reveal-in mx-3 sm:mx-4 mt-3 rounded-xl ring-2 ring-blue-300 bg-blue-50/40 p-3 space-y-2.5">
+                  <div ref={truckDraftRef} className={"ui-reveal-in mx-3 sm:mx-4 mt-3 rounded-xl ring-2 p-3 space-y-2.5 scroll-mt-4 transition-[background-color,box-shadow] duration-500 " + (draftFlash ? "ring-blue-500 bg-blue-100/70 shadow-[0_0_0_5px_rgba(59,130,246,0.25)]" : "ring-blue-300 bg-blue-50/40")}>
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                       <span className="shrink-0 text-sm font-semibold text-gray-900">New truck</span>
                       <span className="text-[11px] text-gray-500">saved once vehicle no., driver and phone are filled</span>
+                      {draftFlash > 0 && <span className="text-[11px] font-semibold text-blue-700">{"Save this truck first, then add the next one."}</span>}
                     </div>
                     {eventTrucks.length > 0 && (
                       <div>
