@@ -873,7 +873,7 @@ export default function DCTrussTab({ ctx }) {
                                           {showMasking && <FabricRow
                                             emoji="🧱" label="Wall Masking" qty={fab.maskingPieces} unitLabel="pc"
                                             allocs={maskingAlloc} totals={maskingTotals} fabricType="masking" allocField="maskingAllocation"
-                                            breakdown={`RFT ${Math.round((fab.maskL || 0) + 2*(fab.maskW || 0))} ÷ 13`}
+                                            breakdown={/* the walls actually masked (it always added back + both sides) */ fab.maskRft != null ? `RFT ${Math.round(fab.maskRft)} ÷ 13${fab.maskExtPieces > 0 ? ` + ${fab.maskExtPieces} extension` : ""}${fab.maskQty > 1 ? ` × ${fab.maskQty} trusses` : ""}` : `RFT ${Math.round((fab.maskL || 0) + 2*(fab.maskW || 0))} ÷ 13`}
                                             discounted={costs?.isRepeat} useNewFabric={useNewFabric} multPart="masking"
                                           />}
                                           {showLiza && <FabricRow
