@@ -155,3 +155,24 @@ describe("fixedAtVenue", () => {
     expect(fixedAtVenue(raja, "Exotica", settings, places, null, inhouse)).toBe(false);
   });
 });
+
+import { addedSupervisorsOf, withAddedSupervisors, isMyEvent as isMine } from "./mySupervisorEvents";
+describe("several supervisors on one event (Add supervisor adds, never replaces)", () => {
+  it("an older event's one supervisor reads as a list of one; none → []", () => {
+    expect(addedSupervisorsOf({ siteSupervisorId: "S1", siteSupervisorName: "Raju", siteSupervisorPhone: "9" })).toEqual([{ id: "S1", name: "Raju", phone: "9" }]);
+    expect(addedSupervisorsOf({})).toEqual([]);
+  });
+  it("writes the list and keeps the old single fields as its first entry; an empty list clears them", () => {
+    const eo = withAddedSupervisors({ id: "E" }, [{ id: "S1", name: "Raju", phone: "1" }, { id: "S2", name: "Chandan", phone: "" }]);
+    expect(eo).toMatchObject({ siteSupervisorId: "S1", siteSupervisorName: "Raju", siteSupervisorPhone: "1" });
+    expect(addedSupervisorsOf(eo).map((s) => s.name)).toEqual(["Raju", "Chandan"]);
+    expect(withAddedSupervisors(eo, [])).toMatchObject({ extraSupervisors: [], siteSupervisorId: null, siteSupervisorName: null });
+    expect(addedSupervisorsOf(withAddedSupervisors(eo, []))).toEqual([]);
+  });
+  it("'My events': the second supervisor added is theirs too", () => {
+    const roster = [{ id: "S1", name: "Raju", phone: "9000000001" }, { id: "S2", name: "Chandan", phone: "9000000002" }];
+    const eo = withAddedSupervisors({ id: "E" }, [roster[0], roster[1]]);
+    expect(isMine(eo, { name: "Chandan", phone: "9000000002" }, roster)).toBe(true);
+    expect(isMine(eo, { name: "Manish", phone: "9000000003" }, roster)).toBe(false);
+  });
+});

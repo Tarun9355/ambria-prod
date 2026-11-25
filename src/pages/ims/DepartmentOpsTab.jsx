@@ -53,7 +53,8 @@ import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActual
 import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeLogs } from "../../lib/ims/recentChanges";
 import { tripsOf } from "../../lib/ims/eventTrucks";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
-import { isMyEvent, supervisorIdsOfUser, fixedAtVenue } from "../../lib/ims/mySupervisorEvents";
+import { isMyEvent, supervisorIdsOfUser, fixedAtVenue, addedSupervisorsOf, withAddedSupervisors } from "../../lib/ims/mySupervisorEvents";
+import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a site" search
 import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
@@ -126,12 +127,16 @@ function crewIcon(type) {
 // Stock shortfalls already alerted for items added on trucks (event|item|date|qty) - once per browser session, not on every open.
 const TRUCK_EXTRA_ALERTED = new Set();
 
-// What a truck still needs before it is a real truck (Loading & dispatch): vehicle no., driver and a 10-digit phone.
-const truckMissingOf = (t) => [
-  !String(t?.vehicle || "").trim() && "Vehicle no.",
-  !String(t?.driver || "").trim() && "Driver",
-  String(t?.phone || "").replace(/\D/g, "").length !== 10 && "Phone",
-].filter(Boolean);
+// What a truck still needs before it is a real truck (Loading & dispatch): vehicle no. and driver. The phone is optional (owner ask
+// 2026-11-25) - but a number typed in must be all 10 digits, so a half-typed one is never saved as the driver's number.
+const truckMissingOf = (t) => {
+  const ph = String(t?.phone || "").replace(/\D/g, "").length;
+  return [
+    !String(t?.vehicle || "").trim() && "Vehicle no.",
+    !String(t?.driver || "").trim() && "Driver",
+    ph > 0 && ph !== 10 && "Phone",
+  ].filter(Boolean);
+};
 
 // A row of chips that scrolls sideways on a phone, with "+N ›" / "‹" buttons on its edges for the chips out of view - a row cut
 // at the edge did not say "scroll" (owner 2026-11-21: "isme pta toh chale scroll krna hai"). Same hint as IMS Inventory's category row.
@@ -206,14 +211,6 @@ const IconClipboard = ({ s = 14 }) => (
   <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
     <rect x="2.75" y="3.25" width="10.5" height="10" rx="2" stroke="currentColor" strokeWidth="1.4" />
     <path d="M2.75 6.25h10.5M5.75 2v2.5M10.25 2v2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-  </svg>
-);
-const IconTruck = ({ s = 14 }) => (
-  <svg width={s} height={s} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-    <path d="M1.75 4.5h7v6.25h-7z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-    <path d="M8.75 7h2.6l2.9 2.2v1.55h-5.5z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-    <circle cx="4.75" cy="11.75" r="1.25" stroke="currentColor" strokeWidth="1.4" />
-    <circle cx="11.25" cy="11.75" r="1.25" stroke="currentColor" strokeWidth="1.4" />
   </svg>
 );
 
@@ -887,6 +884,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const inhouseVenues = useInhouseVenues(true);
   // the properties and in-house venues together - what a supervisor's "fixed at" venues are looked up in
   const venuePlaces = useMemo(() => [...inhouseVenues.properties, ...inhouseVenues.inhouse], [inhouseVenues.properties, inhouseVenues.inhouse]);
+  // The supervisors fixed at this event's venues (Admin → Settings → 👷 Supervisors) - shown in the header when nobody has been picked
+  // for the event (owner ask 2026-11-25), the same people the PDF cover names.
+  const venueSupervisorsOf = (eo) => siteSupervisorsFor(settings, [...(Array.isArray(eo?.functionsDetail) ? eo.functionsDetail.map((f) => f?.venue) : []), eo?.venue], venuePlaces, supervisors, inhouseVenues.inhouse);
   const [search, setSearch] = useState("");
   const [leadEntry, setLeadEntry] = useState(null); // LMS entry no of the lead we arrived from
   // Month shown by the event picker below. Starts on the current month and is nudged, once, to a
@@ -916,6 +916,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // Admin → Transport's venue list (one settings row): the venue's standard genset counts, for the Lighting book's Power page
   // on an event synced before Studio sent each function's own gensets (lib/ims/gensetPlan). Read with truckCap below.
   const [trVenues, setTrVenues] = useState([]);
+  const [supPickFor, setSupPickFor] = useState(null); // the event whose Site Supervisor picker is open (header: name + "Add supervisor" button)
+  // closed when another event is opened - an unmounted <select> never blurs, so going back would reopen it
+  useEffect(() => { setSupPickFor(null); }, [selId]);
   const [opsViewRaw, setOpsView] = useState("planning"); // "planning" | "onsite" — split on-site (receiving/dismantle) into its own view
   // onsiteOnly (Planning sub-tab "Dept Ops: Site Supervisor view only"): the department bar stays; each department shows its Inventory blocked tile (no income, changes, fixed-venue stock or other planning tiles) AND the on-site cards (Receiving, Dismantle & routing, On-site crew) together, with the Department Head / Site Supervisor switch hidden
   const opsView = opsViewRaw;
@@ -949,6 +952,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // overflow-hidden, which would clip an absolutely-positioned menu. Same approach FlowerPicker
   // in components/ui already uses for the same reason.
   const [siteMenu, setSiteMenu] = useState(false);
+  // its search box (lib/ims/siteSearch rankSites): what is typed, and the row the arrow keys are on - both cleared each time it opens
+  const [siteQuery, setSiteQuery] = useState("");
+  const [siteHi, setSiteHi] = useState(0);
+  useEffect(() => { if (siteMenu) { setSiteQuery(""); setSiteHi(0); } }, [siteMenu]);
   const siteBtnRef = useRef(null);
   const [siteMenuPos, setSiteMenuPos] = useState({ top: 0, left: 0, width: 0 });
   useEffect(() => {
@@ -4548,7 +4555,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // for an order with none recorded: the dept plan's last editor, else (combined book) the exporting user.
     preparedBy: opts?.combined ? null : (deptData.updatedBy || null),
     // the supervisors fixed at this event's venue(s) (Admin → Supervisors) - on the cover with their number (owner ask 2026-11-18)
-    siteSupervisors: siteSupervisorsFor(settings, [...(Array.isArray(sel?.functionsDetail) ? sel.functionsDetail.map((f) => f?.venue) : []), sel?.venue], [...inhouseVenues.properties, ...inhouseVenues.inhouse], supervisors, inhouseVenues.inhouse),
+    // the PDF cover's "Site supervisor": the venue's fixed ones and the ones added on the event
+    siteSupervisors: (() => { const added = addedSupervisorsOf(sel); const ids = new Set(added.map((s) => s.id)); return [...venueSupervisorsOf(sel).filter((s) => !ids.has(s.id)), ...added.map((s) => supervisors.find((r) => r.id === s.id) || s)]; })(),
   }, zoneLabels, logos, opts);
 
   // ── THE DOWNLOAD ──
@@ -4830,7 +4838,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         but that row scrolls off the top the moment you start reading, and the switch
         was gone exactly when you wanted it. */}
     {/* ── STATUS TAGS, NOT A SEGMENTED TRACK ──
-        Two standalone tags per the design system: the one you are on is filled soft blue with
+        (Only Department Head is left - the Site Supervisor tag went to the sidebar's Site page, 2026-11-25; the notes below are
+        from when there were two.) Two standalone tags per the design system: the one you are on is filled soft blue with
         blue-700 text, the other is plain. The grey track they used to share made this read as a
         setting with an on and an off position; as two tags it reads as two places, which is
         what it is.
@@ -4839,7 +4848,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         read as clutter rather than as three controls. Unringed, the inactive tag is just a
         label until you want it, and the one that is outlined is the one that means something.
         28px tall, matching the bell. */}
-    {!onsiteOnly && [["planning", "Department Head", IconClipboard], ["onsite", "Site Supervisor", IconTruck]].map(([k, label, Icon]) => {
+    {/* The "Site Supervisor" tag is gone from here (owner ask 2026-11-25): the sidebar's own Site page is where on-site work
+        lives now. The on-site view itself stays reachable from a "changed in the last 48 hours" line (goToChange), and
+        Department Head brings you back from it. */}
+    {!onsiteOnly && [["planning", "Department Head", IconClipboard]].map(([k, label, Icon]) => {
       const on = opsView === k;
       return (
         <button key={k} onClick={() => setOpsView(k)} aria-pressed={on}
@@ -5388,33 +5400,65 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       event order (siteSupervisorId/Name/Phone) rather than just an id, so Studio
                       can show who's assigned without fetching the supervisor roster itself. */}
                   {/* the Site-Supervisor-view-only role never picks the event's supervisor: no dropdown (owner ask 2026-11-20), the name only when there is one */}
-                  {onsiteOnly ? (sel.siteSupervisorName ? (
-                    <div className="mt-1 flex items-center gap-1.5 text-xs">
-                      <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
-                      <span className="font-medium text-gray-700 truncate">{sel.siteSupervisorName}</span>
-                    </div>
-                  ) : null) : (
-                  <div className="mt-1 flex items-center gap-1.5 text-xs">
-                    <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
-                    <select
-                      value={sel.siteSupervisorId || ""}
-                      disabled={!canEditPlanning}
-                      title={canEditPlanning ? undefined : "View only — your access to Planning doesn't include editing"}
-                      onChange={(e) => {
-                        if (!canEditPlanning) return;
-                        const id = e.target.value;
-                        const sup = supervisors.find((s) => s.id === id);
-                        setEventOrders((prev) => prev.map((ev) => ev.id === sel.id ? { ...ev, siteSupervisorId: id || null, siteSupervisorName: sup?.name || null, siteSupervisorPhone: sup?.phone || null } : ev));
-                      }}
-                      className="min-w-0 border border-gray-200 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-700 bg-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <option value="">— unassigned —</option>
-                      {supervisors.filter((s) => s.active !== false || s.id === sel.siteSupervisorId).map((s) => (
-                        <option key={s.id} value={s.id}>{s.name}{s.active === false ? " (inactive)" : ""}</option>
-                      ))}
-                    </select>
-                  </div>
-                  )}
+                  {/* The event's supervisors: the ones fixed at its venue (Admin → Settings → Supervisors) and the ones added here -
+                      "+ Add supervisor" adds one more, it never replaces (owner ask 2026-11-25). Names as text; the picker shows only
+                      once the button is tapped; an added one has a × to take it off (a venue's one is changed in Admin). */}
+                  {(() => {
+                    const added = addedSupervisorsOf(sel);
+                    const addedIds = new Set(added.map((s) => s.id).filter((x) => x != null && x !== ""));
+                    const venueSups = venueSupervisorsOf(sel).filter((s) => !addedIds.has(s.id));
+                    const shownIds = new Set([...addedIds, ...venueSups.map((s) => s.id)]);
+                    const saveAdded = (list) => setEventOrders((prev) => prev.map((ev) => ev.id === sel.id ? withAddedSupervisors(ev, list) : ev));
+                    const none = !added.length && !venueSups.length;
+                    const canPickSup = isAdmin; // only an Admin adds or removes an event's supervisors (owner ask 2026-11-25); everyone sees the names
+                    if (onsiteOnly) return none ? null : (
+                      <div className="mt-1 flex items-center gap-1.5 text-xs min-w-0">
+                        <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
+                        <span className="font-medium text-gray-700 truncate">{[...venueSups, ...added].map((s) => s.name).join(", ")}</span>
+                      </div>
+                    );
+                    return (
+                      <div className="mt-1 flex items-center gap-1.5 text-xs min-w-0 flex-wrap">
+                        <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
+                        {none && <span className="text-gray-400">— unassigned —</span>}
+                        {venueSups.map((s, i) => <span key={"v" + (s.id ?? s.name) + i} className="font-medium text-gray-700">{s.name}</span>)}
+                        {added.map((s, i) => (
+                          <span key={"a" + (s.id ?? s.name) + i} className="inline-flex items-center gap-0.5 font-medium text-gray-700">
+                            {s.name}
+                            {canPickSup && (
+                              <button type="button" aria-label={`Remove ${s.name}`} title="Remove"
+                                onClick={() => saveAdded(added.filter((_, j) => j !== i))}
+                                className="w-4 h-4 inline-flex items-center justify-center rounded text-gray-400 hover:text-red-600 hover:bg-red-50 cursor-pointer leading-none">×</button>
+                            )}
+                          </span>
+                        ))}
+                        {canPickSup && (supPickFor === sel.id ? (
+                          <select
+                            autoFocus
+                            value=""
+                            onChange={(e) => {
+                              const sup = supervisors.find((s) => s.id === e.target.value);
+                              if (sup) saveAdded([...added, { id: sup.id, name: sup.name || "", phone: sup.phone || "" }]);
+                              setSupPickFor(null);
+                            }}
+                            onBlur={() => setSupPickFor(null)}
+                            onKeyDown={(e) => { if (e.key === "Escape") setSupPickFor(null); }}
+                            className="min-w-0 border border-gray-200 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-700 bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200"
+                          >
+                            <option value="">— choose —</option>
+                            {supervisors.filter((s) => s.active !== false && !shownIds.has(s.id)).map((s) => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <button type="button" onClick={() => setSupPickFor(sel.id)}
+                            className="shrink-0 inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 cursor-pointer transition-colors">
+                            + Add supervisor
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
                   {/* Deal value — read-only mirror of Studio's negotiated amount (client_ledger),
                       written whenever Deal Check syncs. It stays frozen once booked by owner decision;
                       "pending" is the live build's drift since booking, shown here so ops sees the same
@@ -7216,7 +7260,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   <div key={dk} ref={el => { draftRefs.current[dk] = el; }} className={"ui-reveal-in mx-3 sm:mx-4 mt-3 rounded-xl ring-2 p-3 space-y-2.5 scroll-mt-4 transition-[background-color,box-shadow] duration-500 " + (draftFlash === dk ? "ring-blue-500 bg-blue-100/70 shadow-[0_0_0_5px_rgba(59,130,246,0.25)]" : "ring-blue-300 bg-blue-50/40")}>
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                       <span className="shrink-0 text-sm font-semibold text-gray-900">New truck</span>
-                      <span className="text-[11px] text-gray-500">saved once vehicle no., driver and phone are filled</span>
+                      <span className="text-[11px] text-gray-500">saved once vehicle no. and driver are filled</span>
                       {/* "+ Add truck" pressed while this one is still missing details */}
                       {draftNeed === dk && miss.length > 0 && <span className="text-[11px] font-semibold text-red-700">{"Fill this truck's details first, then add the next one."}</span>}
                     </div>
@@ -7248,7 +7292,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             <input value={truckDraft[k] || ""}
                               onChange={e => { const v = k === "phone" ? phone10(e.target.value) : e.target.value; setTruckDraftField(dk, { [k]: v }); }}
                               onKeyDown={e => { if (e.key === "Enter") saveTruckDraft(dk); if (e.key === "Escape") dropDraft(dk); }}
-                              {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })}
+                              {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "optional · 10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })}
                               className={"mt-1 w-full h-9 rounded-lg bg-white ring-1 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 " + (m ? "ring-red-300" : "ring-gray-200")} />
                           </div>
                         );
@@ -7350,7 +7394,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           // a required field still empty (or a phone short of 10 digits) is ringed red, with a * on its label
                           const miss = truckMissing(t).includes(l === "Phone" ? "Phone" : l);
                           return (
-                          <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className={"block text-[10px] font-semibold uppercase tracking-[0.06em] " + (miss ? "text-red-600" : "text-gray-400")}>{l}{miss && " *"}</label><TruckTextBox value={t[k] || ""} clean={k === "phone" ? phone10 : undefined} onCommit={v => setTruck(t.id, { [k]: v })} {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })} className={"mt-1 w-full h-9 rounded-lg bg-white ring-1 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 " + (miss ? "ring-red-300 bg-red-50/40" : "ring-gray-200")} /></div>
+                          <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className={"block text-[10px] font-semibold uppercase tracking-[0.06em] " + (miss ? "text-red-600" : "text-gray-400")}>{l}{miss && " *"}</label><TruckTextBox value={t[k] || ""} clean={k === "phone" ? phone10 : undefined} onCommit={v => setTruck(t.id, { [k]: v })} {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "optional · 10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })} className={"mt-1 w-full h-9 rounded-lg bg-white ring-1 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 " + (miss ? "ring-red-300 bg-red-50/40" : "ring-gray-200")} /></div>
                           );
                         })}
                       </div>
@@ -8003,7 +8047,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       </span>
                     ))}
                     {(() => {
-                      const opts = nearbyTransferEvents.filter(({ e }) => !dismantleSites.some(s => s.id === e.id));
+                      const allOpts = nearbyTransferEvents.filter(({ e }) => !dismantleSites.some(s => s.id === e.id));
+                      // guest name / venue / date, forgiving of case, order, punctuation and a typo; best match first
+                      const opts = rankSites(allOpts, siteQuery, venueOfEvent);
+                      const hi = Math.min(siteHi, Math.max(0, opts.length - 1));
+                      const pickSite = (e) => { addDismantleSite(e.id); setSiteMenu(false); };
                       return (
                         <div className="relative">
                           <button ref={siteBtnRef} type="button" onClick={() => setSiteMenu(o => !o)}
@@ -8021,14 +8069,42 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               <div className="px-3 py-2 bg-gray-50 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">
                                 Send items to another event
                               </div>
+                              {allOpts.length > 0 && (
+                                <div className="px-2.5 pt-2.5 pb-2 border-b border-gray-100">
+                                  <div className="relative">
+                                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                                      <circle cx="7" cy="7" r="4.75" stroke="currentColor" strokeWidth="1.6" /><path d="M10.5 10.5 L14 14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                                    </svg>
+                                    <input autoFocus type="search" value={siteQuery} placeholder="Search guest name or venue…"
+                                      aria-label="Search guest name or venue" autoComplete="off" spellCheck={false}
+                                      onChange={(ev) => { setSiteQuery(ev.target.value); setSiteHi(0); }}
+                                      onKeyDown={(ev) => {
+                                        if (ev.key === "ArrowDown") { ev.preventDefault(); setSiteHi(Math.min(hi + 1, opts.length - 1)); }
+                                        else if (ev.key === "ArrowUp") { ev.preventDefault(); setSiteHi(Math.max(hi - 1, 0)); }
+                                        else if (ev.key === "Enter") { ev.preventDefault(); if (opts[hi]) pickSite(opts[hi].e); }
+                                      }}
+                                      className="w-full h-9 rounded-lg bg-gray-50 ring-1 ring-gray-200 pl-8 pr-8 text-[13px] text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:bg-white [&::-webkit-search-cancel-button]:hidden" />
+                                    {siteQuery && (
+                                      <button type="button" onClick={() => { setSiteQuery(""); setSiteHi(0); }} aria-label="Clear search" title="Clear"
+                                        className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 cursor-pointer">×</button>
+                                    )}
+                                  </div>
+                                  {siteQuery.trim() && <div className="mt-1.5 px-0.5 text-[10.5px] text-gray-400">{opts.length} of {allOpts.length} event{allOpts.length === 1 ? "" : "s"}</div>}
+                                </div>
+                              )}
                               <div className="max-h-64 overflow-y-auto">
-                                {opts.length === 0 && (
+                                {allOpts.length === 0 && (
                                   <div className="px-3 py-4 text-center text-xs text-gray-400">No other sold events nearby.</div>
                                 )}
-                                {opts.map(({ e, d, off }) => (
-                                  <button key={e.id} type="button" role="option" aria-selected="false"
-                                    onClick={() => { addDismantleSite(e.id); setSiteMenu(false); }}
-                                    className="w-full text-left px-3 py-2 flex items-center gap-3 hover:bg-blue-50 transition-colors">
+                                {allOpts.length > 0 && opts.length === 0 && (
+                                  <div className="px-3 py-4 text-center text-xs text-gray-400">No event matches this — try the guest&apos;s first name or the venue.</div>
+                                )}
+                                {opts.map(({ e, d, off }, oi) => (
+                                  <button key={e.id} type="button" role="option" aria-selected={oi === hi}
+                                    ref={oi === hi ? (el) => { el?.scrollIntoView?.({ block: "nearest" }); } : undefined}
+                                    onMouseEnter={() => setSiteHi(oi)}
+                                    onClick={() => pickSite(e)}
+                                    className={"w-full text-left px-3 py-2 flex items-center gap-3 transition-colors " + (oi === hi ? "bg-blue-50" : "hover:bg-blue-50")}>
                                     <span className="min-w-0 flex-1">
                                       <span className="block text-[13px] font-semibold text-gray-900 truncate">{e.clientName || "Event"}</span>
                                       <span className="block text-[11px] text-gray-500 tabular-nums truncate">{d || "no date"}{venueOfEvent(e) ? <span className="font-sans"> · {venueOfEvent(e)}</span> : null}</span>

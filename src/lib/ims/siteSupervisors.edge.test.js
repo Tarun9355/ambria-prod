@@ -149,7 +149,7 @@ describe("siteSupervisorsFor - the roster", () => {
       { id: "3", name: "   ", phone: "1", active: true, fixedVenues: ["p_ex"] },
       { id: "4", phone: "2", active: true, fixedVenues: ["p_ex"] },
     ];
-    expect(siteSupervisorsFor(settings, ["Exotica"], places, s)).toEqual([{ name: "Raja", phone: "7607225147" }, { name: "NoPhone", phone: "" }]);
+    expect(siteSupervisorsFor(settings, ["Exotica"], places, s)).toEqual([{ id: "1", name: "Raja", phone: "7607225147" }, { id: "2", name: "NoPhone", phone: "" }]);
   });
   it("a deleted venue id in fixedVenues is ignored; the supervisor's other venues still count", () => {
     const s = [sup("1", "Gone", ["v_deleted"]), sup("2", "Mixed", ["v_deleted", "p_ex"])];
@@ -250,5 +250,12 @@ describe("siteSupervisorsFor - with the inhouse list, as Dept Ops calls it", () 
     const s = [sup("1", "AuraOnly", ["v_aura"]), sup("2", "ExGuy", ["p_ex"])];
     expect(names(siteSupervisorsFor(settings, ["Aura Poolside"], places, s, inhouse))).toEqual(["ExGuy"]);
     expect(names(siteSupervisorsFor({}, ["Exotica Lawn"], places, s, inhouse))).toEqual(["ExGuy"]);
+  });
+});
+
+describe("siteSupervisorsFor - carries the roster id", () => {
+  it("each venue supervisor keeps its id, so the event header can tell one also added on the event (shown once) and leave them out of the picker", () => {
+    const out = siteSupervisorsFor({}, ["Exotica"], props, [sup("1", "ExGuy", ["p_ex"]), sup("2", "Other", ["p_pu"])]);
+    expect(out).toEqual([{ id: "1", name: "ExGuy", phone: "91" }]);
   });
 });

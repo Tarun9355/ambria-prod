@@ -57,7 +57,8 @@ no trucks yet ¦ अभी कोई ट्रक नहीं
 New truck ¦ नया ट्रक
 Save truck ¦ ट्रक सेव करें
 Cancel ¦ रद्द करें
-saved once vehicle no., driver and phone are filled ¦ गाड़ी नंबर, ड्राइवर और फ़ोन भरने पर ही सेव होगा
+saved once vehicle no. and driver are filled ¦ गाड़ी नंबर और ड्राइवर भरने पर ही सेव होगा
+optional · 10 digits ¦ ज़रूरी नहीं · 10 अंक
 on this event ¦ इस इवेंट पर
 Fill these first: ¦ पहले ये भरें:
 nothing can be loaded on this truck until they are filled. ¦ इन्हें भरे बिना इस ट्रक में कुछ लोड नहीं होगा।
@@ -479,6 +480,12 @@ Show only the functions at the venues you are fixed at (and events you are the S
 Showing only the functions at your venues (and events you are the Site Supervisor of) - tap to show every event ¦ सिर्फ़ आपके वेन्यू के फ़ंक्शन दिख रहे हैं (और वे इवेंट जिनके आप साइट सुपरवाइज़र हैं) - सभी इवेंट देखने के लिए दबाएँ
 Your login is not on the Site Supervisor list (Admin → Settings → Supervisors) with this name / phone number - ask the admin to add you. ¦ आपका लॉगिन साइट सुपरवाइज़र की लिस्ट (Admin → Settings → Supervisors) में इस नाम / फ़ोन नंबर से नहीं है - एडमिन से जुड़वाएँ।
 No functions at your venues this month, and none you are the Site Supervisor of - page to another month. ¦ इस महीने आपके वेन्यू पर कोई फ़ंक्शन नहीं है, और कोई इवेंट आपके नाम पर नहीं - दूसरे महीने पर जाएँ।
++ Add supervisor ¦ + सुपरवाइज़र जोड़ें
+Loading your venues… ¦ आपके वेन्यू लोड हो रहे हैं…
+Who's bringing what, on which truck ¦ कौन क्या ला रहा है, किस ट्रक पर
+Search guest name or venue… ¦ गेस्ट का नाम या वेन्यू खोजें…
+No event matches this — try the guest's first name or the venue. ¦ कोई इवेंट नहीं मिला — गेस्ट का पहला नाम या वेन्यू लिखकर देखें।
+— choose — ¦ — चुनें —
 `;
 
 export const UI_HI_MORE = Object.fromEntries(LIST.split("\n").map(l => l.split(" ¦ ")).filter(p => p.length === 2 && p[0].trim()).map(([en, hi]) => [en.trim(), hi.trim()]));

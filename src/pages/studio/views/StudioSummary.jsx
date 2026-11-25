@@ -26,6 +26,7 @@ import { detailShots } from "../../../lib/studio/detailShots";
 import { gammaCreateGeneration, gammaPollGeneration } from "../../../lib/gamma";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { eventOrderFor } from "../../../lib/studio/eventOrderFor.js";
+import { addedSupervisorsOf } from "../../../lib/ims/mySupervisorEvents"; // the supervisors IMS added on the event
 
 // The photograph behind the Total Estimate card. Same glob-not-import reasoning as the panel images
 // on the other steps: no file, no layer, and the build still runs — the card simply keeps the plain
@@ -2935,11 +2936,11 @@ ${(combined.venueDiscount || 0) > 0 ? `<tr><td style="font-weight:600;color:#B91
                 fetching the supervisor roster. */}
             {(() => {
               const eo = eventOrderFor(eventOrders, activeClientId, clientName);
-              if (!eo?.siteSupervisorName) return null;
+              const sups = addedSupervisorsOf(eo); // every supervisor added on the event (several now), not just the first
+              if (!sups.length) return null;
               return (
                 <div style={{marginTop:6,fontSize:11,color:"rgba(255,255,255,0.6)"}}>
-                  👷 Site Supervisor: <span style={{color:"rgba(255,255,255,0.9)",fontWeight:600}}>{eo.siteSupervisorName}</span>
-                  {eo.siteSupervisorPhone ? ` · ${eo.siteSupervisorPhone}` : ""}
+                  👷 Site Supervisor: {sups.map((s, i) => <span key={i}>{i ? ", " : ""}<span style={{color:"rgba(255,255,255,0.9)",fontWeight:600}}>{s.name}</span>{s.phone ? ` · ${s.phone}` : ""}</span>)}
                 </div>
               );
             })()}

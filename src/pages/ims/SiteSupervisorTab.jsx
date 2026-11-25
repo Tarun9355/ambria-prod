@@ -1,19 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isLiveEventOrder } from "../../lib/ims/helpers";
 import { catToDept as sharedCatToDept } from "../../lib/ims/deptClassify";
-import { venueWithParent } from "../../lib/ims/fixedVenues";
+import { venueWithParent, venueCalendarColor, VENUE_CALENDAR_LEGEND } from "../../lib/ims/fixedVenues";
 import { actualsLockState, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
 import { logWrite } from "../../lib/studio/userActions";
 import { Modal } from "../../components/ui";
 import SiteReceivingPanel from "./SiteReceivingPanel.jsx";
 import SiteCrewPanel from "./SiteCrewPanel.jsx";
 import SitePdfButton from "./SitePdfButton.jsx";
+import { addedSupervisorsOf, isMyEvent, fixedAtVenue, supervisorIdsOfUser } from "../../lib/ims/mySupervisorEvents";
+import { useInhouseVenues } from "./SupervisorVenues.jsx";
 
 const PICK_KEY = "ambria-ims-site-event";
+const MY_ONLY_KEY = "ambria-ims-site-my-events";
 const SECTIONS = [
   { id: "receiving", label: "🚛 Receiving" },
   { id: "crew", label: "👷 Crew" },
 ];
+// "2026-11-03" → "3 Nov 2026" (the Planning header's way of saying when)
+const prettyDate = (d) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(d || "")) return d || ""; const dt = new Date(d + "T00:00:00"); return dt.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }); };
 const fnDate = (eo) => {
   const dates = [eo?.date, ...((Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : []).map((f) => f?.date))].filter(Boolean).map((d) => String(d).slice(0, 10));
   return dates.sort()[0] || "";
@@ -22,7 +27,7 @@ const fnDate = (eo) => {
 // One page for the whole event, every department together — not the per-department tabs the rest
 // of IMS uses. Built for the Site Supervisor role: a narrow login that only needs "what's arriving
 // on each truck, right now" and "who's actually on site", not the dept-head planning screens.
-export default function SiteSupervisorTab({ eventOrders, setEventOrders, inventory, settings, blocks, trussInv, rateCardCategories, authUser }) {
+export default function SiteSupervisorTab({ eventOrders, setEventOrders, inventory, settings, blocks, trussInv, rateCardCategories, authUser, supervisors = [] }) {
   const [selId, setSelId] = useState(() => { try { return sessionStorage.getItem(PICK_KEY) || ""; } catch { return ""; } });
   // Was a Planned/Actual toggle — Actual already starts out showing exactly what was planned until
   // someone edits a figure, so a separate read-only "Planned" view never showed anything the Actual
@@ -55,16 +60,30 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
     logWrite(authUser, "actuals.relock", { targetType: "event_order", targetId: sel.id, targetName: sel.clientName, ok: true });
   };
 
-  if (!sel) return <EventPicker eventOrders={eventOrders} settings={settings} onPick={pick} />;
+  if (!sel) return <EventPicker eventOrders={eventOrders} settings={settings} onPick={pick} authUser={authUser} supervisors={supervisors} />;
 
   return (
-    <div className="space-y-4 max-w-3xl">
-      <div className="bg-white rounded-xl border border-gray-100 p-4">
-        <div className="flex items-start justify-between gap-3">
-          <button onClick={() => pick("")} className="shrink-0 w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-gray-100 flex items-center justify-center">‹</button>
+    <div className="space-y-4 w-full min-w-0">
+      {/* The Planning (Dept Ops) event header's look (owner ask 2026-11-25): a raised card, the name as the title, when and where
+          in words ("3 Nov 2026 · Others"), who booked it on a quieter line, and the event's supervisors on their own line. */}
+      <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] p-4 sm:p-5">
+        <div className="flex items-start gap-3">
+          <button onClick={() => pick("")} aria-label="Back to the calendar" title="Back to the calendar"
+            className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] text-gray-500 hover:text-gray-900 flex items-center justify-center cursor-pointer transition-colors">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M9 3.5 L5 7 L9 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </button>
           <div className="min-w-0 flex-1">
-            <div className="text-[16px] font-bold text-gray-900 truncate">{sel.clientName || "Event"}</div>
-            <div className="text-[12px] text-gray-500 mt-0.5">{fnDate(sel) || "no date"} · {venueWithParent(settings, sel.venue) || "—"}{sel.siteSupervisorName ? ` · Supervisor: ${sel.siteSupervisorName}` : ""}</div>
+            <div className="text-[16px] sm:text-[20px] font-semibold tracking-[-0.01em] text-gray-900 leading-tight sm:leading-snug truncate">{sel.clientName || "Event"}</div>
+            <div className="mt-0.5 text-[13px] sm:text-sm font-medium text-gray-700 leading-snug truncate">
+              {[prettyDate(fnDate(sel)) || "no date", venueWithParent(settings, sel.functionsDetail?.[0]?.venue || sel.venue) || ""].filter(Boolean).join(" · ")}
+            </div>
+            {sel.salesperson && <div className="text-[11.5px] sm:text-xs text-gray-400 leading-snug truncate">Booked by {sel.salesperson}</div>}
+            {addedSupervisorsOf(sel).length > 0 && (
+              <div className="mt-1 flex items-center gap-1.5 text-xs min-w-0">
+                <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
+                <span className="font-medium text-gray-700 truncate">{addedSupervisorsOf(sel).map((s) => s.name).join(", ")}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -93,13 +112,19 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
         </div>
       </div>
 
+      {/* Receiving | Crew as the Planning header's view tags: the one you are on soft blue and ringed, the other plain */}
       <div className="flex gap-2">
-        {SECTIONS.map((s) => (
-          <button key={s.id} onClick={() => setSection(s.id)} aria-pressed={section === s.id}
-            className={"h-9 px-3.5 rounded-xl text-[12.5px] font-semibold " + (section === s.id ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200" : "bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50")}>
-            {s.label}
-          </button>
-        ))}
+        {SECTIONS.map((s) => {
+          const on = section === s.id;
+          return (
+            <button key={s.id} onClick={() => setSection(s.id)} aria-pressed={on}
+              className={"shrink-0 h-8 inline-flex items-center gap-1.5 px-3 rounded-lg text-[12.5px] font-semibold cursor-pointer transition-colors "
+                + (on ? "bg-blue-100 text-blue-700 ring-1 ring-blue-200 shadow-[0_4px_10px_-4px_rgba(37,99,235,0.45)]"
+                  : "bg-white/70 text-gray-500 shadow-[0_1px_3px_rgba(15,23,42,0.1),0_4px_10px_-6px_rgba(15,23,42,0.25)] hover:bg-blue-50 hover:text-blue-700")}>
+              {s.label}
+            </button>
+          );
+        })}
       </div>
 
       {section === "receiving" ? (
@@ -127,12 +152,27 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
 // exists. This is a trimmed copy of that same grid (no department filter, since this page isn't
 // scoped to one), not a shared component: that one is woven into a much larger page (PDF export,
 // the department picker above it) that this page doesn't have.
-function EventPicker({ eventOrders, settings, onPick }) {
+function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
   const _now = new Date();
   const today = _now.toLocaleDateString("en-CA"); // local date, not UTC — a function can run past midnight IST
   const [q, setQ] = useState("");
   const [pickMonth, setPickMonth] = useState({ y: _now.getFullYear(), m: _now.getMonth() });
   const [pickDay, setPickDay] = useState(null);
+  // "👷 My events" (owner ask 2026-11-25): only the functions at the venues this supervisor is fixed at (Admin → Settings → Supervisors)
+  // and the events they were added on (Dept Ops header) - the same rule as Dept Ops' own My events (lib/ims/mySupervisorEvents).
+  // Kept for the session (sessionStorage, like the picked event): opening an event and coming back keeps it on.
+  const [myOnly, setMyOnlyRaw] = useState(() => { try { return sessionStorage.getItem(MY_ONLY_KEY) === "1"; } catch { return false; } });
+  const setMyOnly = (fn) => setMyOnlyRaw((v) => { const nv = typeof fn === "function" ? fn(v) : fn; try { sessionStorage.setItem(MY_ONLY_KEY, nv ? "1" : "0"); } catch { /* private mode */ } return nv; });
+  // The Planning calendar's venue colours and legend (owner ask 2026-11-25): each event coloured by THIS date's function's venue
+  // (lib/ims/fixedVenues venueCalendarColor), and a legend that filters to one venue when tapped.
+  const [venueFilter, setVenueFilter] = useState(null);
+  const inhouseVenues = useInhouseVenues(myOnly);
+  // who is fixed where comes from the database once My events is on - until it is in, the grid waits (with a note) rather than
+  // flash "nothing at your venues"
+  const venuesLoading = myOnly && !inhouseVenues.loaded;
+  const venuePlaces = useMemo(() => [...inhouseVenues.properties, ...inhouseVenues.inhouse], [inhouseVenues.properties, inhouseVenues.inhouse]);
+  const myIds = useMemo(() => supervisorIdsOfUser(authUser, supervisors), [authUser, supervisors]);
+  const fnOn = (eo, d) => { const fns = Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : []; return fns.find((f) => String(f?.date || "").slice(0, 10) === d) || fns[0] || null; };
 
   const venueOf = (eo) => venueWithParent(settings, eo?.functionsDetail?.[0]?.venue || eo?.venue || "");
   // The first function's date, else the event's own — only a fallback for an event with no
@@ -181,11 +221,15 @@ function EventPicker({ eventOrders, settings, onPick }) {
       dates.forEach((d) => {
         const [y, m] = d.split("-").map(Number);
         if (y !== pickMonth.y || m !== pickMonth.m + 1) return;
+        if (venueFilter && venueCalendarColor(settings, fnOn(eo, d)?.venue || eo.venue || "").code !== venueFilter) return;
+        if (venuesLoading) return;
+        if (myOnly && !isMyEvent(eo, authUser, supervisors)
+          && !fixedAtVenue(authUser, fnOn(eo, d)?.venue || eo.venue || "", settings, venuePlaces, supervisors, inhouseVenues.inhouse)) return;
         (out[d] = out[d] || []).push(eo);
       });
     });
     return out;
-  }, [events, pickMonth]);
+  }, [events, pickMonth, myOnly, venuesLoading, venueFilter, authUser, supervisors, settings, venuePlaces, inhouseVenues.inhouse]);
 
   const { y, m } = pickMonth;
   const first = new Date(y, m, 1);
@@ -207,7 +251,7 @@ function EventPicker({ eventOrders, settings, onPick }) {
   const dayLabel = pickDay ? new Date(pickDay + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "";
 
   return (
-    <div className="space-y-3 max-w-3xl">
+    <div className="space-y-3 w-full min-w-0">
       <input value={q} onChange={(e) => { setQ(e.target.value); setPickDay(null); }} placeholder="🔍 Search by client or venue…"
         className="w-full h-10 rounded-xl border border-gray-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
       <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
@@ -217,7 +261,13 @@ function EventPicker({ eventOrders, settings, onPick }) {
             <h3 className="mt-0.5 text-base font-bold text-gray-900 tracking-tight">{first.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</h3>
             <div className="text-[11px] text-gray-500 mt-0.5">{monthTotal} event{monthTotal === 1 ? "" : "s"} this month</div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <button type="button" onClick={() => { setMyOnly((v) => !v); setPickDay(null); }} aria-pressed={myOnly}
+              title={myOnly ? "Showing only the functions at your venues (and events you are the Site Supervisor of) - tap to show every event" : "Show only the functions at the venues you are fixed at (and events you are the Site Supervisor of)"}
+              className={"px-3.5 h-9 rounded-full text-xs font-semibold inline-flex items-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 "
+                + (myOnly ? "bg-blue-600 text-white hover:bg-blue-700" : "bg-gray-900 text-white hover:bg-gray-700")}>
+              <span aria-hidden="true">👷</span>{myOnly ? "My events ✓" : "My events"}
+            </button>
             <button onClick={() => { setPickDay(null); setPickMonth({ y: _now.getFullYear(), m: _now.getMonth() }); }}
               className="px-3 h-9 rounded-full text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 transition">Today</button>
             <button onClick={prev} title="Previous month" aria-label="Previous month"
@@ -229,6 +279,22 @@ function EventPicker({ eventOrders, settings, onPick }) {
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M5 3.5 L9 7 L5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
           </div>
+        </div>
+
+        <div className="px-4 pb-2 flex items-center gap-x-3 gap-y-1 flex-wrap">
+          {VENUE_CALENDAR_LEGEND.map((vc) => {
+            const on = venueFilter === vc.code;
+            return (
+              <button key={vc.code} type="button" onClick={() => { setVenueFilter((f) => (f === vc.code ? null : vc.code)); setPickDay(null); }}
+                title={on ? `Showing ${vc.label} only — click to show every venue` : `Show only ${vc.label} events`}
+                className={"inline-flex items-center gap-1 text-[10.5px] rounded-full px-1.5 py-0.5 -mx-1.5 -my-0.5 transition-colors "
+                  + (on ? "bg-gray-900 text-white" : "text-gray-500 hover:bg-gray-100")}>
+                <span aria-hidden="true" className={`w-2 h-2 rounded-full ${vc.dot}`} />
+                {vc.code} <span className={on ? "text-gray-300" : "text-gray-400"}>({vc.label})</span>
+              </button>
+            );
+          })}
+          {venueFilter && <button type="button" onClick={() => setVenueFilter(null)} className="text-[10.5px] font-semibold text-blue-600 hover:text-blue-800">Clear filter</button>}
         </div>
 
         {/* Phone: dates-only dot grid; tapping a highlighted date lists that day's events below,
@@ -273,14 +339,17 @@ function EventPicker({ eventOrders, settings, onPick }) {
                   <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-gray-100 text-gray-500 tabular-nums">{dayEvs.length} event{dayEvs.length === 1 ? "" : "s"}</span>
                 </div>
                 <div className="space-y-2.5">
-                  {dayEvs.map((eo) => (
+                  {dayEvs.map((eo) => { const dayFn = fnOn(eo, pickDay); const vc = venueCalendarColor(settings, dayFn?.venue || eo.venue || ""); return (
                     <button key={eo.id} onClick={() => onPick(eo.id)}
                       className="w-full text-left rounded-xl bg-gray-50 ring-1 ring-gray-100 hover:bg-blue-50 hover:ring-blue-100 active:bg-blue-100 px-4 py-3.5 flex items-center gap-3.5 cursor-pointer transition-colors">
-                      <span aria-hidden="true" className="shrink-0 w-2 h-2 rounded-full bg-blue-500 ring-4 ring-blue-100" />
+                      <span aria-hidden="true" className={`shrink-0 w-2 h-2 rounded-full ring-4 ring-opacity-30 ${vc.dot} ${vc.ring}`} />
                       <span className="min-w-0 flex-1">
-                        <span className="block text-[15px] font-semibold text-gray-900 leading-snug truncate">{eo.clientName || "Event"}</span>
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-[15px] font-semibold text-gray-900 leading-snug truncate">{eo.clientName || "Event"}</span>
+                          <span className={`shrink-0 text-[9.5px] font-bold px-1 rounded ${vc.bg} ${vc.text}`}>{vc.code}</span>
+                        </span>
                         <span className="mt-0.5 block text-xs text-gray-500 truncate">
-                          {venueOf(eo) || "—"}{eo.functionsDetail?.[0]?.shift ? ` · ${eo.functionsDetail[0].shift}` : ""}
+                          {venueWithParent(settings, dayFn?.venue || eo.venue || "") || venueOf(eo) || "—"}{dayFn?.shift ? ` · ${dayFn.shift}` : ""}
                         </span>
                         {eo.salesperson && <span className="block text-xs text-gray-400 truncate">Booked by {eo.salesperson}</span>}
                       </span>
@@ -288,7 +357,7 @@ function EventPicker({ eventOrders, settings, onPick }) {
                         <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L9 7 L5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
                       </span>
                     </button>
-                  ))}
+                  ); })}
                 </div>
               </div>
             );
@@ -313,18 +382,42 @@ function EventPicker({ eventOrders, settings, onPick }) {
                   <span className={"tabular-nums leading-none " + (isToday ? "bg-blue-600 text-white text-[11px] font-bold rounded-full w-[20px] h-[20px] flex items-center justify-center" : "text-[12px] font-semibold text-gray-600")}>{d}</span>
                 </div>
                 <div className="space-y-1">
-                  {evs.map((eo) => (
-                    <button key={eo.id} onClick={() => onPick(eo.id)} title={`Open ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""}`}
-                      className="w-full text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md truncate border-l-[3px] border-blue-500 bg-blue-50/80 text-blue-900 hover:bg-blue-100 transition-colors">
-                      {eo.clientName || "Event"}
-                    </button>
-                  ))}
+                  {evs.map((eo) => {
+                    const dayFn = fnOn(eo, ds);
+                    const vc = venueCalendarColor(settings, dayFn?.venue || eo.venue || "");
+                    const shift = dayFn?.shift || eo.shift || "";
+                    return (
+                      <button key={eo.id} onClick={() => onPick(eo.id)} title={`Open ${eo.clientName || "Event"}${shift ? ` · ${shift}` : ""}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
+                        className={`w-full text-left pl-2 pr-1.5 py-1 rounded-md border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
+                        <span className="flex items-center gap-1 text-[11px] font-medium leading-tight">
+                          <span className="shrink-0 text-[9px] font-bold opacity-70">{vc.code}</span>
+                          <span className="min-w-0 truncate">{eo.clientName || "Event"}</span>
+                        </span>
+                        {shift && <span className="block text-[9.5px] font-normal opacity-70 truncate leading-tight">{shift}</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             );
           })}
         </div>
-        {monthTotal === 0 && <div className="px-4 py-3 text-center text-[11px] text-gray-400">No events this month — page to another month.</div>}
+        {monthTotal === 0 && (
+          <div className="px-4 py-3 text-center text-[11px] text-gray-400">
+            {venuesLoading ? "Loading your venues…" : venueFilter && !myOnly ? (
+              <>No {VENUE_CALENDAR_LEGEND.find((v) => v.code === venueFilter)?.label || venueFilter} events this month — other venues may still have some.{" "}
+                <button onClick={() => setVenueFilter(null)} className="font-semibold text-blue-600 hover:text-blue-800">Clear filter</button>
+              </>
+            ) : myOnly ? (
+              <>
+                {myIds.length === 0
+                  ? "Your login is not on the Site Supervisor list (Admin → Settings → Supervisors) with this name / phone number - ask the admin to add you."
+                  : "No functions at your venues this month, and none you are the Site Supervisor of - page to another month."}{" "}
+                <button onClick={() => setMyOnly(false)} className="font-semibold text-blue-600 hover:text-blue-800">Show every event</button>
+              </>
+            ) : "No events this month — page to another month."}
+          </div>
+        )}
       </div>
     </div>
   );

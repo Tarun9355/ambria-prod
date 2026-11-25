@@ -595,6 +595,6 @@ export function siteSupervisorsFor(settings, venueNames, properties, supervisors
   if (!ids.size) return [];
   return (Array.isArray(supervisors) ? supervisors : [])
     .filter((s) => s && s.active !== false && Array.isArray(s.fixedVenues) && s.fixedVenues.some((id) => ids.has(id)))
-    .map((s) => ({ name: String(s.name || "").trim(), phone: String(s.phone || "").trim() }))
+    .map((s) => ({ id: s.id ?? null, name: String(s.name || "").trim(), phone: String(s.phone || "").trim() })) // id: so the event header can tell a venue supervisor from one added on the event
     .filter((s) => s.name);
 }

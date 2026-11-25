@@ -181,6 +181,29 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           Nothing for {activeFilter} for this event yet.
         </div>
       )}
+      {/* One raised card holding every item, rows split by hairlines - the Planning Receiving card's look (owner ask 2026-11-25),
+          instead of a floating card per item. Its head says what it is and how many items are still short. */}
+      {combinedRows.length > 0 && (() => {
+        const shortIds = new Set();
+        combinedRows.forEach((row) => {
+          if (row.kind === "missing") { shortIds.add("m|" + row.m.invId); return; }
+          const id = row.ln.invId ? String(row.ln.invId) : null;
+          if (id && (neededByInvId.get(id)?.qty ?? 0) > (loadedByInvId.get(id) || 0)) shortIds.add(id);
+        });
+        const nShort = shortIds.size;
+        return (
+      <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
+        <div className="px-4 py-3 bg-gray-50 flex items-center gap-3">
+          <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">📥</span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-semibold text-gray-900">Receiving</div>
+            <div className="text-xs text-gray-500 truncate">Who&apos;s bringing what, on which truck</div>
+          </div>
+          <span className={"shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full " + (nShort > 0 ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700")}>
+            {nShort > 0 ? `⚠️ ${nShort} short` : "✓ all sourced"}
+          </span>
+        </div>
+        <div className="divide-y divide-gray-100">
       {combinedRows.map((row) => {
         // What Studio's build needs that's never gone out on ANY truck at all (owner ask
         // 2026-11-25), merged directly into the same list every loaded item renders in — not a
@@ -188,7 +211,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         if (row.kind === "missing") {
           const m = row.m;
           return (
-            <div key={"missing|" + m.invId} className="bg-white rounded-xl border border-gray-100 shadow-[0_2px_4px_rgba(15,23,42,0.06)] px-4 py-3">
+            <div key={"missing|" + m.invId} className="px-4 py-3">
               <div className="flex items-center gap-2.5">
                 {m.photo ? <img src={thumbUrl(m.photo, 40)} loading="lazy" alt="" className="w-10 h-10 rounded-lg object-cover border border-gray-100 shrink-0" /> : <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center text-gray-300 text-sm shrink-0">📦</div>}
                 <div className="min-w-0 flex-1">
@@ -203,7 +226,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                 </div>
               </div>
               <div className="mt-2 ml-[50px]">
-                <span className="inline-block text-[13px] font-bold px-2.5 py-1 rounded-lg bg-red-50 text-red-700">
+                <span className="inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-700 tabular-nums">
                   need {Math.round(m.qty * 100) / 100} · arriving 0 · short {Math.round(m.qty * 100) / 100}
                 </span>
               </div>
@@ -230,7 +253,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         const need = ln.invId ? (neededByInvId.get(String(ln.invId))?.qty ?? 0) : null;
         const arriving = ln.invId ? (loadedByInvId.get(String(ln.invId)) || 0) : null;
         return (
-          <div key={ln.truck.id + "|" + ln.dept + "|" + ln.key} className="bg-white rounded-xl border border-gray-100 shadow-[0_2px_4px_rgba(15,23,42,0.06)] px-4 py-3">
+          <div key={ln.truck.id + "|" + ln.dept + "|" + ln.key} className="px-4 py-3">
             <div className="flex items-center gap-2.5">
               {ln.photo ? <img src={thumbUrl(ln.photo, 40)} loading="lazy" alt="" className="w-10 h-10 rounded-lg object-cover border border-gray-100 shrink-0" /> : <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center text-gray-300 text-sm shrink-0">📦</div>}
               <div className="min-w-0 flex-1">
@@ -256,7 +279,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                 </div>
                 {need != null && (
                   <div className="mt-1.5">
-                    <span className={"inline-block text-[13px] font-bold px-2.5 py-1 rounded-lg " + (Math.max(0, need - arriving) > 0 ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700")}>
+                    <span className={"inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full tabular-nums " + (Math.max(0, need - arriving) > 0 ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700")}>
                       need {Math.round(need * 100) / 100} · arriving {Math.round(arriving * 100) / 100} · short {Math.round(Math.max(0, need - arriving) * 100) / 100}
                     </span>
                   </div>
@@ -311,6 +334,10 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           </div>
         );
       })}
+        </div>
+      </div>
+        );
+      })()}
 
       {visibleTransfers.length > 0 && (
         <div className="bg-sky-50 rounded-xl p-4">

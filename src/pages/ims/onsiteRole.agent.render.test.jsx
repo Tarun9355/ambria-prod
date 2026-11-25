@@ -195,8 +195,9 @@ describe("event opened - onsiteOnly", () => {
 
 describe("event opened - everyone else is unchanged", () => {
   const html = render(sel({ onsiteOnly: false }), F_SEL);
-  it("Department Head | Site Supervisor switch, bar Download PDF, Sync present", () => {
+  it("Department Head tag (no Site Supervisor tag any more - the sidebar's Site page has it), bar Download PDF, Sync present", () => {
     expect(html).toContain("Department Head");
+    expect(html).not.toContain(">Site Supervisor</button>");
     expect(html).toContain("One PDF with all");
     expect(html).toContain("SYNC-BUTTON");
   });
@@ -355,7 +356,7 @@ describe("RISKS (documented behaviour, not a spec violation of the listed tiles)
     expect(html).toContain("Deal value");
   });
   it("the role never gets the Site Supervisor dropdown (owner ask 2026-11-20): no select, no 'unassigned'; the assigned name is shown as plain text; everyone else keeps the dropdown", () => {
-    const withSup = (onsiteOnly) => render(base({ onsiteOnly, eventOrders: [ev("E1", "MineWedding", 3, { siteSupervisorId: "S1", siteSupervisorName: "Raju" })] }), F_SEL);
+    const withSup = (onsiteOnly, authUser = { id: "u_admin", role: "Admin", name: "Admin" }) => render(base({ onsiteOnly, authUser, eventOrders: [ev("E1", "MineWedding", 3, { siteSupervisorId: "S1", siteSupervisorName: "Raju" })] }), F_SEL);
     const role = withSup(true);
     expect(role).not.toContain("— unassigned —");
     expect(role).not.toMatch(/<select[^>]*>\s*<option value="">— unassigned/);
@@ -364,7 +365,22 @@ describe("RISKS (documented behaviour, not a spec violation of the listed tiles)
     const none = render(base({ onsiteOnly: true, eventOrders: [ev("E1", "MineWedding", 3, {})] }), F_SEL);
     expect(none).not.toContain("— unassigned —");
     expect(none).not.toContain("👷 Site Supervisor");
-    expect(withSup(false)).toContain("— unassigned —"); // control: the Department Head still picks the supervisor
+    // control: the Department Head still picks the supervisor - the name as text with a "Change" button (the picker opens on tap)
+    expect(withSup(false)).toContain("Raju");
+    expect(withSup(false)).toContain(">+ Add supervisor</button>"); // adds one more, never replaces (owner ask 2026-11-25)
+    expect(withSup(false)).toContain('aria-label="Remove Raju"');
+    expect(withSup(false)).not.toContain("<select");
+    // only an Admin adds or removes (owner ask 2026-11-25): anyone else sees the names, no button, no ×
+    const notAdmin = withSup(false, { id: "u5", role: "Ops", name: "Krati" });
+    expect(notAdmin).toContain(">Raju<");
+    expect(notAdmin).not.toContain("+ Add supervisor");
+    expect(notAdmin).not.toContain('aria-label="Remove Raju"');
+    const two = render(base({ onsiteOnly: false, eventOrders: [ev("E1", "MineWedding", 3, { extraSupervisors: [{ id: "S1", name: "Raju" }, { id: "S2", name: "Chandan" }] })] }), F_SEL);
+    expect(two).toContain("Raju");
+    expect(two).toContain("Chandan");
+    const noneHead = render(base({ onsiteOnly: false, authUser: { id: "u_admin", role: "Admin", name: "Admin" }, eventOrders: [ev("E1", "MineWedding", 3, {})] }), F_SEL);
+    expect(noneHead).toContain("— unassigned —");
+    expect(noneHead).toContain(">+ Add supervisor</button>");
   });
   it("Paint department: the planning panel (PaintDeptView with its ₹ paint costs) is not gated on onsiteOnly", () => {
     const paintSrc = SRC.match(/\{dept === PAINT && <PaintDeptView[^\n]*/)[0];
