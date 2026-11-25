@@ -3079,6 +3079,7 @@ export default function IMS() {
             settings={settings} setSettings={setSettings} prodRequests={prodRequests}
             trussInv={trussInv} setTrussInv={setTrussInv}
             trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} platformAlloc={platformAlloc} setPlatformAlloc={setPlatformAlloc} battaAlloc={battaAlloc} setBattaAlloc={setBattaAlloc} eventOrders={eventOrders} setEventOrders={setEventOrders} blocks={readOnlyBlocks}
+            applyBlocksRpc={applyBlocksRpc} /* Dept Ops blocks the items added on its trucks (not in the deal) - through the same locked RPC as Inventory's Block */
             studio={studio} authUser={user} amendRequests={amendRequests}
             focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={clearFocusEvent}
             autoPdfFor={autoPdfFor} onAutoPdfDone={finishAutoPdf}

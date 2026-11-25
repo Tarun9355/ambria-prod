@@ -4,6 +4,9 @@ import { SHIFT_START_HOUR } from "../../lib/studio/dihariWindows.js";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits, flowerPaletteHexFor } from "../../lib/ims/helpers";
 import { isLiveBlockStatus, blockEntryQty } from "../../lib/ims/liveBlocks";
+import { shortfallsOf } from "../../lib/ims/blocksRpc";
+// the stock-ledger tag + ops for items added on a truck that are not in the deal (Studio's reconcile leaves the tag alone)
+import { TRUCK_EXTRA_SRC, truckExtraBlockOps, truckExtraQtyByItem } from "../../lib/ims/truckExtraBlocks";
 import { buildDeptCrew, orderWinIds as orderWinIdsShared, flowerTraceForFn as flowerTraceForFnShared, setMpPatch, addMpPatch, removeMpPatch, actualCrewPatch, resetLinePatch, mpDayPatch, resetMpDayPatch, shiftCountPatch, shiftSplitPatch, addDihariPatch, removeDihariPatch, eventLabourInfo, eventLabourTotalDeptOps } from "../../lib/ims/deptCrew";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel, makeSubcatDept } from "../../lib/ims/deptClassify";
@@ -119,6 +122,7 @@ function crewIcon(type) {
 // shared row for a header to sit above) but is hidden from sm up, where the inventory-blocked list
 // now has ONE sticky header row instead — repeating it on every card there was the exact "confusing"
 // the header replaces.
+
 // What a truck still needs before it is a real truck (Loading & dispatch): vehicle no., driver and a 10-digit phone.
 const truckMissingOf = (t) => [
   !String(t?.vehicle || "").trim() && "Vehicle no.",
@@ -839,7 +843,7 @@ function TruckTextBox({ value, onCommit, clean, ...rest }) {
   );
 }
 
-export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [], rcItems = [] }) {
+export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, applyBlocksRpc = null, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [], rcItems = [] }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   // A labour usage row belongs to the department Deal Check charged it to (ur.dept — the item's own
@@ -1605,7 +1609,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     Object.entries(blocks || {}).forEach(([itemId, arr]) => {
       // isLiveBlockStatus (bug 14): one shared "is this entry live" definition, not a third
       // unfiltered count that disagreed with both Studio's and IMS's own.
-      const qty = (arr || []).filter(b => b.eventId === sel.id && isLiveBlockStatus(b)).reduce((s, b) => s + blockEntryQty(b), 0);
+      // an item added on a truck (not in the deal) has its own block (TRUCK_EXTRA_SRC) and its own section - not counted here twice
+      const qty = (arr || []).filter(b => b.eventId === sel.id && isLiveBlockStatus(b) && b.source !== TRUCK_EXTRA_SRC).reduce((s, b) => s + blockEntryQty(b), 0);
       if (qty <= 0) return;
       const item = (inventory || []).find(i => String(i.id) === String(itemId));
       if (!item) return;
@@ -2876,7 +2881,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const truckOcc = (trip) => {
     let used = 0, unknown = 0;
     const byDept = [];
-    const depts = [...new Set([...Object.keys(trip.loads || {}), ...Object.keys(trip.extra || {})])];
+    const depts = [...new Set([...Object.keys(trip.loads || {}), ...Object.keys(trip.extra || {}), ...Object.keys(trip.custom || {})])];
     depts.forEach(d => {
       const ld = {};
       [trip.loads?.[d] || {}, trip.extra?.[d] || {}].forEach(src => Object.entries(src).forEach(([k, q]) => { ld[k] = (ld[k] || 0) + (Number(q) || 0); }));
@@ -2887,6 +2892,13 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         const sh = truckShares[d]?.get(k);
         if (sh) du += qn * sh.perUnit; else unknown += 1;
       });
+      // items added on the truck (not in the deal) take room too (owner ask 2026-11-25) - at their sub-category's truck capacity
+      (Array.isArray(trip.custom?.[d]) ? trip.custom[d] : []).forEach(c => {
+        const qn = Number(c.qty) || 0;
+        if (qn <= 0) return;
+        const cap = capBySub.get(String(c.sub || "").trim().toLowerCase());
+        if (cap && Number(cap.perTruck) > 0 && PIECE_UNITS.includes(String(cap.unit || "pc").toLowerCase())) du += qn / Number(cap.perTruck); else unknown += 1;
+      });
       if (du > 0) byDept.push({ dept: d, used: du });
       used += du;
     });
@@ -2894,6 +2906,53 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   };
   const truckOccs = Object.fromEntries(eventTruckList.flatMap(t => tripsOf(t).map(tr => [tr.id, truckOcc(tr)])));
   const fullTrucks = eventTruckList.reduce((s, t) => s + tripsOf(t).filter(tr => (truckOccs[tr.id]?.used || 0) >= 0.999).length, 0);
+  // ── ITEMS ADDED ON A TRUCK (NOT IN THE DEAL) ── (owner ask 2026-11-25: "jo bhi add krenge vo inventory block mai add hora
+  // hai? cost rent sab") They used to ride the trip and its challan only: not in Inventory blocked, not reserved in stock
+  // (another deal could take the same pieces that day), not priced, not counted in the truck's fill.
+  // truckExtrasAll: every department's, per inventory item, summed over every truck and trip of this event - what is blocked.
+  const truckExtrasAll = useMemo(() => {
+    const m = new Map();
+    eventTruckList.forEach(t => tripsOf(t).forEach(tr => Object.entries(tr.custom || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach(c => {
+      const q = Number(c.qty) || 0;
+      if (q <= 0 || !c.invId) return;
+      const cur = m.get(c.invId) || { invId: c.invId, name: c.name, sub: c.sub || "", qty: 0, byDept: {} };
+      cur.qty += q; cur.byDept[d] = (cur.byDept[d] || 0) + q;
+      m.set(c.invId, cur);
+    }))));
+    return m;
+  }, [eventTruckList]);
+  // This department's, priced at the item's rent (Inventory's rental price) - shown in Inventory blocked, not billed to the client.
+  const truckExtraRows = useMemo(() => [...truckExtrasAll.values()].filter(x => (x.byDept[dept] || 0) > 0).map(x => {
+    const inv = (inventory || []).find(i => String(i.id) === String(x.invId));
+    const qty = x.byDept[dept];
+    const rate = Number(inv?.price ?? inv?.rentalCost) || 0;
+    const photo = inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || "";
+    return { invId: x.invId, name: inv?.name || x.name, sub: x.sub || inv?.subCat || inv?.subcategory || "", qty, rate, total: Math.round(qty * rate), photo };
+  }), [truckExtrasAll, dept, inventory]);
+  const truckExtraTotal = truckExtraRows.reduce((s, r) => s + r.total, 0);
+  // Keep the stock ledger in step: each item on its event's dates at the qty on the trucks, under TRUCK_EXTRA_SRC (removed
+  // when it comes off every truck). Through the same locked RPC as Inventory's Block (apply_block_ops, 'cap': it reserves what
+  // is really free and says what was not). Only someone who can edit Planning writes it; a signature of what was last asked
+  // keeps it from asking again for the same thing (a capped grant reads back lower than asked, which must not loop).
+  const truckExtraSentRef = useRef({});
+  useEffect(() => {
+    if (!sel?.id || !applyBlocksRpc || !canEditPlanning || onsiteOnly) return;
+    const dates = [...new Set((mpFns.length ? mpFns.map(mpFnDate) : [String(sel.date || "").slice(0, 10)]).filter(Boolean))].sort();
+    // lib/ims/truckExtraBlocks (tested): the ops that make this event's TRUCK_EXTRA_SRC holds match the qty on the trucks
+    const ops = truckExtraBlockOps(blocks, sel.id, dates, truckExtraQtyByItem(eventTruckList, tripsOf));
+    if (!ops.length) return;
+    const sig = JSON.stringify(ops);
+    if (truckExtraSentRef.current[sel.id] === sig) return;
+    truckExtraSentRef.current[sel.id] = sig;
+    (async () => {
+      const res = await applyBlocksRpc(ops, { onShort: "cap" });
+      const short = shortfallsOf(res);
+      if (short.length) {
+        const nm = (id) => (inventory || []).find(i => String(i.id) === String(id))?.name || id;
+        alert(`Not enough free stock to block everything added on the trucks:\n${short.map(s => `• ${nm(s.item_id)} - ${s.date}: ${s.short} short`).join("\n")}\nThe rest is blocked.`);
+      }
+    })();
+  }, [sel?.id, sel?.date, truckExtrasAll, blocks, applyBlocksRpc, canEditPlanning, onsiteOnly, mpFns, inventory]);
   // A truck "has room" when its current (newest) trip is still loading and not full - an earlier trip has already left.
   // A trip carrying items with no truck capacity set can't be judged (its fill reads low), so it is never the one named.
   const truckRoomOf = (t) => {
@@ -6242,6 +6301,34 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 </div>
                   );
                 })()
+              )}
+              {/* ── ADDED ON TRUCKS, NOT IN THE DEAL ── (owner ask 2026-11-25) what this department put on its trucks with "Add an
+                  item not in this deal": blocked in stock for the event's dates, priced at the item's rent - an internal cost,
+                  not billed to the client (the deal does not have them). Event-wide, every function. */}
+              {truckExtraRows.length > 0 && (
+                <div className="m-2.5 mt-1 rounded-xl ring-1 ring-blue-200 bg-blue-50/40 overflow-hidden">
+                  <div className="px-3 py-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 bg-blue-50 border-b border-blue-100">
+                    <span aria-hidden="true">🚚</span>
+                    <span className="text-[13px] font-semibold text-blue-900">{"Added on trucks (not in the deal)"}</span>
+                    <span className="text-[11px] text-blue-700/80">{"blocked in stock · not billed to the client"}</span>
+                    <span className="ml-auto text-[13px] font-bold text-gray-900 tabular-nums">{fmt(truckExtraTotal)}</span>
+                  </div>
+                  <div className="divide-y divide-blue-100/70">
+                    {truckExtraRows.map(r => (
+                      <div key={r.invId} className="px-3 py-2 flex items-center gap-2.5">
+                        {r.photo ? <img src={thumbUrl(r.photo, 40)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(r.photo)} className="w-9 h-9 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} />
+                          : <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-gray-900 truncate">{r.name}</div>
+                          <div className="text-[11px] text-gray-500 truncate">{r.sub || "—"}</div>
+                        </div>
+                        <span className="shrink-0 text-sm font-semibold text-gray-700 tabular-nums">×{r.qty}</span>
+                        <span className="shrink-0 w-20 text-right text-sm text-gray-500 tabular-nums" title={r.rate > 0 ? "Rent per piece (Inventory)" : "No rent set on this item in Inventory"}>{r.rate > 0 ? fmt(r.rate) : "—"}</span>
+                        <span className="shrink-0 w-24 text-right text-sm font-bold text-gray-900 tabular-nums">{r.rate > 0 ? fmt(r.total) : "—"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
 
