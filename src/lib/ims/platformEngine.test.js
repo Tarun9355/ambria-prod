@@ -546,6 +546,35 @@ describe("platformPullPlan / platformPiecesFor — best-fit remainder, fix #2 (o
       { id: "a", label: "8×4ft", lengthFt: 8, widthFt: 4, material: "wood", sqftPerPiece: 32, qty: 4 },
     ]);
   });
+
+  // Regression (owner report, kanishk_test deal, 2026-11-25): commit()'s own row-pick already broke a
+  // footprint tie by remaining stock, but greedyTopUp's largest-first pass and bestFitTopUp's DFS only
+  // sorted by sqftPerPiece - two rows sharing a footprint (same thickness, different material - Wood
+  // and Iron both 8×4×4") fell back to raw config-array order on the tie, so a floor that dropped to
+  // the sqft-only path (BTR 10×10, which can't tile 8×4 pieces even oversize) could get handed to a
+  // near-empty material while a still-plentiful row of the IDENTICAL size sat unused - splitting one
+  // deal's pull across two materials for no real reason.
+  it("prefers the row with more stock left when two rows tie on sqftPerPiece (same footprint, different material)", () => {
+    const trussInv = { platforms: [
+      { id: "iron", label: "8x4x4in Iron", lengthFt: 8, widthFt: 4, stock: 80, material: "Iron", thicknessIn: 4 },
+      { id: "wood", label: "8x4x4in Wood", lengthFt: 8, widthFt: 4, stock: 110, material: "Wood", thicknessIn: 4 },
+    ] };
+    const out = platformPiecesFor(100, trussInv);
+    expect(out.find((p) => p.id === "wood")?.qty).toBe(4);
+    expect(out.find((p) => p.id === "iron")).toBeUndefined();
+  });
+
+  it("the full kanishk_test shape: four exact-tileable 16×20 floors plus one unresolved 10×10 (BTR) stay single-material", () => {
+    const trussInv = { platforms: [
+      { id: "iron", label: "8x4x4in Iron", lengthFt: 8, widthFt: 4, stock: 80, material: "Iron", thicknessIn: 4 },
+      { id: "wood", label: "8x4x4in Wood", lengthFt: 8, widthFt: 4, stock: 150, material: "Wood", thicknessIn: 4 },
+    ] };
+    const floors = [{ L: 16, W: 20 }, { L: 16, W: 20 }, { L: 16, W: 20 }, { L: 16, W: 20 }, { L: 10, W: 10 }];
+    const plan = platformPullPlan(floors, trussInv);
+    expect(plan.pieces.find((p) => p.id === "iron")).toBeUndefined();
+    expect(plan.pieces.find((p) => p.id === "wood")?.qty).toBe(44); // 4×10 (the 16×20 floors) + 4 (BTR's sqft fallback)
+    expect(plan.floors[4].tilingUnresolved).toBe(true); // BTR 10×10 can't tile 8×4 even oversize
+  });
 });
 
 describe("platformPullPlan — stock sharing across copies of the same floor", () => {

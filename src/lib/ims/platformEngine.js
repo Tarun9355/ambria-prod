@@ -402,7 +402,14 @@ const commit = (fpCount, poolRows, stockLeft, groupStockByTKey, allowOver) => {
 // size" (which wasted sqft whenever a different, still-stocked size would have finished the job with
 // less overage, or simply didn't exist as a smaller option at all).
 const bestFitTopUp = (rem, rowsWithStock) => {
-  const sorted = [...rowsWithStock].sort((a, b) => b.sqftPerPiece - a.sqftPerPiece);
+  // Stock as a tie-break (not just sqftPerPiece) when two rows share a footprint (same thickness
+  // group, different material - e.g. Wood 8×4×4" and Iron 8×4×4") - otherwise a tie falls back to
+  // raw config-array order, which can hand a fallback piece to a near-empty row while a still-
+  // plentiful one of the identical size sits unused (owner report, 2026-11-25: BTR's sqft-fallback
+  // piece landed on Iron with 80 left while Wood still had 110, splitting one floor across two
+  // materials for no reason). Mirrors commit()'s own per-row stock tie-break above, so both of this
+  // file's "which concrete row absorbs this piece" decisions agree.
+  const sorted = [...rowsWithStock].sort((a, b) => b.sqftPerPiece - a.sqftPerPiece || (b.stock || 0) - (a.stock || 0));
   let best = null, nodes = 0;
   const dfs = (i, total, qty) => {
     if (++nodes > TOPUP_NODE_CAP) return;
@@ -429,7 +436,9 @@ const bestFitTopUp = (rem, rowsWithStock) => {
 // shortfall — if even the best-fit search can't finish it from real stock — land on the single
 // least-wasteful row, flagged overStock, rather than reporting nothing.
 const greedyTopUp = (need, rows, stockLeft, allowOver) => {
-  const sorted = [...rows].sort((a, b) => b.sqftPerPiece - a.sqftPerPiece);
+  // Same stock tie-break as bestFitTopUp/commit (see bestFitTopUp's own comment) - the largest-first
+  // floored pass below must also prefer the row with more left when two tie on sqftPerPiece.
+  const sorted = [...rows].sort((a, b) => b.sqftPerPiece - a.sqftPerPiece || (stockLeft.get(b._row) || 0) - (stockLeft.get(a._row) || 0));
   const used = new Map();
   let remaining = need;
   sorted.forEach((r) => {
