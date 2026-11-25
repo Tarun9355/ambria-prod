@@ -13,6 +13,7 @@
 import { fmt } from "../format";
 import { walkKitUnits, flowerPaletteHexFor } from "./helpers";
 import { DEPTS } from "./deptClassify";
+import { TRUCK_EXTRA_SRC } from "./truckExtraBlocks";
 import { isTrussFoc, isPlatformFoc } from "../studio/foc.js";
 import { venueWithParent, standingQty, fixedVenueFor } from "./fixedVenues";
 import { ZONE_META, trussBaseArea, CARPET_OFF, carpetPricingFor, carpetTakesStockPick } from "../studio/taxonomy";
@@ -337,7 +338,8 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
           return;
         }
         Object.entries(blocks || {}).forEach(([itemId, arr]) => {
-          const qty = (arr || []).filter(b => b.eventId === sel.id).reduce((s, b) => s + (Number(b.qty) || 0), 0);
+          // an item added on a truck (not in the deal, lib/ims/truckExtraBlocks) is not one of the deal's items
+          const qty = (arr || []).filter(b => b.eventId === sel.id && b.source !== TRUCK_EXTRA_SRC).reduce((s, b) => s + (Number(b.qty) || 0), 0);
           if (qty <= 0) return;
           const item = (inventory || []).find(i => String(i.id) === String(itemId));
           if (!item || catToDept(item.cat || item.category) !== d) return;

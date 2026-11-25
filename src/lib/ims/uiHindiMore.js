@@ -40,13 +40,12 @@ Add trip ¦ ट्रिप जोड़ें
 Add an item not in this deal ¦ डील के बाहर का आइटम जोड़ें
 spares or extras — goes on the challan ¦ स्पेयर या एक्स्ट्रा — चालान में जाएगा
 Added on trucks (not in the deal) ¦ ट्रक में जोड़ा (डील में नहीं)
-blocked in stock · not billed to the client ¦ स्टॉक में ब्लॉक · क्लाइंट के बिल में नहीं
 goes on this trip and its challan ¦ इस ट्रिप और इसके चालान में जाएगा
 No item picked ¦ कोई आइटम नहीं चुना
+Not added — this trip can no longer be loaded (it left, or you can't edit Planning). ¦ नहीं जुड़ा — इस ट्रिप में अब लोड नहीं हो सकता (ट्रिप निकल गई, या आप प्लानिंग एडिट नहीं कर सकते)।
 in stock ¦ स्टॉक में
 All ¦ सब
 No item matches this search. ¦ इस खोज से कोई आइटम नहीं मिला।
-Pick a sub-category above, or search. ¦ ऊपर सब-कैटेगरी चुनें, या खोजें।
 Trucks & dismantle ¦ ट्रक और डिसमेंटल
 Dismantle ¦ डिसमेंटल
 Going ¦ जाना

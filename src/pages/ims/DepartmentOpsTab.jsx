@@ -123,6 +123,9 @@ function crewIcon(type) {
 // now has ONE sticky header row instead — repeating it on every card there was the exact "confusing"
 // the header replaces.
 
+// Stock shortfalls already alerted for items added on trucks (event|item|date|qty) - once per browser session, not on every open.
+const TRUCK_EXTRA_ALERTED = new Set();
+
 // What a truck still needs before it is a real truck (Loading & dispatch): vehicle no., driver and a 10-digit phone.
 const truckMissingOf = (t) => [
   !String(t?.vehicle || "").trim() && "Vehicle no.",
@@ -2691,6 +2694,15 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // "Add an item not in this deal" opens in a modal (owner ask 2026-11-25) - its sub-category chips ran three rows across every
   // open truck. { truckId, tripId, title, sub, invId, qty, q, added } while open.
   const [addItemModal, setAddItemModal] = useState(null);
+  // Escape shuts it wherever focus is (after the big photo closes, focus is on the page, not inside the modal) - not while
+  // the big photo is open, which takes its own Escape first
+  const addItemOpen = !!addItemModal;
+  useEffect(() => {
+    if (!addItemOpen || zoomImg) return;
+    const onKey = (e) => { if (e.key === "Escape") setAddItemModal(null); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [addItemOpen, zoomImg]);
   // Which ONE trip is showing for a given truck (owner ask, 2026-11-23: tabs, not every trip
   // stacked one after another - a truck with several trips used to grow the page's own scroll with
   // each one added). Keyed by truck id -> trip id; falls back to the truck's first trip below
@@ -2856,10 +2868,13 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // Check row — kept as a flat array, not truckKey'd, since there is nothing in the deal to match
   // against. Each gets its own small id (not an array index) so editing/removing one never shifts
   // under an in-flight edit to another.
+  // true when the row was written - the Add-an-item modal only says "Added" then (a viewer without Planning edit, or a trip
+  // dispatched while the modal was open, writes nothing)
   const addTripCustomItem = (id, tripId, invItem, qty) => {
-    if (!isActiveTrip(id, tripId) || !invItem || !(Number(qty) > 0)) return;
+    if (!canEditPlanning || !isActiveTrip(id, tripId) || !invItem || !(Number(qty) > 0)) return false;
     const row = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), invId: invItem.id, name: invItem.name, sub: invItem.subCat || invItem.subcategory || "", qty: Number(qty) };
     setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, custom: { ...(tr.custom || {}), [dept]: [...((tr.custom || {})[dept] || []), row] } } : tr));
+    return true;
   };
   const setTripCustomQty = (id, tripId, rowId, qty) => {
     if (!isActiveTrip(id, tripId)) return;
@@ -2935,24 +2950,37 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // is really free and says what was not). Only someone who can edit Planning writes it; a signature of what was last asked
   // keeps it from asking again for the same thing (a capped grant reads back lower than asked, which must not loop).
   const truckExtraSentRef = useRef({});
+  const truckExtraSeenRef = useRef({}); // eventId -> already looked at once since this page opened
   useEffect(() => {
-    if (!sel?.id || !applyBlocksRpc || !canEditPlanning || onsiteOnly) return;
+    // a cancelled event holds nothing (its entries are filtered out of `blocks`, so this would rewrite them on every open)
+    if (!sel?.id || !applyBlocksRpc || !canEditPlanning || onsiteOnly || sel.status === "cancelled") return;
     const dates = [...new Set((mpFns.length ? mpFns.map(mpFnDate) : [String(sel.date || "").slice(0, 10)]).filter(Boolean))].sort();
     // lib/ims/truckExtraBlocks (tested): the ops that make this event's TRUCK_EXTRA_SRC holds match the qty on the trucks
-    const ops = truckExtraBlockOps(blocks, sel.id, dates, truckExtraQtyByItem(eventTruckList, tripsOf));
+    let ops = truckExtraBlockOps(blocks, sel.id, dates, truckExtraQtyByItem(eventTruckList, tripsOf));
+    if (!truckExtraSeenRef.current[sel.id]) {
+      truckExtraSeenRef.current[sel.id] = true;
+      // First look after opening the event: an item held on every date for LESS than is on the trucks was capped by real stock
+      // when it was added - asking again would only be capped again, and alert every editor who opens the event. Left as is;
+      // any change to the trucks from here on syncs it again.
+      const heldOn = (id, dt) => (blocks?.[id] || []).filter(b => b?.eventId === sel.id && b.source === TRUCK_EXTRA_SRC && b.date === dt && isLiveBlockStatus(b)).reduce((s, b) => s + blockEntryQty(b), 0);
+      ops = ops.filter(op => !(op.add.length && op.add.every(a => { const h = heldOn(op.item_id, a.date); return h > 0 && h < a.qty; })));
+    }
     if (!ops.length) return;
     const sig = JSON.stringify(ops);
     if (truckExtraSentRef.current[sel.id] === sig) return;
     truckExtraSentRef.current[sel.id] = sig;
+    const eventId = sel.id;
     (async () => {
       const res = await applyBlocksRpc(ops, { onShort: "cap" });
-      const short = shortfallsOf(res);
+      if (res?.error) { delete truckExtraSentRef.current[eventId]; return; } // failed (applyBlocksRpc said so): the next render may try again
+      // each shortfall said once per event / item / date / qty in this browser session, never again on every open
+      const short = shortfallsOf(res).filter(s => { const k = `${eventId}|${s.item_id}|${s.date}|${s.requested}`; if (TRUCK_EXTRA_ALERTED.has(k)) return false; TRUCK_EXTRA_ALERTED.add(k); return true; });
       if (short.length) {
         const nm = (id) => (inventory || []).find(i => String(i.id) === String(id))?.name || id;
         alert(`Not enough free stock to block everything added on the trucks:\n${short.map(s => `• ${nm(s.item_id)} - ${s.date}: ${s.short} short`).join("\n")}\nThe rest is blocked.`);
       }
     })();
-  }, [sel?.id, sel?.date, truckExtrasAll, blocks, applyBlocksRpc, canEditPlanning, onsiteOnly, mpFns, inventory]);
+  }, [sel?.id, sel?.date, sel?.status, truckExtrasAll, blocks, applyBlocksRpc, canEditPlanning, onsiteOnly, mpFns, inventory]);
   // A truck "has room" when its current (newest) trip is still loading and not full - an earlier trip has already left.
   // A trip carrying items with no truck capacity set can't be judged (its fill reads low), so it is never the one named.
   const truckRoomOf = (t) => {
@@ -7263,7 +7291,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                 truck and still show up on its challan. Hidden once this trip is locked -
                                 it already left, there's nothing left to add to it. */}
                             {/* one button; the sub-category chips, the photo grid and the qty open in a modal (owner ask 2026-11-25) */}
-                            {!locked && deptInventoryBySub.size > 0 && (
+                            {!locked && canEditPlanning && !onsiteOnly && deptInventoryBySub.size > 0 && (
                               <button type="button"
                                 onClick={() => setAddItemModal({ truckId: t.id, tripId: trip.id, title: `Truck ${truckNumById.get(t.id)}${t.trips.length > 1 ? ` · Trip ${tripI + 1}` : ""}`, sub: "", invId: "", qty: 1, q: "", added: [] })}
                                 // coloured and plain to spot (owner ask 2026-11-25) - a grey dashed strip read as empty space
@@ -8448,8 +8476,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         const qtyN = Math.max(0, Math.floor(Number(m.qty) || 0));
         const add = () => {
           if (!picked || !(qtyN > 0)) return;
-          addTripCustomItem(m.truckId, m.tripId, picked, qtyN);
-          set({ invId: "", qty: 1, added: [...(m.added || []), `${picked.name} ×${qtyN}`] });
+          if (!addTripCustomItem(m.truckId, m.tripId, picked, qtyN)) { set({ failed: true }); return; } // nothing was saved: say so, never "Added"
+          set({ invId: "", qty: 1, failed: false, added: [...(m.added || []), `${picked.name} ×${qtyN}`] });
         };
         const stockOf = (i) => Number(i.qty ?? i.qtyOwned);
         const card = (i) => {
@@ -8486,7 +8514,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
           );
         };
         return (
-          <div data-hi-scope onClick={close} onKeyDown={e => { if (e.key === "Escape") close(); }} className="fixed inset-0 z-[9999] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div data-hi-scope onClick={close} className="fixed inset-0 z-[9999] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div role="dialog" aria-modal="true" aria-label="Add an item not in this deal" onClick={e => e.stopPropagation()}
               className="bg-white w-full sm:w-[min(820px,100%)] h-[90vh] sm:h-[min(720px,88vh)] flex flex-col overflow-hidden rounded-t-2xl sm:rounded-2xl shadow-2xl">
               {/* head: what this is, which truck it goes on, close */}
@@ -8513,6 +8541,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
               </div>
               {/* the items, by photo - grouped by sub-category under All */}
               <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-3 bg-gray-50/70">
+                {m.failed && (
+                  <div role="alert" className="mb-3 rounded-lg bg-red-50 ring-1 ring-red-200 px-3 py-2 text-xs text-red-800">{"Not added — this trip can no longer be loaded (it left, or you can't edit Planning)."}</div>
+                )}
                 {m.added?.length > 0 && (
                   <div className="mb-3 rounded-lg bg-emerald-50 ring-1 ring-emerald-200 px-3 py-2 text-xs text-emerald-800"><b>✓ {"Added"}:</b> {m.added.join(", ")}</div>
                 )}
