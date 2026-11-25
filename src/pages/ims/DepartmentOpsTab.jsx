@@ -2464,10 +2464,18 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     setOpenTruck(next);
     if (next) setTimeout(() => truckRefs.current[next]?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 0);
   };
-  const addTruck = () => {
+  // ── FILL ONE TRUCK BEFORE STARTING THE NEXT ── (owner ask 2026-11-25: people added truck after truck while the
+  // last one was still part-empty.) "+ Add truck" first looks for a truck still LOADING with room left; if there is one
+  // it does not add - it opens that truck, scrolls to it and lights it, and says how much room it has, with
+  // "Add a new truck anyway" for when that truck really can't take more (a different route, the driver left...).
+  const [truckSpaceHint, setTruckSpaceHint] = useState(null); // { id, no, freePct } - the truck with room, while the nudge shows
+  const truckSpaceTimer = useRef(null);
+  useEffect(() => () => clearTimeout(truckSpaceTimer.current), []);
+  const addTruckNow = () => {
     const id = "trk_" + Date.now();
     saveEventTrucks(list => [...list, { id, vehicle: "", driver: "", phone: "", status: "loading", loads: {} }]);
     setOpenTruck(id);
+    setTruckSpaceHint(null);
   };
   const setTruck = (id, patch) => saveEventTrucks(list => list.map(t => t.id === id ? { ...t, ...patch } : t));
   const setTruckItem = (id, key, qty) => {
@@ -2507,6 +2515,18 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   };
   const truckOccs = Object.fromEntries(eventTruckList.map(t => [t.id, truckOcc(t)]));
   const fullTrucks = eventTruckList.filter(t => truckOccs[t.id].used >= 0.999).length;
+  // "+ Add truck" (see truckSpaceHint above): the first truck still loading with room left is filled first
+  const addTruck = () => {
+    const roomy = eventTruckList
+      .map((t, i) => ({ t, no: i + 1, used: truckOccs[t.id]?.used || 0 }))
+      .find(x => (x.t.status || "loading") === "loading" && x.used < 0.999);
+    if (!roomy) { addTruckNow(); return; }
+    setTruckSpaceHint({ id: roomy.t.id, no: roomy.no, freePct: Math.max(1, Math.round((1 - roomy.used) * 100)) });
+    setOpenTruck(roomy.t.id);
+    setTimeout(() => truckRefs.current[roomy.t.id]?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+    clearTimeout(truckSpaceTimer.current);
+    truckSpaceTimer.current = setTimeout(() => setTruckSpaceHint(null), 12000); // the light fades on its own
+  };
   const DEPT_BAR = { Furniture: "bg-amber-500", Floral: "bg-pink-500", Structure: "bg-slate-500", Tenting: "bg-emerald-500", Transport: "bg-orange-500", Lighting: "bg-yellow-400", Fabric: "bg-violet-500" };
   // A short "Can be made" line on a challan says where its units come from - "600 = 500 in stock + 100 outsourced" - so the
   // challan does not read as if all 600 were ours or all made in-house. Empty for every other line.
@@ -6285,6 +6305,21 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     {showFleet ? "Done" : "Manage fleet"}
                   </button>
                 </div>
+                {/* "+ Add truck" while a loading truck still has room: say which, and let them add anyway */}
+                {truckSpaceHint && (
+                  <div role="status" className="ui-reveal-in mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-amber-50 ring-1 ring-amber-300 px-3 py-2">
+                    <span aria-hidden="true" className="text-base leading-none">⚠️</span>
+                    <div className="min-w-[13rem] flex-1 text-xs text-amber-900">
+                      <b>Truck {truckSpaceHint.no} still has space</b> (about {truckSpaceHint.freePct}% free) — fill it before adding another truck.
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => { setTruckSpaceHint(null); truckRefs.current[truckSpaceHint.id]?.scrollIntoView({ behavior: "smooth", block: "center" }); }}
+                        className="h-7 px-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold transition-colors">Fill Truck {truckSpaceHint.no}</button>
+                      <button onClick={addTruckNow}
+                        className="h-7 px-2.5 rounded-lg bg-white ring-1 ring-amber-300 hover:bg-amber-100 text-amber-800 text-xs font-semibold transition-colors">Add new truck anyway</button>
+                    </div>
+                  </div>
+                )}
               </div>
               {showFleet && (
                 <div className="px-3 sm:px-4 py-3 bg-gray-50 border-t border-gray-100 space-y-2.5">
@@ -6329,7 +6364,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   {trucks.map((t, ti) => (
                     /* Each truck is its own card. Stacked in bare padding they ran into each
                        other, and nothing marked where one truck's items stopped. */
-                    <div key={t.id} ref={el => { truckRefs.current[t.id] = el; }} className={"rounded-xl ring-1 p-3 space-y-2.5 scroll-mt-4 " + (openTruck === t.id ? "ring-blue-200" : "ring-gray-200")}>
+                    <div key={t.id} ref={el => { truckRefs.current[t.id] = el; }}
+                      // the truck with room, lit while the "fill it first" note shows
+                      className={"rounded-xl ring-1 p-3 space-y-2.5 scroll-mt-4 transition-[background-color,box-shadow] duration-500 " + (truckSpaceHint?.id === t.id ? "ring-2 ring-amber-400 bg-amber-50/60 shadow-[0_0_0_4px_rgba(251,191,36,0.25)]" : openTruck === t.id ? "ring-blue-200" : "ring-gray-200")}>
                       {/* ── THE HEADER IS THE TRUCK, OPEN OR SHUT ──
                           Everything needed to tell trucks apart without opening one: number, plate,
                           driver, phone, status and how full it is. Tapping it opens this truck and
@@ -6347,7 +6384,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                 </span>
                                 <span className="text-sm font-semibold text-gray-900 shrink-0">Truck {ti + 1}</span>
                                 <span className="min-w-0 truncate text-[12px] text-gray-500">{[t.vehicle, t.driver].filter(Boolean).join(" · ") || "no vehicle yet"}</span>
-                                <span className={"shrink-0 ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded ring-1 " + (TRUCK_STATUS_CLS[st] || TRUCK_STATUS_CLS.loading)}>{TRUCK_STATUS_LABEL[st] || st}</span>
+                                {truckSpaceHint?.id === t.id && <span className="shrink-0 ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-white">Fill this first</span>}
+                                <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ring-1 " + (truckSpaceHint?.id === t.id ? "" : "ml-auto ") + (TRUCK_STATUS_CLS[st] || TRUCK_STATUS_CLS.loading)}>{TRUCK_STATUS_LABEL[st] || st}</span>
                               </div>
                               <div className="mt-1.5 pl-5 flex items-center gap-2">
                                 {t.phone ? <span className="shrink-0 text-[11px] text-gray-500 tabular-nums">📞 {t.phone}</span> : null}
