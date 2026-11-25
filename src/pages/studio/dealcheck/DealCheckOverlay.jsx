@@ -3220,24 +3220,6 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                       <div style={{fontSize:12,color:accent,fontWeight:700}}>Generating…</div>
                     </div>
                   );
-                  if (totalCards === 0) {
-                    return (
-                      <div>
-                        {genBar}
-                        <div style={{padding:"40px 30px",textAlign:"center",color:"#1A1A2E"}}>
-                          <div style={{fontSize:38,marginBottom:14}}>📦</div>
-                          <div style={{fontSize:15.5,fontWeight:600,color:"#1A1A2E",marginBottom:6}}>No inventory matched yet</div>
-                          {/* Was "Click Generate above" — that button no longer exists, so pointing
-                              at it would send people looking for a control that is not there. */}
-                          <div style={{fontSize:13}}>Nothing has been matched to IMS inventory for this function yet.</div>
-                        </div>
-                      </div>
-                    );
-                  }
-                  // gap 12 → 10 between the cards, but they now carry their own radius and lift, so the
-                  // air between them reads. The old rows butted onto each other and the gap was doing
-                  // all the separating on its own — which is why they looked like one striped block
-                  // rather than a stack of cards.
                   // ── ADDED ON TRUCKS AT DISPATCH ── (owner ask 2026-11-25) items IMS ops put on a truck with "Add an item not in this
                   // deal" (event_orders.trucks[].trips[].custom[dept]) - so sales sees them too: which item, how many, on which
                   // vehicle / trip, by which department, at its rent. Read-only; not part of this deal's price (IMS blocks them in stock).
@@ -3256,15 +3238,13 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                     return out;
                   })();
                   const truckExtrasTotal = truckExtras.reduce((s, r) => s + r.total, 0);
-                  return (
-                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                      {genBar}
-                      {truckExtras.length > 0 && (
+                  // shown on every function's tab, also one with nothing matched yet - it is the whole event's, not one function's
+                  const truckExtrasPanel = truckExtras.length > 0 ? (
                         <div style={{border:"1px solid #BFDBFE",borderRadius:12,background:"#F5F9FF",overflow:"hidden"}}>
                           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",padding:"9px 12px",background:"#EFF6FF",borderBottom:"1px solid #DBEAFE"}}>
                             <span aria-hidden="true">🚚</span>
                             <span style={{fontSize:13,fontWeight:700,color:"#1E3A8A"}}>Added on trucks at dispatch</span>
-                            <span style={{fontSize:11,color:"#3B5BA9"}}>by IMS ops · not in this deal · blocked in stock</span>
+                            <span style={{fontSize:11,color:"#3B5BA9"}}>whole event · by IMS ops · not in this deal · blocked in stock</span>
                             <span style={{marginLeft:"auto",fontSize:13,fontWeight:700,color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>₹{truckExtrasTotal.toLocaleString("en-IN")}</span>
                           </div>
                           {truckExtras.map(r => (
@@ -3281,7 +3261,30 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                             </div>
                           ))}
                         </div>
-                      )}
+                  ) : null;
+                  if (totalCards === 0) {
+                    return (
+                      <div>
+                        {genBar}
+                        {truckExtrasPanel}
+                        <div style={{padding:"40px 30px",textAlign:"center",color:"#1A1A2E"}}>
+                          <div style={{fontSize:38,marginBottom:14}}>📦</div>
+                          <div style={{fontSize:15.5,fontWeight:600,color:"#1A1A2E",marginBottom:6}}>No inventory matched yet</div>
+                          {/* Was "Click Generate above" — that button no longer exists, so pointing
+                              at it would send people looking for a control that is not there. */}
+                          <div style={{fontSize:13}}>Nothing has been matched to IMS inventory for this function yet.</div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  // gap 12 → 10 between the cards, but they now carry their own radius and lift, so the
+                  // air between them reads. The old rows butted onto each other and the gap was doing
+                  // all the separating on its own — which is why they looked like one striped block
+                  // rather than a stack of cards.
+                  return (
+                    <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                      {genBar}
+                      {truckExtrasPanel}
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
                         {/* A caption, set as one. At 13px full-ink it had the same presence as the zone
                             names below it, so the eye stopped here on the way to the actual list. Caps
