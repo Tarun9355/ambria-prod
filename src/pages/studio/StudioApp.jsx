@@ -167,6 +167,8 @@ import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeRelo
 import { thumbUrl } from "../../lib/studio/thumb.js";
 import { prefetchImages, AVAIL_THUMB } from "../../lib/studio/prefetchImages.js";
 import { eventOrderFor, ownEventOrderIds } from "../../lib/studio/eventOrderFor.js";
+import { tripsOf } from "../../lib/ims/eventTrucks";
+import { truckExtraElements, withTruckExtraZone, truckExtraFnIdx } from "../../lib/ims/truckExtraBlocks"; // items IMS added on the trucks: crewed on the first function
 import { zoneSwitchState, planPhotoSwitch, zoneAfterSwitch, zoneCfgSig, stripPhotoStash } from "../../lib/studio/photoStash.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -7471,7 +7473,8 @@ export default function StudioApp() {
   // engine now — the "how" trace below stays its own copy, same reasoning as the other two call
   // sites (see manpowerCount.js's top comment): a per-type breakdown for this booking snapshot,
   // not a second computation of the number it explains.
-  const manpowerPlanForBooking = useCallback((allFns) => {
+  // truckExtraEls: the items IMS ops added on this event's trucks (truckExtraElements) - counted on the first function.
+  const manpowerPlanForBooking = useCallback((allFns, truckExtraEls) => {
     const d = dealCheckData || {};
     const dihari = d.dihariSchemes || {};
     const labourTiers = d.labourTiers || {};
@@ -7689,8 +7692,9 @@ export default function StudioApp() {
     };
     return types.map(type => {
       let best = { count: 0, basis: "", trace: null };
-      (allFns || []).forEach(fn => {
-        const fresh = freshFnForManpower(fn);
+      const txIdx = truckExtraFnIdx(allFns);
+      (allFns || []).forEach((fn, fi) => {
+        const fresh = fi === txIdx ? withTruckExtraZone(freshFnForManpower(fn), truckExtraEls, fn) : freshFnForManpower(fn);
         const ctx = mpCtxFor(fresh);
         let count = computePeople(fresh, type, ctx);
         const fv = fixedVenueFor(fvCfgMP, fresh.fnVenue || "");
@@ -10601,7 +10605,11 @@ export default function StudioApp() {
     } catch {}
     // Snapshot the system manpower plan (counts + how each was derived) so dept heads see it.
     let manpowerPlan = [];
-    try { manpowerPlan = manpowerPlanForBooking(allFns); } catch {}
+    try {
+      // a re-push of an already-booked deal keeps the crew for the items IMS ops have since added on its trucks
+      const eoNow = eventOrderFor(eventOrdersRef2.current, client.id, client.name);
+      manpowerPlan = manpowerPlanForBooking(allFns, truckExtraElements(eoNow?.trucks, tripsOf));
+    } catch {}
     // Prevent double-booking: one client = ONE live event order. If a non-cancelled order already
     // exists for this client, update it IN PLACE (reuse id) instead of creating a second row.
     // Confirmed live, 2026-11-02 (Sangeeta): this used to also require e.date === clientDate, where

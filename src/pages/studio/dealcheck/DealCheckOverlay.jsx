@@ -31,6 +31,7 @@ import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { newSplitGroupId, reconcileDealCheckIntoBuild } from "../../../lib/studio/dealCheckSync.js";
 import { eventOrderFor, ownEventOrderIds } from "../../../lib/studio/eventOrderFor.js";
 import { tripsOf } from "../../../lib/ims/eventTrucks"; // a truck's trips (or its one legacy trip) - for the items IMS added on trucks
+import { truckExtraRowsOf, truckExtraElements, withTruckExtraZone, truckExtraFnIdx } from "../../../lib/ims/truckExtraBlocks"; // those items as rows: shown on the Inventory tab, costed in the internal cost; and counted in the crew
 import { reindexFnIdxPrefixedSet } from "../../../lib/studio/dealCheckReindex.js";
 
 // ══ THE PAGE'S GROUND ══
@@ -775,6 +776,8 @@ export default function DealCheckOverlay({ ctx }) {
         }, [dcActiveTab, anyFnPassedForPL]);
 
         // ═══ Shared cost rollup — single computation used by GYV tab + bottom strip (§26.19) ═══
+        // Items IMS ops added on the trucks (not in the deal) need crew too - counted on the first function (truckExtraBlocks.js).
+        const dcTruckExtraEls = (() => { try { return truckExtraElements(eventOrderFor(eventOrders, activeClientId)?.trucks, tripsOf); } catch { return []; } })();
         const dcCostRollup = (() => {
           const fns = collectAllFunctionData ? collectAllFunctionData() : [];
           let rental = 0, florals = 0, transport = 0, manpower = 0, truss = 0, genset = 0, printCost = 0;
@@ -1649,7 +1652,8 @@ export default function DealCheckOverlay({ ctx }) {
               // ALSO missing the tab's loose florals-name fallback (dropping elements the tab counts)
               // and used a looser qty gate (`el.qty || el.count || 1`, defaulting missing/zero qty to
               // 1) instead of the tab's `el.qty || 0` + skip — both directions of drift.
-              const walkFn = (fn, cb) => {
+              const walkFn = (fn0, cb) => {
+                const fn = fn0 === fns[truckExtraFnIdx(fns)] ? withTruckExtraZone(fn0, dcTruckExtraEls, fn0) : fn0; // the "how" traces see the truck items too
                 const en = fn.enabledEls || {};
                 const ze = fn.zoneElements || {};
                 Object.keys(en).forEach(zk => { if (!en[zk]) return; (ze[zk]||[]).forEach(el => {
@@ -1691,7 +1695,8 @@ export default function DealCheckOverlay({ ctx }) {
               const fvCfgMP = { fixedVenues: dealCheckData?.fixedVenues || [], venueParents: dealCheckData?.venueParents || {} };
               // Per category, not only the zone toggle: a repeated Elements or Truss & Masking chip drops
               // just that part's crew (freshFnForManpower, lib/studio/pricing.js — shared with the tab).
-              const freshFnMP = freshFnForManpower;
+              // ...and the first function also carries the items added on the trucks (withTruckExtraZone).
+              const freshFnMP = (fn) => { const src = fn?.__mpSrc || fn; const f = freshFnForManpower(fn); return src === fns[truckExtraFnIdx(fns)] ? withTruckExtraZone(f, dcTruckExtraEls, src) : f; };
               const fixedCrewFloor = (fv, type) => { const c = fv.fixedCrew || {}; if (c[type] != null && c[type] !== "") return Number(c[type]) || 0; if (type === "Labours") return Number(fv.minLabour) || 0; return 0; };
               // ═══ Shared manpower count engine (src/lib/studio/manpowerCount.js) ═══
               // Used to be a hand-rolled copy here, a near-identical one in DCManpowerTab.jsx
@@ -1712,7 +1717,7 @@ export default function DealCheckOverlay({ ctx }) {
                 seasonMap: seasonMapMP, sitMults: sitMultsMP, situMultCap, datePricing: dealCheckData?.datePricing,
                 venueDumping: dealCheckData?.venueDumping || {}, fixedVenues: dealCheckData?.fixedVenues || [],
                 venueParents: dealCheckData?.venueParents || {}, heavyElementRanges,
-                cardsForFn: (dcCards || {})[fns.indexOf(fn)], inventory: dealCheckData?.inventory || [],
+                cardsForFn: (dcCards || {})[fns.indexOf(fn?.__mpSrc || fn)], inventory: dealCheckData?.inventory || [],
                 trussInv: dealCheckData?.trussInv, fabricBangaliRanges,
                 fabricRftPerWorker: Number(dealCheckData?.fabricRftPerWorker) || 100, trussLabourRanges,
                 categoryDepartments: dealCheckData?.categoryDepartments || {}, // Labours' department split (manpowerCount makeSubcatDept)
@@ -2062,7 +2067,7 @@ export default function DealCheckOverlay({ ctx }) {
           // ── Per-dept manpower detail (the exact crew rows the head edits in IMS Dept Ops). Built here
           // so the actuals delta below reconciles head edits — count/rate overrides AND day-wise labour —
           // via the SAME formula IMS uses (deptMpReconciled). Reused by buildDeptSnapshot. ──
-          let dcMpPlan = []; try { dcMpPlan = manpowerPlanForBooking ? manpowerPlanForBooking(fns) : []; } catch {}
+          let dcMpPlan = []; try { dcMpPlan = manpowerPlanForBooking ? manpowerPlanForBooking(fns, dcTruckExtraEls) : []; } catch {}
           const dcPlanByType = {}; dcMpPlan.forEach(p => { dcPlanByType[p.type] = p; });
           const SHARED = new Set(["Labours", "Supervisors"]);
           const manpowerDetail = {};
@@ -2123,8 +2128,18 @@ export default function DealCheckOverlay({ ctx }) {
           // genset (our genset cost, the Power tab) is part of what the deal costs us - it was worked out for the Power tab's
           // pill only and left out of the total (owner report 2026-11-03: "power is not added in the overall cost"). It sits in
           // the Lighting department (dept.power), so the departments still add up to this base.
-          const base = rental + florals + transport + genset + manpower + truss + buyTotal + produceTotal;
-          const baseActual = rental + effFlorals + transport + genset + effManpower + truss + buyTotal + produceTotal + actualExpenses;
+          // Items IMS ops added on a truck at dispatch (not in the deal) - their rent is a cost of doing this event, so it is in
+          // the internal cost (and so in the margin), never in what the client is billed (owner ask 2026-11-25: "internal cost
+          // mai jod do"). Same rows the Inventory tab's "Added on trucks at dispatch" box lists (lib/ims/truckExtraBlocks).
+          const truckExtrasCost = (() => {
+            try {
+              const eoTrucks = eventOrderFor(eventOrders, activeClientId)?.trucks;
+              const inv = (dealCheckData?.inventory?.length > 0) ? dealCheckData.inventory : (dcInventoryCache || []);
+              return truckExtraRowsOf(eoTrucks, inv, tripsOf).reduce((s, r) => s + r.total, 0);
+            } catch { return 0; }
+          })();
+          const base = rental + florals + transport + genset + manpower + truss + buyTotal + produceTotal + truckExtrasCost;
+          const baseActual = rental + effFlorals + transport + genset + effManpower + truss + buyTotal + produceTotal + actualExpenses + truckExtrasCost;
           const gyvFixed = Math.round((hasActuals ? baseActual : base) * 0.05);
           const bufferCost = Math.round((hasActuals ? baseActual : base) * 0.03);
           const grand = base + Math.round(base * 0.05) + Math.round(base * 0.03);
@@ -2247,7 +2262,7 @@ export default function DealCheckOverlay({ ctx }) {
           // — a one-way "quote moved, so commission follows" step, not fed back into the solve above.
           const liveQuote = smartQuoteActive ? smartRevisedQuote : dealAmount;
           const liveCommissionTotal = (smartQuoteActive && dealAmount > 0) ? Math.round(commissionTotal * (liveQuote / dealAmount)) : commissionTotal;
-          return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base, gyvFixed, bufferCost, grand, clientRevenue, venueDiscount, agencyFee, agencyFeePct, dealAmount, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType, byFn,
+          return { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, truckExtrasCost, base, gyvFixed, bufferCost, grand, clientRevenue, venueDiscount, agencyFee, agencyFeePct, dealAmount, profitPct, fns, dept, DEPTS, deptInv, deptMp, mpRateByType, byFn,
             mpPhases: dcMpPhases, mpSchedule, mpSharedTotals, deptDirectMap, directTotal, labourUsageByDept, labourUsageTotal, manpowerDetail, manpowerPlan: dcMpPlan,
             hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals: florals, effManpower, mpDelta, deptActual,
             commissionByVenue, commissionTotal,
@@ -3227,20 +3242,7 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                   // ── ADDED ON TRUCKS AT DISPATCH ── (owner ask 2026-11-25) items IMS ops put on a truck with "Add an item not in this
                   // deal" (event_orders.trucks[].trips[].custom[dept]) - so sales sees them too: which item, how many, on which
                   // vehicle / trip, by which department, at its rent. Read-only; not part of this deal's price (IMS blocks them in stock).
-                  const truckExtras = (() => {
-                    const eo = eventOrderFor(eventOrders, activeClientId);
-                    const out = [];
-                    (Array.isArray(eo?.trucks) ? eo.trucks : []).forEach(t => tripsOf(t).forEach((tr, tri, all) => Object.entries(tr.custom || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach(c => {
-                      const q = Number(c?.qty) || 0;
-                      if (q <= 0) return;
-                      const inv = dealCheckInventory.find(x => String(x.id) === String(c.invId));
-                      const rate = Number(inv?.price ?? inv?.rentalCost) || 0;
-                      out.push({ key: `${t.id}|${tr.id}|${c.id}`, name: inv?.name || c.name, sub: c.sub || inv?.subCat || "", dept: d, qty: q, rate, total: Math.round(rate * q),
-                        photo: inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || "",
-                        where: [t.vehicle || "Truck", all.length > 1 ? `Trip ${tri + 1}` : "", t.driver || ""].filter(Boolean).join(" · "), status: tr.status || "loading" });
-                    }))));
-                    return out;
-                  })();
+                  const truckExtras = truckExtraRowsOf(eventOrderFor(eventOrders, activeClientId)?.trucks, dealCheckInventory, tripsOf);
                   const truckExtrasTotal = truckExtras.reduce((s, r) => s + r.total, 0);
                   // shown on every function's tab, also one with nothing matched yet - it is the whole event's, not one function's
                   const truckExtrasPanel = truckExtras.length > 0 ? (
@@ -4639,7 +4641,7 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                 })() : dcActiveTab === "florals" ? (
                   <DCFloralsTab ctx={ctx} />
                 ) : dcActiveTab === "manpower" ? (
-                  <DCManpowerTab ctx={{ ...ctx, manpowerDetail: dcCostRollup.manpowerDetail }} />
+                  <DCManpowerTab ctx={{ ...ctx, manpowerDetail: dcCostRollup.manpowerDetail, truckExtraEls: dcTruckExtraEls }} />
                 ) : dcActiveTab === "truss" ? (
                   <DCTrussTab ctx={ctx} />
                 ) : dcActiveTab === "transport" ? (() => {
@@ -5546,7 +5548,7 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                   );
                 })() : dcActiveTab === "gyv" ? (() => {
                   // ═══ GYV FIXED & BUFFER COST TAB — reads from shared dcCostRollup ═══
-                  const { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, venueDiscount, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta, smartQuoteActive, smartOrigProfitPct, smartDesiredPct, liveQuote, liveCommissionTotal } = dcCostRollup;
+                  const { rental, florals, transport, genset, manpower, truss, buyTotal, produceTotal, truckExtrasCost, base: baseProj, gyvFixed: gyvCost, bufferCost, commissionTotal, grand: grandProj, venueDiscount, dealAmount, fns, hasActuals, actualMandi, actualExpenses, effFlorals, baseActual, grandActual, projFlorals, effManpower, mpDelta, smartQuoteActive, smartOrigProfitPct, smartDesiredPct, liveQuote, liveCommissionTotal } = dcCostRollup;
                   const baseCost = hasActuals ? baseActual : baseProj;
                   // Project total = production cost + GYV/buffer + venue commission. Commission used
                   // to be excluded here (a "company-level payout" kept out of "what building this event
@@ -5575,6 +5577,8 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                       note: mpDelta ? `dept heads changed the crew · projected ${fmt(manpower)}` : null },
                     { icon: "🛒", label: "Buying",     value: buyTotal },
                     { icon: "🏭", label: "Production", value: produceTotal },
+                    // items IMS ops added on trucks at dispatch (not in the deal): our cost, not the client's
+                    ...(truckExtrasCost > 0 ? [{ icon: "🚛", label: "Added on trucks", value: truckExtrasCost, note: "items ops added at dispatch · not billed" }] : []),
                     ...(actualExpenses > 0 ? [{ icon: "🧾", label: "On-site expenses", value: actualExpenses, flag: "actual", note: "billed on site" }] : []),
                     // GYV fixed + buffer used to sit in their own "Overheads" card further down —
                     // moved in as ordinary lines here so the whole cost side (production cost AND
