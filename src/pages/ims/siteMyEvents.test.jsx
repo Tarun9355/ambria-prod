@@ -15,5 +15,10 @@ describe("Site page calendar: My events", () => {
     expect(html).toContain('aria-pressed="false"');
     expect(html).toContain("Raju Wedding");
     expect(html).toContain("Mehta");
+    // the Planning calendar's venue colours and legend: an outside venue (not one of Ambria's fixed ones) is "ADD", sky
+    expect(html).toContain("border-sky-400");
+    expect(html).toContain(">ADD<");
+    expect(html).toContain("Pushpanjali"); // the legend
+    expect(html).not.toContain("border-blue-500 bg-blue-50/80"); // the old all-blue chip
   });
 });

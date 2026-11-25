@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isLiveEventOrder } from "../../lib/ims/helpers";
 import { catToDept as sharedCatToDept } from "../../lib/ims/deptClassify";
-import { venueWithParent } from "../../lib/ims/fixedVenues";
+import { venueWithParent, venueCalendarColor, VENUE_CALENDAR_LEGEND } from "../../lib/ims/fixedVenues";
 import { actualsLockState, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
 import { logWrite } from "../../lib/studio/userActions";
 import { Modal } from "../../components/ui";
@@ -138,6 +138,9 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
   // "👷 My events" (owner ask 2026-11-25): only the functions at the venues this supervisor is fixed at (Admin → Settings → Supervisors)
   // and the events they were added on (Dept Ops header) - the same rule as Dept Ops' own My events (lib/ims/mySupervisorEvents).
   const [myOnly, setMyOnly] = useState(false);
+  // The Planning calendar's venue colours and legend (owner ask 2026-11-25): each event coloured by THIS date's function's venue
+  // (lib/ims/fixedVenues venueCalendarColor), and a legend that filters to one venue when tapped.
+  const [venueFilter, setVenueFilter] = useState(null);
   const inhouseVenues = useInhouseVenues(myOnly);
   const venuePlaces = useMemo(() => [...inhouseVenues.properties, ...inhouseVenues.inhouse], [inhouseVenues.properties, inhouseVenues.inhouse]);
   const myIds = useMemo(() => supervisorIdsOfUser(authUser, supervisors), [authUser, supervisors]);
@@ -190,6 +193,7 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
       dates.forEach((d) => {
         const [y, m] = d.split("-").map(Number);
         if (y !== pickMonth.y || m !== pickMonth.m + 1) return;
+        if (venueFilter && venueCalendarColor(settings, fnOn(eo, d)?.venue || eo.venue || "").code !== venueFilter) return;
         if (myOnly && !isMyEvent(eo, authUser, supervisors)
           && !fixedAtVenue(authUser, fnOn(eo, d)?.venue || eo.venue || "", settings, venuePlaces, supervisors, inhouseVenues.inhouse)) return;
         (out[d] = out[d] || []).push(eo);
@@ -197,7 +201,7 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
     });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events, pickMonth, myOnly, authUser, supervisors, settings, venuePlaces, inhouseVenues.inhouse]);
+  }, [events, pickMonth, myOnly, venueFilter, authUser, supervisors, settings, venuePlaces, inhouseVenues.inhouse]);
 
   const { y, m } = pickMonth;
   const first = new Date(y, m, 1);
@@ -249,6 +253,22 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
           </div>
         </div>
 
+        <div className="px-4 pb-2 flex items-center gap-x-3 gap-y-1 flex-wrap">
+          {VENUE_CALENDAR_LEGEND.map((vc) => {
+            const on = venueFilter === vc.code;
+            return (
+              <button key={vc.code} type="button" onClick={() => { setVenueFilter((f) => (f === vc.code ? null : vc.code)); setPickDay(null); }}
+                title={on ? `Showing ${vc.label} only — click to show every venue` : `Show only ${vc.label} events`}
+                className={"inline-flex items-center gap-1 text-[10.5px] rounded-full px-1.5 py-0.5 -mx-1.5 -my-0.5 transition-colors "
+                  + (on ? "bg-gray-900 text-white" : "text-gray-500 hover:bg-gray-100")}>
+                <span aria-hidden="true" className={`w-2 h-2 rounded-full ${vc.dot}`} />
+                {vc.code} <span className={on ? "text-gray-300" : "text-gray-400"}>({vc.label})</span>
+              </button>
+            );
+          })}
+          {venueFilter && <button type="button" onClick={() => setVenueFilter(null)} className="text-[10.5px] font-semibold text-blue-600 hover:text-blue-800">Clear filter</button>}
+        </div>
+
         {/* Phone: dates-only dot grid; tapping a highlighted date lists that day's events below,
             at full width — a name-chip grid is unreadable once a column is ~45px wide. */}
         <div className="sm:hidden">
@@ -291,14 +311,17 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
                   <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-gray-100 text-gray-500 tabular-nums">{dayEvs.length} event{dayEvs.length === 1 ? "" : "s"}</span>
                 </div>
                 <div className="space-y-2.5">
-                  {dayEvs.map((eo) => (
+                  {dayEvs.map((eo) => { const dayFn = fnOn(eo, pickDay); const vc = venueCalendarColor(settings, dayFn?.venue || eo.venue || ""); return (
                     <button key={eo.id} onClick={() => onPick(eo.id)}
                       className="w-full text-left rounded-xl bg-gray-50 ring-1 ring-gray-100 hover:bg-blue-50 hover:ring-blue-100 active:bg-blue-100 px-4 py-3.5 flex items-center gap-3.5 cursor-pointer transition-colors">
-                      <span aria-hidden="true" className="shrink-0 w-2 h-2 rounded-full bg-blue-500 ring-4 ring-blue-100" />
+                      <span aria-hidden="true" className={`shrink-0 w-2 h-2 rounded-full ring-4 ring-opacity-30 ${vc.dot} ${vc.ring}`} />
                       <span className="min-w-0 flex-1">
-                        <span className="block text-[15px] font-semibold text-gray-900 leading-snug truncate">{eo.clientName || "Event"}</span>
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-[15px] font-semibold text-gray-900 leading-snug truncate">{eo.clientName || "Event"}</span>
+                          <span className={`shrink-0 text-[9.5px] font-bold px-1 rounded ${vc.bg} ${vc.text}`}>{vc.code}</span>
+                        </span>
                         <span className="mt-0.5 block text-xs text-gray-500 truncate">
-                          {venueOf(eo) || "—"}{eo.functionsDetail?.[0]?.shift ? ` · ${eo.functionsDetail[0].shift}` : ""}
+                          {venueWithParent(settings, dayFn?.venue || eo.venue || "") || venueOf(eo) || "—"}{dayFn?.shift ? ` · ${dayFn.shift}` : ""}
                         </span>
                         {eo.salesperson && <span className="block text-xs text-gray-400 truncate">Booked by {eo.salesperson}</span>}
                       </span>
@@ -306,7 +329,7 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
                         <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L9 7 L5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
                       </span>
                     </button>
-                  ))}
+                  ); })}
                 </div>
               </div>
             );
@@ -331,12 +354,21 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
                   <span className={"tabular-nums leading-none " + (isToday ? "bg-blue-600 text-white text-[11px] font-bold rounded-full w-[20px] h-[20px] flex items-center justify-center" : "text-[12px] font-semibold text-gray-600")}>{d}</span>
                 </div>
                 <div className="space-y-1">
-                  {evs.map((eo) => (
-                    <button key={eo.id} onClick={() => onPick(eo.id)} title={`Open ${eo.clientName || "Event"}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""}`}
-                      className="w-full text-left text-[11px] font-medium leading-tight pl-2 pr-1.5 py-1 rounded-md truncate border-l-[3px] border-blue-500 bg-blue-50/80 text-blue-900 hover:bg-blue-100 transition-colors">
-                      {eo.clientName || "Event"}
-                    </button>
-                  ))}
+                  {evs.map((eo) => {
+                    const dayFn = fnOn(eo, ds);
+                    const vc = venueCalendarColor(settings, dayFn?.venue || eo.venue || "");
+                    const shift = dayFn?.shift || eo.shift || "";
+                    return (
+                      <button key={eo.id} onClick={() => onPick(eo.id)} title={`Open ${eo.clientName || "Event"}${shift ? ` · ${shift}` : ""}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
+                        className={`w-full text-left pl-2 pr-1.5 py-1 rounded-md border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
+                        <span className="flex items-center gap-1 text-[11px] font-medium leading-tight">
+                          <span className="shrink-0 text-[9px] font-bold opacity-70">{vc.code}</span>
+                          <span className="min-w-0 truncate">{eo.clientName || "Event"}</span>
+                        </span>
+                        {shift && <span className="block text-[9.5px] font-normal opacity-70 truncate leading-tight">{shift}</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -344,7 +376,11 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
         </div>
         {monthTotal === 0 && (
           <div className="px-4 py-3 text-center text-[11px] text-gray-400">
-            {myOnly ? (
+            {venueFilter && !myOnly ? (
+              <>No {VENUE_CALENDAR_LEGEND.find((v) => v.code === venueFilter)?.label || venueFilter} events this month — other venues may still have some.{" "}
+                <button onClick={() => setVenueFilter(null)} className="font-semibold text-blue-600 hover:text-blue-800">Clear filter</button>
+              </>
+            ) : myOnly ? (
               <>
                 {myIds.length === 0
                   ? "Your login is not on the Site Supervisor list (Admin → Settings → Supervisors) with this name / phone number - ask the admin to add you."
