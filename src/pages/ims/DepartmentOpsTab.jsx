@@ -54,6 +54,7 @@ import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeL
 import { tripsOf } from "../../lib/ims/eventTrucks";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { isMyEvent, supervisorIdsOfUser, fixedAtVenue, addedSupervisorsOf, withAddedSupervisors } from "../../lib/ims/mySupervisorEvents";
+import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a site" search
 import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
@@ -951,6 +952,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // overflow-hidden, which would clip an absolutely-positioned menu. Same approach FlowerPicker
   // in components/ui already uses for the same reason.
   const [siteMenu, setSiteMenu] = useState(false);
+  // its search box (lib/ims/siteSearch rankSites): what is typed, and the row the arrow keys are on - both cleared each time it opens
+  const [siteQuery, setSiteQuery] = useState("");
+  const [siteHi, setSiteHi] = useState(0);
+  useEffect(() => { if (siteMenu) { setSiteQuery(""); setSiteHi(0); } }, [siteMenu]);
   const siteBtnRef = useRef(null);
   const [siteMenuPos, setSiteMenuPos] = useState({ top: 0, left: 0, width: 0 });
   useEffect(() => {
@@ -8042,7 +8047,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       </span>
                     ))}
                     {(() => {
-                      const opts = nearbyTransferEvents.filter(({ e }) => !dismantleSites.some(s => s.id === e.id));
+                      const allOpts = nearbyTransferEvents.filter(({ e }) => !dismantleSites.some(s => s.id === e.id));
+                      // guest name / venue / date, forgiving of case, order, punctuation and a typo; best match first
+                      const opts = rankSites(allOpts, siteQuery, venueOfEvent);
+                      const hi = Math.min(siteHi, Math.max(0, opts.length - 1));
+                      const pickSite = (e) => { addDismantleSite(e.id); setSiteMenu(false); };
                       return (
                         <div className="relative">
                           <button ref={siteBtnRef} type="button" onClick={() => setSiteMenu(o => !o)}
@@ -8060,14 +8069,42 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               <div className="px-3 py-2 bg-gray-50 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">
                                 Send items to another event
                               </div>
+                              {allOpts.length > 0 && (
+                                <div className="px-2.5 pt-2.5 pb-2 border-b border-gray-100">
+                                  <div className="relative">
+                                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                                      <circle cx="7" cy="7" r="4.75" stroke="currentColor" strokeWidth="1.6" /><path d="M10.5 10.5 L14 14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                                    </svg>
+                                    <input autoFocus type="search" value={siteQuery} placeholder="Search guest name or venue…"
+                                      aria-label="Search guest name or venue" autoComplete="off" spellCheck={false}
+                                      onChange={(ev) => { setSiteQuery(ev.target.value); setSiteHi(0); }}
+                                      onKeyDown={(ev) => {
+                                        if (ev.key === "ArrowDown") { ev.preventDefault(); setSiteHi(Math.min(hi + 1, opts.length - 1)); }
+                                        else if (ev.key === "ArrowUp") { ev.preventDefault(); setSiteHi(Math.max(hi - 1, 0)); }
+                                        else if (ev.key === "Enter") { ev.preventDefault(); if (opts[hi]) pickSite(opts[hi].e); }
+                                      }}
+                                      className="w-full h-9 rounded-lg bg-gray-50 ring-1 ring-gray-200 pl-8 pr-8 text-[13px] text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:bg-white [&::-webkit-search-cancel-button]:hidden" />
+                                    {siteQuery && (
+                                      <button type="button" onClick={() => { setSiteQuery(""); setSiteHi(0); }} aria-label="Clear search" title="Clear"
+                                        className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 cursor-pointer">×</button>
+                                    )}
+                                  </div>
+                                  {siteQuery.trim() && <div className="mt-1.5 px-0.5 text-[10.5px] text-gray-400">{opts.length} of {allOpts.length} event{allOpts.length === 1 ? "" : "s"}</div>}
+                                </div>
+                              )}
                               <div className="max-h-64 overflow-y-auto">
-                                {opts.length === 0 && (
+                                {allOpts.length === 0 && (
                                   <div className="px-3 py-4 text-center text-xs text-gray-400">No other sold events nearby.</div>
                                 )}
-                                {opts.map(({ e, d, off }) => (
-                                  <button key={e.id} type="button" role="option" aria-selected="false"
-                                    onClick={() => { addDismantleSite(e.id); setSiteMenu(false); }}
-                                    className="w-full text-left px-3 py-2 flex items-center gap-3 hover:bg-blue-50 transition-colors">
+                                {allOpts.length > 0 && opts.length === 0 && (
+                                  <div className="px-3 py-4 text-center text-xs text-gray-400">No event matches this — try the guest&apos;s first name or the venue.</div>
+                                )}
+                                {opts.map(({ e, d, off }, oi) => (
+                                  <button key={e.id} type="button" role="option" aria-selected={oi === hi}
+                                    ref={oi === hi ? (el) => { el?.scrollIntoView?.({ block: "nearest" }); } : undefined}
+                                    onMouseEnter={() => setSiteHi(oi)}
+                                    onClick={() => pickSite(e)}
+                                    className={"w-full text-left px-3 py-2 flex items-center gap-3 transition-colors " + (oi === hi ? "bg-blue-50" : "hover:bg-blue-50")}>
                                     <span className="min-w-0 flex-1">
                                       <span className="block text-[13px] font-semibold text-gray-900 truncate">{e.clientName || "Event"}</span>
                                       <span className="block text-[11px] text-gray-500 tabular-nums truncate">{d || "no date"}{venueOfEvent(e) ? <span className="font-sans"> · {venueOfEvent(e)}</span> : null}</span>

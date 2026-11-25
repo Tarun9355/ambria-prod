@@ -483,7 +483,8 @@ No functions at your venues this month, and none you are the Site Supervisor of 
 + Add supervisor ¦ + सुपरवाइज़र जोड़ें
 Loading your venues… ¦ आपके वेन्यू लोड हो रहे हैं…
 Who's bringing what, on which truck ¦ कौन क्या ला रहा है, किस ट्रक पर
-Back to the calendar ¦ कैलेंडर पर वापस
+Search guest name or venue… ¦ गेस्ट का नाम या वेन्यू खोजें…
+No event matches this — try the guest's first name or the venue. ¦ कोई इवेंट नहीं मिला — गेस्ट का पहला नाम या वेन्यू लिखकर देखें।
 — choose — ¦ — चुनें —
 `;
 
