@@ -8,7 +8,8 @@ import { Modal } from "../../components/ui";
 import SiteReceivingPanel from "./SiteReceivingPanel.jsx";
 import SiteCrewPanel from "./SiteCrewPanel.jsx";
 import SitePdfButton from "./SitePdfButton.jsx";
-import { addedSupervisorsOf } from "../../lib/ims/mySupervisorEvents";
+import { addedSupervisorsOf, isMyEvent, fixedAtVenue, supervisorIdsOfUser } from "../../lib/ims/mySupervisorEvents";
+import { useInhouseVenues } from "./SupervisorVenues.jsx";
 
 const PICK_KEY = "ambria-ims-site-event";
 const SECTIONS = [
@@ -23,7 +24,7 @@ const fnDate = (eo) => {
 // One page for the whole event, every department together — not the per-department tabs the rest
 // of IMS uses. Built for the Site Supervisor role: a narrow login that only needs "what's arriving
 // on each truck, right now" and "who's actually on site", not the dept-head planning screens.
-export default function SiteSupervisorTab({ eventOrders, setEventOrders, inventory, settings, blocks, trussInv, rateCardCategories, authUser }) {
+export default function SiteSupervisorTab({ eventOrders, setEventOrders, inventory, settings, blocks, trussInv, rateCardCategories, authUser, supervisors = [] }) {
   const [selId, setSelId] = useState(() => { try { return sessionStorage.getItem(PICK_KEY) || ""; } catch { return ""; } });
   // Was a Planned/Actual toggle — Actual already starts out showing exactly what was planned until
   // someone edits a figure, so a separate read-only "Planned" view never showed anything the Actual
@@ -56,7 +57,7 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
     logWrite(authUser, "actuals.relock", { targetType: "event_order", targetId: sel.id, targetName: sel.clientName, ok: true });
   };
 
-  if (!sel) return <EventPicker eventOrders={eventOrders} settings={settings} onPick={pick} />;
+  if (!sel) return <EventPicker eventOrders={eventOrders} settings={settings} onPick={pick} authUser={authUser} supervisors={supervisors} />;
 
   return (
     <div className="space-y-4 max-w-3xl">
@@ -128,12 +129,19 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
 // exists. This is a trimmed copy of that same grid (no department filter, since this page isn't
 // scoped to one), not a shared component: that one is woven into a much larger page (PDF export,
 // the department picker above it) that this page doesn't have.
-function EventPicker({ eventOrders, settings, onPick }) {
+function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
   const _now = new Date();
   const today = _now.toLocaleDateString("en-CA"); // local date, not UTC — a function can run past midnight IST
   const [q, setQ] = useState("");
   const [pickMonth, setPickMonth] = useState({ y: _now.getFullYear(), m: _now.getMonth() });
   const [pickDay, setPickDay] = useState(null);
+  // "👷 My events" (owner ask 2026-11-25): only the functions at the venues this supervisor is fixed at (Admin → Settings → Supervisors)
+  // and the events they were added on (Dept Ops header) - the same rule as Dept Ops' own My events (lib/ims/mySupervisorEvents).
+  const [myOnly, setMyOnly] = useState(false);
+  const inhouseVenues = useInhouseVenues(myOnly);
+  const venuePlaces = useMemo(() => [...inhouseVenues.properties, ...inhouseVenues.inhouse], [inhouseVenues.properties, inhouseVenues.inhouse]);
+  const myIds = useMemo(() => supervisorIdsOfUser(authUser, supervisors), [authUser, supervisors]);
+  const fnOn = (eo, d) => { const fns = Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : []; return fns.find((f) => String(f?.date || "").slice(0, 10) === d) || fns[0] || null; };
 
   const venueOf = (eo) => venueWithParent(settings, eo?.functionsDetail?.[0]?.venue || eo?.venue || "");
   // The first function's date, else the event's own — only a fallback for an event with no
@@ -182,11 +190,14 @@ function EventPicker({ eventOrders, settings, onPick }) {
       dates.forEach((d) => {
         const [y, m] = d.split("-").map(Number);
         if (y !== pickMonth.y || m !== pickMonth.m + 1) return;
+        if (myOnly && !isMyEvent(eo, authUser, supervisors)
+          && !fixedAtVenue(authUser, fnOn(eo, d)?.venue || eo.venue || "", settings, venuePlaces, supervisors, inhouseVenues.inhouse)) return;
         (out[d] = out[d] || []).push(eo);
       });
     });
     return out;
-  }, [events, pickMonth]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events, pickMonth, myOnly, authUser, supervisors, settings, venuePlaces, inhouseVenues.inhouse]);
 
   const { y, m } = pickMonth;
   const first = new Date(y, m, 1);
@@ -218,7 +229,13 @@ function EventPicker({ eventOrders, settings, onPick }) {
             <h3 className="mt-0.5 text-base font-bold text-gray-900 tracking-tight">{first.toLocaleDateString("en-IN", { month: "long", year: "numeric" })}</h3>
             <div className="text-[11px] text-gray-500 mt-0.5">{monthTotal} event{monthTotal === 1 ? "" : "s"} this month</div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <button type="button" onClick={() => { setMyOnly((v) => !v); setPickDay(null); }} aria-pressed={myOnly}
+              title={myOnly ? "Showing only the functions at your venues (and events you are the Site Supervisor of) - tap to show every event" : "Show only the functions at the venues you are fixed at (and events you are the Site Supervisor of)"}
+              className={"px-3.5 h-9 rounded-full text-xs font-semibold inline-flex items-center gap-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1 "
+                + (myOnly ? "bg-blue-600 text-white hover:bg-blue-700" : "bg-gray-900 text-white hover:bg-gray-700")}>
+              <span aria-hidden="true">👷</span>{myOnly ? "My events ✓" : "My events"}
+            </button>
             <button onClick={() => { setPickDay(null); setPickMonth({ y: _now.getFullYear(), m: _now.getMonth() }); }}
               className="px-3 h-9 rounded-full text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 transition">Today</button>
             <button onClick={prev} title="Previous month" aria-label="Previous month"
@@ -325,7 +342,18 @@ function EventPicker({ eventOrders, settings, onPick }) {
             );
           })}
         </div>
-        {monthTotal === 0 && <div className="px-4 py-3 text-center text-[11px] text-gray-400">No events this month — page to another month.</div>}
+        {monthTotal === 0 && (
+          <div className="px-4 py-3 text-center text-[11px] text-gray-400">
+            {myOnly ? (
+              <>
+                {myIds.length === 0
+                  ? "Your login is not on the Site Supervisor list (Admin → Settings → Supervisors) with this name / phone number - ask the admin to add you."
+                  : "No functions at your venues this month, and none you are the Site Supervisor of - page to another month."}{" "}
+                <button onClick={() => setMyOnly(false)} className="font-semibold text-blue-600 hover:text-blue-800">Show every event</button>
+              </>
+            ) : "No events this month — page to another month."}
+          </div>
+        )}
       </div>
     </div>
   );

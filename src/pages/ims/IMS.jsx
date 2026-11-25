@@ -3119,7 +3119,7 @@ export default function IMS() {
             eventOrders={eventOrders} setEventOrders={setEventOrders}
             inventory={items} settings={settings}
             blocks={readOnlyBlocks} trussInv={trussInv} rateCardCategories={rateCardCategories}
-            authUser={user}
+            authUser={user} supervisors={supervisors}
           />
         ) : (
           <div className="text-center text-gray-400 py-20">
