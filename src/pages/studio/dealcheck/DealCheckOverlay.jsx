@@ -30,6 +30,7 @@ import ItemHoverThumb from "../../../components/shared/ItemHoverThumb.jsx";
 import { WASH_BANDS, GRAIN_URL } from "../../../lib/studio/pageWash";
 import { newSplitGroupId, reconcileDealCheckIntoBuild } from "../../../lib/studio/dealCheckSync.js";
 import { eventOrderFor, ownEventOrderIds } from "../../../lib/studio/eventOrderFor.js";
+import { tripsOf } from "../../../lib/ims/eventTrucks"; // a truck's trips (or its one legacy trip) - for the items IMS added on trucks
 import { reindexFnIdxPrefixedSet } from "../../../lib/studio/dealCheckReindex.js";
 
 // ══ THE PAGE'S GROUND ══
@@ -3223,10 +3224,53 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                       <div style={{fontSize:12,color:accent,fontWeight:700}}>Generating…</div>
                     </div>
                   );
+                  // ── ADDED ON TRUCKS AT DISPATCH ── (owner ask 2026-11-25) items IMS ops put on a truck with "Add an item not in this
+                  // deal" (event_orders.trucks[].trips[].custom[dept]) - so sales sees them too: which item, how many, on which
+                  // vehicle / trip, by which department, at its rent. Read-only; not part of this deal's price (IMS blocks them in stock).
+                  const truckExtras = (() => {
+                    const eo = eventOrderFor(eventOrders, activeClientId);
+                    const out = [];
+                    (Array.isArray(eo?.trucks) ? eo.trucks : []).forEach(t => tripsOf(t).forEach((tr, tri, all) => Object.entries(tr.custom || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach(c => {
+                      const q = Number(c?.qty) || 0;
+                      if (q <= 0) return;
+                      const inv = dealCheckInventory.find(x => String(x.id) === String(c.invId));
+                      const rate = Number(inv?.price ?? inv?.rentalCost) || 0;
+                      out.push({ key: `${t.id}|${tr.id}|${c.id}`, name: inv?.name || c.name, sub: c.sub || inv?.subCat || "", dept: d, qty: q, rate, total: Math.round(rate * q),
+                        photo: inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || "",
+                        where: [t.vehicle || "Truck", all.length > 1 ? `Trip ${tri + 1}` : "", t.driver || ""].filter(Boolean).join(" · "), status: tr.status || "loading" });
+                    }))));
+                    return out;
+                  })();
+                  const truckExtrasTotal = truckExtras.reduce((s, r) => s + r.total, 0);
+                  // shown on every function's tab, also one with nothing matched yet - it is the whole event's, not one function's
+                  const truckExtrasPanel = truckExtras.length > 0 ? (
+                        <div style={{border:"1px solid #BFDBFE",borderRadius:12,background:"#F5F9FF",overflow:"hidden"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",padding:"9px 12px",background:"#EFF6FF",borderBottom:"1px solid #DBEAFE"}}>
+                            <span aria-hidden="true">🚚</span>
+                            <span style={{fontSize:13,fontWeight:700,color:"#1E3A8A"}}>Added on trucks at dispatch</span>
+                            <span style={{fontSize:11,color:"#3B5BA9"}}>whole event · by IMS ops · not in this deal · blocked in stock</span>
+                            <span style={{marginLeft:"auto",fontSize:13,fontWeight:700,color:"#1A1A2E",fontVariantNumeric:"tabular-nums"}}>₹{truckExtrasTotal.toLocaleString("en-IN")}</span>
+                          </div>
+                          {truckExtras.map(r => (
+                            <div key={r.key} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderTop:"1px solid #E5EDFB"}}>
+                              {r.photo ? <img src={r.photo} alt="" loading="lazy" style={{width:36,height:36,borderRadius:8,objectFit:"cover",flexShrink:0}} onError={e => { e.target.style.display = "none"; }} />
+                                : <div style={{width:36,height:36,borderRadius:8,background:"#F1F5F9",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,fontSize:14}}>📦</div>}
+                              <div style={{minWidth:0,flex:1}}>
+                                <div style={{fontSize:13,fontWeight:600,color:"#1A1A2E",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.name}</div>
+                                <div style={{fontSize:11,color:"#64748B",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{[r.sub, r.dept, r.where, r.status !== "loading" ? r.status : ""].filter(Boolean).join(" · ")}</div>
+                              </div>
+                              <span style={{fontSize:13,fontWeight:600,color:"#334155",fontVariantNumeric:"tabular-nums",flexShrink:0}}>×{r.qty}</span>
+                              <span style={{width:72,textAlign:"right",fontSize:12,color:"#64748B",fontVariantNumeric:"tabular-nums",flexShrink:0}}>{r.rate > 0 ? `₹${r.rate.toLocaleString("en-IN")}` : "—"}</span>
+                              <span style={{width:84,textAlign:"right",fontSize:13,fontWeight:700,color:"#1A1A2E",fontVariantNumeric:"tabular-nums",flexShrink:0}}>{r.rate > 0 ? `₹${r.total.toLocaleString("en-IN")}` : "—"}</span>
+                            </div>
+                          ))}
+                        </div>
+                  ) : null;
                   if (totalCards === 0) {
                     return (
                       <div>
                         {genBar}
+                        {truckExtrasPanel}
                         <div style={{padding:"40px 30px",textAlign:"center",color:"#1A1A2E"}}>
                           <div style={{fontSize:38,marginBottom:14}}>📦</div>
                           <div style={{fontSize:15.5,fontWeight:600,color:"#1A1A2E",marginBottom:6}}>No inventory matched yet</div>
@@ -3244,6 +3288,7 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                   return (
                     <div style={{display:"flex",flexDirection:"column",gap:10}}>
                       {genBar}
+                      {truckExtrasPanel}
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
                         {/* A caption, set as one. At 13px full-ink it had the same presence as the zone
                             names below it, so the eye stopped here on the way to the actual list. Caps

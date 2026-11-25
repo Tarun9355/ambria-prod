@@ -4,6 +4,9 @@ import { SHIFT_START_HOUR } from "../../lib/studio/dihariWindows.js";
 import { fmt } from "../../lib/format";
 import { mpDayWise, mpBaseDay, mpDayCost, mpDayDihari, aggregateEventManpower, isLiveEventOrder, phone10, walkKitUnits, flowerPaletteHexFor } from "../../lib/ims/helpers";
 import { isLiveBlockStatus, blockEntryQty } from "../../lib/ims/liveBlocks";
+import { shortfallsOf } from "../../lib/ims/blocksRpc";
+// the stock-ledger tag + ops for items added on a truck that are not in the deal (Studio's reconcile leaves the tag alone)
+import { TRUCK_EXTRA_SRC, truckExtraBlockOps, truckExtraQtyByItem } from "../../lib/ims/truckExtraBlocks";
 import { buildDeptCrew, orderWinIds as orderWinIdsShared, flowerTraceForFn as flowerTraceForFnShared, setMpPatch, addMpPatch, removeMpPatch, actualCrewPatch, resetLinePatch, mpDayPatch, resetMpDayPatch, shiftCountPatch, shiftSplitPatch, addDihariPatch, removeDihariPatch, eventLabourInfo, eventLabourTotalDeptOps } from "../../lib/ims/deptCrew";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel, makeSubcatDept } from "../../lib/ims/deptClassify";
@@ -119,6 +122,10 @@ function crewIcon(type) {
 // shared row for a header to sit above) but is hidden from sm up, where the inventory-blocked list
 // now has ONE sticky header row instead — repeating it on every card there was the exact "confusing"
 // the header replaces.
+
+// Stock shortfalls already alerted for items added on trucks (event|item|date|qty) - once per browser session, not on every open.
+const TRUCK_EXTRA_ALERTED = new Set();
+
 // What a truck still needs before it is a real truck (Loading & dispatch): vehicle no., driver and a 10-digit phone.
 const truckMissingOf = (t) => [
   !String(t?.vehicle || "").trim() && "Vehicle no.",
@@ -839,7 +846,7 @@ function TruckTextBox({ value, onCommit, clean, ...rest }) {
   );
 }
 
-export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [], rcItems = [] }) {
+export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, applyBlocksRpc = null, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [], rcItems = [] }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   // A labour usage row belongs to the department Deal Check charged it to (ur.dept — the item's own
@@ -1605,7 +1612,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     Object.entries(blocks || {}).forEach(([itemId, arr]) => {
       // isLiveBlockStatus (bug 14): one shared "is this entry live" definition, not a third
       // unfiltered count that disagreed with both Studio's and IMS's own.
-      const qty = (arr || []).filter(b => b.eventId === sel.id && isLiveBlockStatus(b)).reduce((s, b) => s + blockEntryQty(b), 0);
+      // an item added on a truck (not in the deal) has its own block (TRUCK_EXTRA_SRC) and its own section - not counted here twice
+      const qty = (arr || []).filter(b => b.eventId === sel.id && isLiveBlockStatus(b) && b.source !== TRUCK_EXTRA_SRC).reduce((s, b) => s + blockEntryQty(b), 0);
       if (qty <= 0) return;
       const item = (inventory || []).find(i => String(i.id) === String(itemId));
       if (!item) return;
@@ -2691,8 +2699,18 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // One truck open at a time: opening another closes the last, so the next truck's header is on
   // screen at once instead of below a screen of the previous truck's items.
   const [openTruck, setOpenTruck] = useState(null);
-  // Per-trip "add an item not from Build" picker state — keyed by trip id, { sub, invId, qty }.
-  const [addPicker, setAddPicker] = useState({});
+  // "Add an item not in this deal" opens in a modal (owner ask 2026-11-25) - its sub-category chips ran three rows across every
+  // open truck. { truckId, tripId, title, sub, invId, qty, q, added } while open.
+  const [addItemModal, setAddItemModal] = useState(null);
+  // Escape shuts it wherever focus is (after the big photo closes, focus is on the page, not inside the modal) - not while
+  // the big photo is open, which takes its own Escape first
+  const addItemOpen = !!addItemModal;
+  useEffect(() => {
+    if (!addItemOpen || zoomImg) return;
+    const onKey = (e) => { if (e.key === "Escape") setAddItemModal(null); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [addItemOpen, zoomImg]);
   // Which ONE trip is showing for a given truck (owner ask, 2026-11-23: tabs, not every trip
   // stacked one after another - a truck with several trips used to grow the page's own scroll with
   // each one added). Keyed by truck id -> trip id; falls back to the truck's first trip below
@@ -2858,10 +2876,13 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // Check row — kept as a flat array, not truckKey'd, since there is nothing in the deal to match
   // against. Each gets its own small id (not an array index) so editing/removing one never shifts
   // under an in-flight edit to another.
+  // true when the row was written - the Add-an-item modal only says "Added" then (a viewer without Planning edit, or a trip
+  // dispatched while the modal was open, writes nothing)
   const addTripCustomItem = (id, tripId, invItem, qty) => {
-    if (!isActiveTrip(id, tripId) || !invItem || !(Number(qty) > 0)) return;
+    if (!canEditPlanning || !isActiveTrip(id, tripId) || !invItem || !(Number(qty) > 0)) return false;
     const row = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), invId: invItem.id, name: invItem.name, sub: invItem.subCat || invItem.subcategory || "", qty: Number(qty) };
     setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, custom: { ...(tr.custom || {}), [dept]: [...((tr.custom || {})[dept] || []), row] } } : tr));
+    return true;
   };
   const setTripCustomQty = (id, tripId, rowId, qty) => {
     if (!isActiveTrip(id, tripId)) return;
@@ -2883,7 +2904,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const truckOcc = (trip) => {
     let used = 0, unknown = 0;
     const byDept = [];
-    const depts = [...new Set([...Object.keys(trip.loads || {}), ...Object.keys(trip.extra || {})])];
+    const depts = [...new Set([...Object.keys(trip.loads || {}), ...Object.keys(trip.extra || {}), ...Object.keys(trip.custom || {})])];
     depts.forEach(d => {
       const ld = {};
       [trip.loads?.[d] || {}, trip.extra?.[d] || {}].forEach(src => Object.entries(src).forEach(([k, q]) => { ld[k] = (ld[k] || 0) + (Number(q) || 0); }));
@@ -2894,6 +2915,13 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         const sh = truckShares[d]?.get(k);
         if (sh) du += qn * sh.perUnit; else unknown += 1;
       });
+      // items added on the truck (not in the deal) take room too (owner ask 2026-11-25) - at their sub-category's truck capacity
+      (Array.isArray(trip.custom?.[d]) ? trip.custom[d] : []).forEach(c => {
+        const qn = Number(c.qty) || 0;
+        if (qn <= 0) return;
+        const cap = capBySub.get(String(c.sub || "").trim().toLowerCase());
+        if (cap && Number(cap.perTruck) > 0 && PIECE_UNITS.includes(String(cap.unit || "pc").toLowerCase())) du += qn / Number(cap.perTruck); else unknown += 1;
+      });
       if (du > 0) byDept.push({ dept: d, used: du });
       used += du;
     });
@@ -2901,6 +2929,66 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   };
   const truckOccs = Object.fromEntries(eventTruckList.flatMap(t => tripsOf(t).map(tr => [tr.id, truckOcc(tr)])));
   const fullTrucks = eventTruckList.reduce((s, t) => s + tripsOf(t).filter(tr => (truckOccs[tr.id]?.used || 0) >= 0.999).length, 0);
+  // ── ITEMS ADDED ON A TRUCK (NOT IN THE DEAL) ── (owner ask 2026-11-25: "jo bhi add krenge vo inventory block mai add hora
+  // hai? cost rent sab") They used to ride the trip and its challan only: not in Inventory blocked, not reserved in stock
+  // (another deal could take the same pieces that day), not priced, not counted in the truck's fill.
+  // truckExtrasAll: every department's, per inventory item, summed over every truck and trip of this event - what is blocked.
+  const truckExtrasAll = useMemo(() => {
+    const m = new Map();
+    eventTruckList.forEach(t => tripsOf(t).forEach(tr => Object.entries(tr.custom || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach(c => {
+      const q = Number(c.qty) || 0;
+      if (q <= 0 || !c.invId) return;
+      const cur = m.get(c.invId) || { invId: c.invId, name: c.name, sub: c.sub || "", qty: 0, byDept: {} };
+      cur.qty += q; cur.byDept[d] = (cur.byDept[d] || 0) + q;
+      m.set(c.invId, cur);
+    }))));
+    return m;
+  }, [eventTruckList]);
+  // This department's, priced at the item's rent (Inventory's rental price) - shown in Inventory blocked, not billed to the client.
+  const truckExtraRows = useMemo(() => [...truckExtrasAll.values()].filter(x => (x.byDept[dept] || 0) > 0).map(x => {
+    const inv = (inventory || []).find(i => String(i.id) === String(x.invId));
+    const qty = x.byDept[dept];
+    const rate = Number(inv?.price ?? inv?.rentalCost) || 0;
+    const photo = inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || "";
+    return { invId: x.invId, name: inv?.name || x.name, sub: x.sub || inv?.subCat || inv?.subcategory || "", qty, rate, total: Math.round(qty * rate), photo };
+  }), [truckExtrasAll, dept, inventory]);
+  const truckExtraTotal = truckExtraRows.reduce((s, r) => s + r.total, 0);
+  // Keep the stock ledger in step: each item on its event's dates at the qty on the trucks, under TRUCK_EXTRA_SRC (removed
+  // when it comes off every truck). Through the same locked RPC as Inventory's Block (apply_block_ops, 'cap': it reserves what
+  // is really free and says what was not). Only someone who can edit Planning writes it; a signature of what was last asked
+  // keeps it from asking again for the same thing (a capped grant reads back lower than asked, which must not loop).
+  const truckExtraSentRef = useRef({});
+  const truckExtraSeenRef = useRef({}); // eventId -> already looked at once since this page opened
+  useEffect(() => {
+    // a cancelled event holds nothing (its entries are filtered out of `blocks`, so this would rewrite them on every open)
+    if (!sel?.id || !applyBlocksRpc || !canEditPlanning || onsiteOnly || sel.status === "cancelled") return;
+    const dates = [...new Set((mpFns.length ? mpFns.map(mpFnDate) : [String(sel.date || "").slice(0, 10)]).filter(Boolean))].sort();
+    // lib/ims/truckExtraBlocks (tested): the ops that make this event's TRUCK_EXTRA_SRC holds match the qty on the trucks
+    let ops = truckExtraBlockOps(blocks, sel.id, dates, truckExtraQtyByItem(eventTruckList, tripsOf));
+    if (!truckExtraSeenRef.current[sel.id]) {
+      truckExtraSeenRef.current[sel.id] = true;
+      // First look after opening the event: an item held on every date for LESS than is on the trucks was capped by real stock
+      // when it was added - asking again would only be capped again, and alert every editor who opens the event. Left as is;
+      // any change to the trucks from here on syncs it again.
+      const heldOn = (id, dt) => (blocks?.[id] || []).filter(b => b?.eventId === sel.id && b.source === TRUCK_EXTRA_SRC && b.date === dt && isLiveBlockStatus(b)).reduce((s, b) => s + blockEntryQty(b), 0);
+      ops = ops.filter(op => !(op.add.length && op.add.every(a => { const h = heldOn(op.item_id, a.date); return h > 0 && h < a.qty; })));
+    }
+    if (!ops.length) return;
+    const sig = JSON.stringify(ops);
+    if (truckExtraSentRef.current[sel.id] === sig) return;
+    truckExtraSentRef.current[sel.id] = sig;
+    const eventId = sel.id;
+    (async () => {
+      const res = await applyBlocksRpc(ops, { onShort: "cap" });
+      if (res?.error) { delete truckExtraSentRef.current[eventId]; return; } // failed (applyBlocksRpc said so): the next render may try again
+      // each shortfall said once per event / item / date / qty in this browser session, never again on every open
+      const short = shortfallsOf(res).filter(s => { const k = `${eventId}|${s.item_id}|${s.date}|${s.requested}`; if (TRUCK_EXTRA_ALERTED.has(k)) return false; TRUCK_EXTRA_ALERTED.add(k); return true; });
+      if (short.length) {
+        const nm = (id) => (inventory || []).find(i => String(i.id) === String(id))?.name || id;
+        alert(`Not enough free stock to block everything added on the trucks:\n${short.map(s => `• ${nm(s.item_id)} - ${s.date}: ${s.short} short`).join("\n")}\nThe rest is blocked.`);
+      }
+    })();
+  }, [sel?.id, sel?.date, sel?.status, truckExtrasAll, blocks, applyBlocksRpc, canEditPlanning, onsiteOnly, mpFns, inventory]);
   // A truck "has room" when its current (newest) trip is still loading and not full - an earlier trip has already left.
   // A trip carrying items with no truck capacity set can't be judged (its fill reads low), so it is never the one named.
   const truckRoomOf = (t) => {
@@ -5561,7 +5649,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   const bad = rows.filter(r => r.status === "short").length;
                   return { k: "fabreq", icon: "🧵", title: "Fabric plan", sub: bad ? <span className="text-red-600 font-semibold">{bad} need{bad === 1 ? "s" : ""} attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
                 })(),
-                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held", value: fmt(invBlockedTotal), shortList: invShortItems },
+                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(blockedItemsGrouped.length, "item") + " held" + (truckExtraRows.length ? ` · +${n(truckExtraRows.length, "item")} on trucks` : ""), value: fmt(invBlockedTotal + truckExtraTotal), shortList: invShortItems },
                 dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
                   const rows = carpetPlanOf().rows;
                   const decided = rows.filter(r => r.status === "decided").length;
@@ -5708,10 +5796,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   <span aria-hidden="true" className="shrink-0 w-8 h-8 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-sm leading-none">📦</span>
                   <div className="min-w-0">
                     <div className="text-[13px] font-semibold text-gray-900 leading-snug sm:truncate">Inventory blocked for {dept}</div>
-                    <div className="text-[10px] text-gray-500 truncate">{invShown.length} item{invShown.length === 1 ? "" : "s"} held for {invScoped ? "this function" : "this event"}</div>
+                    <div className="text-[10px] text-gray-500 truncate">{invShown.length} item{invShown.length === 1 ? "" : "s"} held for {invScoped ? "this function" : "this event"}{!invScoped && truckExtraTotal > 0 ? ` · incl. ${fmt(truckExtraTotal)} added on trucks` : ""}</div>
                   </div>
                 </div>
-                <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{fmt(invScoped ? invShownTotal : invBlockedTotal)}</div>
+                <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{/* the event's total takes in what was added on trucks (owner 2026-11-25: "overall cost update ni kr ra"); a function's view leaves them out - they are not tied to one function */}{fmt(invScoped ? invShownTotal : invBlockedTotal + truckExtraTotal)}</div>
               </div>
               {/* what is short, first thing under the head (owner ask 2026-11-15) - each item and how many are missing */}
               {invShortItems.length > 0 && (
@@ -6277,6 +6365,33 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 </div>
                   );
                 })()
+              )}
+              {/* ── ADDED ON TRUCKS, NOT IN THE DEAL ── (owner ask 2026-11-25) what this department put on its trucks with "Add an
+                  item not in this deal": blocked in stock for the event's dates, priced at the item's rent - an internal cost,
+                  not billed to the client (the deal does not have them). Event-wide, every function. */}
+              {truckExtraRows.length > 0 && !invScoped && (
+                <div className="m-2.5 mt-1 rounded-xl ring-1 ring-blue-200 bg-blue-50/40 overflow-hidden">
+                  <div className="px-3 py-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 bg-blue-50 border-b border-blue-100">
+                    <span aria-hidden="true">🚚</span>
+                    <span className="text-[13px] font-semibold text-blue-900">{"Added on trucks (not in the deal)"}</span>
+                    <span className="ml-auto text-[13px] font-bold text-gray-900 tabular-nums">{fmt(truckExtraTotal)}</span>
+                  </div>
+                  <div className="divide-y divide-blue-100/70">
+                    {truckExtraRows.map(r => (
+                      <div key={r.invId} className="px-3 py-2 flex items-center gap-2.5">
+                        {r.photo ? <img src={thumbUrl(r.photo, 40)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(r.photo)} className="w-9 h-9 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} />
+                          : <div className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-gray-900 truncate">{r.name}</div>
+                          <div className="text-[11px] text-gray-500 truncate">{r.sub || "—"}</div>
+                        </div>
+                        <span className="shrink-0 text-sm font-semibold text-gray-700 tabular-nums">×{r.qty}</span>
+                        <span className="shrink-0 w-20 text-right text-sm text-gray-500 tabular-nums" title={r.rate > 0 ? "Rent per piece (Inventory)" : "No rent set on this item in Inventory"}>{r.rate > 0 ? fmt(r.rate) : "—"}</span>
+                        <span className="shrink-0 w-24 text-right text-sm font-bold text-gray-900 tabular-nums">{r.rate > 0 ? fmt(r.total) : "—"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
 
@@ -7211,51 +7326,18 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                 item, so a spare panel or an outside-the-deal extra can still ride on a
                                 truck and still show up on its challan. Hidden once this trip is locked -
                                 it already left, there's nothing left to add to it. */}
-                            {!locked && (
-                            <div className="rounded-lg ring-1 ring-dashed ring-gray-300 p-2.5 space-y-2">
-                              <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Add an item not in this deal</div>
-                              <div className="flex flex-wrap gap-1.5">
-                                {[...deptInventoryBySub.keys()].sort().map(s => {
-                                  const on = addPicker[trip.id]?.sub === s;
-                                  return (
-                                    <button key={s} type="button" onClick={() => setAddPicker(p => ({ ...p, [trip.id]: on ? null : { sub: s, invId: "", qty: 1 } }))} aria-pressed={on}
-                                      className={"px-2.5 py-1 rounded-full text-[11px] font-medium ring-1 transition-colors " + (on ? "bg-blue-600 text-white ring-blue-600" : "bg-white text-gray-700 ring-gray-200 hover:bg-gray-50")}>
-                                      {s}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                              {/* Picked by a thumbnail grid, not a name-only dropdown (owner ask, 2026-11-22) -
-                                  a sub-category can hold several near-identical-sounding items, and the photo
-                                  is how the floor actually tells them apart. */}
-                              {addPicker[trip.id]?.sub && (
-                                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-64 overflow-y-auto p-1 rounded-lg bg-gray-50">
-                                  {(deptInventoryBySub.get(addPicker[trip.id].sub) || []).map(i => {
-                                    const on = addPicker[trip.id]?.invId === i.id;
-                                    const ph = i.img || (Array.isArray(i.photoUrls) && i.photoUrls[0]) || "";
-                                    return (
-                                      <button key={i.id} type="button" onClick={() => setAddPicker(p => ({ ...p, [trip.id]: { ...p[trip.id], invId: i.id } }))} aria-pressed={on}
-                                        className={"flex flex-col items-center gap-1 p-1.5 rounded-lg ring-1 bg-white transition-colors " + (on ? "ring-blue-400 ring-2" : "ring-gray-200 hover:bg-gray-50")}>
-                                        {ph ? <img src={thumbUrl(ph, 112)} loading="lazy" decoding="async" alt="" className="w-full aspect-square rounded-md object-cover" onError={e => { e.target.style.display = "none"; }} />
-                                          : <div className="w-full aspect-square rounded-md bg-gray-100 flex items-center justify-center text-gray-300 text-2xl">📦</div>}
-                                        <span className="w-full text-[10.5px] text-gray-700 text-center leading-snug line-clamp-2" title={i.name}>{i.name}</span>
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                              {addPicker[trip.id]?.invId && (
-                                <div className="flex items-center gap-2">
-                                  <input type="number" min="1" value={addPicker[trip.id]?.qty ?? 1} onChange={e => setAddPicker(p => ({ ...p, [trip.id]: { ...p[trip.id], qty: e.target.value } }))} aria-label="Quantity to add"
-                                    className="h-8 w-16 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs text-center focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                                  <button onClick={() => {
-                                    const pick = addPicker[trip.id];
-                                    const inv = (deptInventoryBySub.get(pick.sub) || []).find(i => i.id === pick.invId);
-                                    if (inv) { addTripCustomItem(t.id, trip.id, inv, pick.qty); setAddPicker(p => ({ ...p, [trip.id]: null })); }
-                                  }} className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold">+ Add</button>
-                                </div>
-                              )}
-                            </div>
+                            {/* one button; the sub-category chips, the photo grid and the qty open in a modal (owner ask 2026-11-25) */}
+                            {!locked && canEditPlanning && !onsiteOnly && deptInventoryBySub.size > 0 && (
+                              <button type="button"
+                                onClick={() => setAddItemModal({ truckId: t.id, tripId: trip.id, title: `Truck ${truckNumById.get(t.id)}${t.trips.length > 1 ? ` · Trip ${tripI + 1}` : ""}`, sub: "", invId: "", qty: 1, q: "", added: [] })}
+                                // coloured and plain to spot (owner ask 2026-11-25) - a grey dashed strip read as empty space
+                                className="group w-full min-h-11 px-3 py-2 inline-flex items-center justify-center gap-2.5 rounded-xl border-2 border-dashed border-blue-300 bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 text-blue-700 hover:border-blue-400 hover:from-blue-100 hover:via-indigo-100 hover:to-blue-100 active:scale-[0.99] transition-[background-color,border-color,transform] duration-150">
+                                <span aria-hidden="true" className="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-base leading-none shadow-[0_2px_6px_-1px_rgba(37,99,235,0.5)] group-hover:scale-110 transition-transform">+</span>
+                                <span className="text-left leading-tight">
+                                  <span className="block text-[13px] font-semibold">{"Add an item not in this deal"}</span>
+                                  <span className="block text-[10.5px] font-normal text-blue-600/80">{"spares or extras — goes on the challan"}</span>
+                                </span>
+                              </button>
                             )}
                             {/* Already-added ad-hoc items stay visible (and on the challan) once a trip
                                 locks - just no longer editable, same as everything else on it. */}
@@ -7263,6 +7345,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
                                 {trip.custom.map(c => (
                                   <div key={c.id} className="flex items-center gap-2.5 px-2.5 py-2">
+                                    {/* its photo from Inventory, like every other loaded item (tap for the big one) */}
+                                    {(() => { const inv = (inventory || []).find(i => String(i.id) === String(c.invId)); const ph = inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || ""; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
                                     <div className="min-w-0 flex-1">
                                       <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2">{c.name}</div>
                                       <div className="mt-0.5 text-[10px] text-amber-700">{c.sub || "—"} · not in Build/Deal Check</div>
@@ -8411,6 +8495,130 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         </div>,
         document.body
       )}
+      {/* ── ADD AN ITEM NOT IN THIS DEAL ── (owner ask 2026-11-25: a modal, not three rows of chips inside every truck) search or
+          pick a sub-category, pick the item by its photo, the qty, Add - it stays open so several can go on one after another;
+          what was added shows at its top. Same writer as before (addTripCustomItem), so the trip lock / truck-details gate apply. */}
+      {addItemModal && createPortal((() => {
+        const m = addItemModal;
+        const set = (patch) => setAddItemModal(x => (x ? { ...x, ...patch } : x));
+        const close = () => setAddItemModal(null);
+        const subs = [...deptInventoryBySub.keys()].sort((x, y) => x.localeCompare(y, undefined, { sensitivity: "base" }));
+        const all = subs.flatMap(s => (deptInventoryBySub.get(s) || []).map(i => ({ ...i, _sub: s })));
+        const q = String(m.q || "").trim().toLowerCase();
+        // what shows: a search looks through everything; else one sub-category, or every item grouped by sub-category ("All",
+        // the default - the modal used to open on an empty "pick a sub-category" box)
+        const shown = q ? all.filter(i => String(i.name || "").toLowerCase().includes(q) || i._sub.toLowerCase().includes(q))
+          : m.sub ? all.filter(i => i._sub === m.sub) : all;
+        const groups = (q || m.sub) ? [["", shown]] : subs.map(s => [s, shown.filter(i => i._sub === s)]).filter(([, l]) => l.length);
+        const picked = m.invId ? all.find(i => i.id === m.invId) || null : null;
+        const qtyN = Math.max(0, Math.floor(Number(m.qty) || 0));
+        const add = () => {
+          if (!picked || !(qtyN > 0)) return;
+          if (!addTripCustomItem(m.truckId, m.tripId, picked, qtyN)) { set({ failed: true }); return; } // nothing was saved: say so, never "Added"
+          set({ invId: "", qty: 1, failed: false, added: [...(m.added || []), `${picked.name} ×${qtyN}`] });
+        };
+        const stockOf = (i) => Number(i.qty ?? i.qtyOwned);
+        const card = (i) => {
+          const on = m.invId === i.id;
+          const ph = i.img || (Array.isArray(i.photoUrls) && i.photoUrls[0]) || "";
+          const st = stockOf(i);
+          return (
+            <button key={i.id} type="button" onClick={() => set({ invId: on ? "" : i.id })} aria-pressed={on}
+              className={"group relative flex flex-col text-left rounded-xl bg-white overflow-hidden transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 " + (on ? "ring-2 ring-blue-500 shadow-[0_6px_16px_-8px_rgba(37,99,235,0.6)]" : "ring-1 ring-gray-200 hover:shadow-[0_6px_16px_-10px_rgba(15,23,42,0.35)]")}>
+              {/* the photo zooms in on hover; a click on it opens it large (and picks the item, so it is ready to add when the photo shuts) */}
+              {ph ? (
+                <span className="relative block w-full aspect-square overflow-hidden bg-gray-100">
+                  <img src={thumbUrl(ph, 240)} loading="lazy" decoding="async" alt="" title="See the photo"
+                    onClick={e => { e.stopPropagation(); set({ invId: i.id }); setZoomImg(ph); }}
+                    className="w-full h-full object-cover cursor-zoom-in transition-transform duration-300 ease-out group-hover:scale-110 motion-reduce:transition-none motion-reduce:group-hover:scale-100" onError={e => { e.target.style.display = "none"; }} />
+                  <span aria-hidden="true" className="pointer-events-none absolute bottom-1.5 left-1.5 w-6 h-6 rounded-full bg-white/90 text-gray-700 flex items-center justify-center shadow opacity-0 group-hover:opacity-100 transition-opacity">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.75" stroke="currentColor" strokeWidth="1.5" /><path d="M10.5 10.5 L13.5 13.5 M7 5 V9 M5 7 H9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
+                  </span>
+                </span>
+              ) : <div className="w-full aspect-square bg-gray-100 flex items-center justify-center text-gray-300 text-2xl">📦</div>}
+              {on && <span aria-hidden="true" className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center shadow">✓</span>}
+              <span className="px-2 pt-1.5 text-[11px] font-medium text-gray-800 leading-snug line-clamp-2" title={i.name}>{i.name}</span>
+              <span className="px-2 pb-2 pt-0.5 text-[10px] text-gray-400 truncate">{Number.isFinite(st) ? `${st} ${"in stock"}` : ""}{q && Number.isFinite(st) ? " · " : ""}{q ? i._sub : ""}</span>
+            </button>
+          );
+        };
+        const chip = (key, label, count) => {
+          const on = (m.sub || "") === key;
+          return (
+            <button key={key || "__all"} type="button" onClick={() => set({ sub: key, invId: "", q: "" })} aria-pressed={on}
+              className={"shrink-0 inline-flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium ring-1 transition-colors " + (on ? "bg-gray-900 text-white ring-gray-900" : "bg-white text-gray-700 ring-gray-200 hover:bg-gray-50")}>
+              {label}<span className={"tabular-nums text-[10px] " + (on ? "text-white/70" : "text-gray-400")}>{count}</span>
+            </button>
+          );
+        };
+        return (
+          <div data-hi-scope onClick={close} className="fixed inset-0 z-[9999] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div role="dialog" aria-modal="true" aria-label="Add an item not in this deal" onClick={e => e.stopPropagation()}
+              className="bg-white w-full sm:w-[min(820px,100%)] h-[90vh] sm:h-[min(720px,88vh)] flex flex-col overflow-hidden rounded-t-2xl sm:rounded-2xl shadow-2xl">
+              {/* head: what this is, which truck it goes on, close */}
+              <div className="px-4 sm:px-5 pt-4 pb-3 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[15px] font-semibold text-gray-900">{"Add an item not in this deal"}</p>
+                  <p className="text-xs text-gray-500 mt-0.5"><span className="font-medium text-gray-700">{m.title}</span> · {"goes on this trip and its challan"}</p>
+                </div>
+                <button type="button" onClick={close} aria-label="Close" className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-800 hover:bg-gray-100">
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
+                </button>
+              </div>
+              {/* search + sub-category chips (one scrolling row) */}
+              <div className="px-4 sm:px-5 pb-3 space-y-2.5 border-b border-gray-100">
+                <div className="relative">
+                  <svg aria-hidden="true" width="15" height="15" viewBox="0 0 16 16" fill="none" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><circle cx="7" cy="7" r="4.75" stroke="currentColor" strokeWidth="1.5" /><path d="M10.5 10.5 L13.5 13.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
+                  <input autoFocus value={m.q} onChange={e => set({ q: e.target.value, invId: "" })} placeholder="Search items…"
+                    className="w-full h-10 rounded-xl bg-gray-50 ring-1 ring-gray-200 pl-9 pr-3 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                </div>
+                <ChipScrollRow>
+                  {chip("", "All", all.length)}
+                  {subs.map(s => chip(s, s, (deptInventoryBySub.get(s) || []).length))}
+                </ChipScrollRow>
+              </div>
+              {/* the items, by photo - grouped by sub-category under All */}
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-3 bg-gray-50/70">
+                {m.failed && (
+                  <div role="alert" className="mb-3 rounded-lg bg-red-50 ring-1 ring-red-200 px-3 py-2 text-xs text-red-800">{"Not added — this trip can no longer be loaded (it left, or you can't edit Planning)."}</div>
+                )}
+                {m.added?.length > 0 && (
+                  <div className="mb-3 rounded-lg bg-emerald-50 ring-1 ring-emerald-200 px-3 py-2 text-xs text-emerald-800"><b>✓ {"Added"}:</b> {m.added.join(", ")}</div>
+                )}
+                {shown.length > 0 ? groups.map(([g, list]) => (
+                  <div key={g || "_"} className="mb-4 last:mb-0">
+                    {g && <div className="mb-2 flex items-baseline gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500">{g}</span><span className="text-[10px] text-gray-400 tabular-nums">{list.length}</span></div>}
+                    <div className="grid grid-cols-3 sm:grid-cols-5 gap-2.5">{list.map(card)}</div>
+                  </div>
+                )) : (
+                  <div className="h-full flex flex-col items-center justify-center gap-1 text-center px-6">
+                    <span aria-hidden="true" className="text-2xl">🔍</span>
+                    <span className="text-sm font-medium text-gray-700">{"No item matches this search."}</span>
+                  </div>
+                )}
+              </div>
+              {/* foot: the picked item, its qty (− n +), Add, Done */}
+              <div className="px-4 sm:px-5 py-3 border-t border-gray-100 flex flex-wrap items-center gap-2">
+                <div className="basis-full sm:basis-auto min-w-0 sm:min-w-[8rem] flex-1 flex items-center gap-2">
+                  {picked ? (<>
+                    {(() => { const ph = picked.img || (Array.isArray(picked.photoUrls) && picked.photoUrls[0]) || ""; return ph ? <img src={thumbUrl(ph, 40)} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" /> : <span className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">📦</span>; })()}
+                    <span className="min-w-0"><span className="block text-xs font-semibold text-gray-900 truncate">{picked.name}</span><span className="block text-[10px] text-gray-400 truncate">{picked._sub}</span></span>
+                  </>) : <span className="text-xs text-gray-400">{"No item picked"}</span>}
+                </div>
+                <div className={"inline-flex items-center rounded-lg ring-1 ring-gray-200 bg-white " + (picked ? "" : "opacity-50")}>
+                  <button type="button" disabled={!picked || qtyN <= 1} onClick={() => set({ qty: Math.max(1, qtyN - 1) })} aria-label="One less" className="w-9 h-9 text-gray-600 hover:bg-gray-50 rounded-l-lg disabled:opacity-40">−</button>
+                  <input type="number" min="1" value={m.qty ?? 1} onChange={e => set({ qty: e.target.value })} onKeyDown={e => { if (e.key === "Enter") add(); }} aria-label="Quantity to add" disabled={!picked}
+                    className="w-12 h-9 text-center text-sm font-semibold tabular-nums focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
+                  <button type="button" disabled={!picked} onClick={() => set({ qty: qtyN + 1 })} aria-label="One more" className="w-9 h-9 text-gray-600 hover:bg-gray-50 rounded-r-lg disabled:opacity-40">+</button>
+                </div>
+                <button type="button" onClick={add} disabled={!picked || !(qtyN > 0)}
+                  className="flex-1 sm:flex-none h-9 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors">+ {"Add"}</button>
+                <button type="button" onClick={close} className="h-9 px-3 rounded-lg bg-white ring-1 ring-gray-200 hover:bg-gray-50 text-xs font-semibold text-gray-700">{"Done"}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })(), document.body)}
       {/* A fabric colour, large — a 14px square is enough to tell colours apart, not to match a bolt against. */}
       {/* 🔁 Mandi swap — what was bought instead of a flower the mandi did not have (saveMandiSwap). */}
       {mandiSwap && mandiRows[mandiSwap.i] && createPortal((() => {
@@ -8495,10 +8703,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         document.body
       )}
       {/* Click-to-enlarge lightbox — ops can view any item/kit photo big & clear */}
-      {zoomImg && (
-        <div onClick={() => setZoomImg(null)} className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out">
-          <img src={fitUrl(zoomImg, 700, 75)} loading="lazy" decoding="async" alt="" className="max-w-[90vw] max-h-[90vh] rounded-lg object-contain shadow-2xl" onClick={e => e.stopPropagation()} />
-        </div>
+      {/* on document.body and above the other overlays, so a photo opened from inside a modal (Add an item) shows over it */}
+      {zoomImg && createPortal(
+        <div onClick={() => setZoomImg(null)} onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setZoomImg(null); } }} tabIndex={-1} ref={el => el?.focus()}
+          className="fixed inset-0 z-[10000] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out outline-none">
+          <img src={fitUrl(zoomImg, 900, 80)} loading="lazy" decoding="async" alt="" className="max-w-[90vw] max-h-[90vh] rounded-lg object-contain shadow-2xl" onClick={e => e.stopPropagation()} />
+          <button type="button" onClick={() => setZoomImg(null)} aria-label="Close photo" className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/90 hover:bg-white text-gray-800 flex items-center justify-center shadow-lg">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
+          </button>
+        </div>,
+        document.body
       )}
       {confirmDialog}
       {dcModalOpen && sel && <DeptIncomeModal eo={sel} depts={bookDepts} startDept={dept} onClose={() => setDcModalOpen(false)} liveFloralDetail={liveFloral?.floralDetail || null} inventory={inventory} mandiCatalogue={settings?.mandiCatalogue || []} />}
