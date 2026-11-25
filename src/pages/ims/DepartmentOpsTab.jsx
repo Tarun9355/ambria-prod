@@ -119,6 +119,13 @@ function crewIcon(type) {
 // shared row for a header to sit above) but is hidden from sm up, where the inventory-blocked list
 // now has ONE sticky header row instead — repeating it on every card there was the exact "confusing"
 // the header replaces.
+// What a truck still needs before it is a real truck (Loading & dispatch): vehicle no., driver and a 10-digit phone.
+const truckMissingOf = (t) => [
+  !String(t?.vehicle || "").trim() && "Vehicle no.",
+  !String(t?.driver || "").trim() && "Driver",
+  String(t?.phone || "").replace(/\D/g, "").length !== 10 && "Phone",
+].filter(Boolean);
+
 // A row of chips that scrolls sideways on a phone, with "+N ›" / "‹" buttons on its edges for the chips out of view - a row cut
 // at the edge did not say "scroll" (owner 2026-11-21: "isme pta toh chale scroll krna hai"). Same hint as IMS Inventory's category row.
 // From sm up the chips wrap and no button shows.
@@ -2695,13 +2702,29 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const truckSpaceTimer = useRef(null);
   useEffect(() => () => clearTimeout(truckSpaceTimer.current), []);
   const newTrip = () => ({ id: "trip_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), status: "loading", loads: {}, extra: {}, custom: {} });
+  // ── A NEW TRUCK IS A DRAFT UNTIL ITS DETAILS ARE IN ── (owner ask 2026-11-25: "add krne do new truck but jab tk details
+  // fill na kre tab tak na register ho") "+ Add truck" opens a form at the top - pick from the fleet or type vehicle no.,
+  // driver and a 10-digit phone - and the truck is saved (registered for every department) only on "Save truck". Nothing
+  // half-filled is ever saved, so no truck sits on the event with no number or driver.
+  const [truckDraft, setTruckDraft] = useState(null); // { vehicle, driver, phone } while the form is open
   const addTruckNow = () => {
+    setTruckDraft(d => d || { vehicle: "", driver: "", phone: "" });
+    setTruckSpaceHint(null);
+  };
+  const saveTruckDraft = () => {
+    const d = truckDraft;
+    if (!d) return;
+    const clean = { vehicle: String(d.vehicle || "").trim(), driver: String(d.driver || "").trim(), phone: String(d.phone || "").replace(/\D/g, "").slice(0, 10) };
+    if (truckMissingOf(clean).length) return;
+    // the same vehicle as a truck already on this event: one real vehicle is one truck, it makes another trip instead
+    const dupIdx = eventTruckList.findIndex(t => String(t.vehicle || "").trim().toLowerCase() === clean.vehicle.toLowerCase());
+    if (dupIdx >= 0) { const no = truckNumById.get(eventTruckList[dupIdx].id); alert(`Truck ${no} already has this vehicle (${clean.vehicle}). Open Truck ${no} and use "+ Add trip" there instead of a new truck.`); return; }
     const id = "trk_" + Date.now();
     // New truck goes to the top (owner ask, 2026-11-23) - the one you just added, about to be
     // filled in, is what you want in front of you, not a new "Truck N" at the bottom of a long list.
-    saveEventTrucks(list => [{ id, vehicle: "", driver: "", phone: "", trips: [newTrip()] }, ...list]);
+    saveEventTrucks(list => [{ id, ...clean, trips: [newTrip()] }, ...list]);
+    setTruckDraft(null);
     setOpenTruck(id);
-    setTruckSpaceHint(null);
   };
   // Refuses to give a truck the same vehicle number as ANOTHER truck already on this event (owner
   // report, 2026-11-23: users were ending up with two separate truck cards for one real vehicle,
@@ -2740,11 +2763,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // ── A TRUCK IS LOADED ONLY ONCE WE KNOW WHICH TRUCK IT IS ── (owner ask 2026-11-25) Vehicle no., driver and a 10-digit
   // phone must be on the truck before anything is loaded on it (items, extras, an outside item, a status change, a new
   // trip) and before another truck can be added - trucks went out with no number or driver on their challan.
-  const truckMissing = (t) => [
-    !String(t?.vehicle || "").trim() && "Vehicle no.",
-    !String(t?.driver || "").trim() && "Driver",
-    String(t?.phone || "").replace(/\D/g, "").length !== 10 && "Phone",
-  ].filter(Boolean);
+  const truckMissing = (t) => truckMissingOf(t);
   const addTrip = (id) => {
     if (truckMissing(eventTruckList.find(t => t.id === id)).length) return;
     const trip = newTrip();
@@ -2839,7 +2858,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     const cur = trips[trips.length - 1];
     if (!cur || (cur.status || "loading") !== "loading") return null;
     const oc = truckOccs[cur.id] || { used: 0, unknown: 0 };
-    return oc.used < 0.999 && !oc.unknown ? oc.used : null;
+    // "room" = at least 15% of the truck still free: a truck 94% full is as good as full, and the next truck should just be
+    // added (owner, 2026-11-25, on "Truck 1 still has space (about 6% free)")
+    return oc.used < 0.85 && !oc.unknown ? oc.used : null;
   };
   // "+ Add truck" (see truckSpaceHint above): a truck still loading with room left is filled first
   const pointAtTruck = (hint) => {
@@ -6847,8 +6868,61 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   </div>
                 </div>
               )}
+              {/* ── NEW TRUCK (a draft until saved) ── vehicle no., driver and phone first; "Save truck" registers it */}
+              {truckDraft && (() => {
+                const miss = truckMissingOf(truckDraft);
+                const onEvent = new Set(eventTruckList.map(t => String(t.vehicle || "").trim().toLowerCase()).filter(Boolean));
+                return (
+                  <div className="ui-reveal-in mx-3 sm:mx-4 mt-3 rounded-xl ring-2 ring-blue-300 bg-blue-50/40 p-3 space-y-2.5">
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <span className="shrink-0 text-sm font-semibold text-gray-900">New truck</span>
+                      <span className="text-[11px] text-gray-500">saved once vehicle no., driver and phone are filled</span>
+                    </div>
+                    {eventTrucks.length > 0 && (
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Pick from fleet</div>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {eventTrucks.map(f => {
+                            const on = truckDraft.vehicle === f.vehicle && truckDraft.driver === f.driver;
+                            const used = onEvent.has(String(f.vehicle || "").trim().toLowerCase()); // already a truck on this event: add a trip there
+                            return (
+                              <button key={f.id} type="button" disabled={used} title={used ? "Already a truck on this event — open it and use “+ Add trip”" : undefined}
+                                onClick={() => setTruckDraft({ vehicle: f.vehicle || "", driver: f.driver || "", phone: String(f.phone || "").replace(/\D/g, "").slice(0, 10) })} aria-pressed={on}
+                                className={"text-left px-2.5 py-1.5 rounded-lg ring-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed " + (on ? "bg-blue-50 ring-blue-300" : "bg-white ring-gray-200 hover:bg-gray-50")}>
+                                <span className={"block text-[11px] font-semibold tabular-nums " + (on ? "text-blue-700" : "text-gray-800")}>{f.vehicle || f.driver}</span>
+                                {f.vehicle && f.driver && <span className={"block text-[10px] capitalize " + (on ? "text-blue-600" : "text-gray-500")}>{used ? "on this event" : String(f.driver).toLowerCase()}</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {[["Vehicle no.", "vehicle"], ["Driver", "driver"], ["Phone", "phone"]].map(([l, k]) => {
+                        const m = miss.includes(l);
+                        return (
+                          <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}>
+                            <label className={"block text-[10px] font-semibold uppercase tracking-[0.06em] " + (m ? "text-red-600" : "text-gray-400")}>{l}{m && " *"}</label>
+                            <input value={truckDraft[k] || ""} autoFocus={k === "vehicle"}
+                              onChange={e => { const v = k === "phone" ? phone10(e.target.value) : e.target.value; setTruckDraft(d => ({ ...d, [k]: v })); }}
+                              onKeyDown={e => { if (e.key === "Enter") saveTruckDraft(); if (e.key === "Escape") setTruckDraft(null); }}
+                              {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })}
+                              className={"mt-1 w-full h-9 rounded-lg bg-white ring-1 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 " + (m ? "ring-red-300" : "ring-gray-200")} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex items-center justify-end gap-2">
+                      {miss.length > 0 && <span className="mr-auto text-[11px] text-red-600">Fill {miss.join(", ")} to save</span>}
+                      <button type="button" onClick={() => setTruckDraft(null)} className="h-8 px-3 rounded-lg bg-white ring-1 ring-gray-200 hover:bg-gray-50 text-xs font-semibold text-gray-700 transition-colors">Cancel</button>
+                      <button type="button" onClick={saveTruckDraft} disabled={miss.length > 0}
+                        className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors">Save truck</button>
+                    </div>
+                  </div>
+                );
+              })()}
               {/* Trucks */}
-              {trucks.length === 0 ? (
+              {trucks.length === 0 && truckDraft ? null : trucks.length === 0 ? (
                 /* An empty state that says what to do, not a sentence floating in white space. */
                 <div className="px-4 py-7 flex flex-col items-center text-center">
                   <span aria-hidden="true" className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-lg leading-none">🚛</span>
