@@ -17,6 +17,8 @@ const SECTIONS = [
   { id: "receiving", label: "🚛 Receiving" },
   { id: "crew", label: "👷 Crew" },
 ];
+// "2026-11-03" → "3 Nov 2026" (the Planning header's way of saying when)
+const prettyDate = (d) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(d || "")) return d || ""; const dt = new Date(d + "T00:00:00"); return dt.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }); };
 const fnDate = (eo) => {
   const dates = [eo?.date, ...((Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : []).map((f) => f?.date))].filter(Boolean).map((d) => String(d).slice(0, 10));
   return dates.sort()[0] || "";
@@ -62,12 +64,26 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
 
   return (
     <div className="space-y-4 w-full min-w-0">
-      <div className="bg-white rounded-xl border border-gray-100 p-4">
-        <div className="flex items-start justify-between gap-3">
-          <button onClick={() => pick("")} className="shrink-0 w-8 h-8 rounded-lg bg-gray-50 text-gray-500 hover:bg-gray-100 flex items-center justify-center">‹</button>
+      {/* The Planning (Dept Ops) event header's look (owner ask 2026-11-25): a raised card, the name as the title, when and where
+          in words ("3 Nov 2026 · Others"), who booked it on a quieter line, and the event's supervisors on their own line. */}
+      <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] p-4 sm:p-5">
+        <div className="flex items-start gap-3">
+          <button onClick={() => pick("")} aria-label="Back to the calendar" title="Back to the calendar"
+            className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] text-gray-500 hover:text-gray-900 flex items-center justify-center cursor-pointer transition-colors">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M9 3.5 L5 7 L9 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </button>
           <div className="min-w-0 flex-1">
-            <div className="text-[16px] font-bold text-gray-900 truncate">{sel.clientName || "Event"}</div>
-            <div className="text-[12px] text-gray-500 mt-0.5">{fnDate(sel) || "no date"} · {venueWithParent(settings, sel.venue) || "—"}{addedSupervisorsOf(sel).length ? ` · Supervisor: ${addedSupervisorsOf(sel).map((s) => s.name).join(", ")}` : ""}</div>
+            <div className="text-[16px] sm:text-[20px] font-semibold tracking-[-0.01em] text-gray-900 leading-tight sm:leading-snug truncate">{sel.clientName || "Event"}</div>
+            <div className="mt-0.5 text-[13px] sm:text-sm font-medium text-gray-700 leading-snug truncate">
+              {[prettyDate(fnDate(sel)) || "no date", venueWithParent(settings, sel.functionsDetail?.[0]?.venue || sel.venue) || ""].filter(Boolean).join(" · ")}
+            </div>
+            {sel.salesperson && <div className="text-[11.5px] sm:text-xs text-gray-400 leading-snug truncate">Booked by {sel.salesperson}</div>}
+            {addedSupervisorsOf(sel).length > 0 && (
+              <div className="mt-1 flex items-center gap-1.5 text-xs min-w-0">
+                <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
+                <span className="font-medium text-gray-700 truncate">{addedSupervisorsOf(sel).map((s) => s.name).join(", ")}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -96,13 +112,19 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
         </div>
       </div>
 
+      {/* Receiving | Crew as the Planning header's view tags: the one you are on soft blue and ringed, the other plain */}
       <div className="flex gap-2">
-        {SECTIONS.map((s) => (
-          <button key={s.id} onClick={() => setSection(s.id)} aria-pressed={section === s.id}
-            className={"h-9 px-3.5 rounded-xl text-[12.5px] font-semibold " + (section === s.id ? "bg-blue-50 text-blue-700 ring-1 ring-blue-200" : "bg-white text-gray-600 ring-1 ring-gray-200 hover:bg-gray-50")}>
-            {s.label}
-          </button>
-        ))}
+        {SECTIONS.map((s) => {
+          const on = section === s.id;
+          return (
+            <button key={s.id} onClick={() => setSection(s.id)} aria-pressed={on}
+              className={"shrink-0 h-8 inline-flex items-center gap-1.5 px-3 rounded-lg text-[12.5px] font-semibold cursor-pointer transition-colors "
+                + (on ? "bg-blue-100 text-blue-700 ring-1 ring-blue-200 shadow-[0_4px_10px_-4px_rgba(37,99,235,0.45)]"
+                  : "bg-white/70 text-gray-500 shadow-[0_1px_3px_rgba(15,23,42,0.1),0_4px_10px_-6px_rgba(15,23,42,0.25)] hover:bg-blue-50 hover:text-blue-700")}>
+              {s.label}
+            </button>
+          );
+        })}
       </div>
 
       {section === "receiving" ? (

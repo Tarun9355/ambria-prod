@@ -482,6 +482,8 @@ Your login is not on the Site Supervisor list (Admin → Settings → Supervisor
 No functions at your venues this month, and none you are the Site Supervisor of - page to another month. ¦ इस महीने आपके वेन्यू पर कोई फ़ंक्शन नहीं है, और कोई इवेंट आपके नाम पर नहीं - दूसरे महीने पर जाएँ।
 + Add supervisor ¦ + सुपरवाइज़र जोड़ें
 Loading your venues… ¦ आपके वेन्यू लोड हो रहे हैं…
+Who's bringing what, on which truck ¦ कौन क्या ला रहा है, किस ट्रक पर
+Back to the calendar ¦ कैलेंडर पर वापस
 — choose — ¦ — चुनें —
 `;
 

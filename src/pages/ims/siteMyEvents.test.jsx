@@ -22,3 +22,18 @@ describe("Site page calendar: My events", () => {
     expect(html).not.toContain("border-blue-500 bg-blue-50/80"); // the old all-blue chip
   });
 });
+
+describe("Site page event: the Planning look", () => {
+  it("header: the name as the title, the date in words, booked by, the supervisors; Receiving | Crew as view tags", () => {
+    const eo = { id: "E1", clientName: "Anuja berry", status: "confirmed", date: "2026-11-03", salesperson: "Tarun", functionsDetail: [{ date: "2026-11-03", venue: "Others" }], extraSupervisors: [{ id: "S1", name: "Raja" }] };
+    const store = { "ambria-ims-site-event": "E1" };
+    vi.stubGlobal("sessionStorage", { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = String(v); } });
+    const html = renderToString(<SiteSupervisorTab eventOrders={[eo]} setEventOrders={() => {}} inventory={[]} settings={{}} authUser={{ role: "Admin" }} supervisors={[]} />);
+    vi.unstubAllGlobals();
+    expect(html).toContain("Back to the calendar");
+    expect(html).toContain("3 Nov 2026");
+    expect(html).toContain("Booked by");
+    expect(html).toContain("Raja");
+    expect(html).toContain('aria-pressed="true"');
+  });
+});
