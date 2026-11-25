@@ -36,6 +36,32 @@ Add another dihari (shift) this day ¦ इस दिन एक और दिह�
 Add crew type ¦ क्रू टाइप जोड़ें
 Add on-site expense ¦ साइट का खर्च जोड़ें
 Add truck ¦ ट्रक जोड़ें
+Add trip ¦ ट्रिप जोड़ें
+Trucks & dismantle ¦ ट्रक और डिसमेंटल
+Dismantle ¦ डिसमेंटल
+Going ¦ जाना
+Return ¦ वापसी
+Going · Loading & dispatch ¦ जाना · लोडिंग और डिस्पैच
+Dismantle · Routing ¦ डिसमेंटल · रूटिंग
+all routed ¦ सब भेज दिया
+no trucks yet ¦ अभी कोई ट्रक नहीं
+New truck ¦ नया ट्रक
+Save truck ¦ ट्रक सेव करें
+Cancel ¦ रद्द करें
+saved once vehicle no., driver and phone are filled ¦ गाड़ी नंबर, ड्राइवर और फ़ोन भरने पर ही सेव होगा
+on this event ¦ इस इवेंट पर
+Fill these first: ¦ पहले ये भरें:
+nothing can be loaded on this truck until they are filled. ¦ इन्हें भरे बिना इस ट्रक में कुछ लोड नहीं होगा।
+A new truck can be added after that. ¦ उसके बाद नया ट्रक जोड़ सकते हैं।
+Open truck ¦ ट्रक खोलें
+Details needed ¦ जानकारी भरें
+still has space ¦ में अभी जगह है
+fill it before adding another truck. ¦ दूसरा ट्रक जोड़ने से पहले इसे भरें।
+Fill this truck ¦ यह ट्रक भरें
+Fill this first ¦ पहले इसे भरें
+Add new truck anyway ¦ फिर भी नया ट्रक जोड़ें
+Save this truck first, then add the next one. ¦ पहले यह ट्रक सेव करें, फिर अगला जोड़ें।
+Fill this truck's details first, then add the next one. ¦ पहले इस ट्रक की जानकारी भरें, फिर अगला ट्रक जोड़ें।
 Remove truck ¦ ट्रक हटाएँ
 Adjust crew per day and per shift (e.g. drop the evening, or keep 1 in evening) ¦ हर दिन और शिफ़्ट का क्रू बदलें (जैसे शाम हटाएँ, या शाम में 1 रखें)
 Another department has items on this truck ¦ इस ट्रक पर दूसरे विभाग का सामान भी है

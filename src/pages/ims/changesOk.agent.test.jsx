@@ -93,7 +93,9 @@ const amend = (o = {}) => ({ id: "A1", eventOrderId: "E1", status: "logged", dep
 const store0 = (events) => { const st = { events, calls: 0 }; st.set = (u) => { st.calls += 1; st.events = typeof u === "function" ? u(st.events) : u; }; return st; };
 const props = (st, o = {}) => ({ onsiteOnly: false, eventOrders: st.events, setEventOrders: st.set, authUser: floralHead, settings: {}, supervisors: [], inventory: [], functions: [], blocks: [], amendRequests: [], ...o });
 const mount = (p, f = {}) => {
-  rec.els = []; forced.map = f;
+  // "Changed in the last 48 hours" is shut by default (owner ask 2026-11-25) - opened here, the way a tap on its head opens it,
+  // so these tests still read the list inside it
+  rec.els = []; forced.map = { "const [changesOpen, setChangesOpen]": true, ...f };
   try {
     const html = renderToString(h(DepartmentOpsTab, p)).replace(/<!-- -->/g, "");
     return { html, els: rec.els.slice() };

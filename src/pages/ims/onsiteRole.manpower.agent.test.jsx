@@ -90,7 +90,8 @@ const crewEvent = (extra = {}, date = FUT) => ({
 const store0 = (events) => { const st = { events, calls: 0 }; st.set = (u) => { st.calls += 1; st.events = typeof u === "function" ? u(st.events) : u; }; return st; };
 const props = (st, o = {}) => ({ onsiteOnly: true, eventOrders: st.events, setEventOrders: st.set, authUser: me, settings: dihariSettings, supervisors: roster, inventory: [], functions: [], blocks: [], ...o });
 const mount = (p, f = {}) => {
-  rec.els = []; rec.effects = []; forced.map = f;
+  // "Changed in the last 48 hours" is shut by default (owner ask 2026-11-25) - opened here so these tests still read its list
+  rec.els = []; rec.effects = []; forced.map = { "const [changesOpen, setChangesOpen]": true, ...f };
   try {
     const html = renderToString(h(DepartmentOpsTab, p)).replace(/<!-- -->/g, "");
     return { html, els: rec.els.slice(), effects: rec.effects.slice() };
@@ -212,7 +213,7 @@ describe("1b. everyone else is unchanged", () => {
   });
   it("a Department Head with Planning edit but no Site-Supervisor-only sub-tab (any non-role) keeps the full tile set", () => {
     const { html } = mount(props(st(), { onsiteOnly: false, authUser: { ...me, role: "Floral Head", departments: ["Floral"] } }), FSEL);
-    for (const t of ["Inventory blocked", "Manpower plan", "Actuals", "Truck planning"]) expect(tileTitles(html)).toContain(t);
+    for (const t of ["Inventory blocked", "Manpower plan", "Actuals", "Trucks &amp; dismantle"]) expect(tileTitles(html)).toContain(t); // Truck planning + Dismantle plan are one tile now
   });
 });
 

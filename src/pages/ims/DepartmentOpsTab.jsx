@@ -119,6 +119,13 @@ function crewIcon(type) {
 // shared row for a header to sit above) but is hidden from sm up, where the inventory-blocked list
 // now has ONE sticky header row instead — repeating it on every card there was the exact "confusing"
 // the header replaces.
+// What a truck still needs before it is a real truck (Loading & dispatch): vehicle no., driver and a 10-digit phone.
+const truckMissingOf = (t) => [
+  !String(t?.vehicle || "").trim() && "Vehicle no.",
+  !String(t?.driver || "").trim() && "Driver",
+  String(t?.phone || "").replace(/\D/g, "").length !== 10 && "Phone",
+].filter(Boolean);
+
 // A row of chips that scrolls sideways on a phone, with "+N ›" / "‹" buttons on its edges for the chips out of view - a row cut
 // at the edge did not say "scroll" (owner 2026-11-21: "isme pta toh chale scroll krna hai"). Same hint as IMS Inventory's category row.
 // From sm up the chips wrap and no button shows.
@@ -1315,6 +1322,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // and the write guards in saveDept/setEventLabourTotal flip live, without anyone needing to
   // refresh right as a booking crosses its lock time.
   const [lockNow, setLockNow] = useState(() => Date.now());
+  // "Changed in the last 48 hours" opens on a tap - shut by default (owner ask 2026-11-25), and shut again on another event
+  const [changesOpen, setChangesOpen] = useState(false);
+  useEffect(() => { setChangesOpen(false); }, [selId]);
   useEffect(() => { const id = setInterval(() => setLockNow(Date.now()), 60000); return () => clearInterval(id); }, []);
   // ── Changed in the last 48 hours (owner ask 2026-11-15) ── per event: its inventory change logs and Dept Ops edits
   // (lib/ims/recentChanges). A ⚠ on the calendar chip, and inside the event a list + a badge on each block that changed.
@@ -2703,14 +2713,69 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const truckSpaceTimer = useRef(null);
   useEffect(() => () => clearTimeout(truckSpaceTimer.current), []);
   const newTrip = () => ({ id: "trip_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), status: "loading", loads: {}, extra: {}, custom: {} });
-  const addTruckNow = () => {
-    const id = "trk_" + Date.now();
+  // ── A NEW TRUCK IS A DRAFT UNTIL ITS DETAILS ARE IN ── (owner ask 2026-11-25: "add krne do new truck but jab tk details
+  // fill na kre tab tak na register ho") "+ Add truck" opens a form at the top - pick from the fleet or type vehicle no.,
+  // driver and a 10-digit phone - and the truck is saved (registered for every department) only on "Save truck". Nothing
+  // half-filled is ever saved, so no truck sits on the event with no number or driver.
+  // Every click of "+ Add truck" adds another New truck form (owner 2026-11-25: "ek hi baar add hora hai" - several trucks
+  // are often set up together); each is saved on its own "Save truck", newest at the top.
+  const [truckDrafts, setTruckDrafts] = useState([]); // [{ key, vehicle, driver, phone }]
+  const draftRefs = useRef({});
+  const [draftFlash, setDraftFlash] = useState(null); // the key of the form just added, lit for a moment
+  const [draftNeed, setDraftNeed] = useState(null); // the form "+ Add truck" stopped at - its note stays until its details are in
+  useEffect(() => {
+    if (!draftFlash) return;
+    const t = setTimeout(() => setDraftFlash(null), 1400);
+    return () => clearTimeout(t);
+  }, [draftFlash]);
+  const setTruckDraftField = (key, patch) => setTruckDrafts(list => list.map(d => d.key === key ? { ...d, ...patch } : d));
+  const dropDraft = (key) => setTruckDrafts(list => list.filter(d => d.key !== key));
+  const saveTruckDraft = (key) => {
+    const d = truckDrafts.find(x => x.key === key);
+    if (!d) return false;
+    const clean = { vehicle: String(d.vehicle || "").trim(), driver: String(d.driver || "").trim(), phone: String(d.phone || "").replace(/\D/g, "").slice(0, 10) };
+    if (truckMissingOf(clean).length) return false;
+    // the same vehicle as a truck already on this event: one real vehicle is one truck, it makes another trip instead
+    const dupIdx = eventTruckList.findIndex(t => String(t.vehicle || "").trim().toLowerCase() === clean.vehicle.toLowerCase());
+    if (dupIdx >= 0) { const no = truckNumById.get(eventTruckList[dupIdx].id); alert(`Truck ${no} already has this vehicle (${clean.vehicle}). Open Truck ${no} and use "+ Add trip" there instead of a new truck.`); return false; }
+    // unique even when several new trucks are saved in one click
+    const id = "trk_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     // New truck goes to the top (owner ask, 2026-11-23) - the one you just added, about to be
     // filled in, is what you want in front of you, not a new "Truck N" at the bottom of a long list.
-    saveEventTrucks(list => [{ id, vehicle: "", driver: "", phone: "", trips: [newTrip()] }, ...list]);
+    saveEventTrucks(list => [{ id, ...clean, trips: [newTrip()] }, ...list]);
+    dropDraft(key);
     setOpenTruck(id);
-    setTruckSpaceHint(null);
+    return true;
   };
+  const addTruckNow = () => {
+    setTruckSpaceHint(null);
+    // No next truck while a new one still lacks its details (owner 2026-11-25: "jab tak driver details / truck details na ho,
+    // new truck add na ho"): that form is lit, says so, and gets the cursor. A new truck whose details ARE all in is saved
+    // (registered) right here, and the next form opens - so trucks still go in one after another without an extra click.
+    const pending = truckDrafts.find(d => truckMissingOf(d).length);
+    if (pending) {
+      setDraftFlash(pending.key);
+      setDraftNeed(pending.key);
+      setTimeout(() => {
+        const el = draftRefs.current[pending.key];
+        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+        const box = el && [...el.querySelectorAll("input")].find(i => !i.value);
+        (box || el?.querySelector("input"))?.focus({ preventScroll: true });
+      }, 0);
+      return;
+    }
+    if (!truckDrafts.every(d => saveTruckDraft(d.key))) return; // one couldn't be saved (same vehicle as a truck already here): it stays open, no new form
+    const key = "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    setTruckDrafts(list => [{ key, vehicle: "", driver: "", phone: "" }, ...list]);
+    setDraftFlash(key);
+    setTimeout(() => {
+      const el = draftRefs.current[key];
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      el?.querySelector("input")?.focus({ preventScroll: true });
+    }, 0);
+  };
+  // forms belong to the event on screen - another event starts with none
+  useEffect(() => { setTruckDrafts([]); }, [selId]);
   // Refuses to give a truck the same vehicle number as ANOTHER truck already on this event (owner
   // report, 2026-11-23: users were ending up with two separate truck cards for one real vehicle,
   // via "Pick from fleet" or just retyping its number) - matched the same way eventTruckList's own
@@ -2745,7 +2810,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // into "Dispatched" so nobody has to remember to do it by hand, and is locked from further
   // editing below (see `locked` in the trip render) - never downgraded if it was already further
   // along (at-site/returned) than that.
+  // ── A TRUCK IS LOADED ONLY ONCE WE KNOW WHICH TRUCK IT IS ── (owner ask 2026-11-25) Vehicle no., driver and a 10-digit
+  // phone must be on the truck before anything is loaded on it (items, extras, an outside item, a status change, a new
+  // trip) and before another truck can be added - trucks went out with no number or driver on their challan.
+  const truckMissing = (t) => truckMissingOf(t);
   const addTrip = (id) => {
+    if (truckMissing(eventTruckList.find(t => t.id === id)).length) return;
     const trip = newTrip();
     setTrips(id, trips => [
       ...trips.map((tr, i) => i === trips.length - 1 && (tr.status || "loading") === "loading" ? { ...tr, status: "dispatched" } : tr),
@@ -2768,6 +2838,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const isActiveTrip = (id, tripId) => {
     const t = eventTruckList.find(tt => tt.id === id);
     const trips = t && tripsOf(t);
+    if (t && truckMissing(t).length) return false; // nothing loads on a truck whose details aren't filled in yet
     return !!trips && trips.length > 0 && trips[trips.length - 1].id === tripId;
   };
   const setTripStatus = (id, tripId, status) => { if (!isActiveTrip(id, tripId)) return; setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, status } : tr)); };
@@ -2837,20 +2908,30 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     const cur = trips[trips.length - 1];
     if (!cur || (cur.status || "loading") !== "loading") return null;
     const oc = truckOccs[cur.id] || { used: 0, unknown: 0 };
-    return oc.used < 0.999 && !oc.unknown ? oc.used : null;
+    // "room" = at least 15% of the truck still free: a truck 94% full is as good as full, and the next truck should just be
+    // added (owner, 2026-11-25, on "Truck 1 still has space (about 6% free)")
+    return oc.used < 0.85 && !oc.unknown ? oc.used : null;
   };
   // "+ Add truck" (see truckSpaceHint above): a truck still loading with room left is filled first
-  const addTruck = () => {
-    const roomy = eventTruckList.map(t => ({ t, used: truckRoomOf(t) })).find(x => x.used != null);
-    if (!roomy) { addTruckNow(); return; }
-    setTruckSpaceHint({ id: roomy.t.id, no: truckNumById.get(roomy.t.id), freePct: Math.max(1, Math.round((1 - roomy.used) * 100)) });
-    setOpenTruck(roomy.t.id);
-    setTimeout(() => truckRefs.current[roomy.t.id]?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+  const pointAtTruck = (hint) => {
+    setTruckSpaceHint(hint);
+    setOpenTruck(hint.id);
+    setTimeout(() => truckRefs.current[hint.id]?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
     clearTimeout(truckSpaceTimer.current);
     truckSpaceTimer.current = setTimeout(() => setTruckSpaceHint(null), 12000); // the light fades on its own
   };
-  // the note goes as soon as its truck is gone, full, or its trip has left - it named a truck that had already gone
-  const hintStale = !!truckSpaceHint && truckRoomOf(eventTruckList.find(t => t.id === truckSpaceHint.id) || {}) == null;
+  const addTruck = () => {
+    // "+ Add truck" is never refused (owner 2026-11-25: "add truck krne pe truck add krne do") - a truck still missing its
+    // vehicle no. / driver / phone stays shut for loading on its own card, and the new truck is itself saved only once its
+    // details are in (the New truck form). The one nudge left: a truck still loading with room left - fill it first, with
+    // "Add new truck anyway". A truck with no details can't be loaded yet, so it is never the one named.
+    const roomy = eventTruckList.filter(t => !truckMissing(t).length).map(t => ({ t, used: truckRoomOf(t) })).find(x => x.used != null);
+    if (!roomy) { addTruckNow(); return; }
+    pointAtTruck({ kind: "space", id: roomy.t.id, no: truckNumById.get(roomy.t.id), freePct: Math.max(1, Math.round((1 - roomy.used) * 100)) });
+  };
+  // the note goes as soon as it no longer holds: its truck gone, or (details) all three filled in, or (space) full / its trip left
+  const hintTruckNow = truckSpaceHint ? eventTruckList.find(t => t.id === truckSpaceHint.id) : null;
+  const hintStale = !!truckSpaceHint && (!hintTruckNow || truckRoomOf(hintTruckNow) == null);
   useEffect(() => { if (hintStale) setTruckSpaceHint(null); }, [hintStale]);
   const DEPT_BAR = { Furniture: "bg-amber-500", Floral: "bg-pink-500", Structure: "bg-slate-500", Tenting: "bg-emerald-500", Transport: "bg-orange-500", Lighting: "bg-yellow-400", Fabric: "bg-violet-500" };
   // A short "Can be made" line on a challan says where its units come from - "600 = 500 in stock + 100 outsourced" - so the
@@ -5415,7 +5496,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
               return (
                 <div className="rounded-xl bg-white ring-1 ring-amber-300 shadow-[0_1px_2px_rgba(16,24,40,0.05)] overflow-hidden" role="status">
                   {/* the Activity log's own look (owner ask 2026-11-15) - an amber head so it still reads as a warning */}
-                  <div className="px-4 py-2.5 flex items-center gap-2 bg-amber-50 border-b border-amber-200">
+                  {/* the head is the toggle: shut by default (owner ask 2026-11-25), the count says how much is inside */}
+                  <div role="button" tabIndex={0} aria-expanded={changesOpen} onClick={(e) => { if (e.target?.closest?.("button")) return; setChangesOpen(o => !o); }}
+                    onKeyDown={e => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setChangesOpen(o => !o); } }}
+                    className={"px-4 py-2.5 flex items-center gap-2 bg-amber-50 cursor-pointer select-none hover:bg-amber-100/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-400 " + (changesOpen ? "border-b border-amber-200" : "")}>
                     <span aria-hidden="true" className="w-6 h-6 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-[13px]">⚠</span>
                     <span className="text-[14px] font-semibold text-amber-900">Changed in the last 48 hours</span>
                     <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 tabular-nums">{list.length}</span>
@@ -5429,9 +5513,15 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         ✓ OK
                       </button>
                     )}
+                    {/* open / shut, at the right end (after OK when there is one) */}
+                    <span aria-hidden="true" className={"shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 " + (isDeptHead && !onsiteOnly && myDepts.includes(dept) ? "" : "ml-auto")}>
+                      {changesOpen ? "Hide" : "Show"}
+                      <svg width="12" height="12" viewBox="0 0 14 14" fill="none" className={"transition-transform duration-150 " + (changesOpen ? "-rotate-90" : "rotate-90")}><path d="M5 3.5 L8.5 7 L5 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    </span>
                   </div>
                   {/* every entry of the 48 hours, no "show all" - the list scrolls; anything older is in the Activity log. An entry opens
                       the block it changed (goToChange). */}
+                  {changesOpen && (<>
                   <div className="max-h-[360px] overflow-y-auto overscroll-contain px-4 divide-y divide-gray-100">
                     {list.map((c, i) => {
                       const canGo = deptOptions.includes(c.dept);
@@ -5452,6 +5542,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       Older changes → Activity log
                     </button>
                   </div>
+                  </>)}
                 </div>
               );
             })()}
@@ -5480,8 +5571,21 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 dept === "Tenting" && trussPlanOf().length > 0 && { k: "truss", icon: "🏗️", title: "Truss plan", sub: n(trussPlanOf().length, "truss") + " · pillars, beams, fabric" },
                 { k: "mp", icon: "👷", title: "Manpower plan", sub: mpChanged ? <span className="text-red-600 font-semibold">⚠ Changed since you last looked · {fmt(Number(mpSeen.cost) || 0)} → {fmt(mpSnapCost)}</span> : mpRows.length ? n(mpRows.length, "crew line") : "no crew assigned", value: fmt(mpCost), ...(mpChanged ? { tone: "bg-red-50", alert: true } : {}) },
                 { k: "actuals", icon: "🧾", title: "Actuals", sub: hasActuals ? "real spend logged" : "nothing logged yet", value: hasActuals ? fmt(actualCost) : null },
-                { k: "truck", icon: "🚚", title: "Truck planning", sub: trucks.length ? n(trucks.length, "truck") + (fullTrucks ? ` · ${fullTrucks} full` : "") : "no trucks yet" },
-                SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && { k: "dism", icon: "🔁", title: "Dismantle plan", sub: "where each item goes after" },
+                // ── TRUCKS & RETURN ── (owner ask 2026-11-25) Truck planning and the Dismantle plan were two tiles for one journey -
+                // out to the event and back. One tile now, saying where both stand; it opens on "Going" with a "Return" tab beside it.
+                (() => {
+                  const goingTxt = trucks.length ? n(trucks.length, "truck") + (fullTrucks ? ` · ${fullTrucks} full` : "") : "no trucks yet";
+                  const hasReturn = SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0;
+                  const left = hasReturn ? blockedItems.filter(it => unroutedQty(it) > 0).length : 0;
+                  const returnTxt = !hasReturn ? "nothing to route" : left ? n(left, "item") + " left to route" : "all routed";
+                  return { k: "truck", also: ["dism"], icon: "🚚", title: "Trucks & dismantle", sub: (
+                    // a two-column grid: the label column is as wide as its longest word ("DISMANTLE" ran into its text in a fixed 3rem)
+                    <span className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-2 gap-y-0.5">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 whitespace-nowrap">{"Going"}</span><span>{goingTxt}</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 whitespace-nowrap">{"Dismantle"}</span><span className={left ? "text-amber-700 font-semibold" : ""}>{returnTxt}</span>
+                    </span>
+                  ) };
+                })(),
               ].filter((t) => t && (!onsiteOnly || t.k === "inv" || t.k === "mp")); // Site-Supervisor-view-only: Inventory blocked and the Manpower plan (the Department Head's own panel) only
               return (
                 <div className={GRID}>
@@ -5494,8 +5598,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       /* Clicking the open tile again closes it — with the block inline, the tile
                          is a toggle, not a launcher. The open one is ringed so you can tell at a
                          glance which of the five the panel below belongs to. */
-                      onClickCapture={e => { if (modal === t.k) { e.stopPropagation(); setModal(null); } }}
-                      className={"group text-left rounded-xl p-3 sm:p-3.5 h-full flex flex-col transition-[transform,box-shadow] duration-150 shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] hover:-translate-y-0.5 hover:shadow-[0_4px_8px_rgba(15,23,42,0.1),0_22px_40px_-12px_rgba(15,23,42,0.45)] " + (modal === t.k ? "ring-2 ring-blue-500 " + (t.tone || "bg-white/90") : (t.tone || GLASS))}>
+                      // a tile also stands for the blocks in t.also (Trucks & return: its "Return" tab is the dismantle block)
+                      onClickCapture={e => { if (modal === t.k || (t.also || []).includes(modal)) { e.stopPropagation(); setModal(null); } }}
+                      className={"group text-left rounded-xl p-3 sm:p-3.5 h-full flex flex-col transition-[transform,box-shadow] duration-150 shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] hover:-translate-y-0.5 hover:shadow-[0_4px_8px_rgba(15,23,42,0.1),0_22px_40px_-12px_rgba(15,23,42,0.45)] " + (modal === t.k || (t.also || []).includes(modal) ? "ring-2 ring-blue-500 " + (t.tone || "bg-white/90") : (t.tone || GLASS))}>
                       {/* Icon above the title on a phone, beside it from sm. Two to a row a tile
                           is ~170px; with a 36px icon beside it the title had ~110px and
                           "Inventory blocked" broke over two lines. Stacked, the title gets the
@@ -6761,6 +6866,19 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
 
             {/* Loading / dispatch — cross-check inventory + essentials while loading the truck.
                 Opens under the Truck planning tile; the dismantle plan has its own tile. */}
+            {/* ── TRUCKS & RETURN: GOING | RETURN ── one tile, two blocks (owner ask 2026-11-25): the loading block and the
+                dismantle block each stay exactly as they were; this switch sits above whichever of the two is open */}
+            {(modal === "truck" || modal === "dism") && SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && (
+              <div role="tablist" aria-label="Trucks and dismantle" className="inline-flex p-1 rounded-lg bg-gray-100 text-xs font-semibold">
+                {[["truck", "🚚", "Going", "Going · Loading & dispatch"], ["dism", "🔁", "Dismantle", "Dismantle · Routing"]].map(([k, ic, short, label]) => (
+                  <button key={k} type="button" role="tab" aria-selected={modal === k} onClick={() => setModal(k)}
+                    className={"px-3 py-1.5 rounded-md inline-flex items-center gap-1.5 whitespace-nowrap transition-colors " + (modal === k ? "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.12)] text-gray-900" : "text-gray-500 hover:text-gray-800")}>
+                    {/* phone: the short word; from sm the block's full name */}
+                    <span aria-hidden="true">{ic}</span><span className="sm:hidden">{short}</span><span className="hidden sm:inline">{label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("truck")}>
               {/* Same header shape as the other blocks: icon tile, title, primary action at the
                   right end, a one-line caption under it with the secondary action beside it. */}
@@ -6779,16 +6897,17 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     {showFleet ? "Done" : "Manage fleet"}
                   </button>
                 </div>
-                {/* "+ Add truck" while a loading truck still has room: say which, and let them add anyway */}
+                {/* "+ Add truck" refused: a truck's vehicle / driver / phone are not in yet (no way past it), or a loading truck
+                    still has room (say which, and let them add anyway) */}
                 {truckSpaceHint && (
                   <div role="status" className="ui-reveal-in mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-amber-50 ring-1 ring-amber-300 px-3 py-2">
                     <span aria-hidden="true" className="text-base leading-none">⚠️</span>
                     <div className="min-w-[13rem] flex-1 text-xs text-amber-900">
-                      <b>Truck {truckSpaceHint.no} still has space</b> (about {truckSpaceHint.freePct}% free) — fill it before adding another truck.
+                      <b>{`Truck ${truckSpaceHint.no}`} {"still has space"}</b>{` (~${truckSpaceHint.freePct}%)`}{" — "}{"fill it before adding another truck."}
                     </div>
                     <div className="flex items-center gap-2">
                       <button onClick={() => { setTruckSpaceHint(null); truckRefs.current[truckSpaceHint.id]?.scrollIntoView({ behavior: "smooth", block: "center" }); }}
-                        className="h-7 px-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold transition-colors">Fill Truck {truckSpaceHint.no}</button>
+                        className="h-7 px-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold transition-colors">{"Fill this truck"}</button>
                       <button onClick={addTruckNow}
                         className="h-7 px-2.5 rounded-lg bg-white ring-1 ring-amber-300 hover:bg-amber-100 text-amber-800 text-xs font-semibold transition-colors">Add new truck anyway</button>
                     </div>
@@ -6825,8 +6944,64 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   </div>
                 </div>
               )}
-              {/* Trucks */}
-              {trucks.length === 0 ? (
+              {/* ── NEW TRUCK (a draft until saved) ── vehicle no., driver and phone first; "Save truck" registers it */}
+              {truckDrafts.map((truckDraft) => {
+                const dk = truckDraft.key;
+                const miss = truckMissingOf(truckDraft);
+                // vehicles already a truck on this event, or already picked in ANOTHER open form, can't be picked here
+                const onEvent = new Set([...eventTruckList.map(t => t.vehicle), ...truckDrafts.filter(x => x.key !== dk).map(x => x.vehicle)].map(v => String(v || "").trim().toLowerCase()).filter(Boolean));
+                return (
+                  <div key={dk} ref={el => { draftRefs.current[dk] = el; }} className={"ui-reveal-in mx-3 sm:mx-4 mt-3 rounded-xl ring-2 p-3 space-y-2.5 scroll-mt-4 transition-[background-color,box-shadow] duration-500 " + (draftFlash === dk ? "ring-blue-500 bg-blue-100/70 shadow-[0_0_0_5px_rgba(59,130,246,0.25)]" : "ring-blue-300 bg-blue-50/40")}>
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <span className="shrink-0 text-sm font-semibold text-gray-900">New truck</span>
+                      <span className="text-[11px] text-gray-500">saved once vehicle no., driver and phone are filled</span>
+                      {/* "+ Add truck" pressed while this one is still missing details */}
+                      {draftNeed === dk && miss.length > 0 && <span className="text-[11px] font-semibold text-red-700">{"Fill this truck's details first, then add the next one."}</span>}
+                    </div>
+                    {eventTrucks.length > 0 && (
+                      <div>
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Pick from fleet</div>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {eventTrucks.map(f => {
+                            const on = truckDraft.vehicle === f.vehicle && truckDraft.driver === f.driver;
+                            const used = !on && onEvent.has(String(f.vehicle || "").trim().toLowerCase()); // already a truck / in another form: one vehicle, one truck
+                            return (
+                              <button key={f.id} type="button" disabled={used} title={used ? "Already a truck on this event (or in another new truck) — use “+ Add trip” on that truck" : undefined}
+                                onClick={() => setTruckDraftField(dk, { vehicle: f.vehicle || "", driver: f.driver || "", phone: String(f.phone || "").replace(/\D/g, "").slice(0, 10) })} aria-pressed={on}
+                                className={"text-left px-2.5 py-1.5 rounded-lg ring-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed " + (on ? "bg-blue-50 ring-blue-300" : "bg-white ring-gray-200 hover:bg-gray-50")}>
+                                <span className={"block text-[11px] font-semibold tabular-nums " + (on ? "text-blue-700" : "text-gray-800")}>{f.vehicle || f.driver}</span>
+                                {f.vehicle && f.driver && <span className={"block text-[10px] capitalize " + (on ? "text-blue-600" : "text-gray-500")}>{used ? "on this event" : String(f.driver).toLowerCase()}</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {[["Vehicle no.", "vehicle"], ["Driver", "driver"], ["Phone", "phone"]].map(([l, k]) => {
+                        const m = miss.includes(l);
+                        return (
+                          <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}>
+                            <label className={"block text-[10px] font-semibold uppercase tracking-[0.06em] " + (m ? "text-red-600" : "text-gray-400")}>{l}{m && " *"}</label>
+                            <input value={truckDraft[k] || ""}
+                              onChange={e => { const v = k === "phone" ? phone10(e.target.value) : e.target.value; setTruckDraftField(dk, { [k]: v }); }}
+                              onKeyDown={e => { if (e.key === "Enter") saveTruckDraft(dk); if (e.key === "Escape") dropDraft(dk); }}
+                              {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })}
+                              className={"mt-1 w-full h-9 rounded-lg bg-white ring-1 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 " + (m ? "ring-red-300" : "ring-gray-200")} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex items-center justify-end gap-2">
+                      {miss.length > 0 && <span className="mr-auto text-[11px] text-red-600">{"Fill these first:"} {miss.join(", ")}</span>}
+                      <button type="button" onClick={() => dropDraft(dk)} className="h-8 px-3 rounded-lg bg-white ring-1 ring-gray-200 hover:bg-gray-50 text-xs font-semibold text-gray-700 transition-colors">Cancel</button>
+                      <button type="button" onClick={() => saveTruckDraft(dk)} disabled={miss.length > 0}
+                        className="h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:hover:bg-blue-600 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors">Save truck</button>
+                    </div>
+                  </div>
+                );
+              })}              {/* Trucks */}
+              {trucks.length === 0 && truckDrafts.length ? null : trucks.length === 0 ? (
                 /* An empty state that says what to do, not a sentence floating in white space. */
                 <div className="px-4 py-7 flex flex-col items-center text-center">
                   <span aria-hidden="true" className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-lg leading-none">🚛</span>
@@ -6854,8 +7029,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             </span>
                             <span className="text-sm font-semibold text-gray-900 shrink-0">Truck {truckNumById.get(t.id)}</span>
                             <span className="min-w-0 truncate text-[12px] text-gray-500">{[t.vehicle, t.driver].filter(Boolean).join(" · ") || "no vehicle yet"}</span>
-                            {truckSpaceHint?.id === t.id && <span className="shrink-0 ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-white">Fill this first</span>}
-                            {t.trips.length > 1 && <span className={"shrink-0 text-[10px] font-semibold text-gray-400 " + (truckSpaceHint?.id === t.id ? "" : "ml-auto")}>{t.trips.length} trips</span>}
+                            {/* every truck still missing vehicle / driver / phone says so, shut or open; the "has room" one says fill it first */}
+                            {truckMissing(t).length > 0
+                              ? <span className="shrink-0 ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-700 ring-1 ring-red-200">Details needed</span>
+                              : truckSpaceHint?.id === t.id && <span className="shrink-0 ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-white">Fill this first</span>}
+                            {t.trips.length > 1 && <span className={"shrink-0 text-[10px] font-semibold text-gray-400 " + (truckMissing(t).length > 0 || truckSpaceHint?.id === t.id ? "" : "ml-auto")}>{t.trips.length} trips</span>}
                           </div>
                           <div className="mt-1.5 pl-5 space-y-1">
                             {t.phone && <span className="block text-[11px] text-gray-500 tabular-nums">📞 {t.phone}</span>}
@@ -6906,11 +7084,15 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       {/* Two to a row on a phone, phone number full width under them — three
                           full-width fields stacked made each truck a screen tall before its items. */}
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {[["Vehicle no.", "vehicle"], ["Driver", "driver"], ["Phone", "phone"]].map(([l, k]) => (
-                          <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className="block text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{l}</label><TruckTextBox value={t[k] || ""} clean={k === "phone" ? phone10 : undefined} onCommit={v => setTruck(t.id, { [k]: v })} {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })} className="mt-1 w-full h-9 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" /></div>
-                        ))}
+                        {[["Vehicle no.", "vehicle"], ["Driver", "driver"], ["Phone", "phone"]].map(([l, k]) => {
+                          // a required field still empty (or a phone short of 10 digits) is ringed red, with a * on its label
+                          const miss = truckMissing(t).includes(l === "Phone" ? "Phone" : l);
+                          return (
+                          <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className={"block text-[10px] font-semibold uppercase tracking-[0.06em] " + (miss ? "text-red-600" : "text-gray-400")}>{l}{miss && " *"}</label><TruckTextBox value={t[k] || ""} clean={k === "phone" ? phone10 : undefined} onCommit={v => setTruck(t.id, { [k]: v })} {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })} className={"mt-1 w-full h-9 rounded-lg bg-white ring-1 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 " + (miss ? "ring-red-300 bg-red-50/40" : "ring-gray-200")} /></div>
+                          );
+                        })}
                       </div>
-                      <button onClick={() => addTrip(t.id)} className="h-8 px-3 rounded-lg ring-1 ring-dashed ring-gray-300 text-gray-500 hover:text-gray-700 hover:ring-gray-400 text-xs font-semibold transition-colors">+ Add trip</button>
+                      <button onClick={() => addTrip(t.id)} disabled={truckMissing(t).length > 0} title={truckMissing(t).length > 0 ? `Fill ${truckMissing(t).join(", ")} first` : undefined} className="h-8 px-3 rounded-lg ring-1 ring-dashed ring-gray-300 text-gray-500 hover:text-gray-700 hover:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-semibold transition-colors">+ Add trip</button>
                       {/* ── EACH TRIP IS ITS OWN RUN ── its own status, its own challan, its own items
                           (owner ask, 2026-11-23: "the same truck makes multiple trips... for trip 2,
                           dont show me items that have already fully gone out for trip 1"). Only the
@@ -6930,7 +7112,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         // Only the NEWEST trip is still being loaded - every earlier one already left
                         // the moment a later trip started (owner ask, 2026-11-23), so it's locked from
                         // further editing here (its status was already bumped to Dispatched in addTrip).
-                        const locked = tripI !== t.trips.length - 1;
+                        // gated: this truck's vehicle / driver / phone are not in yet - nothing loads on it until they are
+                        // (owner ask 2026-11-25); every load control below is shut the same way a dispatched trip's is
+                        const gated = truckMissing(t).length > 0;
+                        const locked = tripI !== t.trips.length - 1 || gated;
                         const oc = truckOccs[trip.id] || { used: 0, byDept: [], unknown: 0 };
                         const pct = Math.round(oc.used * 100);
                         const over = oc.used > 1.005, full = oc.used >= 0.999;
@@ -6965,6 +7150,14 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             </div>
                           )}
                           <div className="space-y-2.5">
+                            {gated && (
+                              <div role="alert" className="flex items-start gap-2 rounded-lg bg-red-50 ring-1 ring-red-200 px-3 py-2 text-xs text-red-800">
+                                <span aria-hidden="true" className="leading-none mt-px">🚫</span>
+                                {/* pieces the Hindi screen (lib/ims/uiHindiMore) finds whole: "Fill these first:" + the fields, never a
+                                    sentence with the field names inside it (it read "फ़िल्ल ... अबोव फ़र्स्ट") */}
+                                <span><b>{"Fill these first:"} {truckMissing(t).join(", ")}</b>{" — "}{"nothing can be loaded on this truck until they are filled."}</span>
+                              </div>
+                            )}
                             {/* ── WHO FILLS THIS TRIP ── the bar itself is in the header above; opened, it
                                 adds each department's share of it and what to do when it is full. */}
                             {(oc.byDept.length > 0 || oc.unknown > 0) && (
@@ -6980,7 +7173,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             )}
                             <div className="flex items-center gap-2 flex-wrap">
                               <select value={trip.status || "loading"} onChange={e => setTripStatus(t.id, trip.id, e.target.value)} disabled={locked} className="h-8 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-xs font-medium capitalize focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-60 disabled:cursor-not-allowed">{TRUCK_STATUS.map(s => <option key={s} value={s}>{s}</option>)}</select>
-                              {locked && <span className="text-[10px] text-gray-400">🔒 already dispatched - a later trip exists</span>}
+                              {tripI !== t.trips.length - 1 && <span className="text-[10px] text-gray-400">🔒 already dispatched - a later trip exists</span>}
                               {t.phone && <a href={"tel:" + t.phone} className="h-8 inline-flex items-center text-xs font-semibold text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 rounded-lg px-2.5 hover:bg-emerald-100" title={"Call " + (t.driver || "driver") + " · " + t.phone}>Call {t.phone}</a>}
                               <button onClick={() => downloadTruckChallanPdf(t, trip.id, truckNumById.get(t.id), tripI + 1)} disabled={!!challanPdfBusy} className="h-8 ml-auto text-xs font-semibold bg-white ring-1 ring-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-60 px-3 rounded-lg transition-colors">{challanPdfBusy === trip.id ? "Making PDF…" : "Download PDF"}</button>
                               <button onClick={() => printTruckChallan(t, trip.id, truckNumById.get(t.id), tripI + 1)} className="h-8 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white px-3 rounded-lg transition-colors">Print challan</button>

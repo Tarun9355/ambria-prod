@@ -76,7 +76,9 @@ describe("what the role is NOT shown - each surface is gated on onsiteOnly in th
   it("every planning-tile key in the tile array other than inv is dropped by that filter (fabreq, carpet, truss, mp, actuals, truck, dism)", () => {
     const tiles = slice("const tiles = [\n                dept === \"Fabric\"", "].filter((t) => t && (!onsiteOnly");
     const keys = [...tiles.matchAll(/\bk: "([a-z]+)"/g)].map((m) => m[1]);
-    expect(keys).toEqual(expect.arrayContaining(["fabreq", "inv", "carpet", "truss", "mp", "actuals", "truck", "dism"]));
+    expect(keys).toEqual(expect.arrayContaining(["fabreq", "inv", "carpet", "truss", "mp", "actuals", "truck"]));
+    // the Dismantle plan is no tile of its own any more - it is the "Return" tab of the Trucks & return tile (owner ask 2026-11-25)
+    expect(tiles).toContain('k: "truck", also: ["dism"]');
   });
   it("RISK guard: the Planning view is mounted for the role only to host the Inventory tile + its panel (both views render in one pass)", () => {
     expect(src).toContain('{(opsView === "planning" || onsiteOnly) && dept !== PAINT && (<>');
