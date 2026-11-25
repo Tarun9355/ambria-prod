@@ -6310,7 +6310,6 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   <div className="px-3 py-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 bg-blue-50 border-b border-blue-100">
                     <span aria-hidden="true">🚚</span>
                     <span className="text-[13px] font-semibold text-blue-900">{"Added on trucks (not in the deal)"}</span>
-                    <span className="text-[11px] text-blue-700/80">{"blocked in stock · not billed to the client"}</span>
                     <span className="ml-auto text-[13px] font-bold text-gray-900 tabular-nums">{fmt(truckExtraTotal)}</span>
                   </div>
                   <div className="divide-y divide-blue-100/70">
