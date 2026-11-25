@@ -40,6 +40,8 @@ Add trip ¦ ट्रिप जोड़ें
 Add an item not in this deal ¦ डील के बाहर का आइटम जोड़ें
 goes on this trip and its challan ¦ इस ट्रिप और इसके चालान में जाएगा
 No item picked ¦ कोई आइटम नहीं चुना
+in stock ¦ स्टॉक में
+All ¦ सब
 No item matches this search. ¦ इस खोज से कोई आइटम नहीं मिला।
 Pick a sub-category above, or search. ¦ ऊपर सब-कैटेगरी चुनें, या खोजें।
 Trucks & dismantle ¦ ट्रक और डिसमेंटल

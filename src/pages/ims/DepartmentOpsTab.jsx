@@ -8345,82 +8345,105 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         const m = addItemModal;
         const set = (patch) => setAddItemModal(x => (x ? { ...x, ...patch } : x));
         const close = () => setAddItemModal(null);
-        const subs = [...deptInventoryBySub.keys()].sort();
+        const subs = [...deptInventoryBySub.keys()].sort((x, y) => x.localeCompare(y, undefined, { sensitivity: "base" }));
+        const all = subs.flatMap(s => (deptInventoryBySub.get(s) || []).map(i => ({ ...i, _sub: s })));
         const q = String(m.q || "").trim().toLowerCase();
-        // a search looks through every sub-category; otherwise the chosen sub-category's items
-        const items = q
-          ? subs.flatMap(s => (deptInventoryBySub.get(s) || []).map(i => ({ ...i, _sub: s }))).filter(i => String(i.name || "").toLowerCase().includes(q))
-          : m.sub ? (deptInventoryBySub.get(m.sub) || []).map(i => ({ ...i, _sub: m.sub })) : [];
-        const picked = m.invId ? items.find(i => i.id === m.invId) || subs.flatMap(s => deptInventoryBySub.get(s) || []).find(i => i.id === m.invId) : null;
-        const qtyOk = Number(m.qty) > 0;
+        // what shows: a search looks through everything; else one sub-category, or every item grouped by sub-category ("All",
+        // the default - the modal used to open on an empty "pick a sub-category" box)
+        const shown = q ? all.filter(i => String(i.name || "").toLowerCase().includes(q) || i._sub.toLowerCase().includes(q))
+          : m.sub ? all.filter(i => i._sub === m.sub) : all;
+        const groups = (q || m.sub) ? [["", shown]] : subs.map(s => [s, shown.filter(i => i._sub === s)]).filter(([, l]) => l.length);
+        const picked = m.invId ? all.find(i => i.id === m.invId) || null : null;
+        const qtyN = Math.max(0, Math.floor(Number(m.qty) || 0));
         const add = () => {
-          if (!picked || !qtyOk) return;
-          addTripCustomItem(m.truckId, m.tripId, picked, m.qty);
-          set({ invId: "", qty: 1, added: [...(m.added || []), `${picked.name} ×${Number(m.qty)}`] });
+          if (!picked || !(qtyN > 0)) return;
+          addTripCustomItem(m.truckId, m.tripId, picked, qtyN);
+          set({ invId: "", qty: 1, added: [...(m.added || []), `${picked.name} ×${qtyN}`] });
+        };
+        const stockOf = (i) => Number(i.qty ?? i.qtyOwned);
+        const card = (i) => {
+          const on = m.invId === i.id;
+          const ph = i.img || (Array.isArray(i.photoUrls) && i.photoUrls[0]) || "";
+          const st = stockOf(i);
+          return (
+            <button key={i.id} type="button" onClick={() => set({ invId: on ? "" : i.id })} aria-pressed={on}
+              className={"relative flex flex-col text-left rounded-xl bg-white overflow-hidden transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 " + (on ? "ring-2 ring-blue-500 shadow-[0_6px_16px_-8px_rgba(37,99,235,0.6)]" : "ring-1 ring-gray-200 hover:shadow-[0_6px_16px_-10px_rgba(15,23,42,0.35)]")}>
+              {ph ? <img src={thumbUrl(ph, 160)} loading="lazy" decoding="async" alt="" className="w-full aspect-square object-cover bg-gray-100" onError={e => { e.target.style.display = "none"; }} />
+                : <div className="w-full aspect-square bg-gray-100 flex items-center justify-center text-gray-300 text-2xl">📦</div>}
+              {on && <span aria-hidden="true" className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center shadow">✓</span>}
+              <span className="px-2 pt-1.5 text-[11px] font-medium text-gray-800 leading-snug line-clamp-2" title={i.name}>{i.name}</span>
+              <span className="px-2 pb-2 pt-0.5 text-[10px] text-gray-400 truncate">{Number.isFinite(st) ? `${st} ${"in stock"}` : ""}{q && Number.isFinite(st) ? " · " : ""}{q ? i._sub : ""}</span>
+            </button>
+          );
+        };
+        const chip = (key, label, count) => {
+          const on = (m.sub || "") === key;
+          return (
+            <button key={key || "__all"} type="button" onClick={() => set({ sub: key, invId: "", q: "" })} aria-pressed={on}
+              className={"shrink-0 inline-flex items-center gap-1.5 px-3 h-8 rounded-full text-xs font-medium ring-1 transition-colors " + (on ? "bg-gray-900 text-white ring-gray-900" : "bg-white text-gray-700 ring-gray-200 hover:bg-gray-50")}>
+              {label}<span className={"tabular-nums text-[10px] " + (on ? "text-white/70" : "text-gray-400")}>{count}</span>
+            </button>
+          );
         };
         return (
           <div data-hi-scope onClick={close} onKeyDown={e => { if (e.key === "Escape") close(); }} className="fixed inset-0 z-[9999] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div role="dialog" aria-modal="true" aria-label="Add an item not in this deal" onClick={e => e.stopPropagation()}
-              className="bg-white w-full sm:w-[min(760px,100%)] max-h-[92vh] sm:max-h-[88vh] flex flex-col overflow-hidden rounded-t-2xl sm:rounded-2xl shadow-2xl">
-              <div className="px-4 sm:px-5 py-3.5 border-b border-gray-100 flex items-start justify-between gap-3">
+              className="bg-white w-full sm:w-[min(820px,100%)] h-[90vh] sm:h-[min(720px,88vh)] flex flex-col overflow-hidden rounded-t-2xl sm:rounded-2xl shadow-2xl">
+              {/* head: what this is, which truck it goes on, close */}
+              <div className="px-4 sm:px-5 pt-4 pb-3 flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="font-semibold text-gray-900">{"Add an item not in this deal"}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">{m.title} · {"goes on this trip and its challan"}</p>
+                  <p className="text-[15px] font-semibold text-gray-900">{"Add an item not in this deal"}</p>
+                  <p className="text-xs text-gray-500 mt-0.5"><span className="font-medium text-gray-700">{m.title}</span> · {"goes on this trip and its challan"}</p>
                 </div>
                 <button type="button" onClick={close} aria-label="Close" className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-800 hover:bg-gray-100">
                   <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
                 </button>
               </div>
-              <div className="px-4 sm:px-5 pt-3 pb-2 space-y-2.5 border-b border-gray-100">
+              {/* search + sub-category chips (one scrolling row) */}
+              <div className="px-4 sm:px-5 pb-3 space-y-2.5 border-b border-gray-100">
+                <div className="relative">
+                  <svg aria-hidden="true" width="15" height="15" viewBox="0 0 16 16" fill="none" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><circle cx="7" cy="7" r="4.75" stroke="currentColor" strokeWidth="1.5" /><path d="M10.5 10.5 L13.5 13.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
+                  <input autoFocus value={m.q} onChange={e => set({ q: e.target.value, invId: "" })} placeholder="Search items…"
+                    className="w-full h-10 rounded-xl bg-gray-50 ring-1 ring-gray-200 pl-9 pr-3 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                </div>
+                <ChipScrollRow>
+                  {chip("", "All", all.length)}
+                  {subs.map(s => chip(s, s, (deptInventoryBySub.get(s) || []).length))}
+                </ChipScrollRow>
+              </div>
+              {/* the items, by photo - grouped by sub-category under All */}
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-3 bg-gray-50/70">
                 {m.added?.length > 0 && (
-                  <div className="rounded-lg bg-emerald-50 ring-1 ring-emerald-200 px-3 py-1.5 text-xs text-emerald-800">✓ {"Added"}: {m.added.join(", ")}</div>
+                  <div className="mb-3 rounded-lg bg-emerald-50 ring-1 ring-emerald-200 px-3 py-2 text-xs text-emerald-800"><b>✓ {"Added"}:</b> {m.added.join(", ")}</div>
                 )}
-                <input autoFocus value={m.q} onChange={e => set({ q: e.target.value, invId: "" })} placeholder="Search items…"
-                  className="w-full h-9 rounded-lg bg-white ring-1 ring-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                {!q && (
-                  <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
-                    {subs.map(s => {
-                      const on = m.sub === s;
-                      return (
-                        <button key={s} type="button" onClick={() => set({ sub: on ? "" : s, invId: "" })} aria-pressed={on}
-                          className={"px-2.5 py-1 rounded-full text-[11px] font-medium ring-1 transition-colors " + (on ? "bg-blue-600 text-white ring-blue-600" : "bg-white text-gray-700 ring-gray-200 hover:bg-gray-50")}>
-                          {s}
-                        </button>
-                      );
-                    })}
+                {shown.length > 0 ? groups.map(([g, list]) => (
+                  <div key={g || "_"} className="mb-4 last:mb-0">
+                    {g && <div className="mb-2 flex items-baseline gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500">{g}</span><span className="text-[10px] text-gray-400 tabular-nums">{list.length}</span></div>}
+                    <div className="grid grid-cols-3 sm:grid-cols-5 gap-2.5">{list.map(card)}</div>
+                  </div>
+                )) : (
+                  <div className="h-full flex flex-col items-center justify-center gap-1 text-center px-6">
+                    <span aria-hidden="true" className="text-2xl">🔍</span>
+                    <span className="text-sm font-medium text-gray-700">{"No item matches this search."}</span>
                   </div>
                 )}
               </div>
-              {/* the photo grid - a sub-category can hold several near-identical names; the photo is how the floor tells them apart */}
-              <div className="flex-1 min-h-[160px] overflow-y-auto px-4 sm:px-5 py-3 bg-gray-50">
-                {items.length > 0 ? (
-                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                    {items.map(i => {
-                      const on = m.invId === i.id;
-                      const ph = i.img || (Array.isArray(i.photoUrls) && i.photoUrls[0]) || "";
-                      return (
-                        <button key={i.id} type="button" onClick={() => set({ invId: on ? "" : i.id })} aria-pressed={on}
-                          className={"flex flex-col items-center gap-1 p-1.5 rounded-lg bg-white transition-colors " + (on ? "ring-2 ring-blue-500" : "ring-1 ring-gray-200 hover:bg-gray-50")}>
-                          {ph ? <img src={thumbUrl(ph, 112)} loading="lazy" decoding="async" alt="" className="w-full aspect-square rounded-md object-cover" onError={e => { e.target.style.display = "none"; }} />
-                            : <div className="w-full aspect-square rounded-md bg-gray-100 flex items-center justify-center text-gray-300 text-2xl">📦</div>}
-                          <span className="w-full text-[10.5px] text-gray-700 text-center leading-snug line-clamp-2" title={i.name}>{i.name}</span>
-                          {q && <span className="w-full text-[9.5px] text-gray-400 text-center truncate">{i._sub}</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="h-full min-h-[140px] flex items-center justify-center text-xs text-gray-400 text-center px-6">
-                    {q ? "No item matches this search." : "Pick a sub-category above, or search."}
-                  </div>
-                )}
-              </div>
-              <div className="px-4 sm:px-5 py-3 border-t border-gray-100 flex items-center gap-2">
-                <div className="min-w-0 flex-1 text-xs text-gray-600 truncate">{picked ? <b className="text-gray-900">{picked.name}</b> : <span className="text-gray-400">{"No item picked"}</span>}</div>
-                <input type="number" min="1" value={m.qty ?? 1} onChange={e => set({ qty: e.target.value })} onKeyDown={e => { if (e.key === "Enter") add(); }} aria-label="Quantity to add" disabled={!picked}
-                  className="h-9 w-16 rounded-lg bg-white ring-1 ring-gray-200 px-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50" />
-                <button type="button" onClick={add} disabled={!picked || !qtyOk}
-                  className="h-9 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors">+ {"Add"}</button>
+              {/* foot: the picked item, its qty (− n +), Add, Done */}
+              <div className="px-4 sm:px-5 py-3 border-t border-gray-100 flex flex-wrap items-center gap-2">
+                <div className="basis-full sm:basis-auto min-w-0 sm:min-w-[8rem] flex-1 flex items-center gap-2">
+                  {picked ? (<>
+                    {(() => { const ph = picked.img || (Array.isArray(picked.photoUrls) && picked.photoUrls[0]) || ""; return ph ? <img src={thumbUrl(ph, 40)} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" /> : <span className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">📦</span>; })()}
+                    <span className="min-w-0"><span className="block text-xs font-semibold text-gray-900 truncate">{picked.name}</span><span className="block text-[10px] text-gray-400 truncate">{picked._sub}</span></span>
+                  </>) : <span className="text-xs text-gray-400">{"No item picked"}</span>}
+                </div>
+                <div className={"inline-flex items-center rounded-lg ring-1 ring-gray-200 bg-white " + (picked ? "" : "opacity-50")}>
+                  <button type="button" disabled={!picked || qtyN <= 1} onClick={() => set({ qty: Math.max(1, qtyN - 1) })} aria-label="One less" className="w-9 h-9 text-gray-600 hover:bg-gray-50 rounded-l-lg disabled:opacity-40">−</button>
+                  <input type="number" min="1" value={m.qty ?? 1} onChange={e => set({ qty: e.target.value })} onKeyDown={e => { if (e.key === "Enter") add(); }} aria-label="Quantity to add" disabled={!picked}
+                    className="w-12 h-9 text-center text-sm font-semibold tabular-nums focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" />
+                  <button type="button" disabled={!picked} onClick={() => set({ qty: qtyN + 1 })} aria-label="One more" className="w-9 h-9 text-gray-600 hover:bg-gray-50 rounded-r-lg disabled:opacity-40">+</button>
+                </div>
+                <button type="button" onClick={add} disabled={!picked || !(qtyN > 0)}
+                  className="flex-1 sm:flex-none h-9 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold transition-colors">+ {"Add"}</button>
                 <button type="button" onClick={close} className="h-9 px-3 rounded-lg bg-white ring-1 ring-gray-200 hover:bg-gray-50 text-xs font-semibold text-gray-700">{"Done"}</button>
               </div>
             </div>
