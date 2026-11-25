@@ -5570,10 +5570,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   const hasReturn = SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0;
                   const left = hasReturn ? blockedItems.filter(it => unroutedQty(it) > 0).length : 0;
                   const returnTxt = !hasReturn ? "nothing to route" : left ? n(left, "item") + " left to route" : "all routed";
-                  return { k: "truck", also: ["dism"], icon: "🚚", title: "Trucks & return", sub: (
+                  return { k: "truck", also: ["dism"], icon: "🚚", title: "Trucks & dismantle", sub: (
                     <span className="block space-y-0.5">
                       <span className="flex items-baseline gap-1.5"><span className="shrink-0 w-12 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{"Going"}</span><span>{goingTxt}</span></span>
-                      <span className="flex items-baseline gap-1.5"><span className="shrink-0 w-12 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{"Return"}</span><span className={left ? "text-amber-700 font-semibold" : ""}>{returnTxt}</span></span>
+                      <span className="flex items-baseline gap-1.5"><span className="shrink-0 w-12 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">{"Dismantle"}</span><span className={left ? "text-amber-700 font-semibold" : ""}>{returnTxt}</span></span>
                     </span>
                   ) };
                 })(),
@@ -6860,8 +6860,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
             {/* ── TRUCKS & RETURN: GOING | RETURN ── one tile, two blocks (owner ask 2026-11-25): the loading block and the
                 dismantle block each stay exactly as they were; this switch sits above whichever of the two is open */}
             {(modal === "truck" || modal === "dism") && SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && (
-              <div role="tablist" aria-label="Trucks and return" className="inline-flex p-1 rounded-lg bg-gray-100 text-xs font-semibold">
-                {[["truck", "🚚", "Going", "Going · Loading & dispatch"], ["dism", "🔁", "Return", "Return · Dismantle & routing"]].map(([k, ic, short, label]) => (
+              <div role="tablist" aria-label="Trucks and dismantle" className="inline-flex p-1 rounded-lg bg-gray-100 text-xs font-semibold">
+                {[["truck", "🚚", "Going", "Going · Loading & dispatch"], ["dism", "🔁", "Dismantle", "Dismantle · Routing"]].map(([k, ic, short, label]) => (
                   <button key={k} type="button" role="tab" aria-selected={modal === k} onClick={() => setModal(k)}
                     className={"px-3 py-1.5 rounded-md inline-flex items-center gap-1.5 whitespace-nowrap transition-colors " + (modal === k ? "bg-white shadow-[0_1px_2px_rgba(16,24,40,0.12)] text-gray-900" : "text-gray-500 hover:text-gray-800")}>
                     {/* phone: the short word; from sm the block's full name */}

@@ -15,6 +15,10 @@ describe("uiHindi - truck notes", () => {
     ["New truck", "नया ट्रक"],
     ["Save truck", "ट्रक सेव करें"],
     ["+ Add trip", "+ ट्रिप जोड़ें"],
+    ["Trucks & dismantle", "ट्रक और डिसमेंटल"],
+    ["Dismantle", "डिसमेंटल"],
+    ["Dismantle · Routing", "डिसमेंटल · रूटिंग"],
+    ["Going", "जाना"],
   ])("%s", (en, hi) => {
     expect(uiHindi(en)).toBe(hi);
   });
