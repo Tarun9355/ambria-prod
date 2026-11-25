@@ -2868,21 +2868,20 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     setOpenTruck(hint.id);
     setTimeout(() => truckRefs.current[hint.id]?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
     clearTimeout(truckSpaceTimer.current);
-    // a missing-details note stays until the details are in (hintStale below); a "has room" note fades on its own
-    if (hint.kind !== "details") truckSpaceTimer.current = setTimeout(() => setTruckSpaceHint(null), 12000);
+    truckSpaceTimer.current = setTimeout(() => setTruckSpaceHint(null), 12000); // the light fades on its own
   };
   const addTruck = () => {
-    // 1. a truck with no vehicle no. / driver / phone yet: fill that one in first - no new truck until then (no "add anyway")
-    const bare = eventTruckList.find(t => truckMissing(t).length);
-    if (bare) { pointAtTruck({ kind: "details", id: bare.id, no: truckNumById.get(bare.id), missing: truckMissing(bare) }); return; }
-    // 2. a truck still loading with room left: fill it first (with "Add new truck anyway")
-    const roomy = eventTruckList.map(t => ({ t, used: truckRoomOf(t) })).find(x => x.used != null);
+    // "+ Add truck" is never refused (owner 2026-11-25: "add truck krne pe truck add krne do") - a truck still missing its
+    // vehicle no. / driver / phone stays shut for loading on its own card, and the new truck is itself saved only once its
+    // details are in (the New truck form). The one nudge left: a truck still loading with room left - fill it first, with
+    // "Add new truck anyway". A truck with no details can't be loaded yet, so it is never the one named.
+    const roomy = eventTruckList.filter(t => !truckMissing(t).length).map(t => ({ t, used: truckRoomOf(t) })).find(x => x.used != null);
     if (!roomy) { addTruckNow(); return; }
     pointAtTruck({ kind: "space", id: roomy.t.id, no: truckNumById.get(roomy.t.id), freePct: Math.max(1, Math.round((1 - roomy.used) * 100)) });
   };
   // the note goes as soon as it no longer holds: its truck gone, or (details) all three filled in, or (space) full / its trip left
   const hintTruckNow = truckSpaceHint ? eventTruckList.find(t => t.id === truckSpaceHint.id) : null;
-  const hintStale = !!truckSpaceHint && (!hintTruckNow || (truckSpaceHint.kind === "details" ? truckMissing(hintTruckNow).length === 0 : truckRoomOf(hintTruckNow) == null));
+  const hintStale = !!truckSpaceHint && (!hintTruckNow || truckRoomOf(hintTruckNow) == null);
   useEffect(() => { if (hintStale) setTruckSpaceHint(null); }, [hintStale]);
   const DEPT_BAR = { Furniture: "bg-amber-500", Floral: "bg-pink-500", Structure: "bg-slate-500", Tenting: "bg-emerald-500", Transport: "bg-orange-500", Lighting: "bg-yellow-400", Fabric: "bg-violet-500" };
   // A short "Can be made" line on a challan says where its units come from - "600 = 500 in stock + 100 outsourced" - so the
@@ -6813,17 +6812,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 </div>
                 {/* "+ Add truck" refused: a truck's vehicle / driver / phone are not in yet (no way past it), or a loading truck
                     still has room (say which, and let them add anyway) */}
-                {truckSpaceHint?.kind === "details" && (
-                  <div role="alert" className="ui-reveal-in mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-red-50 ring-1 ring-red-300 px-3 py-2">
-                    <span aria-hidden="true" className="text-base leading-none">🚫</span>
-                    <div className="min-w-[13rem] flex-1 text-xs text-red-900">
-                      <b>{`Truck ${truckSpaceHint.no}`}</b>{" — "}{"Fill these first:"} {truckSpaceHint.missing.join(", ")}{". "}{"A new truck can be added after that."}
-                    </div>
-                    <button onClick={() => truckRefs.current[truckSpaceHint.id]?.scrollIntoView({ behavior: "smooth", block: "center" })}
-                      className="h-7 px-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold transition-colors">{"Open truck"}</button>
-                  </div>
-                )}
-                {truckSpaceHint && truckSpaceHint.kind !== "details" && (
+                {truckSpaceHint && (
                   <div role="status" className="ui-reveal-in mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-amber-50 ring-1 ring-amber-300 px-3 py-2">
                     <span aria-hidden="true" className="text-base leading-none">⚠️</span>
                     <div className="min-w-[13rem] flex-1 text-xs text-amber-900">
@@ -6936,7 +6925,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                        other, and nothing marked where one truck's items stopped. */
                     <div key={t.id} ref={el => { truckRefs.current[t.id] = el; }}
                       // the truck with room, lit while the "fill it first" note shows
-                      className={"rounded-xl ring-1 p-3 space-y-2.5 scroll-mt-4 transition-[background-color,box-shadow] duration-500 " + (truckSpaceHint?.id === t.id ? (truckSpaceHint.kind === "details" ? "ring-2 ring-red-400 bg-red-50/50 shadow-[0_0_0_4px_rgba(248,113,113,0.22)]" : "ring-2 ring-amber-400 bg-amber-50/60 shadow-[0_0_0_4px_rgba(251,191,36,0.25)]") : openTruck === t.id ? "ring-blue-200" : "ring-gray-200")}>
+                      className={"rounded-xl ring-1 p-3 space-y-2.5 scroll-mt-4 transition-[background-color,box-shadow] duration-500 " + (truckSpaceHint?.id === t.id ? "ring-2 ring-amber-400 bg-amber-50/60 shadow-[0_0_0_4px_rgba(251,191,36,0.25)]" : openTruck === t.id ? "ring-blue-200" : "ring-gray-200")}>
                       {/* ── THE HEADER IS THE TRUCK, OPEN OR SHUT ──
                           Everything needed to tell trucks apart without opening one: number, plate,
                           driver, phone, and each trip's own status and how full IT is (a truck can
