@@ -7317,6 +7317,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
                                 {trip.custom.map(c => (
                                   <div key={c.id} className="flex items-center gap-2.5 px-2.5 py-2">
+                                    {/* its photo from Inventory, like every other loaded item (tap for the big one) */}
+                                    {(() => { const inv = (inventory || []).find(i => String(i.id) === String(c.invId)); const ph = inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || ""; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
                                     <div className="min-w-0 flex-1">
                                       <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2">{c.name}</div>
                                       <div className="mt-0.5 text-[10px] text-amber-700">{c.sub || "—"} · not in Build/Deal Check</div>
