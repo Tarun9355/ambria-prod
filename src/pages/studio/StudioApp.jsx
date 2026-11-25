@@ -11075,6 +11075,13 @@ export default function StudioApp() {
         buildStamps[idx] = { fnType: snap?.fnType || "", fnDate: snap?.fnDate || "" };
       });
       const merge = mergeLmsFunctions(restored, opts.lmsFunctions, { occupiedBuildIdxs, buildStamps, landingFnIdx: landingIdx });
+      // Logged BEFORE the early-return below — the incident this closes (Vipin Sohlet, 2026-11-25)
+      // is exactly the case where LMS reported a duplicate and nothing else was left to append, so
+      // `merge.toAppend` is empty and the early return would otherwise skip this warning entirely,
+      // leaving the drop invisible (regression review).
+      if (merge.droppedDuplicates?.length) {
+        console.warn(`[loadClientSession] LMS merge: dropped ${merge.droppedDuplicates.length} LMS function(s) that duplicated another LMS row already accounted for — no new function was appended for them.`, merge.droppedDuplicates);
+      }
       if (merge.blocked || !merge.toAppend.length) return merge;
       setExtraFunctions([...restoredExtras, ...merge.toAppend]);
       if (merge.evictIdxs.length) {
