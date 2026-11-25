@@ -8367,9 +8367,18 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
           const st = stockOf(i);
           return (
             <button key={i.id} type="button" onClick={() => set({ invId: on ? "" : i.id })} aria-pressed={on}
-              className={"relative flex flex-col text-left rounded-xl bg-white overflow-hidden transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 " + (on ? "ring-2 ring-blue-500 shadow-[0_6px_16px_-8px_rgba(37,99,235,0.6)]" : "ring-1 ring-gray-200 hover:shadow-[0_6px_16px_-10px_rgba(15,23,42,0.35)]")}>
-              {ph ? <img src={thumbUrl(ph, 160)} loading="lazy" decoding="async" alt="" className="w-full aspect-square object-cover bg-gray-100" onError={e => { e.target.style.display = "none"; }} />
-                : <div className="w-full aspect-square bg-gray-100 flex items-center justify-center text-gray-300 text-2xl">📦</div>}
+              className={"group relative flex flex-col text-left rounded-xl bg-white overflow-hidden transition-[box-shadow,transform] duration-150 hover:-translate-y-0.5 " + (on ? "ring-2 ring-blue-500 shadow-[0_6px_16px_-8px_rgba(37,99,235,0.6)]" : "ring-1 ring-gray-200 hover:shadow-[0_6px_16px_-10px_rgba(15,23,42,0.35)]")}>
+              {/* the photo zooms in on hover; a click on it opens it large (and picks the item, so it is ready to add when the photo shuts) */}
+              {ph ? (
+                <span className="relative block w-full aspect-square overflow-hidden bg-gray-100">
+                  <img src={thumbUrl(ph, 240)} loading="lazy" decoding="async" alt="" title="See the photo"
+                    onClick={e => { e.stopPropagation(); set({ invId: i.id }); setZoomImg(ph); }}
+                    className="w-full h-full object-cover cursor-zoom-in transition-transform duration-300 ease-out group-hover:scale-110 motion-reduce:transition-none motion-reduce:group-hover:scale-100" onError={e => { e.target.style.display = "none"; }} />
+                  <span aria-hidden="true" className="pointer-events-none absolute bottom-1.5 left-1.5 w-6 h-6 rounded-full bg-white/90 text-gray-700 flex items-center justify-center shadow opacity-0 group-hover:opacity-100 transition-opacity">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.75" stroke="currentColor" strokeWidth="1.5" /><path d="M10.5 10.5 L13.5 13.5 M7 5 V9 M5 7 H9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
+                  </span>
+                </span>
+              ) : <div className="w-full aspect-square bg-gray-100 flex items-center justify-center text-gray-300 text-2xl">📦</div>}
               {on && <span aria-hidden="true" className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center shadow">✓</span>}
               <span className="px-2 pt-1.5 text-[11px] font-medium text-gray-800 leading-snug line-clamp-2" title={i.name}>{i.name}</span>
               <span className="px-2 pb-2 pt-0.5 text-[10px] text-gray-400 truncate">{Number.isFinite(st) ? `${st} ${"in stock"}` : ""}{q && Number.isFinite(st) ? " · " : ""}{q ? i._sub : ""}</span>
@@ -8534,10 +8543,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         document.body
       )}
       {/* Click-to-enlarge lightbox — ops can view any item/kit photo big & clear */}
-      {zoomImg && (
-        <div onClick={() => setZoomImg(null)} className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out">
-          <img src={fitUrl(zoomImg, 700, 75)} loading="lazy" decoding="async" alt="" className="max-w-[90vw] max-h-[90vh] rounded-lg object-contain shadow-2xl" onClick={e => e.stopPropagation()} />
-        </div>
+      {/* on document.body and above the other overlays, so a photo opened from inside a modal (Add an item) shows over it */}
+      {zoomImg && createPortal(
+        <div onClick={() => setZoomImg(null)} onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setZoomImg(null); } }} tabIndex={-1} ref={el => el?.focus()}
+          className="fixed inset-0 z-[10000] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out outline-none">
+          <img src={fitUrl(zoomImg, 900, 80)} loading="lazy" decoding="async" alt="" className="max-w-[90vw] max-h-[90vh] rounded-lg object-contain shadow-2xl" onClick={e => e.stopPropagation()} />
+          <button type="button" onClick={() => setZoomImg(null)} aria-label="Close photo" className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/90 hover:bg-white text-gray-800 flex items-center justify-center shadow-lg">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
+          </button>
+        </div>,
+        document.body
       )}
       {confirmDialog}
       {dcModalOpen && sel && <DeptIncomeModal eo={sel} depts={bookDepts} startDept={dept} onClose={() => setDcModalOpen(false)} liveFloralDetail={liveFloral?.floralDetail || null} inventory={inventory} mandiCatalogue={settings?.mandiCatalogue || []} />}
