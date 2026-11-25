@@ -5272,13 +5272,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       event order (siteSupervisorId/Name/Phone) rather than just an id, so Studio
                       can show who's assigned without fetching the supervisor roster itself. */}
                   {/* the Site-Supervisor-view-only role never picks the event's supervisor: no dropdown (owner ask 2026-11-20), the name only when there is one */}
-                  {/* nobody picked for the event → the venue's fixed supervisor(s) stand in, marked "fixed at venue" */}
+                  {/* nobody picked for the event → the venue's fixed supervisor(s) show, just by name (owner ask 2026-11-25) */}
                   {(() => { const vs = sel.siteSupervisorId || sel.siteSupervisorName ? [] : venueSupervisorsOf(sel); return (
                   onsiteOnly ? ((sel.siteSupervisorName || vs.length) ? (
                     <div className="mt-1 flex items-center gap-1.5 text-xs">
                       <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
                       <span className="font-medium text-gray-700 truncate">{sel.siteSupervisorName || vs.map((s) => s.name).join(", ")}</span>
-                      {!sel.siteSupervisorName && <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 rounded px-1 py-px shrink-0">fixed at venue</span>}
                     </div>
                   ) : null) : (
                   <div className="mt-1 flex items-center gap-1.5 text-xs">
@@ -5295,7 +5294,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       }}
                       className="min-w-0 border border-gray-200 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-700 bg-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <option value="">{vs.length ? `${vs.map((s) => s.name).join(", ")} (fixed at venue)` : "— unassigned —"}</option>
+                      <option value="">{vs.length ? vs.map((s) => s.name).join(", ") : "— unassigned —"}</option>
                       {supervisors.filter((s) => s.active !== false || s.id === sel.siteSupervisorId).map((s) => (
                         <option key={s.id} value={s.id}>{s.name}{s.active === false ? " (inactive)" : ""}</option>
                       ))}
