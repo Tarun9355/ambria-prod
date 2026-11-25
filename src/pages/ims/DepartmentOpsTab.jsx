@@ -126,12 +126,16 @@ function crewIcon(type) {
 // Stock shortfalls already alerted for items added on trucks (event|item|date|qty) - once per browser session, not on every open.
 const TRUCK_EXTRA_ALERTED = new Set();
 
-// What a truck still needs before it is a real truck (Loading & dispatch): vehicle no., driver and a 10-digit phone.
-const truckMissingOf = (t) => [
-  !String(t?.vehicle || "").trim() && "Vehicle no.",
-  !String(t?.driver || "").trim() && "Driver",
-  String(t?.phone || "").replace(/\D/g, "").length !== 10 && "Phone",
-].filter(Boolean);
+// What a truck still needs before it is a real truck (Loading & dispatch): vehicle no. and driver. The phone is optional (owner ask
+// 2026-11-25) - but a number typed in must be all 10 digits, so a half-typed one is never saved as the driver's number.
+const truckMissingOf = (t) => {
+  const ph = String(t?.phone || "").replace(/\D/g, "").length;
+  return [
+    !String(t?.vehicle || "").trim() && "Vehicle no.",
+    !String(t?.driver || "").trim() && "Driver",
+    ph > 0 && ph !== 10 && "Phone",
+  ].filter(Boolean);
+};
 
 // A row of chips that scrolls sideways on a phone, with "+N ›" / "‹" buttons on its edges for the chips out of view - a row cut
 // at the edge did not say "scroll" (owner 2026-11-21: "isme pta toh chale scroll krna hai"). Same hint as IMS Inventory's category row.
@@ -7132,7 +7136,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   <div key={dk} ref={el => { draftRefs.current[dk] = el; }} className={"ui-reveal-in mx-3 sm:mx-4 mt-3 rounded-xl ring-2 p-3 space-y-2.5 scroll-mt-4 transition-[background-color,box-shadow] duration-500 " + (draftFlash === dk ? "ring-blue-500 bg-blue-100/70 shadow-[0_0_0_5px_rgba(59,130,246,0.25)]" : "ring-blue-300 bg-blue-50/40")}>
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                       <span className="shrink-0 text-sm font-semibold text-gray-900">New truck</span>
-                      <span className="text-[11px] text-gray-500">saved once vehicle no., driver and phone are filled</span>
+                      <span className="text-[11px] text-gray-500">saved once vehicle no. and driver are filled</span>
                       {/* "+ Add truck" pressed while this one is still missing details */}
                       {draftNeed === dk && miss.length > 0 && <span className="text-[11px] font-semibold text-red-700">{"Fill this truck's details first, then add the next one."}</span>}
                     </div>
@@ -7164,7 +7168,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             <input value={truckDraft[k] || ""}
                               onChange={e => { const v = k === "phone" ? phone10(e.target.value) : e.target.value; setTruckDraftField(dk, { [k]: v }); }}
                               onKeyDown={e => { if (e.key === "Enter") saveTruckDraft(dk); if (e.key === "Escape") dropDraft(dk); }}
-                              {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })}
+                              {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "optional · 10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })}
                               className={"mt-1 w-full h-9 rounded-lg bg-white ring-1 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 " + (m ? "ring-red-300" : "ring-gray-200")} />
                           </div>
                         );
@@ -7266,7 +7270,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           // a required field still empty (or a phone short of 10 digits) is ringed red, with a * on its label
                           const miss = truckMissing(t).includes(l === "Phone" ? "Phone" : l);
                           return (
-                          <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className={"block text-[10px] font-semibold uppercase tracking-[0.06em] " + (miss ? "text-red-600" : "text-gray-400")}>{l}{miss && " *"}</label><TruckTextBox value={t[k] || ""} clean={k === "phone" ? phone10 : undefined} onCommit={v => setTruck(t.id, { [k]: v })} {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })} className={"mt-1 w-full h-9 rounded-lg bg-white ring-1 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 " + (miss ? "ring-red-300 bg-red-50/40" : "ring-gray-200")} /></div>
+                          <div key={k} className={k === "phone" ? "col-span-2 sm:col-span-1" : ""}><label className={"block text-[10px] font-semibold uppercase tracking-[0.06em] " + (miss ? "text-red-600" : "text-gray-400")}>{l}{miss && " *"}</label><TruckTextBox value={t[k] || ""} clean={k === "phone" ? phone10 : undefined} onCommit={v => setTruck(t.id, { [k]: v })} {...(k === "phone" ? { inputMode: "numeric", maxLength: 10, placeholder: "optional · 10 digits" } : { placeholder: k === "vehicle" ? "outside vehicle?" : "" })} className={"mt-1 w-full h-9 rounded-lg bg-white ring-1 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 " + (miss ? "ring-red-300 bg-red-50/40" : "ring-gray-200")} /></div>
                           );
                         })}
                       </div>

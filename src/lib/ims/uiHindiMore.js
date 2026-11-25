@@ -57,7 +57,8 @@ no trucks yet ¦ अभी कोई ट्रक नहीं
 New truck ¦ नया ट्रक
 Save truck ¦ ट्रक सेव करें
 Cancel ¦ रद्द करें
-saved once vehicle no., driver and phone are filled ¦ गाड़ी नंबर, ड्राइवर और फ़ोन भरने पर ही सेव होगा
+saved once vehicle no. and driver are filled ¦ गाड़ी नंबर और ड्राइवर भरने पर ही सेव होगा
+optional · 10 digits ¦ ज़रूरी नहीं · 10 अंक
 on this event ¦ इस इवेंट पर
 Fill these first: ¦ पहले ये भरें:
 nothing can be loaded on this truck until they are filled. ¦ इन्हें भरे बिना इस ट्रक में कुछ लोड नहीं होगा।
