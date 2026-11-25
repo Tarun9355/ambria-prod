@@ -56,6 +56,19 @@ const friendlyUploadError = (status, msg) => {
 };
 
 /**
+ * SHA-256 of a File/Blob's bytes, as lowercase hex. Naming a content-addressed upload by this
+ * (via uploadToStorage's `keepName`) means the identical photo always lands on the same storage
+ * key — even uploaded separately in a different zone or function — so two call sites that key off
+ * the resulting URL (e.g. Dept Ops' per-department line merge for an item with no inventory id,
+ * like a Carpet New floor's own reference photo) see one URL and treat it as one line, not two.
+ */
+export async function sha256Hex(file) {
+  const buf = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
  * Upload a File/Blob (or a `data:` URL string) and return its public URL.
  * Throws on failure so call sites can surface a message rather than silently storing "".
  */

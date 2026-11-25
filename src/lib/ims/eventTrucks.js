@@ -31,7 +31,10 @@ export function tripsOf(t) {
   return [{ id: (t?.id || "trip") + "_trip1", status: t?.status || "loading", loads: t?.loads || {}, extra: t?.extra || {}, custom: t?.custom || {} }];
 }
 
-// A stored load key ("inv:<id>", "inv:<id>@<kitname>", or "nm:<name>") → a display label + photo.
+// A stored load key ("inv:<id>", "inv:<id>@<kitname>", "nm:<name>", or "nm:<name>|<photo>" for an
+// item with no inventory id but its own reference photo - Carpet New's colour photo, say, which the
+// key carries precisely so two differently-coloured floors of the same material name never share
+// one load) → a display label + photo.
 export function labelForLoadKey(key, inventory) {
   const k = String(key || "");
   if (k.startsWith("inv:")) {
@@ -40,7 +43,13 @@ export function labelForLoadKey(key, inventory) {
     if (item) return { label: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", invId };
     return { label: invId, photo: "", invId };
   }
-  if (k.startsWith("nm:")) return { label: titleCase(k.slice(3)), photo: "", invId: null };
+  if (k.startsWith("nm:")) {
+    const rest = k.slice(3);
+    const sep = rest.indexOf("|");
+    const name = sep === -1 ? rest : rest.slice(0, sep);
+    const photo = sep === -1 ? "" : rest.slice(sep + 1);
+    return { label: titleCase(name), photo, invId: null };
+  }
   return { label: k, photo: "", invId: null };
 }
 

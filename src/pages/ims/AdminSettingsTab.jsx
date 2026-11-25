@@ -348,6 +348,12 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
   // mobile has no single file input that reliably offers both, so the "+" button opens this tiny
   // 2-option menu instead of a bare <input type=file>.
   const [fabricPhotoMenuOpen, setFabricPhotoMenuOpen] = useState(null);
+  // The enlarge-on-hover preview for a fabric-stock photo ({ key, src, left, top } in viewport
+  // coordinates, or null). `position: fixed` (not absolute) so it isn't clipped by the table's own
+  // `overflow-x-auto` row-scroller or the card's `overflow-hidden` - both clip vertically too (an
+  // ancestor with overflow-x set to anything but visible forces overflow-y to auto as well), which
+  // cut the preview off against the first/last row or a one-colour search result.
+  const [fabricPhotoPreview, setFabricPhotoPreview] = useState(null);
   const [addColourErr, setAddColourErr] = useState("");
   const [fabricSearch, setFabricSearch] = useState({}); // per fabric table: { lizaStock: "ivo", ... }
   const [sMandiMapPicker, setSMandiMapPicker] = useState(null); // { flowerId } — inventory picker for a "Mapping" flower
@@ -2498,12 +2504,35 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                                   } catch (err) { alert("Photo upload failed: " + (err?.message || err)); }
                                   finally { setFabricPhotoUploading((prev) => { const np = { ...prev }; delete np[photoKey]; return np; }); }
                                 };
+                                // A 36px swatch is too small to judge a fabric colour by - enlarge it on hover. `position: fixed`
+                                // at a hand-tracked viewport coordinate (not `absolute`) because the table's own row-scroller
+                                // (`overflow-x-auto` - which forces overflow-y to clip too, not just x) and the card around it
+                                // (`overflow-hidden`) would otherwise cut the preview off against the first/last row or a
+                                // one-colour search result. Clamped so it never runs off the right or bottom of the window.
+                                const PREVIEW = 160;
+                                const showPreview = (e) => {
+                                  if (!row.photo) return;
+                                  const r = e.currentTarget.getBoundingClientRect();
+                                  let left = r.right + 8;
+                                  if (left + PREVIEW > window.innerWidth) left = Math.max(8, r.left - PREVIEW - 8);
+                                  const top = Math.min(Math.max(r.top + r.height / 2 - PREVIEW / 2, 8), window.innerHeight - PREVIEW - 8);
+                                  setFabricPhotoPreview({ key: photoKey, src: row.photo, left, top });
+                                };
+                                const hidePreview = () => setFabricPhotoPreview((p) => (p?.key === photoKey ? null : p));
                                 return (
                                   <>
-                                    <button type="button" onClick={() => setFabricPhotoMenuOpen((k) => k === photoKey ? null : photoKey)} className="block cursor-pointer">
+                                    <button type="button"
+                                      onClick={() => { setFabricPhotoMenuOpen((k) => k === photoKey ? null : photoKey); hidePreview(); }}
+                                      onMouseEnter={showPreview} onMouseLeave={hidePreview}
+                                      className="block cursor-pointer">
                                       {row.photo ? <img src={thumbUrl(row.photo, 36)} loading="lazy" decoding="async" alt={row.colour} className="w-9 h-9 rounded object-cover border border-gray-300" title="Click to replace" />
                                         : <div className={`w-9 h-9 rounded border-2 border-dashed border-gray-300 flex items-center justify-center text-gray-400 text-base hover:border-${themeColor}-400 hover:text-${themeColor}-500`} title="Upload a reference photo">{photoUploading ? "…" : "+"}</div>}
                                     </button>
+                                    {fabricPhotoPreview?.key === photoKey && (
+                                      <img src={thumbUrl(fabricPhotoPreview.src, 240)} loading="lazy" decoding="async" alt="" aria-hidden="true"
+                                        style={{ left: fabricPhotoPreview.left, top: fabricPhotoPreview.top, width: PREVIEW, height: PREVIEW }}
+                                        className={`fixed z-50 rounded-lg object-cover border-2 shadow-xl pointer-events-none border-${themeColor}-300`} />
+                                    )}
                                     {fabricPhotoMenuOpen === photoKey && (
                                       <div className="absolute z-20 top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 w-32">
                                         <label className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-700 hover:bg-gray-50 cursor-pointer whitespace-nowrap">

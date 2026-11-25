@@ -1452,16 +1452,19 @@ export default function DealCheckOverlay({ ctx }) {
                   // (what that carpet actually costs us — e.g. ₹4); with no pick (or a pick with no
                   // rental set) it falls back to the Build material's rate. The guest quote is
                   // untouched — it always bills the Build material (calcStructCost).
+                  const cpInfo = carpetPricingFor(row.cpT, imsCarpetMaterials);
                   const itemRate = carpetItem ? imsField.rentalCost(carpetItem) : 0;
-                  const cRate = itemRate > 0 ? itemRate : (carpetPricingFor(row.cpT, imsCarpetMaterials).rate || 0);
+                  const cRate = itemRate > 0 ? itemRate : (cpInfo.rate || 0);
                   const cc = area * cRate;
                   if (!(cc > 0)) return;
                   rental += cc; byFn[fi].rental += cc;
                   addD("Tenting", "rental", cc);
                   if (deptInv["Tenting"]) deptInv["Tenting"].push({
-                    name: carpetItem?.name || carpetPricingFor(row.cpT, imsCarpetMaterials).label || "Carpet",
-                    // A stock carpet's own photo, else the one uploaded for a Carpet New floor in Build.
-                    photo: carpetItem ? imsField.photos(carpetItem)[0] || "" : (row.cpPhoto || ""),
+                    name: carpetItem?.name || cpInfo.label || "Carpet",
+                    // A stock carpet's own photo, else - only for a Carpet New floor - the one uploaded in Build. A zone
+                    // switched away from Carpet New to another material keeps cpPhoto set (Build never clears it), so
+                    // using it unconditionally would show a stale photo for a material that was never meant to carry one.
+                    photo: carpetItem ? imsField.photos(carpetItem)[0] || "" : (/new/i.test(cpInfo.label || "") ? row.cpPhoto || "" : ""),
                     qty: Math.round(area), unit: cRate, total: Math.round(cc), qtyUnit: "sqft",
                     // Where these sqft come from, for IMS's "how?" on the merged line.
                     parts: [{ zone: rows.length > 1 ? `${zoneLbl} · floor ${rIdx + 1}` : zoneLbl, fn: fns.length > 1 ? (fn.fnType || "") : "", fnIdx: fi, dims: `${Number(fd.L) || Number(fd.S) || 0} × ${Number(fd.W) || Number(fd.S) || 0}`, qty: Math.round(area), rate: cRate, total: Math.round(cc) }],
@@ -1524,7 +1527,14 @@ export default function DealCheckOverlay({ ctx }) {
               // foc value, telling ops to either load billed stock or leave blocked stock at the venue.
               // fromKit too (owner report 2026-11-15): a part of another department's kit (Pillar Candle of the 3D candle wall) and the
               // same item placed loose (Pillar Candle on a table) are two lines - merged, the loose ones read "part of" the kit and the qty doubled.
-              const key = (it.name || "") + "|" + (it.sub || "") + "|" + (it.imsId || "") + "|" + (it.prodOrBuy || "") + "|" + (it.foc ? "foc" : "") + "|" + String(it.fromKit || "").trim().toLowerCase();
+              // With no imsId (Carpet New bought fresh, an unmatched custom item…) there is no real stock
+              // identity tying two rows together — only the name says so, and two floors can share a name
+              // ("Carpet New") while being two different colours (Build's per-floor cpPhoto/c.photo). Folding
+              // the photo into the key here too keeps those apart instead of silently keeping whichever row
+              // was seen first and summing the other's qty under its photo. An imsId'd row is the same real
+              // stock item regardless of which zone's photo happened to be attached, so it is left out of the
+              // key there, same as before.
+              const key = (it.name || "") + "|" + (it.sub || "") + "|" + (it.imsId || "") + "|" + (it.prodOrBuy || "") + "|" + (it.foc ? "foc" : "") + "|" + String(it.fromKit || "").trim().toLowerCase() + (it.imsId ? "" : "|" + (it.photo || ""));
               // rentalQty: the raw per-function qty this line was actually billed against, summed
               // straight across every function with NO cross-function dedup — unlike `qty` ("to
               // load"), which nets out the same physical units a sibling function already reuses.

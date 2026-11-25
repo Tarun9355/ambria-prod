@@ -68,7 +68,7 @@ import InventoryItemPickerModal from "../../../components/shared/InventoryItemPi
 import PrintedWallsModal from "../../../components/studio/PrintedWallsModal.jsx";
 import ClickablePhoto from "../../../components/shared/ClickablePhoto.jsx";
 import CopyBuildModal from "../../../components/studio/CopyBuildModal.jsx";
-import { uploadToStorage, STORAGE_FOLDERS } from "../../../lib/storage";
+import { uploadToStorage, sha256Hex, STORAGE_FOLDERS } from "../../../lib/storage";
 
 // Temporary crowd-sourced library cleanup (Phase 1b). While true, anyone on the build screen
 // can push a corrected element list back to the master library photo ("Save correction to
@@ -1006,7 +1006,15 @@ export function FloorCard({ S, zc, zm, st, sZ, sFD, fd, fmt, showCosts, isDark, 
   const uploadCarpetPhoto = async (file) => {
     if (!file) return;
     setCpUploading(true);
-    try { const url = await uploadToStorage(file, STORAGE_FOLDERS.CLIENT); sZ({ cpPhoto: url, ...clearPrefsPatch() }); }
+    try {
+      // Content-addressed (keepName: a hash of the bytes) so the SAME photo picked again for another
+      // zone/function lands on the same URL — Dept Ops' merge keys a Carpet New line (no inventory id
+      // of its own) partly on this photo, and two uploads of the identical picture must read as one
+      // line, not split just because each was its own upload.
+      const hash = await sha256Hex(file);
+      const url = await uploadToStorage(file, STORAGE_FOLDERS.CLIENT, { keepName: hash });
+      sZ({ cpPhoto: url, ...clearPrefsPatch() });
+    }
     catch (e) { alert("Photo upload failed: " + (e?.message || e)); }
     finally { setCpUploading(false); }
   };
