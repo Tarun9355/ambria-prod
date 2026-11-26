@@ -488,6 +488,7 @@ add phone · 10 digits ¦ फ़ोन जोड़ें · 10 अंक
 Already at the venue · not loaded ¦ पहले से वेन्यू पर · लोड नहीं होगा
 Fixed stock standing there, or set to Repeat in the build ¦ वेन्यू पर पहले से लगा स्टॉक, या बिल्ड में Repeat
 Liza, velvet and masking - tap one for its colours and zones ¦ लीज़ा, वेलवेट और मास्किंग - रंग और ज़ोन देखने के लिए दबाएँ
+Added on truck · not in the deal ¦ ट्रक पर जोड़ा · डील में नहीं
 Loaded — a truck with items on it (or a trip gone) can't be removed ¦ लदा हुआ — जिस ट्रक पर सामान है (या ट्रिप निकल चुकी है) उसे हटाया नहीं जा सकता
 Search guest name or venue… ¦ गेस्ट का नाम या वेन्यू खोजें…
 No event matches this — try the guest's first name or the venue. ¦ कोई इवेंट नहीं मिला — गेस्ट का पहला नाम या वेन्यू लिखकर देखें।

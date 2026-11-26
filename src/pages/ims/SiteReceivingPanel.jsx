@@ -360,7 +360,16 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                     <a href={`tel:${ln.truck.phone}`} className="font-semibold text-blue-600 hover:underline">📞 Call{ln.truck.driver ? ` ${ln.truck.driver}` : ""}</a>
                   )}
                 </div>
-                {need != null && (
+                {/* added on the truck at dispatch ("Add an item not in this deal") - not in the build, so there is no need to weigh it
+                    against: said plainly instead of "need 0" (owner report 2026-11-26) */}
+                {ln.customQty > 0 && (
+                  <div className="mt-1.5">
+                    <span className="inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 tabular-nums">
+                      {ln.customQty >= ln.planned + ln.extra ? `Added on truck · not in the deal` : `${ln.customQty} added on truck · not in the deal`}
+                    </span>
+                  </div>
+                )}
+                {need != null && !(ln.customQty > 0 && need === 0) && (
                   <div className="mt-1.5">
                     <span className={"inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full tabular-nums " + (Math.max(0, need - arriving) > 0 ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700")}>
                       need {Math.round(need * 100) / 100}{unitTxt} · arriving {Math.round(arriving * 100) / 100}{unitTxt} · short {Math.round(Math.max(0, need - arriving) * 100) / 100}{unitTxt}

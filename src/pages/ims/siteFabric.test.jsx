@@ -48,4 +48,10 @@ describe("Site Receiving: fabric", () => {
     expect(html).toContain("Liza Fabric - Maroon");
     expect(html).not.toContain("Velvet Curtains - Ivory");
   });
+  it("an item added on the truck (not in the deal) says so instead of 'need 0'", () => {
+    const sel = { id: "E1", trucks: [{ id: "T1", vehicle: "DL9", driver: "Ganesh", trips: [{ id: "a", status: "dispatched", custom: { Fabric: [{ id: "c1", invId: "cc1", name: "Cushion Cover Maroon", qty: 17 }] } }] }] };
+    const html = renderToString(<SiteReceivingPanel sel={sel} setEventOrders={() => {}} inventory={[{ id: "cc1", name: "Cushion Cover Maroon" }]} eventOrders={[sel]} authUser={{}} mode="actual" settings={{}} trussInv={{}} />);
+    expect(html).toContain("Added on truck · not in the deal");
+    expect(html).not.toMatch(/need <!-- -->0/);
+  });
 });

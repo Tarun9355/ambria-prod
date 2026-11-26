@@ -90,6 +90,7 @@ export function truckManifest(sel, inventory) {
           const id = dept + "|" + key;
           const cur = totals.get(id) || { dept, key, planned: 0, extra: 0 };
           cur.planned += q;
+          cur.customQty = (cur.customQty || 0) + q; // added on the truck, not in the deal - Receiving says so instead of "need 0"
           totals.set(id, cur);
         });
       });
