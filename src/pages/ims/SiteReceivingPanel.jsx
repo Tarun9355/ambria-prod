@@ -8,6 +8,7 @@ import { actualsLockState } from "../../lib/ims/actualsLock";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { atVenueOfEvent } from "../../lib/ims/atVenue";
+import { FABRIC_KINDS } from "../../lib/ims/fabricGroups";
 
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 
@@ -17,7 +18,7 @@ const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", 
 // old whole-truck "Arrived as planned" button entirely — that one used to mark every department on a
 // truck arrived in a single tap, which a dept head filtering to their own department could trigger by
 // accident for departments they'd never actually looked at.
-export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eventOrders, authUser, mode, settings }) {
+export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eventOrders, authUser, mode, settings, trussInv }) {
   const [flaggingKey, setFlaggingKey] = useState(null); // `${truckId}|${dept}|${key}` currently showing its issue panel
   // "all" (default) or one department — a supervisor checking in a truck usually cares about every
   // department on it, but a dept head who only wants to confirm THEIR OWN pieces arrived (owner ask
@@ -91,6 +92,26 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // genuinely arriving this way would wrongly read "need N · arriving 0 · short N" right next to the
   // very transfer line (below) that says otherwise (regression review, 2026-11-25).
   transfers.forEach((t) => { if (t.invId) loadedByInvId.set(String(t.invId), (loadedByInvId.get(String(t.invId)) || 0) + (Number(t.qty) || 0)); });
+  // ── FABRIC: LIZA / VELVET / WALL MASKING ── (owner ask 2026-11-26: "as Planning shows it") Not inventory items, so not in the
+  // functions' item list: the need is Deal Check's fabric plan (sel.fabricPlan, per fabric and colour - what Planning's Fabric
+  // department reads), and a truck carries it as "Liza Fabric - <colour>" (Truck planning's folded fabric line, keyed by name).
+  const fabricNeed = new Map(); // "liza fabric - powder blue" -> { label, qty, unit, photo }
+  FABRIC_KINDS.forEach((k) => (Array.isArray(sel?.fabricPlan?.[k.key]) ? sel.fabricPlan[k.key] : []).forEach((r) => {
+    const q = Number(r?.qty) || 0;
+    if (q <= 0) return;
+    const colour = String(r.colour || "").trim() || "(unassigned)";
+    const label = `${k.label} - ${colour}`;
+    const key = label.toLowerCase();
+    const stock = (Array.isArray(trussInv?.[k.stockKey]) ? trussInv[k.stockKey] : []).find((x) => String(x?.colour || "").trim().toLowerCase() === colour.toLowerCase()) || {};
+    const cur = fabricNeed.get(key) || { label, qty: 0, unit: k.unit, photo: stock.photo || "" };
+    cur.qty += q;
+    fabricNeed.set(key, cur);
+  }));
+  const fabricKeyOf = (ln) => (!ln?.invId && String(ln?.key || "").startsWith("nm:") ? String(ln.key).slice(3).split("|")[0].trim().toLowerCase() : null);
+  const fabricLoaded = new Map();
+  allLines.forEach((ln) => { const fk = fabricKeyOf(ln); if (fk && fabricNeed.has(fk)) fabricLoaded.set(fk, (fabricLoaded.get(fk) || 0) + Number(ln.planned || 0) + Number(ln.extra || 0)); });
+  const missingFabric = [...fabricNeed.entries()].filter(([fk]) => !(fabricLoaded.get(fk) > 0))
+    .map(([fk, f]) => ({ invId: "fab:" + fk, qty: f.qty, unit: f.unit, dept: "Fabric", label: f.label, photo: f.photo }));
   const missingItems = [...neededByInvId.entries()]
     .filter(([invId]) => !(loadedByInvId.get(invId) > 0))
     .map(([invId, { qty, dept }]) => {
@@ -104,6 +125,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
       return { invId, qty, dept: catToDept(inv?.cat || inv?.category || dept), ...labelForLoadKey("inv:" + invId, inventory) };
     })
     .sort((a, b) => String(a.label || "").localeCompare(String(b.label || "")) || String(a.dept || "").localeCompare(String(b.dept || "")));
+  missingItems.push(...missingFabric);
 
   const allDepts = [...new Set([...manifest.flatMap((m) => m.lines.map((l) => l.dept)), ...transfers.map((t) => t.fromDept), ...missingItems.map((m) => m.dept), ...atVenueRows.map((r) => r.dept)])].filter(Boolean).sort();
   // Falls back to "all" the instant the picked department doesn't exist on THIS event (switching to
@@ -208,6 +230,8 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           if (row.kind === "missing") { shortIds.add("m|" + row.m.invId); return; }
           const id = row.ln.invId ? String(row.ln.invId) : null;
           if (id && (neededByInvId.get(id)?.qty ?? 0) > (loadedByInvId.get(id) || 0)) shortIds.add(id);
+          const fk = fabricKeyOf(row.ln);
+          if (fk && fabricNeed.has(fk) && fabricNeed.get(fk).qty > (fabricLoaded.get(fk) || 0)) shortIds.add("fab:" + fk);
         });
         const nShort = shortIds.size;
         return (
@@ -246,7 +270,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
               </div>
               <div className="mt-2 ml-[50px]">
                 <span className="inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-700 tabular-nums">
-                  need {Math.round(m.qty * 100) / 100} · arriving 0 · short {Math.round(m.qty * 100) / 100}
+                  need {Math.round(m.qty * 100) / 100}{m.unit ? ` ${m.unit}` : ""} · arriving 0 · short {Math.round(m.qty * 100) / 100}{m.unit ? ` ${m.unit}` : ""}
                 </span>
               </div>
             </div>
@@ -269,8 +293,12 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         // loaded or not loaded" — so a line loaded beyond/outside what Studio's build asked for
         // still gets a "need 0" row, not silence). Only skipped for a custom/named truck line with
         // no inventory id at all — there's no Studio quantity to compare it against.
-        const need = ln.invId ? (neededByInvId.get(String(ln.invId))?.qty ?? 0) : null;
-        const arriving = ln.invId ? (loadedByInvId.get(String(ln.invId)) || 0) : null;
+        // a fabric line (Liza / Velvet / Masking by colour) is weighed against the fabric plan instead
+        const fabK = fabricKeyOf(ln);
+        const fab = fabK ? fabricNeed.get(fabK) : null;
+        const need = ln.invId ? (neededByInvId.get(String(ln.invId))?.qty ?? 0) : fab ? fab.qty : null;
+        const arriving = ln.invId ? (loadedByInvId.get(String(ln.invId)) || 0) : fab ? (fabricLoaded.get(fabK) || 0) : null;
+        const unitTxt = fab?.unit ? ` ${fab.unit}` : "";
         return (
           <div key={ln.truck.id + "|" + ln.dept + "|" + ln.key} className="px-4 py-3">
             <div className="flex items-center gap-2.5">
@@ -299,7 +327,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                 {need != null && (
                   <div className="mt-1.5">
                     <span className={"inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full tabular-nums " + (Math.max(0, need - arriving) > 0 ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700")}>
-                      need {Math.round(need * 100) / 100} · arriving {Math.round(arriving * 100) / 100} · short {Math.round(Math.max(0, need - arriving) * 100) / 100}
+                      need {Math.round(need * 100) / 100}{unitTxt} · arriving {Math.round(arriving * 100) / 100}{unitTxt} · short {Math.round(Math.max(0, need - arriving) * 100) / 100}{unitTxt}
                     </span>
                   </div>
                 )}

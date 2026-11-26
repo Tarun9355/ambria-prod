@@ -128,7 +128,7 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
       </div>
 
       {section === "receiving" ? (
-        <SiteReceivingPanel sel={sel} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} authUser={authUser} mode={mode} settings={settings} />
+        <SiteReceivingPanel sel={sel} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} authUser={authUser} mode={mode} settings={settings} trussInv={trussInv} />
       ) : (
         <SiteCrewPanel sel={sel} setEventOrders={setEventOrders} settings={settings} inventory={inventory} authUser={authUser} catToDept={catToDept} mode={mode} />
       )}
