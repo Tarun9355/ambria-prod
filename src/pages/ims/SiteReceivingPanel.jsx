@@ -8,7 +8,9 @@ import { actualsLockState } from "../../lib/ims/actualsLock";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { atVenueOfEvent } from "../../lib/ims/atVenue";
-import { FABRIC_KINDS } from "../../lib/ims/fabricGroups";
+import { FABRIC_KINDS, buildFabricGroups } from "../../lib/ims/fabricGroups";
+import { makeEventPlans } from "../../lib/ims/eventPlans";
+import FabricBlock from "./FabricBlock.jsx";
 
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 
@@ -34,6 +36,17 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // the same rule (lib/ims/atVenue), so they show here as at the venue, not as short (owner ask 2026-11-26).
   const fvSettings = useFixedVenueSettings(settings);
   const atVenueOf = useMemo(() => atVenueOfEvent(sel, fvSettings, inventory), [sel, fvSettings, inventory]);
+  // Planning's Fabric block (owner ask 2026-11-26: "as Planning shows it, at the top"): Liza / Velvet / Wall Masking, each with its
+  // colour photo and total, opening to its colours and zone-by-zone use - the same groups Dept Ops builds (lib/ims/fabricGroups),
+  // from the event's own layout and Deal Check's fabric plan. No money here.
+  const fabricGroups = useMemo(() => {
+    try {
+      const pl = makeEventPlans({ sel, inventory, blocks: {}, eventOrders, settings, trussInv });
+      const fnsF = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+      return buildFabricGroups({ entries: pl.fabricEntriesOf(), lines: Array.isArray(sel?.deptInventory?.Fabric) ? sel.deptInventory.Fabric : [],
+        fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1, fnPalettes: pl.fabricPalettesOf() }).groups;
+    } catch (e) { console.error("[site-receiving] fabric groups:", e); return []; }
+  }, [sel, inventory, eventOrders, settings, trussInv]);
   useEffect(() => {
     let cancelled = false;
     // Cleared IMMEDIATELY on every event switch, not just once the new fetch resolves — this panel
@@ -226,6 +239,21 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           Nothing for {activeFilter} for this event yet.
         </div>
       )}
+      {fabricGroups.length > 0 && (activeFilter === "all" || activeFilter === "Fabric") && (
+        <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 flex items-center gap-3">
+            <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🧵</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[15px] font-semibold text-gray-900">Fabric</div>
+              <div className="text-xs text-gray-500 truncate">Liza, velvet and masking - tap one for its colours and zones</div>
+            </div>
+          </div>
+          <div className="p-2.5">
+            <FabricBlock groups={fabricGroups} fnDates={(Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).map((f) => String(f?.date || "").slice(0, 10))} />
+          </div>
+        </div>
+      )}
+
       {/* One raised card holding every item, rows split by hairlines - the Planning Receiving card's look (owner ask 2026-11-25),
           instead of a floating card per item. Its head says what it is and how many items are still short. */}
       {combinedRows.length > 0 && (() => {

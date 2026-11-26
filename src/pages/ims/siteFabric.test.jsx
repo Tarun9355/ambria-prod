@@ -30,4 +30,13 @@ describe("Site Receiving: fabric", () => {
     expect(html).toContain("ivory.jpg");
     expect(html).toContain("gold.jpg");
   });
+  it("Planning's Fabric block on top: each fabric with its colours and total, no money", () => {
+    const sel = { id: "E1", trucks: [], fabricPlan: { liza: [{ colour: "Ivory", qty: 160 }] },
+      deptInventory: { Fabric: [{ id: "f1", name: "Liza Fabric (Old)", sub: "kg · stage", qty: 160, total: 48000 }] } };
+    const html = base(sel);
+    expect(html).toContain(">Fabric<");
+    expect(html).toMatch(/Ivory 160 kg/);
+    expect(html).not.toContain("48,000");
+    expect(html.indexOf(">Fabric<")).toBeLessThan(html.indexOf(">Receiving<"));
+  });
 });
