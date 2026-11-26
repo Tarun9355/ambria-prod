@@ -19,7 +19,7 @@ const { latestPlanningInputStamp, PLANNING_INPUT_TABLES } = await import("./plan
 
 describe("latestPlanningInputStamp - a recipe edit makes booked deals' planning stale (owner report 2026-11-11)", () => {
   it("counts the recipe, mandi and fixed-venue tables, not only settings and inventory", () => {
-    expect(PLANNING_INPUT_TABLES).toEqual(expect.arrayContaining(["inventory", "flower_patterns", "mandi_flowers", "fixed_venues"]));
+    expect(PLANNING_INPUT_TABLES).toEqual(expect.arrayContaining(["inventory", "flower_patterns", "mandi_flowers", "fixed_venues", "truss_inventory"]));
   });
   it("the newest change anywhere wins - here a recipe edited after everything else", async () => {
     expect(await latestPlanningInputStamp()).toBe(Date.parse("2026-11-11T09:30:00Z"));

@@ -9,7 +9,10 @@ export const PLANNING_SETTING_KEYS = ["heavyElementRanges", "categoryDepartments
 // Recipes, mandi flowers and fixed venues moved out of `settings` into tables of their own (migrations 038-040), so their
 // settings keys above stopped changing - a recipe edited in IMS never made a booked deal's planning stale (owner report
 // 2026-11-11). Each table's newest row change counts now, as inventory's does.
-export const PLANNING_INPUT_TABLES = ["inventory", "flower_patterns", "mandi_flowers", "fixed_venues"];
+// truss_inventory: truss / Liza / curtain / masking stock and their Old / New rates (IMS Planning -> Fabric Stock). A rate change there
+// never made a booked deal stale, so deals synced while the Old rates were 0 kept Rs 0 fabric after the rates came back (owner report
+// 2026-11-26: Liza / curtain / masking Rs 0 on ~50 deals).
+export const PLANNING_INPUT_TABLES = ["inventory", "flower_patterns", "mandi_flowers", "fixed_venues", "truss_inventory"];
 export async function latestPlanningInputStamp() {
   const newest = (table) => supabase.from(table).select("updated_at").order("updated_at", { ascending: false }).limit(1);
   const [{ data: srows }, ...tableRows] = await Promise.all([
