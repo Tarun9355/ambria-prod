@@ -103,7 +103,7 @@ export default function AutoPlanningSync({ eventOrders, flowerPatterns }) {
       try {
         const latest = await latestPlanningInputStamp();
         const sweptAt = readSwept(), skipped = readSkipped();
-        const stale = (ordersRef.current || []).filter((eo) => planningNeedsSync(eo, latest, sweptAt) && skipped[eo.id] !== eo.deptSyncedAt).length;
+        const stale = (ordersRef.current || []).filter((eo) => planningNeedsSync(eo, latest, sweptAt) && skipped[eo.id] !== (eo.deptSyncedAt || 0)).length;
         if (!stale || !alive || sweepRef.current) return;
         if (!(await takeSweepLock())) return;
         if (alive) setSweep({ tag: `autosweep-${Date.now()}`, done: {}, count: stale });
@@ -127,7 +127,7 @@ export default function AutoPlanningSync({ eventOrders, flowerPatterns }) {
         try {
           localStorage.setItem(SWEPT_KEY, String(Date.now()));
           const next = {};
-          skippedIds.forEach((id) => { const eo = (ordersRef.current || []).find((x) => x.id === id); if (eo) next[id] = eo.deptSyncedAt; });
+          skippedIds.forEach((id) => { const eo = (ordersRef.current || []).find((x) => x.id === id); if (eo) next[id] = eo.deptSyncedAt || 0; });
           localStorage.setItem(SKIPPED_KEY, JSON.stringify(next));
         } catch { /* private mode */ }
         return null;

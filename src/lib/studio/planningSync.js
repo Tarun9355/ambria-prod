@@ -98,13 +98,27 @@ export const PLANNING_SNAPSHOT_VERSION = 29;
 const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-22T00:00:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
+// A booked deal whose Deal Check never reached IMS at all (no deptSyncedAt): Planning shows 0 crew and no income for it.
+// The run at Sold is the only one that writes the first snapshot, and when it did not finish (tab closed, a slow load) nothing
+// tried again - the auto-sync on open, the sweep and IMS's automatic sync all skipped never-synced orders (owner report
+// 2026-11-26: Jahdev, 27 Nov, Floral manpower 0 until someone pressed "Sync now"). Upcoming events only (an old order never
+// synced is history, not work), from a Studio deal (a client), not cancelled.
+export function planningNeverSynced(eo, now = Date.now()) {
+  if (!eo || eo.deptSyncedAt) return false;
+  if (!(eo.clientId || eo.clientName)) return false;
+  if (String(eo.status || "").toLowerCase() === "cancelled") return false;
+  return planningUpcoming(eo, now);
+}
+
 // Synced before, and a planning input changed after that sync (a minute of slack: the sync's own write
 // lands moments after the run it belongs to). An outdated snapshot shape counts as a change made when
 // it shipped. Past events count too (owner ask) — their dates having gone by is no reason to leave
 // their planning on old rules. `since` lets a finished sweep that skipped the order (no saved build)
 // stop flagging it until something changes again.
-export function planningNeedsSync(eo, latest, since = 0) {
-  if (!eo || !eo.deptSyncedAt || !latest) return false;
+export function planningNeedsSync(eo, latest, since = 0, now = Date.now()) {
+  if (!eo) return false;
+  if (planningNeverSynced(eo, now)) return true;
+  if (!eo.deptSyncedAt || !latest) return false;
   const changed = planningSnapshotOutdated(eo) ? Math.max(latest, PLANNING_SNAPSHOT_SHIPPED_AT) : latest;
   return changed > Math.max(Number(eo.deptSyncedAt), Number(since) || 0) + 60000;
 }

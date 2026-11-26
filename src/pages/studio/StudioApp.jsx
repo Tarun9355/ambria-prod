@@ -125,7 +125,7 @@ import { todayStr } from "../../lib/ims/attendance";
 import { cancelledEventIds, liveDateBlocks, isLiveBlockStatus, blockEntryQty } from "../../lib/ims/liveBlocks";
 import { supabase, fetchAll, upsertRow, deleteRow, subscribeTable, keepaliveUpsert, keepaliveRpc, claimDealPresence } from "../../lib/supabase";
 import { writeWithRetry } from "../../lib/writeRetry";
-import { latestPlanningInputStamp, planningNeedsSync, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
+import { latestPlanningInputStamp, planningNeedsSync, planningNeverSynced, planningSnapshotOutdated, planningUpcoming, PLANNING_SNAPSHOT_VERSION } from "../../lib/studio/planningSync.js";
 import { guestRepeatLineCost, flaggedUnitRate } from "../../lib/studio/repeatPricing.js";
 import {
   rowToLibItem, libItemToRow, fetchLibraryItemsByIds, fetchLibraryItemsByUrls,
@@ -2941,7 +2941,10 @@ export default function StudioApp() {
     const cli = (clientLedger || []).find(c => c.id === activeClientId);
     if (!cli || cli.status !== "booked") return;
     const eo = eventOrderFor(eventOrders, activeClientId, clientName);
-    if (!eo || !eo.deptSyncedAt) return; // never synced yet — the first Deal Check open does that
+    if (!eo) return;
+    // Never synced (the run at Sold did not finish): sync it now too, no button needed - see planningNeverSynced.
+    const neverSynced = !eo.deptSyncedAt;
+    if (neverSynced && !planningNeverSynced(eo)) return;
     // Only once this client's build has actually loaded: a run over a build that is still empty
     // would push an empty plan to IMS. Until then this effect just waits for the next change.
     if (!Object.values(zoneElements || {}).some(a => Array.isArray(a) && a.length > 0)) return;
@@ -2956,6 +2959,7 @@ export default function StudioApp() {
           await new Promise((r) => (typeof window.requestIdleCallback === "function" ? window.requestIdleCallback(() => r(), { timeout: 2500 }) : setTimeout(r, 1200)));
           if (activeClientIdRef.current !== clientId) { autoSyncedClientsRef.current.delete(clientId); return; }
         }
+        if (neverSynced) { syncDeptOpsHeadlessRef.current?.(); return; }
         const latest = await latestPlanningInputStamp();
         if (!latest) return;
         // A minute of slack: the sync's own write lands moments after the run it belongs to.

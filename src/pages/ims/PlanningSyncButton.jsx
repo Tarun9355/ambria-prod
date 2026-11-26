@@ -40,7 +40,7 @@ export default function PlanningSyncButton({ eventOrders, onlyOrder, force = fal
 
   const [skipped, setSkipped] = useState(readSkipped);
   const eventOrdersRef = useRef(eventOrders); eventOrdersRef.current = eventOrders;
-  const needStale = useMemo(() => (eventOrders || []).filter(eo => (!onlyId || eo.id === onlyId) && planningNeedsSync(eo, latest, sweptAt) && skipped[eo.id] !== eo.deptSyncedAt).length, [eventOrders, latest, sweptAt, skipped, onlyId]);
+  const needStale = useMemo(() => (eventOrders || []).filter(eo => (!onlyId || eo.id === onlyId) && planningNeedsSync(eo, latest, sweptAt) && skipped[eo.id] !== (eo.deptSyncedAt || 0)).length, [eventOrders, latest, sweptAt, skipped, onlyId]);
   const need = force && onlyId ? 1 : needStale;
 
   // The event the running sync was started for: opening another event meanwhile must not change it.
@@ -83,7 +83,7 @@ export default function PlanningSyncButton({ eventOrders, onlyOrder, force = fal
           // a one-event run only knows about that event: keep what earlier runs remembered for the others
           const next = runOnlyRef.current ? { ...readSkipped() } : {};
           if (runOnlyRef.current) delete next[runOnlyRef.current];
-          skippedIds.forEach(id => { const eo = (eventOrdersRef.current || []).find(e => e.id === id); if (eo) next[id] = eo.deptSyncedAt; });
+          skippedIds.forEach(id => { const eo = (eventOrdersRef.current || []).find(e => e.id === id); if (eo) next[id] = eo.deptSyncedAt || 0; });
           try { localStorage.setItem(SKIPPED_KEY, JSON.stringify(next)); } catch { /* private mode */ }
           setSkipped(next);
         }
