@@ -191,7 +191,8 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
       .sort((a, b) => b.qty - a.qty);
     // each zone's colours with the colour's own stock photo; an event without per-zone colours yet shows its one colour when the fabric has just one
     zones = zones.map((z) => {
-      const list = (z.colours && z.colours.length) ? z.colours : (colours.length === 1 && z.fi != null ? [{ colour: colours[0].colour, qty: z.qty }] : []);
+      // (not on a ♻ Repeat zone: the plan's colours are the NEW fabric's, the standing fabric's colour is not recorded there)
+      const list = (z.colours && z.colours.length) ? z.colours : (colours.length === 1 && z.fi != null && !z.standing ? [{ colour: colours[0].colour, qty: z.qty }] : []);
       return { ...z, colours: list.map((c) => { const s = stockOf(c.colour); return { ...c, photo: s.photo || "", hex: s.hex || "" }; }) };
     });
     zones.sort((a, b) => b.qty - a.qty);
@@ -200,12 +201,17 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
     const standingOnly = zones.length > 0 && zones.every((z) => z.standing);
     const standingCols = standingOnly ? [...new Set(zones.flatMap((z) => (z.colours || []).map((c) => c.colour)))] : [];
     const firstStanding = standingOnly ? zones.flatMap((z) => z.colours || [])[0] : null;
-    // What is pulled from stock: the colours added up - each colour is rounded UP to a whole kg / piece, so this can be a little more
-    // than the zones' exact total (owner report 2026-11-26, Rajiv Tangri: Maroon 10 + Ivory 8 = 18 kg, while the card said 16 kg).
-    // The whole event's only: the colours are the whole event's, a one-function view keeps the zones' figure.
-    const pullQty = (onlyFi === null || onlyFi === undefined) && colours.length ? r2(colours.reduce((s, c) => s + (Number(c.qty) || 0), 0)) : null;
+    // What is pulled from stock - always the NEW fabric only (a ♻ Repeat zone's fabric is already standing at the venue):
+    //  - colours picked (whole event): the colours added up, each rounded UP to a whole kg / piece, so a little more than the zones'
+    //    exact figure (owner report 2026-11-26, Rajiv Tangri: Maroon 10 + Ivory 8 = 18 kg while the card said 16 kg);
+    //  - otherwise (no colour yet, or one function's view - the colours are the whole event's): the non-Repeat zones' total.
+    // qty stays every zone's total (the zone list and its share bar); standingQty is the Repeat zones' part of it.
+    const freshQty = r2(zones.filter((z) => !z.standing).reduce((s, z) => s + (Number(z.qty) || 0), 0));
+    const standingQty = r2(Math.max(0, qty - freshQty));
+    const pullQty = (onlyFi === null || onlyFi === undefined) && colours.length ? r2(colours.reduce((s, c) => s + (Number(c.qty) || 0), 0)) : freshQty;
+    const roundedUp = (onlyFi === null || onlyFi === undefined) && colours.length > 0;
     groups.push({
-      key: kind.key, label: kind.label, unit: kind.unit, emoji: kind.emoji, qty, pullQty, amount, zones, colours, standingOnly,
+      key: kind.key, label: kind.label, unit: kind.unit, emoji: kind.emoji, qty, pullQty, freshQty, standingQty, roundedUp, amount, zones, colours, standingOnly,
       photo: colours[0]?.photo || firstStanding?.photo || "", hex: colours[0]?.hex || firstStanding?.hex || "",
       colourText: colours.length ? colours.map((c) => `${c.colour} ${c.qty} ${kind.unit}`).join(" · ")
         : standingOnly ? `♻ Repeat · standing${standingCols.length ? " " + standingCols.join(", ") : ""}` : "No colour picked yet",
@@ -214,11 +220,6 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
   return { groups, groupedLineIds };
 }
 
-// The flat load list (Truck planning, loading checklist, receiving) carries the same per-zone fabric lines ("Liza Fabric (Old) · stage", "· entry" ...)
-// with no photo, and trucks key them by name, so the zones of one fabric share one load. Fold them into what is physically loaded: one line per fabric
-// colour ("Liza Fabric - Powder Blue", 112 kg, with the colour's photo), or one line for the fabric when no colour is picked yet.
-// `flat` is the list, `groups` come from buildFabricGroups (whole event). Lines that are not fabric lines keep their place; the folded lines go where the
-// first fabric line was.
 // What a fabric's ♻ Repeat zones already have standing at the venue (no new fabric loaded for them), per colour when the zone's
 // colour is known: [{ key, label, colour, qty, unit, photo }]. Owner ask 2026-11-26: the site / ops must see the exact extra to bring,
 // with what is already there from the Repeat zones apart.
@@ -229,13 +230,20 @@ export function fabricStandingOf(groups) {
     (g.zones || []).filter((z) => z.standing && z.qty > 0).forEach((z) => {
       const cols = (z.colours || []).filter((c) => c.qty > 0);
       if (!cols.length) { const cur = by.get("") || { colour: "", qty: 0, photo: "" }; cur.qty += z.qty; by.set("", cur); return; }
-      cols.forEach((c) => { const k = colourKey(c.colour); const cur = by.get(k) || { colour: c.colour, qty: 0, photo: c.photo || "" }; cur.qty += c.qty; by.set(k, cur); });
+      // the zone's own exact figure, split over its colours by their share (a row's colours are rounded up, or a saved allocation can be stale)
+      const tot = cols.reduce((s, c) => s + c.qty, 0);
+      cols.forEach((c) => { const k = colourKey(c.colour); const cur = by.get(k) || { colour: c.colour, qty: 0, photo: c.photo || "" }; cur.qty += z.qty * (c.qty / tot); by.set(k, cur); });
     });
     by.forEach((v) => out.push({ key: g.key, label: v.colour ? `${g.label} - ${v.colour}` : g.label, colour: v.colour, qty: r2(v.qty), unit: g.unit, photo: v.photo || g.photo || "" }));
   });
   return out;
 }
 
+// The flat load list (Truck planning, loading checklist, receiving) carries the same per-zone fabric lines ("Liza Fabric (Old) · stage", "· entry" ...)
+// with no photo, and trucks key them by name, so the zones of one fabric share one load. Fold them into what is physically loaded: one line per fabric
+// colour ("Liza Fabric - Powder Blue", 112 kg, with the colour's photo), or one line for the fabric when no colour is picked yet.
+// `flat` is the list, `groups` come from buildFabricGroups (whole event). Lines that are not fabric lines keep their place; the folded lines go where the
+// first fabric line was.
 export function foldFabricLines(flat, groups) {
   const list = Array.isArray(flat) ? flat : [];
   if (!list.some((l) => isFabricLine(l)) || !Array.isArray(groups) || !groups.length) return list;
@@ -251,7 +259,9 @@ export function foldFabricLines(flat, groups) {
     } else {
       // no colour picked yet: the fabric's total less its Repeat zones (owner report 2026-11-26: Liza 33.58 kg "need" counted the Repeat zones' fabric too)
       const fresh = r2(Math.max(0, (Number(g.qty) || 0) - standing));
-      if (fresh > 0) folded.push({ id: `fabric:${g.key}`, invId: null, name: g.label, photo: "", hex: "", qty: fresh, qtyUnit: g.unit, unit: 0, total: g.amount, sub: `${g.unit} · fabric`, prodOrBuy: null, byFn: null });
+      // the money follows the quantity: the Repeat zones' share is not on this line
+      const total = (Number(g.qty) || 0) > 0 ? Math.round((g.amount * fresh) / g.qty) : g.amount;
+      if (fresh > 0) folded.push({ id: `fabric:${g.key}`, invId: null, name: g.label, photo: "", hex: "", qty: fresh, qtyUnit: g.unit, unit: 0, total, sub: `${g.unit} · fabric`, prodOrBuy: null, byFn: null });
     }
   });
   const out = [];

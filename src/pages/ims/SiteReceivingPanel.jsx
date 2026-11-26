@@ -128,12 +128,16 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
       standing.forEach((s) => {
         atVenue.push({ dept: "Fabric", key: `fabric:${s.key}:repeat:${s.colour}`, label: s.label, photo: s.photo, qty: s.qty, unit: s.unit, a: { repeat: true, fixed: 0, foc: false, load: 0 } });
       });
-      const repeatByKind = new Map();
-      standing.forEach((s) => repeatByKind.set(s.key, r2((repeatByKind.get(s.key) || 0) + s.qty)));
+      // per fabric and per colour: a colour line gets only its own colour's standing fabric; the no-colour line gets the fabric's whole
+      const ck = (c) => String(c || "").trim().replace(/\s+/g, " ").toLowerCase();
+      const repeatOf = (key, colour) => r2(standing.filter((s) => s.key === key && (colour == null || ck(s.colour) === ck(colour))).reduce((t, s) => t + s.qty, 0));
       need.forEach((n) => {
-        if (n.dept !== "Fabric" || !String(n.key).startsWith("nm:")) return;
-        const g = (fabricGroups || []).find((x) => String(n.label || "").startsWith(x.label));
-        const rq = g ? repeatByKind.get(g.key) : 0;
+        if (n.dept !== "Fabric" || n.invId || !String(n.key).startsWith("nm:")) return;
+        const label = String(n.label || "");
+        const g = (fabricGroups || []).find((x) => label === x.label || label.startsWith(x.label + " - "));
+        if (!g) return;
+        const colour = label === g.label ? null : label.slice(g.label.length + 3);
+        const rq = repeatOf(g.key, colour);
         if (rq > 0) n.notes = [...(n.notes || []), `Only the extra to bring - ${rq} ${g.unit} more already at the venue (♻ Repeat zones)`];
       });
     } catch (e) { console.error("[site-receiving] repeat fabric:", e); }

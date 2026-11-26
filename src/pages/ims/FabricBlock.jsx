@@ -66,8 +66,10 @@ function FabricDetail({ cur, fmt, onZoom, dates = [], dateOf = () => "" }) {
       <div>
         <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-1.5">
           {qtyShown(cur.qty, cur.unit)} {cur.unit} across {zoneCount} zone{zoneCount === 1 ? "" : "s"}
-          {cur.pullQty != null && qtyShown(cur.pullQty, cur.unit) !== qtyShown(cur.qty, cur.unit) && (
-            <span className="normal-case tracking-normal font-medium"> · {qtyShown(cur.pullQty, cur.unit)} {cur.unit} to pull - each colour rounded up</span>
+          {/* why the card's figure differs from the zones' total - said by its cause */}
+          {cur.standingQty > 0 && <span className="normal-case tracking-normal font-medium"> · {qtyShown(cur.standingQty, cur.unit)} {cur.unit} already standing (♻ Repeat)</span>}
+          {!cur.standingOnly && cur.pullQty != null && qtyShown(cur.pullQty, cur.unit) !== qtyShown(cur.qty, cur.unit) && (
+            <span className="normal-case tracking-normal font-medium"> · {qtyShown(cur.pullQty, cur.unit)} {cur.unit} to pull{cur.roundedUp && qtyShown(cur.pullQty, cur.unit) !== qtyShown(cur.freshQty, cur.unit) ? " - each colour rounded up" : ""}</span>
           )}
         </div>
         {cur.colours.length > 1 && cur.zones.some((z) => !(z.colours?.length)) && (
@@ -166,7 +168,7 @@ export default function FabricBlock({ groups, fmt, onZoom, fnDates }) {
                   <span className="block text-sm font-semibold text-gray-900 truncate">{g.label}</span>
                   <span className="block text-[11px] text-gray-500 truncate">{g.colourText}</span>
                   <span className="block text-[13px] font-bold text-gray-900 tabular-nums">
-                    {qtyShown(g.pullQty ?? g.qty, g.unit)} {g.unit}{fmt && <span className="font-medium text-gray-400"> · {fmt(g.amount)}</span>}
+                    {qtyShown(g.standingOnly ? g.qty : (g.pullQty ?? g.qty), g.unit)} {g.unit}{fmt && <span className="font-medium text-gray-400"> · {fmt(g.amount)}</span>}
                   </span>
                   {dates.length > 1 && (
                     <span className="block text-[11px] text-gray-500 tabular-nums truncate" title={dates.map((d) => `${dayLabel(d)}: ${qtyShown(r2(g.zones.filter((z) => dateOf(z) === d).reduce((a, z) => a + z.qty, 0)), g.unit)} ${g.unit}`).join("  ·  ")}>
