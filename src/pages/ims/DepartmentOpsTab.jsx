@@ -58,7 +58,7 @@ import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a si
 import { truckDetailsLocked, truckLoadedOf } from "../../lib/ims/truckLock";
 import { atVenueOfEvent } from "../../lib/ims/atVenue";
 import { makeFabricNeedCache } from "../../lib/ims/fabricNeed"; // fabric per colour, as the Fabric block reads it
-import { truckKeyOf, mappedStockRowsOf, kitPartOfDeptOf, blockedGroupedFor, blockedFlatFor } from "../../lib/ims/deptLoadList"; // what a department loads (shared with Site) // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
+import { truckKeyOf, mappedStockRowsOf, kitPartOfDeptOf, blockedGroupedFor, blockedFlatFor, mergeLegacyTrucks } from "../../lib/ims/deptLoadList"; // what a department loads (shared with Site) // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
 import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
@@ -2561,47 +2561,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // nothing loaded, an explicit {}), that's authoritative and is never overwritten by stale array
   // data. A legacy row with no vehicle typed yet has nothing to match by and surfaces as its own,
   // separate truck, same as before any of this existed.
-  const eventTruckList = (() => {
-    // flatDeptItems(d) now does real work (the same rich blockedGroupedOf/blockedFlatOf pipeline a
-    // department's own screen uses, not a cheap one-off reconstruction) - cached per department HERE
-    // so a department with several old legacy truck rows only pays for it once, not once per row.
-    const itemsByDept = new Map();
-    const itemsOf = (d) => { if (!itemsByDept.has(d)) itemsByDept.set(d, flatDeptItems(d)); return itemsByDept.get(d); };
-    const legacyByPlate = new Map(); // vehicle number (trimmed, lowercase) -> { ...truck fields, byDept }
-    const noPlate = [];
-    Object.entries(sel?.deptOps || {}).forEach(([d, od]) => {
-      (Array.isArray(od?.trucks) ? od.trucks : []).forEach(t => {
-        const items = itemsOf(d), ld = {};
-        Object.entries(t.items || {}).forEach(([k, q]) => { const it = items.find(x => "inv:" + x.id === k); if (it && Number(q) > 0) ld[truckKey(it)] = Number(q); });
-        const plateKey = String(t.vehicle || "").trim().toLowerCase();
-        if (!plateKey) { noPlate.push({ id: t.id, vehicle: "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } }); return; }
-        if (!legacyByPlate.has(plateKey)) legacyByPlate.set(plateKey, { id: t.id, vehicle: t.vehicle || "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", byDept: {} });
-        legacyByPlate.get(plateKey).byDept[d] = ld;
-      });
-    });
-    const usedPlates = new Set();
-    const base = (Array.isArray(sel?.trucks) ? sel.trucks : []).map(t => {
-      const plateKey = String(t.vehicle || "").trim().toLowerCase();
-      const legacy = plateKey ? legacyByPlate.get(plateKey) : null;
-      if (!legacy) return t;
-      usedPlates.add(plateKey);
-      // Already split into trips - legacy data predates trips entirely, so a still-missing
-      // department folds onto trip 1 (never a new trip of its own); a department already present on
-      // ANY trip is left alone, same "never overwrite real data" rule as the pre-trips version.
-      if (Array.isArray(t.trips) && t.trips.length) {
-        const missing = {};
-        let changed = false;
-        Object.entries(legacy.byDept).forEach(([d, ld]) => { if (!t.trips.some(tr => tr.loads?.[d])) { missing[d] = ld; changed = true; } });
-        if (!changed) return t;
-        return { ...t, trips: t.trips.map((tr, i) => i === 0 ? { ...tr, loads: { ...(tr.loads || {}), ...missing } } : tr) };
-      }
-      let loads = t.loads || {}, changed = false;
-      Object.entries(legacy.byDept).forEach(([d, ld]) => { if (!loads[d]) { loads = { ...loads, [d]: ld }; changed = true; } });
-      return changed ? { ...t, loads } : t;
-    });
-    legacyByPlate.forEach((legacy, plateKey) => { if (!usedPlates.has(plateKey)) base.push({ id: legacy.id, vehicle: legacy.vehicle, driver: legacy.driver, phone: legacy.phone, status: legacy.status, loads: legacy.byDept }); });
-    return [...base, ...noPlate];
-  })();
+  // lib/ims/deptLoadList mergeLegacyTrucks (shared with the Site page)
+  const eventTruckList = mergeLegacyTrucks(sel, flatDeptItems);
   const saveEventTrucks = (fn) => {
     if (!sel || !canEditPlanning) return;
     const next = fn(eventTruckList);

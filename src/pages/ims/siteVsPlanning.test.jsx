@@ -59,4 +59,13 @@ describe("Site Receiving = Planning's to-load list", () => {
     expect(html).toContain("reused from another site");
     expect(html).toContain('aria-label="Pieces arrived"');
   });
+  it("a department's truck from before trucks were shared (deptOps) is folded in by vehicle, as Planning does - not 'Not loaded'", () => {
+    const sel = { id: "E",
+      deptInventory: { Furniture: [{ name: "Chair", imsId: "CH", qty: 4 }], Lighting: [{ name: "Candle Wall", imsId: "KW", qty: 2 }] },
+      trucks: [{ id: "T1", vehicle: "DL1LAJ1250", driver: "Raju", trips: [{ id: "a", status: "dispatched", loads: { Furniture: { "inv:CH": 4 } } }] }],
+      deptOps: { Lighting: { trucks: [{ id: "old", vehicle: "dl1laj1250", items: { "inv:Candle Wall0": 2 } }] } } };
+    const html = render(sel);
+    expect(html).toMatch(/Candle Wall[^]*?need <!-- -->2<!-- -->(<!-- -->)? · arriving <!-- -->2/);
+    expect(html).not.toContain("Not loaded");
+  });
 });

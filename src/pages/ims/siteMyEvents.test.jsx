@@ -36,4 +36,13 @@ describe("Site page event: the Planning look", () => {
     expect(html).toContain("Raja");
     expect(html).toContain('aria-pressed="true"');
   });
+  it("an event over two days at two venues: every date and venue, not just the first", () => {
+    const eo = { id: "E2", clientName: "Two Venue", status: "confirmed", date: "2026-11-01", functionsDetail: [{ date: "2026-11-03", venue: "Grand" }, { date: "2026-11-05", venue: "Aura" }] };
+    const store = { "ambria-ims-site-event": "E2" };
+    vi.stubGlobal("sessionStorage", { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = String(v); } });
+    const html = renderToString(<SiteSupervisorTab eventOrders={[eo]} setEventOrders={() => {}} inventory={[]} settings={{}} authUser={{ role: "Admin" }} supervisors={[]} />);
+    vi.unstubAllGlobals();
+    expect(html).toContain("3 Nov · Grand + 5 Nov · Aura (2026)");
+    expect(html).not.toContain("1 Nov");
+  });
 });

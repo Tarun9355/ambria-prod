@@ -10,7 +10,9 @@ import { atVenueOfEvent } from "../../lib/ims/atVenue";
 import { buildFabricGroups } from "../../lib/ims/fabricGroups";
 import { makeEventPlans } from "../../lib/ims/eventPlans";
 import { buildLiveFloralPlan } from "../../lib/ims/liveFloralPlan";
-import { truckKeyOf, mappedStockRowsOf, blockedGroupedFor, blockedFlatFor, loadSplitOf } from "../../lib/ims/deptLoadList";
+import { truckKeyOf, mappedStockRowsOf, blockedGroupedFor, blockedFlatFor, loadSplitOf, mergeLegacyTrucks } from "../../lib/ims/deptLoadList";
+import { choiceNotesForRows } from "../../lib/ims/elementPlan";
+import { carpetNotesForRows } from "../../lib/ims/carpetPlan";
 import FabricBlock from "./FabricBlock.jsx";
 
 // The "how many arrived" box: what is typed stays in the box until Enter or leaving it, then saves once (owner's QA audit
@@ -66,8 +68,9 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   const plan = useMemo(() => {
     const need = new Map(); // `${dept}|${truckKey}` -> { dept, key, qty, label, photo, unit, invId }
     const atVenue = [];
+    const flatByDept = new Map();
     let fabricGroups = [];
-    if (!sel) return { need, atVenue, fabricGroups };
+    if (!sel) return { need, atVenue, fabricGroups, trucks: [] };
     let pl = null;
     try { pl = makeEventPlans({ sel, inventory, blocks: {}, eventOrders, settings, trussInv }); } catch (e) { console.error("[site-receiving] plans:", e); }
     // Planning's Fabric block (Liza / Velvet / Wall Masking, colour photo, total, zones) - shown on top, no money.
@@ -84,11 +87,22 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         const grouped = blockedGroupedFor(d, { sel, inventory, blocks, catToDept, mappedStockRows: mapped });
         if (!grouped.length) return;
         const flat = blockedFlatFor(grouped, d, { sel, trussInv, fabricEntriesOf: pl?.fabricEntriesOf, fabricPalettesOf: pl?.fabricPalettesOf });
+        flatByDept.set(d, flat);
         const { load, atVenue: av } = loadSplitOf(flat, atVenueOf);
+        // The design Planning chose for an overlay / cushion cover (Fabric) or a carpet floor (Tenting) - what is actually on the
+        // truck - with the line's notes ("not decided yet ..."), as Planning's truck list and challan name it (owner's QA audit
+        // 2026-11-26: Site still named sales' 1st choice).
+        let choice = new Map();
+        try {
+          if (pl && d === "Fabric") choice = choiceNotesForRows(flat, pl.elementPlanOf().rows);
+          else if (pl && d === "Tenting") choice = carpetNotesForRows(flat, pl.carpetPlanOf().rows);
+        } catch { /* no plan for the choices: the line's own name */ }
         load.forEach((it) => {
           const key = truckKeyOf(it);
           const id = d + "|" + key;
-          const c = need.get(id) || { dept: d, key, qty: 0, label: it.name, photo: it.photo || "", unit: it.qtyUnit || "", invId: it.invId || null };
+          const cv = choice.get(it.id);
+          const c = need.get(id) || { dept: d, key, qty: 0, label: cv?.name || it.name, photo: cv?.photo || it.photo || "", unit: it.qtyUnit || "", invId: it.invId || null,
+            notes: (cv?.notes || []).map((n) => n.text).filter(Boolean) };
           c.qty += Number(it.qty) || 0;
           need.set(id, c);
         });
@@ -96,11 +110,14 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
       } catch (e) { console.error("[site-receiving] dept list", d, e); }
     });
     atVenue.sort((x, y) => String(x.label || "").localeCompare(String(y.label || "")));
-    return { need, atVenue, fabricGroups };
+    // the trucks as Planning reads them: the shared list with any department's older per-department trucks folded in
+    let trucks = Array.isArray(sel.trucks) ? sel.trucks : [];
+    try { trucks = mergeLegacyTrucks(sel, (d) => flatByDept.get(d) || []); } catch (e) { console.error("[site-receiving] legacy trucks:", e); }
+    return { need, atVenue, fabricGroups, trucks };
   }, [sel, inventory, blocks, eventOrders, settings, trussInv, liveFloral, atVenueOf]); // eslint-disable-line react-hooks/exhaustive-deps
   const fabricGroups = plan.fabricGroups;
 
-  const manifest = truckManifest(sel, inventory);
+  const manifest = truckManifest(sel ? { ...sel, trucks: plan.trucks } : sel, inventory);
   const transfers = incomingTransfersFor(eventOrders, sel?.id);
   const receiving = receivingOf(sel);
   // Flattened — every line carries its OWN truck back-reference, so the list is items-first; a
@@ -119,7 +136,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   const atVenueRows = plan.atVenue;
   // In Planning's list but on no truck yet: its own "Not loaded" row - every kind of line (platform, carpet, print, recipe parts too).
   const missingItems = [...plan.need.values()].filter((n) => !(loadedByKey.get(n.dept + "|" + n.key) > 0))
-    .map((n) => ({ invId: n.dept + "|" + n.key, qty: n.qty, unit: n.unit, dept: n.dept, label: n.label, photo: n.photo }))
+    .map((n) => ({ invId: n.dept + "|" + n.key, qty: n.qty, unit: n.unit, dept: n.dept, label: n.label, photo: n.photo, notes: n.notes || [] }))
     .sort((a, b) => String(a.label || "").localeCompare(String(b.label || "")) || String(a.dept || "").localeCompare(String(b.dept || "")));
 
   const allDepts = [...new Set([...manifest.flatMap((m) => m.lines.map((l) => l.dept)), ...transfers.map((t) => t.fromDept), ...missingItems.map((m) => m.dept), ...atVenueRows.map((r) => r.dept)])].filter(Boolean).sort();
@@ -284,6 +301,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                     <span className="font-bold text-gray-500 bg-gray-50 rounded px-1.5 py-0.5">{DEPT_ICON[m.dept] || ""} {m.dept}</span>
                     <span className="text-gray-500">No truck assigned yet.</span>
                   </div>
+                  {m.notes?.length > 0 && <div className="mt-1 text-[11px] text-gray-500 leading-snug">{m.notes.join(" · ")}</div>}
                 </div>
               </div>
               <div className="mt-2 ml-[50px]">
@@ -325,10 +343,10 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         return (
           <div key={ln.truck.id + "|" + ln.dept + "|" + ln.key} className="px-4 py-3">
             <div className="flex items-center gap-2.5">
-              {ln.photo ? <img src={thumbUrl(ln.photo, 40)} loading="lazy" alt="" className="w-10 h-10 rounded-lg object-cover border border-gray-100 shrink-0" /> : <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center text-gray-300 text-sm shrink-0">📦</div>}
+              {(nd?.photo || ln.photo) ? <img src={thumbUrl(nd?.photo || ln.photo, 40)} loading="lazy" alt="" className="w-10 h-10 rounded-lg object-cover border border-gray-100 shrink-0" /> : <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center text-gray-300 text-sm shrink-0">📦</div>}
               <div className="min-w-0 flex-1">
                 <div className="text-[13.5px] font-semibold text-gray-900 truncate flex items-center gap-1.5 flex-wrap">
-                  {ln.label}
+                  {nd?.label || ln.label}
                   {r.flag
                     ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">⚑ {FLAG_REASONS.find((f) => f.key === r.flag)?.label || "Flagged"}</span>
                     : short
@@ -350,6 +368,8 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                     <a href={`tel:${ln.truck.phone}`} className="font-semibold text-blue-600 hover:underline">📞 Call{ln.truck.driver ? ` ${ln.truck.driver}` : ""}</a>
                   )}
                 </div>
+                {/* Planning's note on a chosen design (overlay / cushion / carpet): which one was chosen, or that it is not decided yet */}
+                {nd?.notes?.length > 0 && <div className="mt-1 text-[11px] text-gray-500 leading-snug">{nd.notes.join(" · ")}</div>}
                 {/* added on the truck at dispatch ("Add an item not in this deal") - not in the build, so there is no need to weigh it
                     against: said plainly instead of "need 0" (owner report 2026-11-26) */}
                 {ln.customQty > 0 && (

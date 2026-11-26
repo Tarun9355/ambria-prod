@@ -148,3 +148,48 @@ export function loadSplitOf(flat, atVenueOf) {
   });
   return { load, atVenue };
 }
+
+// ── THE EVENT'S TRUCKS, WITH TRUCKS FROM BEFORE THEY WERE SHARED FOLDED IN ── (moved out of DepartmentOpsTab.jsx 2026-11-26)
+// Trucks saved before they were shared lived in each department's own deptOps; any such row not yet folded into the event's own
+// shared list (sel.trucks) is backfilled, matched by vehicle number - on every read, since a department only starts writing to a
+// shared truck once it has been through the shared screen itself (owner report 2026-11-23: Furniture's "DL1LAJ1250" was shared
+// while Structure's old row for the same vehicle stayed invisible). A legacy row only fills a department's loads while that
+// department is ABSENT from the shared truck (on every trip); a row with no vehicle surfaces as its own truck. The Site page reads
+// this too (owner's QA audit 2026-11-26: it only saw the shared list, so such a department's items read "Not loaded").
+// flatItemsOf(d): that department's flat list (blockedFlatFor), whose ids the legacy rows' "inv:<id>" keys name.
+export function mergeLegacyTrucks(sel, flatItemsOf) {
+  const itemsByDept = new Map();
+  const itemsOf = (d) => { if (!itemsByDept.has(d)) itemsByDept.set(d, flatItemsOf(d) || []); return itemsByDept.get(d); };
+  const legacyByPlate = new Map(); // vehicle number (trimmed, lowercase) -> { ...truck fields, byDept }
+  const noPlate = [];
+  Object.entries(sel?.deptOps || {}).forEach(([d, od]) => {
+    (Array.isArray(od?.trucks) ? od.trucks : []).forEach(t => {
+      const items = itemsOf(d), ld = {};
+      Object.entries(t.items || {}).forEach(([k, q]) => { const it = items.find(x => "inv:" + x.id === k); if (it && Number(q) > 0) ld[truckKeyOf(it)] = Number(q); });
+      const plateKey = String(t.vehicle || "").trim().toLowerCase();
+      if (!plateKey) { noPlate.push({ id: t.id, vehicle: "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } }); return; }
+      if (!legacyByPlate.has(plateKey)) legacyByPlate.set(plateKey, { id: t.id, vehicle: t.vehicle || "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", byDept: {} });
+      legacyByPlate.get(plateKey).byDept[d] = ld;
+    });
+  });
+  const usedPlates = new Set();
+  const base = (Array.isArray(sel?.trucks) ? sel.trucks : []).map(t => {
+    const plateKey = String(t.vehicle || "").trim().toLowerCase();
+    const legacy = plateKey ? legacyByPlate.get(plateKey) : null;
+    if (!legacy) return t;
+    usedPlates.add(plateKey);
+    // Already split into trips - a still-missing department folds onto trip 1; one present on ANY trip is left alone.
+    if (Array.isArray(t.trips) && t.trips.length) {
+      const missing = {};
+      let changed = false;
+      Object.entries(legacy.byDept).forEach(([d, ld]) => { if (!t.trips.some(tr => tr.loads?.[d])) { missing[d] = ld; changed = true; } });
+      if (!changed) return t;
+      return { ...t, trips: t.trips.map((tr, i) => i === 0 ? { ...tr, loads: { ...(tr.loads || {}), ...missing } } : tr) };
+    }
+    let loads = t.loads || {}, changed = false;
+    Object.entries(legacy.byDept).forEach(([d, ld]) => { if (!loads[d]) { loads = { ...loads, [d]: ld }; changed = true; } });
+    return changed ? { ...t, loads } : t;
+  });
+  legacyByPlate.forEach((legacy, plateKey) => { if (!usedPlates.has(plateKey)) base.push({ id: legacy.id, vehicle: legacy.vehicle, driver: legacy.driver, phone: legacy.phone, status: legacy.status, loads: legacy.byDept }); });
+  return [...base, ...noPlate];
+}
