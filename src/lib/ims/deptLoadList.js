@@ -157,7 +157,7 @@ function blockedGroupedForSnap(d, { sel, inventory, blocks, catToDept, mappedSto
   return out.sort((a, b) => b.total - a.total);
 }
 
-// FLAT view — kits expanded into the kit shell + each component as its own physical row (and a kit's flower recipe parts), and for
+// FLAT view — kits expanded into the kit shell + each component as its own physical row (never a kit's flower recipes), and for
 // Fabric the per-zone Liza / Velvet / Masking lines folded to one load line per fabric colour. What Loading & dispatch, Receiving and
 // Dismantle read. fabricEntriesOf / fabricPalettesOf come from makeEventPlans (lib/ims/eventPlans).
 export function blockedFlatFor(grouped, d, { sel, trussInv, fabricEntriesOf, fabricPalettesOf }) {
@@ -169,37 +169,17 @@ export function blockedFlatFor(grouped, d, { sel, trussInv, fabricEntriesOf, fab
       const partsSum = it.kitPartsTotal != null ? it.kitPartsTotal : (it.components || []).reduce((s, c) => s + (Number(c.total) || 0), 0);
       out.push({ ...it, isKit: false, components: null, recipeParts: null, total: Math.max(0, (Number(it.total) || 0) - partsSum) }); // kit shell (its own base value)
       (it.components || []).forEach((cp, ci) => out.push({ id: it.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, photo: cp.photo || "", qty: Number(cp.qty) || 0, unit: cp.unit || 0, total: Number(cp.total) || 0, sub: cp.sub || "", kitOf: it.name }));
-      // A kit's flower RECIPE parts are not inventory — no imsId, no money — but are their own load rows: Floral's, whichever department
-      // the kit is (owner report 2026-11-27: "Flower Bunch filler" / "Flower Trail" of a Tenting Tree listed under Tenting on the Site page -
-      // the floral team makes and brings them). Another department's kit's recipes are added to Floral's list below.
-      if (d === "Floral") (it.recipeParts || []).forEach((rp, ri) => out.push({ id: it.id + "__r" + ri, invId: null, name: rp.name, photo: rp.photo || "", qty: Number(rp.qty) || 0, qtyUnit: rp.uom || "", unit: 0, total: 0, sub: "", kitOf: it.name, isRecipe: true, stockOnly: true }));
+      // A kit's flower RECIPES are not loaded or received (owner report 2026-11-27: "Chandelier Tree Floral Recipe" on the Site receiving
+      // list): they are made by the florists from mandi flowers and the artificial bunches - which are their own lines - so they stay on the
+      // kit's card and the Dept Book's kit page only, never a truck line.
     } else out.push(it);
   });
-  if (d === "Floral" && sel) out.push(...otherDeptKitRecipes(sel));
   if (d === "Fabric" && sel) {
     try {
       const g = buildFabricGroups({ entries: fabricEntriesOf ? fabricEntriesOf() : [], lines: grouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: false, fnPalettes: fabricPalettesOf ? fabricPalettesOf() : null }).groups;
       return foldFabricLines(out, g);
     } catch { return out; }
   }
-  return out;
-}
-
-// The flower recipe parts of kits filed under OTHER departments (a Tenting Tree's Flower Trail), as Floral load rows - from Deal Check's
-// snapshot, the same rows each kit carries. kitDept says whose kit it is.
-export function otherDeptKitRecipes(sel) {
-  const out = [];
-  Object.entries(sel?.deptInventory || {}).forEach(([dd, rows]) => {
-    if (dd === "Floral" || !Array.isArray(rows)) return;
-    rows.forEach((x, i) => {
-      if (!x?.isKit || !Array.isArray(x.recipeParts)) return;
-      x.recipeParts.forEach((rp, ri) => {
-        if (!(Number(rp?.qty) > 0)) return;
-        out.push({ id: `kr:${dd}:${x.name}${i}__r${ri}`, invId: null, name: rp.name, photo: rp.photo || "", qty: Number(rp.qty) || 0, qtyUnit: rp.uom || "", unit: 0, total: 0, sub: "",
-          kitOf: x.name, kitDept: dd, isRecipe: true, stockOnly: true });
-      });
-    });
-  });
   return out;
 }
 
