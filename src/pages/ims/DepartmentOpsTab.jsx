@@ -55,6 +55,7 @@ import { tripsOf } from "../../lib/ims/eventTrucks";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { isMyEvent, supervisorIdsOfUser, fixedAtVenue, addedSupervisorsOf, withAddedSupervisors } from "../../lib/ims/mySupervisorEvents";
 import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a site" search
+import { truckDetailsLocked } from "../../lib/ims/truckLock"; // vehicle / driver fixed once a truck is loaded
 import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
@@ -137,6 +138,7 @@ const truckMissingOf = (t) => {
     ph > 0 && ph !== 10 && "Phone",
   ].filter(Boolean);
 };
+
 
 // A row of chips that scrolls sideways on a phone, with "+N ›" / "‹" buttons on its edges for the chips out of view - a row cut
 // at the edge did not say "scroll" (owner 2026-11-21: "isme pta toh chale scroll krna hai"). Same hint as IMS Inventory's category row.
@@ -2922,6 +2924,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // existing truck, not a second truck - this just says so instead of silently allowing the
   // duplicate for someone to notice later.
   const setTruck = (id, patch) => {
+    // vehicle / driver are fixed once the truck is loaded (truckDetailsLocked) - a different vehicle is a new truck
+    const cur = eventTruckList.find(t => t.id === id);
+    if (cur && truckDetailsLocked(cur) && ((patch.vehicle != null && patch.vehicle !== cur.vehicle) || (patch.driver != null && patch.driver !== cur.driver) || (patch.phone != null && String(cur.phone || "").trim() && patch.phone !== cur.phone))) {
+      alert("This truck is already loaded, so its vehicle, driver and phone can't be changed. A different vehicle? Use \"+ Add truck\".");
+      return;
+    }
     if (patch.vehicle != null && String(patch.vehicle).trim()) {
       const plateKey = String(patch.vehicle).trim().toLowerCase();
       const dupIdx = eventTruckList.findIndex(t => t.id !== id && String(t.vehicle || "").trim().toLowerCase() === plateKey);
@@ -7373,6 +7381,20 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           already applied to the truck. Vehicle and driver stacked in the chip,
                           not joined by a dot, so the plate number leads. Truck-level - shared by
                           every trip it makes. */}
+                      {truckDetailsLocked(t) ? (
+                        /* loaded: the vehicle / driver / phone are shown, not editable (truckDetailsLocked) - only an empty phone can be filled */
+                        <div className="rounded-lg bg-gray-50 ring-1 ring-gray-200 px-3 py-2.5">
+                          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-sm">
+                            <span className="inline-flex items-center gap-1.5 font-semibold text-gray-900 tabular-nums"><span aria-hidden="true">🔒</span>{t.vehicle}</span>
+                            <span className="text-gray-700 capitalize">{String(t.driver || "").toLowerCase()}</span>
+                            {String(t.phone || "").trim()
+                              ? <a href={"tel:" + t.phone} className="text-emerald-700 font-semibold tabular-nums hover:underline">📞 {t.phone}</a>
+                              : <TruckTextBox value="" clean={phone10} onCommit={v => { if (v && v.length === 10) setTruck(t.id, { phone: v }); }} inputMode="numeric" maxLength={10} placeholder="add phone · 10 digits"
+                                  className="h-8 w-40 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />}
+                          </div>
+                          <div className="mt-1 text-[11px] text-gray-500">{"Locked — this truck is loaded. A different vehicle? Use “+ Add truck”."}</div>
+                        </div>
+                      ) : (<>
                       {eventTrucks.length > 0 && (
                         <div>
                           <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Pick from fleet</div>
@@ -7398,6 +7420,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           );
                         })}
                       </div>
+                      </>)}
                       <button onClick={() => addTrip(t.id)} disabled={truckMissing(t).length > 0} title={truckMissing(t).length > 0 ? `Fill ${truckMissing(t).join(", ")} first` : undefined} className="h-8 px-3 rounded-lg ring-1 ring-dashed ring-gray-300 text-gray-500 hover:text-gray-700 hover:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-semibold transition-colors">+ Add trip</button>
                       {/* ── EACH TRIP IS ITS OWN RUN ── its own status, its own challan, its own items
                           (owner ask, 2026-11-23: "the same truck makes multiple trips... for trip 2,
