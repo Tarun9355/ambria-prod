@@ -365,7 +365,12 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                 {ln.customQty > 0 && (
                   <div className="mt-1.5">
                     <span className="inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 tabular-nums">
-                      {ln.customQty >= ln.planned + ln.extra ? `Added on truck · not in the deal` : `${ln.customQty} added on truck · not in the deal`}
+                      {/* "not in the deal" only when it truly is not: the whole line was added on the truck and the build needs none of it.
+                          An item the deal has, with some pieces added on the truck on top, says how many extra (a number and a fixed
+                          phrase as separate pieces, so the Hindi screen finds the phrase). */}
+                      {(need == null || need === 0) && ln.customQty >= ln.planned + ln.extra
+                        ? "Added on truck · not in the deal"
+                        : <><span>+{ln.customQty}</span> <span>{"extra, added on truck"}</span></>}
                     </span>
                   </div>
                 )}
