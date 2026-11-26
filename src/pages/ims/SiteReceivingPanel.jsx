@@ -10,7 +10,7 @@ import { atVenueOfEvent } from "../../lib/ims/atVenue";
 import { buildFabricGroups, fabricStandingOf } from "../../lib/ims/fabricGroups";
 import { makeEventPlans } from "../../lib/ims/eventPlans";
 import { buildLiveFloralPlan } from "../../lib/ims/liveFloralPlan";
-import { truckKeyOf, mappedStockRowsOf, blockedGroupedFor, blockedFlatFor, loadSplitOf, mergeLegacyTrucks, tripChallanRows } from "../../lib/ims/deptLoadList";
+import { truckKeyOf, mappedStockRowsOf, blockedGroupedFor, blockedFlatFor, loadSplitOf, mergeLegacyTrucks, tripChallanRows, mergeAtVenueRows } from "../../lib/ims/deptLoadList";
 import { choiceNotesForRows } from "../../lib/ims/elementPlan";
 import { carpetNotesForRows } from "../../lib/ims/carpetPlan";
 import FabricBlock from "./FabricBlock.jsx";
@@ -79,7 +79,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   }, [sel, settings, rcItems, rateCardCategories, inventory]);
   const plan = useMemo(() => {
     const need = new Map(); // `${dept}|${truckKey}` -> { dept, key, qty, label, photo, unit, invId }
-    const atVenue = [];
+    let atVenue = [];
     const flatByDept = new Map();
     let fabricGroups = [];
     if (!sel) return { need, atVenue, fabricGroups, trucks: [], flatByDept };
@@ -141,6 +141,8 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         if (rq > 0) n.notes = [...(n.notes || []), `Only the extra to bring - ${rq} ${g.unit} more already at the venue (♻ Repeat zones)`];
       });
     } catch (e) { console.error("[site-receiving] repeat fabric:", e); }
+    // one row per item: the same item in several kits stood once each in the list (mergeAtVenueRows)
+    atVenue = mergeAtVenueRows(atVenue);
     atVenue.sort((x, y) => String(x.label || "").localeCompare(String(y.label || "")));
     // the trucks as Planning reads them: the shared list with any department's older per-department trucks folded in
     let trucks = Array.isArray(sel.trucks) ? sel.trucks : [];

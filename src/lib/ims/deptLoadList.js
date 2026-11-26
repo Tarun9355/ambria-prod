@@ -217,6 +217,34 @@ export function loadSplitOf(flat, atVenueOf) {
   return { load, atVenue };
 }
 
+// The "Already at the venue" list, one row per item (owner report 2026-11-27: the Site page showed "Mattress · all 4 stay from
+// before" four times and "Pillar Candle" twice). The flat list has a row per kit an item is part of - its truck key carries the kit
+// ("inv:<id>@<kit>") because each kit's pieces are loaded and received apart - but nothing is loaded or received here, so the
+// same item in one department, standing the same way (♻ Repeat / 📌 Fixed / 🎁 FOC), is one row with the kits' pieces added up.
+// rows: [{ dept, key, label, photo, qty, unit, a: { repeat, foc, fixed, load } }], in order; the first row of an item keeps its place.
+export function mergeAtVenueRows(rows) {
+  const out = [], byKey = new Map();
+  (Array.isArray(rows) ? rows : []).forEach((r) => {
+    const a = r.a || {};
+    const how = a.foc ? "foc" : a.repeat ? "repeat" : "fixed";
+    // only an inventory key carries a kit ("@kit"); a name key ends in the photo's URL, which is left whole
+    const item = String(r.key || "").startsWith("inv:") ? String(r.key).replace(/@.*$/, "") : String(r.key || "");
+    const k = `${r.dept}|${how}|${item}`;
+    const cur = byKey.get(k);
+    if (!cur) {
+      const row = { ...r, key: `${item}#${how}`, a: { ...a } };
+      byKey.set(k, row);
+      out.push(row);
+      return;
+    }
+    cur.qty = Math.round(((Number(cur.qty) || 0) + (Number(r.qty) || 0)) * 100) / 100;
+    cur.a.fixed = (Number(cur.a.fixed) || 0) + (Number(a.fixed) || 0);
+    cur.a.load = (Number(cur.a.load) || 0) + (Number(a.load) || 0);
+    if (!cur.photo && r.photo) cur.photo = r.photo;
+  });
+  return out;
+}
+
 // ── THE EVENT'S TRUCKS, WITH TRUCKS FROM BEFORE THEY WERE SHARED FOLDED IN ── (moved out of DepartmentOpsTab.jsx 2026-11-26)
 // Trucks saved before they were shared lived in each department's own deptOps; any such row not yet folded into the event's own
 // shared list (sel.trucks) is backfilled, matched by vehicle number - on every read, since a department only starts writing to a
