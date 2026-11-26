@@ -61,4 +61,12 @@ describe("Site Receiving: fabric", () => {
     expect(html).toContain("extra, added on truck");
     expect(html).not.toContain("not in the deal");
   });
+  it("a kit's part on a truck takes its need from the department's list (the build list lacked it): no more 'need 0'", () => {
+    const sel = { id: "E1",
+      deptInventory: { Floral: [{ name: "Glass Consol Table", imsId: "KIT1", qty: 1, isKit: true, components: [{ name: "Green Bottle Vase", imsId: "FLO-00172", qty: 4 }] }] },
+      trucks: [{ id: "T1", vehicle: "DL1LAv1350", driver: "Jaiprakash", trips: [{ id: "a", status: "loading", loads: { Floral: { "inv:FLO-00172@glass consol table": 4 } } }] }] };
+    const html = renderToString(<SiteReceivingPanel sel={sel} setEventOrders={() => {}} inventory={[{ id: "FLO-00172", name: "Green Bottle Vase" }, { id: "KIT1", name: "Glass Consol Table" }]} eventOrders={[sel]} authUser={{}} mode="actual" settings={{}} trussInv={{}} />);
+    expect(html).toMatch(/need <!-- -->4<!-- --> · arriving <!-- -->4/);
+    expect(html).not.toMatch(/need <!-- -->0/);
+  });
 });

@@ -86,6 +86,18 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
     cur.qty += Number(it.qty) || 0;
     neededAllByInvId.set(invId, cur);
   });
+  // ...and what Planning itself loads from: each department's Deal Check list (deptInventory), a kit as its shell plus every
+  // part - the same flat list Truck planning loads (keys "inv:<part>@<kit>"). An item the build list above lacks (a kit's part
+  // it did not carry - owner report 2026-11-26: Green Bottle Vase, part of a Glass Consol Table, read "need 0" while 4 were on a
+  // truck) takes its need from here; one the build list has keeps the build's figure, so nothing is counted twice.
+  const planNeed = new Map();
+  Object.entries(sel?.deptInventory || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach((x) => {
+    if (!x || x.foc) return;
+    const add = (id, q) => { if (!id || !(Number(q) > 0)) return; const k = String(id); const c = planNeed.get(k) || { qty: 0, dept: d }; c.qty += Number(q); planNeed.set(k, c); };
+    add(x.imsId, x.qty);
+    (Array.isArray(x.components) ? x.components : []).forEach((cp) => add(cp?.imsId, cp?.qty));
+  }));
+  planNeed.forEach((v, k) => { if (!neededAllByInvId.has(k)) neededAllByInvId.set(k, v); });
   // What has to come on a truck: less what stands at the venue (fixed) and all of a Repeat item. Those are listed apart below.
   const neededByInvId = new Map();
   const atVenueRows = [];
