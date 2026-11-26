@@ -1312,7 +1312,7 @@ export default function DealCheckOverlay({ ctx }) {
                         .forEach((l) => deptInv["Tenting"].push({ ...l, photo: "", sub: "truss structure", fnIdx: fi, trussUse: [{ ...trussUseOf(l.qty), fnIdx: fi }] }));
                       if (pv.batta?.rftWithBuffer > 0 && pv.costs.battaCost > 0) {
                         const battaUnit = Math.round(pv.costs.battaCost / pv.batta.rftWithBuffer);
-                        deptInv["Tenting"].push({ name: "Batta", photo: "", qty: pv.batta.rftWithBuffer, unit: battaUnit, total: Math.round(pv.costs.battaCost), sub: "truss structure", fnIdx: fi, trussUse: [{ ...trussUseOf(pv.batta.rftWithBuffer), fnIdx: fi }] });
+                        deptInv["Tenting"].push({ name: "Batta", photo: "", qtyUnit: "rft", qty: pv.batta.rftWithBuffer, unit: battaUnit, total: Math.round(pv.costs.battaCost), sub: "truss structure", fnIdx: fi, trussUse: [{ ...trussUseOf(pv.batta.rftWithBuffer), fnIdx: fi }] });
                       }
                     }
                     const fabCost = calcZoneFabricCost(row, tInv, anchors, row.drapeDensity || density, row.dcFabricMult) * repeatFabMult;
@@ -1415,7 +1415,7 @@ export default function DealCheckOverlay({ ctx }) {
               if (deptInv["Tenting"] && sqft > 0) {
                 const parts = (partsByFn[fnIdx] || []).map(p => ({ ...p, rate: Math.round(rate), total: Math.round(p.qty * rate) }));
                 // (a fixed venue's standing-platform discount shows as the line's "≠ rate × qty" note)
-                deptInv["Tenting"].push({ name: "Platform", photo: "", qty: Math.round(sqft * 100) / 100, unit: Math.round(rate), total: pc, sub: "platform structure (blended Wood+Iron rate)", fnIdx: Number(fnIdx), parts });
+                deptInv["Tenting"].push({ name: "Platform", photo: "", qtyUnit: "sqft", qty: Math.round(sqft * 100) / 100, unit: Math.round(rate), total: pc, sub: "platform structure (blended Wood+Iron rate)", fnIdx: Number(fnIdx), parts });
               }
             });
           } catch {}

@@ -74,6 +74,21 @@ export function kitPartOfDeptOf({ sel, inventory, catToDept }) {
   };
 }
 
+// What one item has reserved for THIS event at its busiest date (live entries, not added on a truck). Blocks are kept one entry per date,
+// and the same pieces serve every date, so adding the dates up counted them once per day (site audit 2026-11-27: 10 chairs on 3 dates
+// read "need 30"). The same rule mappedStockRowsOf uses.
+export function peakEventQty(arr, eventId) {
+  const byDate = new Map();
+  (arr || []).forEach((b) => {
+    if (!b || b.eventId !== eventId || !isLiveBlockStatus(b) || b.source === TRUCK_EXTRA_SRC) return;
+    const k = String(b.date || "");
+    byDate.set(k, (byDate.get(k) || 0) + blockEntryQty(b));
+  });
+  let peak = 0;
+  byDate.forEach((q) => { if (q > peak) peak = q; });
+  return peak;
+}
+
 // Items reserved for THIS event in the blocks ledger (live, not added on a truck) that Deal Check's snapshot does not list anywhere -
 // in any department, as a kit part or a mapped piece. Owner report 2026-11-26 (Neel Vashisht, 27 Nov): 45 Floral items were blocked
 // but Planning showed only the two artificial rows Deal Check sent, so the rest were invisible. Listed as `blockedOnly` rows with no
@@ -90,7 +105,7 @@ export function blockedNotInSnapshot(d, { sel, inventory, blocks, catToDept, map
   const out = [];
   Object.entries(blocks || {}).forEach(([itemId, arr]) => {
     if (known.has(String(itemId))) return;
-    const qty = (arr || []).filter((b) => b.eventId === sel.id && isLiveBlockStatus(b) && b.source !== TRUCK_EXTRA_SRC).reduce((s, b) => s + blockEntryQty(b), 0);
+    const qty = peakEventQty(arr, sel.id);
     if (qty <= 0) return;
     const item = itemById(inventory, itemId);
     if (!item || catToDept(item.cat || item.category) !== d) return;
@@ -117,7 +132,11 @@ function blockedGroupedForSnap(d, { sel, inventory, blocks, catToDept, mappedSto
   if (snapD && snapD.length) {
     // fromKit carried through from the snapshot: Deal Check splits a kit's parts across departments by each part's own category, so a
     // row can be a component of a kit owned by another department. It is the only record of that parent.
-    const rows = snapD.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components.filter(cp => kitPartOfDept(cp, x.name, d)) : null, kitPartsTotal: Array.isArray(x.components) ? x.components.reduce((t, c) => t + (Number(c.total) || 0), 0) : 0, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swaps.has(x.name), swappedFrom: swaps.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null, foc: !!x.foc }));
+    // A production / buying row names the inventory item it is modelled on (imsId = its reference), but it is a different thing - made or
+    // bought - so it is never keyed as that rented item (site audit 2026-11-27: "Chairs need 60" = 50 rented + 10 production under one
+    // line). Platform (sqft) and Batta (running ft incl. buffer) came with no unit, so "need 448" read as pieces.
+    const unitOf = (x) => x.qtyUnit || (/^platform$/i.test(String(x.name || "").trim()) ? "sqft" : /^batta$/i.test(String(x.name || "").trim()) ? "rft" : "");
+    const rows = snapD.map((x, i) => ({ id: x.name + i, invId: x.prodOrBuy ? null : (x.imsId || null), refInvId: x.prodOrBuy ? (x.imsId || null) : null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components.filter(cp => kitPartOfDept(cp, x.name, d)) : null, kitPartsTotal: Array.isArray(x.components) ? x.components.reduce((t, c) => t + (Number(c.total) || 0), 0) : 0, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swaps.has(x.name), swappedFrom: swaps.get(x.name)?.swappedFrom || null, qtyUnit: unitOf(x), parts: Array.isArray(x.parts) ? x.parts : null, foc: !!x.foc }));
     // Short items first, then Production/Buying, then everything else, FOC last. Stable within each group.
     const rank = (it) => (it.foc ? 3 : it.shortQty > 0 ? 0 : it.prodOrBuy ? 1 : 2);
     const sorted = rows.sort((a, b) => rank(a) - rank(b));
@@ -142,8 +161,9 @@ function blockedGroupedForSnap(d, { sel, inventory, blocks, catToDept, mappedSto
   }
   const out = [];
   Object.entries(blocks || {}).forEach(([itemId, arr]) => {
-    // an item added on a truck (not in the deal) has its own block (TRUCK_EXTRA_SRC) and its own section - not counted here twice
-    const qty = (arr || []).filter(b => b.eventId === sel.id && isLiveBlockStatus(b) && b.source !== TRUCK_EXTRA_SRC).reduce((s, b) => s + blockEntryQty(b), 0);
+    // an item added on a truck (not in the deal) has its own block (TRUCK_EXTRA_SRC) and its own section - not counted here twice;
+    // the busiest date's pieces, not every date's added up (peakEventQty)
+    const qty = peakEventQty(arr, sel.id);
     if (qty <= 0) return;
     const item = itemById(inventory, itemId);
     if (!item) return;
@@ -278,10 +298,15 @@ export function tripChallanRows(trip, flatItemsOf) {
   if (!trip) return out;
   Object.keys(trip.loads || {}).forEach((d) => {
     const mine = trip.loads?.[d] || {}, mineX = trip.extra?.[d] || {};
+    // one row per load key: two list rows can share a key (the same item loose and as another department's kit part), and the load is
+    // kept per key - printing it once per row doubled it on the challan (site audit 2026-11-27)
+    const seen = new Set();
     (flatItemsOf(d) || []).forEach((it) => {
       const k = truckKeyOf(it);
+      if (seen.has(k)) return;
       const q = Number(mine[k]) || 0, x = Number(mineX[k]) || 0;
       if (q <= 0 && x <= 0) return;
+      seen.add(k);
       out.push({ dept: d, key: k, name: it.name || "", sub: it.sub || "", qty: q, extra: x, added: false });
     });
   });

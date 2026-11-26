@@ -47,7 +47,9 @@ export function makeEventPlans({ sel, inventory, blocks, eventOrders, settings, 
     const out = trussPlanOf().map((e) => ({
       fi: e.fi, zk: e.zk, ri: e.ri, zLabel: e.zLabel, fnLabel: e.fn?.type || `Function ${e.fi + 1}`,
       photo: e.fn?.elSelectedPhoto?.[e.zk]?.src || "", fab: e.fab, row: e.row,
-      repeat: !!repeatCatFor(e.fn?.zones?.[e.zk], "truss"), // a repeat zone reuses standing fabric: no new colour is worked out for it
+      // a repeat zone reuses standing fabric: no new colour is worked out for it; an FOC truss's fabric is already up at the venue too, as Deal
+      // Check counts it (site audit 2026-11-27: FOC fabric was counted as fabric to bring)
+      repeat: !!repeatCatFor(e.fn?.zones?.[e.zk], "truss") || isTrussFoc(e.row) || isTrussFoc(e.fn?.zones?.[e.zk]),
     }));
     // A zone with loose fabric but no truss (Build's Elements "🧵 Loose fabric", owner ask 2026-11-17) is not a truss row, so
     // the truss plan skips it - added here with no drape of its own, or its Liza / masking / curtains never reach the Fabric
