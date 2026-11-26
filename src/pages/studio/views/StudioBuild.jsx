@@ -1612,6 +1612,21 @@ export default function StudioBuild({ ctx }) {
       <span style={{display:"flex",color:textS,transform:side==="left"?"rotate(-90deg)":"rotate(90deg)"}}><IconChevron size={11}/></span>
     </div>
   );
+  // Jump to the foot of the page, where "Summary →" is (owner ask 2026-11-26): a long build meant a long scroll to get there.
+  const jumpToBottom = () => {
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const el = document.getElementById("build-bottom-nav");
+    if (el) el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "end" });
+    else window.scrollTo({ top: document.documentElement.scrollHeight, behavior: reduce ? "auto" : "smooth" });
+  };
+  const jumpToBottomBtn = (wide) => (
+    <button type="button" onClick={jumpToBottom} title="Scroll down to Summary" aria-label="Scroll down to Summary"
+      style={{width:wide?"100%":38,marginTop:wide?8:0,display:"flex",flexDirection:wide?"row":"column",alignItems:"center",justifyContent:"center",gap:wide?6:4,
+        padding:wide?"8px 10px":"10px 0",borderRadius:10,border:`1px solid ${border}`,background:cardBg,color:accent,cursor:"pointer",fontFamily:"inherit"}}>
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M7 2.5v8.5M3 7.5 7 11.5l4-4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"/></svg>
+      <span style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,whiteSpace:"nowrap",...(wide?{}:{writingMode:"vertical-rl"})}}>{"Summary"}</span>
+    </button>
+  );
   // Sub-label under each tile's title. Read straight off zoneConfig — no cost maths here, so it
   // cannot drift from the figures inside the panels.
   // The existing printed walls (IMS Fabric › Printed Walls) sitting in a zone's element list — picked from the Print section's
@@ -6864,7 +6879,7 @@ undefined
       </div>, document.body);
     })()}
 
-    <div style={{display:"flex",justifyContent:"space-between",marginTop:32}}><button onClick={()=>setStep(1)} style={S.btn(false)}>← Browse</button><button onClick={()=>setStep(3)} style={S.btn(true)}>Summary →</button></div>
+    <div id="build-bottom-nav" style={{display:"flex",justifyContent:"space-between",marginTop:32,scrollMarginBottom:24}}><button onClick={()=>setStep(1)} style={S.btn(false)}>← Browse</button><button onClick={()=>setStep(3)} style={S.btn(true)}>Summary →</button></div>
 
     {/* Per-element stock availability modal now renders in StudioModals.jsx — shared with the
         Add Production/Buying Item modal, which also triggers openAvailModal via ctx. */}
@@ -7140,8 +7155,8 @@ undefined
     })()}
       </div>{/* /right column */}
       {PRICING_TILE&&(rightRailOpen
-        ? <div className="bd-rail bd-rail-r" style={{width:RAIL_W,flexShrink:0,position:"sticky",top:RAIL_TOP,alignSelf:"flex-start"}}>{PRICING_TILE}</div>
-        : railTab("right","Live estimate",<IconBolt size={14}/>))}
+        ? <div className="bd-rail bd-rail-r" style={{width:RAIL_W,flexShrink:0,position:"sticky",top:RAIL_TOP,alignSelf:"flex-start"}}>{PRICING_TILE}{jumpToBottomBtn(true)}</div>
+        : <div style={{flexShrink:0,position:"sticky",top:70,alignSelf:"flex-start",display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>{railTab("right","Live estimate",<IconBolt size={14}/>)}{jumpToBottomBtn(false)}</div>)}
     </div>{/* /two-column shell */}
   </div>
   );
