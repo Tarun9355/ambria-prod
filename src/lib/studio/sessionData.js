@@ -448,8 +448,19 @@ export function duplicateSourceVideoFnIdxs(allFns) {
 const normType = (s) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 const normDate = (d) => String(d ?? "").trim().slice(0, 10);
 const normShift = (s) => String(s ?? "").trim().toLowerCase();
+const normVenueText = (s) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 const LMS_SHIFT_RANK = { breakfast: 0, lunch: 1, evening: 2, dinner: 3 };
 const lmsShiftRank = (s) => { const k = normShift(s); return k in LMS_SHIFT_RANK ? LMS_SHIFT_RANK[k] : 99; };
+// Identity of one LMS row, by its OWN fields only — type+date+shift+venue. Venue is deliberately
+// part of this key: two functions can legitimately share type+date+shift on purpose (e.g. two
+// family Haldis the same morning at different venues — see StudioApp.jsx's own "two family Haldis
+// one morning" comment) and must not collapse into one just because this file de-duplicates LMS's
+// own reported rows against each other.
+// venueOther is part of the key alongside venue — resolveVenue (StudioApp.jsx) turns any venue
+// not in the known in-house list into the literal sentinel "Others" with the real text living in
+// venueOther instead (confirmed live: two private-home Haldis both arrive as venue:"Others", only
+// venueOther differs) — venue alone would make them collide and wrongly collapse.
+const identityOfLms = (f) => (f?.type && f?.date) ? normType(f.type) + "||" + normDate(f.date) + "||" + normShift(f.shift) + "||" + normVenueText(f.venue) + "||" + normVenueText(f.venueOther) : null;
 
 /**
  * restored: this deal's CURRENT function list as Studio just restored it, index 0 = fn1 —
@@ -482,12 +493,24 @@ export function mergeLmsFunctions(restored, lms, opts = {}) {
   // The screen is live on an index beyond what's restored (an orphan being viewed) — don't touch
   // the function list out from under it.
   if (landingFnIdx >= R) {
-    return { toAppend: [], adoptedIdxs: [], evictIdxs: [], dateConflicts: [], unmatchedRestoredCount: restoredList.length, blocked: "landing" };
+    return { toAppend: [], adoptedIdxs: [], evictIdxs: [], dateConflicts: [], droppedDuplicates: [], unmatchedRestoredCount: restoredList.length, blocked: "landing" };
   }
 
   const usedRestored = new Set();
   const resolvedLms = new Set(); // LMS indices already matched, conflicted, or ignored (blank)
   const dateConflicts = [];
+  // Identity (type+date+shift+venue) of every LMS row Pass 1 actually matches to a restored
+  // function below — built from the LMS row's OWN fields, never from Studio's restored side. A
+  // duplicate catch keyed against `restored`'s own shift instead would only work when Studio's
+  // shift happens to agree with LMS's — regression review found it does NOT reliably (Studio's
+  // Shift field only offers Morning/Lunch/Sundowner/Night; LMS's own shift vocabulary is
+  // breakfast/lunch/evening/dinner; a salesperson re-picking Studio's required Shift field
+  // routinely leaves the two sides disagreeing, or LMS reports blank). Matching an LMS row against
+  // another LMS row it was reported alongside needs no Studio-side shift at all — two rows LMS
+  // itself sent with the identical type+date+shift+venue are a genuine duplicate on LMS's
+  // own side regardless of what Studio's restored shift says, which is exactly the shape of the
+  // live incident this closes (Vipin Sohlet, 2026-11-25 — LMS reported "Ring Ceremony" twice).
+  const matchedLmsIdentities = new Set();
   const byShiftThenIdx = (f) => (a, b) => {
     const sa = normShift(a.r?.shift) === normShift(f?.shift) ? 0 : 1;
     const sb = normShift(b.r?.shift) === normShift(f?.shift) ? 0 : 1;
@@ -521,6 +544,13 @@ export function mergeLmsFunctions(restored, lms, opts = {}) {
       const ri = availRestored.splice(pos, 1)[0];
       usedRestored.add(ri);
       resolvedLms.add(li);
+      // null (no type or no date — an early lead with nothing typed yet) must never be added: a
+      // Set containing `null` would make EVERY other date-less/type-less row read as "already
+      // matched" via identityOfLms(f) also being null below, silently dropping all of them
+      // (regression review caught this: an early lead's second, genuinely-new blank-date function
+      // was wrongly treated as a duplicate of the first one matched here).
+      const idA = identityOfLms(f);
+      if (idA) matchedLmsIdentities.add(idA);
       pendingLms.splice(pendingLms.indexOf(li), 1);
     });
     // Sub-pass b: whatever's left in this bucket (shift blank/edited on one side), pair by order.
@@ -529,6 +559,8 @@ export function mergeLmsFunctions(restored, lms, opts = {}) {
       const ri = availRestored.shift();
       usedRestored.add(ri);
       resolvedLms.add(li);
+      const idB = identityOfLms(lmsList[li]);
+      if (idB) matchedLmsIdentities.add(idB);
     });
   });
 
@@ -544,13 +576,58 @@ export function mergeLmsFunctions(restored, lms, opts = {}) {
     if (!candidates.length) return;
     usedRestored.add(candidates[0].ri);
     resolvedLms.add(li);
+    // Also recorded here, not just in Pass 1's two sub-passes — a SECOND identical copy of a row
+    // Pass 2 consumes (same type+date+shift+venue, just moved to a different date than Studio's
+    // restored copy) would otherwise still fall through to Pass 3 and get appended as its own
+    // extra tab, same incident shape, one step removed (regression review).
+    const idConflict = identityOfLms(f);
+    if (idConflict) matchedLmsIdentities.add(idConflict);
     dateConflicts.push({ lms: f, restoredIdx: candidates[0].ri });
   });
 
   // Pass 3 — everything LMS still has that nothing restored matched: append, sorted date-then-shift
   // (this is safe to sort — it only orders new TRAILING indices, never touches 0..R-1).
+  //
+  // One exception: an LMS row whose own type+date+shift+venue is IDENTICAL to an LMS row Pass 1
+  // already matched to a restored function (`matchedLmsIdentities`) is LMS reporting the same
+  // function twice, not a new one — the second copy is left with nothing to match. Checked against
+  // LMS's OWN data on both sides, deliberately never against Studio's restored shift: Studio's
+  // Shift field is Morning/Lunch/Sundowner/Night, LMS's own vocabulary is breakfast/lunch/evening/
+  // dinner, and the two routinely disagree or one side is blank (regression review: an earlier
+  // version of this check compared against Studio's restored shift instead, and a same-shift-on-
+  // both-LMS-copies duplicate still slipped past it whenever Studio's own shift didn't happen to
+  // match). Venue is part of the key for the opposite reason: two functions can legitimately share
+  // type+date+shift on purpose (two family Haldis one morning, at different venues — see
+  // StudioApp.jsx's own comment on this) and must never collapse into one just because they look
+  // alike on type+date+shift alone; an earlier version of this fix that ALSO checked the appended
+  // entry against `restored`'s own (venue-less) identity wrongly dropped the second, legitimately
+  // distinct Haldi for exactly this reason, so that check was removed rather than made more clever.
+  //
+  // Appending a true duplicate anyway would create a second, identically-labelled, fully real
+  // function tab a salesperson has no way to tell apart from the real one — confirmed incident,
+  // Vipin Sohlet, 2026-11-25: LMS reported "Ring Ceremony" twice, the duplicate fell through to
+  // here, got appended as a 3rd function, and ~15 minutes of real edits (a Wisteria Hanging element
+  // among them) landed on it instead of the real function before anyone noticed.
+  //
+  // droppedDuplicates is returned purely for visibility (logged by the caller) — nothing reads it
+  // to make a decision, so a wrong drop still leaves a trail instead of vanishing silently.
+  const droppedDuplicates = [];
   const toAppend = lmsList
-    .filter((f, li) => !resolvedLms.has(li))
+    .filter((f, li) => {
+      if (resolvedLms.has(li)) return false; // already matched/conflicted/ignored, not a drop
+      const id = identityOfLms(f);
+      // No identity (no type or no date) is never a duplicate of anything — never drop it, and
+      // never let it collide with another `null` via `.has(null)` (same null-safety reasoning as
+      // the two sub-passes above).
+      if (id && matchedLmsIdentities.has(id)) { droppedDuplicates.push(f); return false; }
+      // Record this KEPT row's own identity too — not just rows Pass 1/2 matched to something
+      // restored. Two LMS rows that are both genuinely new (nothing restored matches either) but
+      // identical to EACH OTHER are the same incident shape one step removed: the first gets kept,
+      // the second is now caught here as a duplicate of the first, instead of both becoming two
+      // identical ghost tabs (regression review).
+      if (id) matchedLmsIdentities.add(id);
+      return true;
+    })
     .sort((a, b) => {
       const da = normDate(a?.date), db = normDate(b?.date);
       if (da !== db) return da < db ? -1 : 1;
@@ -564,7 +641,10 @@ export function mergeLmsFunctions(restored, lms, opts = {}) {
   // An appended function may land on an index that already has a leftover build in memory (an
   // older function's content that outlived its own removal from the function list) — adopt it only
   // if that leftover's OWN stamped identity actually matches what's landing there; otherwise it's a
-  // different function's decor and must not be silently inherited.
+  // different function's decor and must not be silently inherited. Nothing beyond the original
+  // plain type+date comparison is needed here any more: the Pass-3 filter above already keeps a
+  // true duplicate out of `toAppend` entirely, at the source, so nothing reaching this loop can be
+  // the ghost-tab case any more.
   const adoptedIdxs = [];
   const evictIdxs = [];
   toAppend.forEach((entry, i) => {
@@ -575,5 +655,5 @@ export function mergeLmsFunctions(restored, lms, opts = {}) {
     (matches ? adoptedIdxs : evictIdxs).push(idx);
   });
 
-  return { toAppend, adoptedIdxs, evictIdxs, dateConflicts, unmatchedRestoredCount: restoredList.length - usedRestored.size, blocked: null };
+  return { toAppend, adoptedIdxs, evictIdxs, dateConflicts, droppedDuplicates, unmatchedRestoredCount: restoredList.length - usedRestored.size, blocked: null };
 }

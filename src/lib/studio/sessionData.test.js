@@ -368,6 +368,130 @@ describe("mergeLmsFunctions — an LMS load adds what LMS has that Studio doesn'
     expect(r.adoptedIdxs).toEqual([1]); // index 1 = Wedding, stamp matches
     expect(r.evictIdxs).toEqual([2]);   // index 2 = Sangeet, stamp says a different function
   });
+  it("LMS reporting a duplicate of an already-restored function is dropped at the source — no ghost tab gets appended at all (Vipin Sohlet incident, 2026-11-25)", () => {
+    // Ring Ceremony is already restored at index 0 (alive, real). LMS reports it TWICE (a
+    // duplicate row on LMS's own side) — Pass 1 matches the restored slot to one of the two
+    // identical LMS rows; the other, with nowhere left to match, used to fall through to append
+    // with the SAME type+date+shift as the function that's already restored, creating a second,
+    // identically-labelled, selectable function tab. A leftover build happened to carry that same
+    // stamp too, and got adopted into it — ~15 minutes of real edits (a Wisteria Hanging element
+    // among them) landed on that duplicate tab instead of the real function before anyone noticed.
+    // The fix drops the exact-duplicate LMS row before it ever becomes an appended function at all.
+    const restored = [{ type: "Ring Ceremony", date: "2026-11-26", shift: "Morning" }];
+    const lms = [{ type: "Ring Ceremony", date: "2026-11-26", shift: "Morning" }, { type: "Ring Ceremony", date: "2026-11-26", shift: "Morning" }];
+    const r = mergeLmsFunctions(restored, lms, {
+      landingFnIdx: 0,
+      occupiedBuildIdxs: [1],
+      buildStamps: { 1: { fnType: "Ring Ceremony", fnDate: "2026-11-26" } }, // duplicates restored[0]'s own stamp
+    });
+    expect(r.toAppend).toEqual([]);
+    expect(r.adoptedIdxs).toEqual([]);
+    expect(r.evictIdxs).toEqual([]);
+  });
+  it("the duplicate is still caught when Studio's restored shift disagrees with (or is blank against) LMS's own shift for both copies — matching is LMS-row-to-LMS-row, not against Studio's shift", () => {
+    // Studio's Shift field only offers Morning/Lunch/Sundowner/Night; LMS's own vocabulary is
+    // breakfast/lunch/evening/dinner — the two routinely disagree or one side is blank. An earlier
+    // version of this fix compared the appended entry's identity only against `restored`'s own
+    // shift, which missed this: both LMS copies agreed with EACH OTHER (both "Dinner") even though
+    // neither matched Studio's own "" (blank, never synced back) or "Night" (typed independently).
+    for (const studioShift of ["", "Night"]) {
+      const restored = [{ type: "Ring Ceremony", date: "2026-11-26", shift: studioShift }];
+      const lms = [{ type: "Ring Ceremony", date: "2026-11-26", shift: "Dinner", venue: "Sunday Resort" }, { type: "Ring Ceremony", date: "2026-11-26", shift: "Dinner", venue: "Sunday Resort" }];
+      const r = mergeLmsFunctions(restored, lms, {
+        landingFnIdx: 0,
+        occupiedBuildIdxs: [1],
+        buildStamps: { 1: { fnType: "Ring Ceremony", fnDate: "2026-11-26" } },
+      });
+      expect(r.toAppend).toEqual([]);
+      expect(r.adoptedIdxs).toEqual([]);
+      expect(r.evictIdxs).toEqual([]);
+    }
+  });
+  it("two REAL same-type/date/shift functions at DIFFERENT venues (two family Haldis one morning) are never collapsed into one — venueOTHER is part of the LMS-to-LMS duplicate key", () => {
+    // Real shape, not raw venue text: resolveVenue (StudioApp.jsx) turns any venue outside the
+    // known in-house list into the literal sentinel venue:"Others", with the actual typed text
+    // living in venueOther instead — both private-home Haldis below arrive as venue:"Others",
+    // identical, and only venueOther differs. Keying on venue alone (an earlier version of this
+    // fix did) would make the two collide and wrongly collapse into one (regression review: caught
+    // against the REAL shape the app actually sends, not a shape no caller produces).
+    const restored = [{ type: "Haldi", date: "2026-12-01", shift: "Lunch" }];
+    const lms = [
+      { type: "Haldi", date: "2026-12-01", shift: "Lunch", venue: "Others", venueOther: "Bride's home" },
+      { type: "Haldi", date: "2026-12-01", shift: "Lunch", venue: "Others", venueOther: "Groom's home" },
+    ];
+    const r = mergeLmsFunctions(restored, lms, { landingFnIdx: 0 });
+    expect(r.toAppend.map((t) => t.venueOther)).toEqual(["Groom's home"]);
+    expect(r.droppedDuplicates).toEqual([]);
+  });
+  it("several date-less/type-less LMS rows never collide with each other via a shared null identity (regression caught before this shipped)", () => {
+    // identityOfLms deliberately returns null for a row with no type or no date (an early LMS lead
+    // with nothing typed yet). A Set that ever added that null would make EVERY other null-identity
+    // row read as "already matched" and silently drop all of them, one step removed from the
+    // original incident's shape. Two genuinely distinct blank-date functions must both survive.
+    const restored = [{ type: "Wedding", date: "", shift: "" }];
+    const lms = [{ type: "Wedding", date: "" }, { type: "Haldi", date: "" }];
+    const r = mergeLmsFunctions(restored, lms, {
+      landingFnIdx: 0,
+      occupiedBuildIdxs: [1],
+      buildStamps: { 1: { fnType: "Haldi", fnDate: "" } },
+    });
+    expect(r.toAppend.map((t) => t.type)).toEqual(["Haldi"]);
+    expect(r.adoptedIdxs).toEqual([1]);
+    expect(r.evictIdxs).toEqual([]);
+  });
+  it("LMS reporting the SAME brand-new function twice (nothing restored matches either copy) still produces only ONE appended tab, not two", () => {
+    // Neither copy matches anything restored (so Pass 1 never records either one), but they're
+    // identical to EACH OTHER — the same incident shape one step removed: both would otherwise
+    // become two indistinguishable ghost tabs for a function that doesn't exist in Studio at all
+    // yet, rather than one duplicated across two already-restored/appended slots.
+    const restored = [{ type: "Wedding", date: "2026-12-01", shift: "" }];
+    const lms = [{ type: "Haldi", date: "2026-12-02", shift: "Lunch" }, { type: "Haldi", date: "2026-12-02", shift: "Lunch" }];
+    const r = mergeLmsFunctions(restored, lms, { landingFnIdx: 0 });
+    expect(r.toAppend.map((t) => t.type)).toEqual(["Haldi"]);
+    expect(r.droppedDuplicates.map((d) => d.type)).toEqual(["Haldi"]);
+  });
+  it("a duplicate combined with a moved date doesn't slip past Pass 2's date-conflict handling into an extra appended tab", () => {
+    // Pass 2 consumes ONE of two identical "moved date" copies as a date conflict (flagged, nothing
+    // touched); the second, identical LMS row must still be recognised as a duplicate of the one
+    // Pass 2 just consumed, not appended as its own new function.
+    const restored = [{ type: "Ring Ceremony", date: "2026-11-26", shift: "Morning" }];
+    const lms = [
+      { type: "Ring Ceremony", date: "2026-11-27", shift: "Morning" },
+      { type: "Ring Ceremony", date: "2026-11-27", shift: "Morning" },
+    ];
+    const r = mergeLmsFunctions(restored, lms, { landingFnIdx: 0 });
+    expect(r.dateConflicts).toHaveLength(1);
+    expect(r.toAppend).toEqual([]);
+  });
+  it("a genuinely different sibling function (same type+date, different shift) is never treated as a duplicate — its orphan build is still adopted, not evicted", () => {
+    // A Wedding Dinner sitting being added alongside an already-restored Wedding Lunch sitting.
+    // The orphan's own saved stamp never carries shift (only fnType/fnDate), so the shift-aware
+    // duplicate check must key off the APPENDED ENTRY's identity, not the orphan's stamp — keying
+    // off the stamp would make this indistinguishable from the real duplicate case above and wrongly
+    // evict a real, still-needed function's build (regression caught before this shipped).
+    const restored = [{ type: "Wedding", date: "2026-12-01", shift: "Lunch" }];
+    const lms = [{ type: "Wedding", date: "2026-12-01", shift: "Lunch" }, { type: "Wedding", date: "2026-12-01", shift: "Dinner" }];
+    const r = mergeLmsFunctions(restored, lms, {
+      landingFnIdx: 0,
+      occupiedBuildIdxs: [1],
+      buildStamps: { 1: { fnType: "Wedding", fnDate: "2026-12-01" } }, // the Dinner sitting's own real, removed build
+    });
+    expect(r.toAppend.map((t) => `${t.type}-${t.shift}`)).toEqual(["Wedding-Dinner"]);
+    expect(r.adoptedIdxs).toEqual([1]);
+    expect(r.evictIdxs).toEqual([]);
+  });
+  it("a function with no date yet can still have its orphan build reattached (date-less early LMS lead)", () => {
+    const restored = [{ type: "Haldi", date: "2026-12-01", shift: "" }];
+    const lms = [{ type: "Haldi", date: "2026-12-01" }, { type: "Mehendi", date: "" }];
+    const r = mergeLmsFunctions(restored, lms, {
+      landingFnIdx: 0,
+      occupiedBuildIdxs: [1],
+      buildStamps: { 1: { fnType: "Mehendi", fnDate: "" } },
+    });
+    expect(r.toAppend.map((t) => t.type)).toEqual(["Mehendi"]);
+    expect(r.adoptedIdxs).toEqual([1]);
+    expect(r.evictIdxs).toEqual([]);
+  });
   it("landing on an index beyond what's restored (viewing an orphan) blocks the merge entirely", () => {
     const r = mergeLmsFunctions([{ type: "Haldi", date: "2026-12-01" }], [{ type: "Wedding", date: "2026-12-02" }], { landingFnIdx: 3 });
     expect(r.blocked).toBe("landing");
