@@ -496,6 +496,7 @@ Trucks & challans ¦ ट्रक और चालान
 Each trip's challan - every department's items on it ¦ हर ट्रिप का चालान - उस पर हर डिपार्टमेंट का सामान
 Print challan ¦ चालान प्रिंट करें
 Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन बदल सकता है
+🔒 View only — only an Admin can edit Fabric Stock ¦ 🔒 सिर्फ़ देखने के लिए — फ़ैब्रिक स्टॉक सिर्फ़ एडमिन बदल सकता है
 Rate history ¦ रेट का इतिहास
 Who changed which rate, and when ¦ किसने कौन-सा रेट कब बदला
 No rate changes recorded yet. Every change from now on shows here with the name of who made it. ¦ अभी कोई रेट बदलाव दर्ज नहीं है। अब से हर बदलाव यहाँ बदलने वाले के नाम के साथ दिखेगा।

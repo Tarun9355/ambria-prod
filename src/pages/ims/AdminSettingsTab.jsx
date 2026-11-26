@@ -570,7 +570,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
           mount (Planning's Truss & Batta / Platform / Fabric Stock / Truck, Flowers' Mandi /
           Recipes); Admin → Settings itself always passes the canEdit=true default. */}
       {forcedMode && !canEdit && (
-        <div className="rounded-lg bg-gray-100 text-gray-500 text-xs font-semibold px-3 py-2 inline-flex items-center gap-1.5">👁 View only — your access here doesn't include editing</div>
+        <div className="rounded-lg bg-gray-100 text-gray-500 text-xs font-semibold px-3 py-2 inline-flex items-center gap-1.5">{mode === "fabricstock" ? "🔒 View only — only an Admin can edit Fabric Stock" : "👁 View only — your access here doesn't include editing"}</div>
       )}
       {!forcedMode && <Tabs tabs={panelsShown} active={panel} onChange={setPanel} />}
       {!forcedMode && panel === "masterdata" && (
@@ -2584,7 +2584,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
         };
         return (
           <div className="space-y-4">
-            {!canChangeRates && <AdminOnlyNote />}
+            {canEdit && !canChangeRates && <AdminOnlyNote />}
             <RateHistory refreshKey={rateLogTick} keys={["lizaKgRate", "lizaKgRateNew", "maskingPieceRate", "maskingPieceRateNew", "curtainPieceRate", "curtainPieceRateNew"]} />
             <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4">
               <p className="font-bold text-indigo-900">🧵 Fabric Stock & Pricing</p>
