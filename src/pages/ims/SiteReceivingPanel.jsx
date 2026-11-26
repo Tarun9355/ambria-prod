@@ -114,7 +114,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           const id = d + "|" + key;
           const cv = choice.get(it.id);
           const c = need.get(id) || { dept: d, key, qty: 0, label: cv?.name || it.name, photo: cv?.name ? (cv.photo || "") : (it.photo || ""), unit: it.qtyUnit || "", invId: it.invId || null,
-            notes: (cv?.notes || []).map((n) => n.text).filter(Boolean) };
+            notes: [...(cv?.notes || []).map((n) => n.text).filter(Boolean), ...(it.blockedOnly ? ["Blocked for this event in Inventory - not in Deal Check's list"] : [])] };
           c.qty += Number(it.qty) || 0;
           need.set(id, c);
         });

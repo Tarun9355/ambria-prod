@@ -6202,6 +6202,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                   : <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-bold">SHORT ×{it.shortQty}</span>)}
                                 {it.prodOrBuy && <span className={"text-[10px] px-1.5 py-0.5 rounded font-bold " + (it.prodOrBuy === "buying" ? "bg-orange-100 text-orange-700" : "bg-purple-100 text-purple-700")}>{it.prodOrBuy === "buying" ? "🛒 BUYING" : "🏭 PRODUCTION"}</span>}
                                 {it.isSwapped && <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 font-bold">🔁 SWAPPED</span>}
+                                {it.blockedOnly && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold" title="Reserved for this event in Inventory, but Deal Check's list does not have it - re-sync Deal Check in Studio, or release the block if it is not needed">BLOCKED · NOT IN DEAL CHECK</span>}
                                 {it.mappedFor && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold" title="A Mapping flower's artificial version — the pieces come from the recipe's artificial share × the flower's pieces-per-unit (Flowers → Mandi Prices)">
                                   {/* label and flower name are two text nodes so Hindi mode translates the label
                                       ("असली फूल की जगह:") and only spells the name — one node was spelled whole ("आर्टिफ़िशियल फ़ॉर …") */}

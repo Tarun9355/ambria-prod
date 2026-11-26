@@ -496,6 +496,8 @@ Trucks & challans ¦ ट्रक और चालान
 Each trip's challan - every department's items on it ¦ हर ट्रिप का चालान - उस पर हर डिपार्टमेंट का सामान
 Print challan ¦ चालान प्रिंट करें
 Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन बदल सकता है
+BLOCKED · NOT IN DEAL CHECK ¦ ब्लॉक है · डील चेक में नहीं
+Blocked for this event in Inventory - not in Deal Check's list ¦ इन्वेंटरी में इस इवेंट के लिए ब्लॉक है - डील चेक की लिस्ट में नहीं
 Only an Admin can change rates, colours and the conversion factors - you can update the stock quantities ¦ रेट, रंग और कन्वर्ज़न फ़ैक्टर सिर्फ़ एडमिन बदल सकता है - आप स्टॉक की मात्रा बदल सकते हैं
 Rate history ¦ रेट का इतिहास
 Who changed which rate, and when ¦ किसने कौन-सा रेट कब बदला

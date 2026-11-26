@@ -74,8 +74,43 @@ export function kitPartOfDeptOf({ sel, inventory, catToDept }) {
   };
 }
 
+// Items reserved for THIS event in the blocks ledger (live, not added on a truck) that Deal Check's snapshot does not list anywhere -
+// in any department, as a kit part or a mapped piece. Owner report 2026-11-26 (Neel Vashisht, 27 Nov): 45 Floral items were blocked
+// but Planning showed only the two artificial rows Deal Check sent, so the rest were invisible. Listed as `blockedOnly` rows with no
+// money (Deal Check never priced them), so nothing reserved is hidden.
+export function blockedNotInSnapshot(d, { sel, inventory, blocks, catToDept, mappedStockRows = [] }) {
+  if (!sel || !blocks) return [];
+  const known = new Set();
+  Object.values(sel?.deptInventory || {}).forEach((rows) => (Array.isArray(rows) ? rows : []).forEach((x) => {
+    if (x?.imsId) known.add(String(x.imsId));
+    (Array.isArray(x?.components) ? x.components : []).forEach((c) => { if (c?.imsId) known.add(String(c.imsId)); });
+    (Array.isArray(x?.parts) ? x.parts : []).forEach((c) => { if (c?.imsId) known.add(String(c.imsId)); });
+  }));
+  (mappedStockRows || []).forEach((m) => { if (m?.invId) known.add(String(m.invId)); });
+  const out = [];
+  Object.entries(blocks || {}).forEach(([itemId, arr]) => {
+    if (known.has(String(itemId))) return;
+    const qty = (arr || []).filter((b) => b.eventId === sel.id && isLiveBlockStatus(b) && b.source !== TRUCK_EXTRA_SRC).reduce((s, b) => s + blockEntryQty(b), 0);
+    if (qty <= 0) return;
+    const item = itemById(inventory, itemId);
+    if (!item || catToDept(item.cat || item.category) !== d) return;
+    out.push({ id: "blk:" + itemId, invId: itemId, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, rentalQty: qty, unit: 0, total: 0,
+      sub: item.subCat || item.subcategory || "", blockedOnly: true });
+  });
+  return out.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+}
+
 // GROUPED view (kit as one line + its components): Deal Check's snapshot when synced, else the event's live blocks in the ledger.
-export function blockedGroupedFor(d, { sel, inventory, blocks, catToDept, mappedStockRows = [], swaps = new Map() }) {
+export function blockedGroupedFor(d, opts) {
+  const base = blockedGroupedForSnap(d, opts);
+  const snapD = opts?.sel?.deptInventory && Array.isArray(opts.sel.deptInventory[d]) ? opts.sel.deptInventory[d] : null;
+  // only when the list came from Deal Check's snapshot - without one the list already is the event's blocks
+  if (!(snapD && snapD.length)) return base;
+  const extra = blockedNotInSnapshot(d, opts || {});
+  return extra.length ? [...base, ...extra] : base;
+}
+
+function blockedGroupedForSnap(d, { sel, inventory, blocks, catToDept, mappedStockRows = [], swaps = new Map() }) {
   if (!sel) return [];
   const kitPartOfDept = kitPartOfDeptOf({ sel, inventory, catToDept });
   const snapD = (sel?.deptInventory && Array.isArray(sel.deptInventory[d])) ? sel.deptInventory[d] : null;
