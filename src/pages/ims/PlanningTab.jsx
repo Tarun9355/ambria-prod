@@ -17,7 +17,7 @@ function Placeholder({ name, note }) {
   );
 }
 
-export default function PlanningTab({ prodRequests, projects, functions, setFunctions, inventory, setInventory, settings, setSettings, trussInv, setTrussInv, trussAlloc, setTrussAlloc, platformAlloc, setPlatformAlloc, battaAlloc, setBattaAlloc, eventOrders, setEventOrders, blocks, applyBlocksRpc, studio, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, rateCardCategories, rcItems, rcCats, supervisors }) {
+export default function PlanningTab({ prodRequests, projects, functions, setFunctions, inventory, setInventory, settings, setSettings, trussInv, setTrussInv, saveTrussRate, trussAlloc, setTrussAlloc, platformAlloc, setPlatformAlloc, battaAlloc, setBattaAlloc, eventOrders, setEventOrders, blocks, applyBlocksRpc, studio, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, rateCardCategories, rcItems, rcCats, supervisors }) {
   // KEEP IN SYNC: RoleAccessModal.jsx's IMS_SUBTABS.planning mirrors this list by hand (role-based
   // tab access has no shared source of truth with the real tab bars) — add/remove/rename a tab
   // here and update that list in the same change.
@@ -76,9 +76,9 @@ export default function PlanningTab({ prodRequests, projects, functions, setFunc
       {sub === "deptops" && <DepartmentOpsTab onsiteOnly={onsiteOnly} pickerSlot={pickerSlot} prodRequests={prodRequests} functions={functions} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} setInventory={setInventory} blocks={blocks} applyBlocksRpc={applyBlocksRpc} settings={settings} setSettings={setSettings} trussInv={trussInv} setTrussInv={setTrussInv} authUser={authUser} amendRequests={amendRequests} focusEventId={focusEventId} focusSearch={focusSearch} focusLeadEntry={focusLeadEntry} onFocusHandled={onFocusHandled} onGoToCalendar={onGoToCalendar} autoPdfFor={autoPdfFor} onAutoPdfDone={onAutoPdfDone} supervisors={supervisors} rateCardCategories={rateCardCategories} rcItems={rcItems} />}
       {sub === "structure" && <StructurePlanningTab trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} platformAlloc={platformAlloc} setPlatformAlloc={setPlatformAlloc} battaAlloc={battaAlloc} setBattaAlloc={setBattaAlloc} trussInv={trussInv} eventOrders={eventOrders} authUser={authUser} canEditPlanning={canEditPlanning} />}
       {sub === "paint" && <PaintPlanningTab projects={projects} functions={functions} inventory={inventory} settings={settings} />}
-      {sub === "trussbatta" && <AdminSettingsTab mode="trussbatta" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} canEdit={canEditPlanning} />}
+      {sub === "trussbatta" && <AdminSettingsTab mode="trussbatta" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} saveTrussRate={saveTrussRate} authUser={authUser} canEdit={canEditPlanning} />}
       {sub === "platformconfig" && <AdminSettingsTab mode="platformconfig" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} canEdit={canEditPlanning} />}
-      {sub === "fabricstock" && <AdminSettingsTab mode="fabricstock" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} canEdit={canEditPlanning} />}
+      {sub === "fabricstock" && <AdminSettingsTab mode="fabricstock" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} saveTrussRate={saveTrussRate} authUser={authUser} canEdit={canEditPlanning} />}
       {sub === "truck" && <AdminSettingsTab mode="truck" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} rateCardCategories={rateCardCategories} rcItems={rcItems} rcCats={rcCats} inventory={inventory} canEdit={canEditPlanning} />}
     </div>
   );

@@ -49,6 +49,8 @@ import { rowToRcItem, rcItemToRow } from "../../lib/rateCard";
 import { registerFlushBeforeReload, unregisterFlushBeforeReload, flushBeforeReload } from "../../lib/pendingSaveRegistry";
 import { reportSaveProblem, clearSaveProblem } from "../../lib/saveHealth";
 import { writeWithRetry } from "../../lib/writeRetry";
+import { applyTrussRate, readTrussRate, rateLabel, isAdminUser, withRatesOf, RATE_ACTION } from "../../lib/ims/trussRates";
+import { logWrite } from "../../lib/studio/userActions";
 import { readTransport, writeTransport, renameTruckCapItem } from "../../lib/studio/transportBlob";
 
 const LMS_STALE_MS = 30 * 60 * 1000; // re-sync in background only if cache older than 30 min
@@ -2710,6 +2712,7 @@ export default function IMS() {
   }, [trackWrite]);
 
   // Truss inventory is a single-row key-value (key='main', data JSONB).
+  const trussWriteChainRef = useRef(Promise.resolve());
   const setTrussInv = useCallback((updater) => {
     // Refuse to save before the real row has actually landed — see trussInvLoadedRef's own comment
     // for the incident this closes (an edit made while trussInv still held INIT_TRUSS_INV silently
@@ -2720,10 +2723,47 @@ export default function IMS() {
     }
     setTrussInvState((prev) => {
       const next = typeof updater === "function" ? updater(prev) : updater;
-      trackWrite(retryingUpsert("truss_inventory", { key: "main", data: next }, "key").then(({ error: e }) => { if (e) setError(`Save failed: ${e.message}`); }));
+      // Rates come from the database's row as it is now, never this tab's copy (lib/ims/trussRates withRatesOf): rates change only
+      // through saveTrussRate, and an old tab's stock edit used to write its old rates back with it.
+      // One at a time, in the order made (stock boxes save on every keystroke; a later keystroke's write must land last)
+      trackWrite(trussWriteChainRef.current = trussWriteChainRef.current.catch(() => {}).then(async () => {
+        let data = next;
+        try {
+          const { data: row } = await supabase.from("truss_inventory").select("data").eq("key", "main").maybeSingle();
+          if (row?.data && typeof row.data === "object") data = withRatesOf(next, row.data);
+        } catch { /* could not read: save as before */ }
+        const { error: e } = await retryingUpsert("truss_inventory", { key: "main", data }, "key");
+        if (e) setError(`Save failed: ${e.message}`);
+      }));
       return next;
     });
   }, [trackWrite]);
+
+  // ONE truss / fabric rate, Admin only, logged with the person's name (lib/ims/trussRates - owner report 2026-11-26: the Old fabric
+  // rates were set to 0 and nobody could tell who). Applied to the row as it is in the database NOW, not to this tab's copy: the whole
+  // row is one JSON value, and a tab left open since the morning used to write its old copy of every rate back with any edit.
+  const saveTrussRateNow = async (mat, key, value) => {
+    const { data: row, error: readErr } = await supabase.from("truss_inventory").select("data").eq("key", "main").maybeSingle();
+    if (readErr || !row?.data || typeof row.data !== "object") { setError("Couldn't read the current rates — the rate was NOT saved. Check the connection and try again."); return false; }
+    const from = readTrussRate(row.data, mat, key);
+    const to = Math.max(0, Number(value) || 0);
+    if (from === to) return true;
+    const next = applyTrussRate(row.data, mat, key, to);
+    const { error: e } = await retryingUpsert("truss_inventory", { key: "main", data: next }, "key");
+    logWrite(user, RATE_ACTION, { targetType: "truss_rate", targetId: `${mat || "iron"}:${key}`, targetName: rateLabel(mat, key), ok: !e, error: e?.message, detail: { mat: mat || "iron", key, from, to } });
+    if (e) { setError(`Save failed: ${e.message}`); return false; }
+    setTrussInvState((prev) => applyTrussRate(prev, mat, key, to)); // just the rate: this tab's own unsaved-yet stock edits stay
+    return true;
+  };
+  const saveTrussRate = useCallback((mat, key, value) => {
+    if (!isAdminUser(user)) { setError("Only an Admin can change a rate."); return Promise.resolve(false); }
+    if (!trussInvLoadedRef.current) { setError("Truss/fabric inventory hasn't finished loading — the rate was NOT saved. Reload the page and try again."); return Promise.resolve(false); }
+    // in the same line as every other write of the row (trussWriteChainRef)
+    const job = trussWriteChainRef.current.catch(() => {}).then(() => saveTrussRateNow(mat, key, value));
+    trussWriteChainRef.current = job;
+    trackWrite(job);
+    return job;
+  }, [user, trackWrite]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setCategories = useCallback((updater) => {
     setCats((prev) => (typeof updater === "function" ? updater(prev) : updater));
@@ -3077,7 +3117,7 @@ export default function IMS() {
           <PlanningTab
             projects={projects} functions={functions} setFunctions={setFunctions} inventory={items} setInventory={setInventory}
             settings={settings} setSettings={setSettings} prodRequests={prodRequests}
-            trussInv={trussInv} setTrussInv={setTrussInv}
+            trussInv={trussInv} setTrussInv={setTrussInv} saveTrussRate={saveTrussRate}
             trussAlloc={trussAlloc} setTrussAlloc={setTrussAlloc} platformAlloc={platformAlloc} setPlatformAlloc={setPlatformAlloc} battaAlloc={battaAlloc} setBattaAlloc={setBattaAlloc} eventOrders={eventOrders} setEventOrders={setEventOrders} blocks={readOnlyBlocks}
             applyBlocksRpc={applyBlocksRpc} /* Dept Ops blocks the items added on its trucks (not in the deal) - through the same locked RPC as Inventory's Block */
             studio={studio} authUser={user} amendRequests={amendRequests}

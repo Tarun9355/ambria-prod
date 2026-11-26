@@ -495,6 +495,13 @@ Still loading ¦ अभी लद रहा है
 Trucks & challans ¦ ट्रक और चालान
 Each trip's challan - every department's items on it ¦ हर ट्रिप का चालान - उस पर हर डिपार्टमेंट का सामान
 Print challan ¦ चालान प्रिंट करें
+Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन बदल सकता है
+Rate history ¦ रेट का इतिहास
+Who changed which rate, and when ¦ किसने कौन-सा रेट कब बदला
+No rate changes recorded yet. Every change from now on shows here with the name of who made it. ¦ अभी कोई रेट बदलाव दर्ज नहीं है। अब से हर बदलाव यहाँ बदलने वाले के नाम के साथ दिखेगा।
+Couldn't load the history. ¦ इतिहास लोड नहीं हो सका।
+not saved ¦ सेव नहीं हुआ
+₹0 - Old fabric is billed at nothing ¦ ₹0 - पुराने फ़ैब्रिक का कोई पैसा नहीं लग रहा
 on the way ¦ रास्ते में
 still loading ¦ अभी लद रहे हैं
 arrival issues ¦ आने में दिक्कत

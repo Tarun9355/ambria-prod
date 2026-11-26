@@ -10,6 +10,7 @@ import { canvaAuthUrl, canvaConnectionStatus, canvaClientId } from "../../lib/ca
 import { uploadToStorage, compressImageForUpload, STORAGE_FOLDERS } from "../../lib/storage";
 import { saveVariantsFresh, variantDisplayPhoto } from "../../lib/ims/mandiVariants";
 import MappingDetailModal from "../../components/shared/MappingDetailModal.jsx";
+import { RateInput, RateHistory, AdminOnlyNote } from "./TrussRateControls.jsx";
 import { resolveMandiFlower, computePatternSizeCost, effectiveMarkup, studioUnitLabel, genMandiFlowerId, mandiFlowerToRow, mandiFlowerPatchToRow, genFlowerPatternId, flowerPatternToRow, mirrorFlowerPick, mapPcsPerUnit } from "../../lib/ims/flowerHelpers";
 import { labourTypePatchToRow } from "../../lib/ims/labourTypes";
 import { priceForInvItem, phone10, flowerPaletteItemsOf } from "../../lib/ims/helpers";
@@ -115,7 +116,7 @@ function withPrevPrice(history, price) {
   return last && last.date === today ? h : [...h, { price: price || 0, date: today }];
 }
 
-export default function AdminSettingsTab({ settings, setSettings: setSettingsProp, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv: setTrussInvProp, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [], authUser, settingsLoaded = false, canEdit = true }) {
+export default function AdminSettingsTab({ settings, setSettings: setSettingsProp, supervisors, setSupervisors, studio, mode, syncRecipeRatesToStudio, tier15LastSync, tier15Syncing, trussInv, setTrussInv: setTrussInvProp, inventory = [], rateCardCategories = [], onUpdateSubcatFactor, onUpdateSubcatCostPercent, onAddSubcat, onRenameSubcat, onUpdateSubcatCategory, onSyncSubcatsFromInventory, onDeleteSubcat, onUpdateSubcatFloralMode, onUpdateSubcatTagHidden, rcItems = [], rcCats = [], authUser, settingsLoaded = false, canEdit = true, saveTrussRate = null }) {
   // Only meaningful for the handful of `forcedMode` mounts this task gates (Planning's Truss &
   // Batta Config / Platform Config / Fabric Stock / Truck, Flowers' Mandi Prices / Recipes) — every
   // other caller (Admin → Settings itself, Master Data, …) doesn't pass `canEdit` at all, so it
@@ -123,6 +124,11 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
   // mutators here (rather than adding `if (!canEdit)` at each of the ~30 call sites across this
   // file) is the one choke point for every write this component can make.
   const setTrussInv = canEdit ? setTrussInvProp : () => {};
+  // Truss / fabric RATES: Admin only, one rate at a time through IMS's saveTrussRate (fresh row, logged with the name) - lib/ims/trussRates.
+  const ratesAdmin = (authUser?.role || "").toLowerCase() === "admin" || authUser?.id === "u_admin";
+  const canChangeRates = canEdit && ratesAdmin && typeof saveTrussRate === "function";
+  const [rateLogTick, setRateLogTick] = useState(0);
+  const saveRate = async (mat, key, v) => { const ok = await saveTrussRate(mat, key, v); if (ok) setRateLogTick((t) => t + 1); return ok; };
   const setSettings = canEdit ? setSettingsProp : () => {};
   const updateRow = canEdit ? rawUpdateRow : () => Promise.reject(new Error("View only — you don't have edit access here"));
   const deleteRow = canEdit ? rawDeleteRow : () => Promise.reject(new Error("View only — you don't have edit access here"));
@@ -2160,6 +2166,8 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
         const battaRate = battaInherited ? trussInv.rates?.battaRftRate : TI.rates?.battaRftRate;
         return (
         <div className="space-y-4">
+          {!canChangeRates && <AdminOnlyNote />}
+          <RateHistory refreshKey={rateLogTick} keys={["pillarRftRate", "beamRftRate", "battaRftRate"]} />
           {/* ── Material tabs ── */}
           <div className="flex gap-2">
             {MAT_TABS.map((m) => (
@@ -2214,7 +2222,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
             )}
             <div className="mt-3 bg-indigo-50 border border-indigo-100 rounded-xl p-3 flex items-center justify-between">
               <div><p className="text-sm font-bold text-indigo-800">💰 {matLabel} pillar rental rate</p><p className="text-xs text-indigo-600">Single rate for all pillar sizes (₹/RFT × height).</p></div>
-              <div className="flex items-center gap-2"><span className="text-sm text-gray-700">₹</span><input type="number" min="0" value={TI.rates?.pillarRftRate || 0} onChange={(e) => setTI((ti) => ({ ...ti, rates: { ...ti.rates, pillarRftRate: parseFloat(e.target.value) || 0 } }))} className="w-24 border border-indigo-300 rounded-lg px-3 py-1.5 text-sm font-bold text-indigo-700 text-center" /><span className="text-sm text-gray-700">/ RFT</span></div>
+              <div className="flex items-center gap-2"><span className="text-sm text-gray-700">₹</span><RateInput value={TI.rates?.pillarRftRate || 0} canChange={canChangeRates} onSave={(v) => saveRate(trussMatTab, "pillarRftRate", v)} ariaLabel={`${matLabel} pillar rental rate`} className="w-24 border border-indigo-300 rounded-lg px-3 py-1.5 text-sm font-bold text-indigo-700 text-center" /><span className="text-sm text-gray-700">/ RFT</span></div>
             </div>
           </div>
 
@@ -2250,7 +2258,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
             )}
             <div className="mt-3 bg-purple-50 border border-purple-100 rounded-xl p-3 flex items-center justify-between">
               <div><p className="text-sm font-bold text-purple-800">💰 {matLabel} beam rental rate</p><p className="text-xs text-purple-600">Single rate for all beam sizes (₹/RFT × length).</p></div>
-              <div className="flex items-center gap-2"><span className="text-sm text-gray-700">₹</span><input type="number" min="0" value={TI.rates?.beamRftRate || 0} onChange={(e) => setTI((ti) => ({ ...ti, rates: { ...ti.rates, beamRftRate: parseFloat(e.target.value) || 0 } }))} className="w-24 border border-purple-300 rounded-lg px-3 py-1.5 text-sm font-bold text-purple-700 text-center" /><span className="text-sm text-gray-700">/ RFT</span></div>
+              <div className="flex items-center gap-2"><span className="text-sm text-gray-700">₹</span><RateInput value={TI.rates?.beamRftRate || 0} canChange={canChangeRates} onSave={(v) => saveRate(trussMatTab, "beamRftRate", v)} ariaLabel={`${matLabel} beam rental rate`} className="w-24 border border-purple-300 rounded-lg px-3 py-1.5 text-sm font-bold text-purple-700 text-center" /><span className="text-sm text-gray-700">/ RFT</span></div>
             </div>
           </div>
 
@@ -2261,7 +2269,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
             <div className="mb-3"><p className="font-bold text-amber-800">🧵 {matLabel} Batta (truss wrap) {battaInherited && <span className="text-[10px] font-normal text-gray-400">· inherited from Iron until edited here</span>}</p><p className="text-xs text-gray-500">Bulk RFT pool — ops cuts to needed length. Wraps every pillar + beam.</p></div>
             <div className="grid md:grid-cols-3 gap-3">
               <div><label className="text-xs text-gray-600 font-medium">Total stock (RFT)</label><input type="number" min="0" value={battaTI?.stockRft || 0} onChange={(e) => setTI((ti) => ({ ...ti, batta: { ...(ti.batta || battaTI || {}), stockRft: parseInt(e.target.value) || 0 } }))} className="mt-1 w-full border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-700 text-center" /></div>
-              <div><label className="text-xs text-gray-600 font-medium">Rental rate (₹/RFT)</label><input type="number" min="0" value={battaRate || 0} onChange={(e) => setTI((ti) => ({ ...ti, rates: { ...(ti.rates || {}), battaRftRate: parseFloat(e.target.value) || 0 } }))} className="mt-1 w-full border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-700 text-center" /></div>
+              <div><label className="text-xs text-gray-600 font-medium">Rental rate (₹/RFT)</label><RateInput value={battaRate || 0} canChange={canChangeRates} onSave={(v) => saveRate(trussMatTab, "battaRftRate", v)} ariaLabel="Batta rental rate" className="mt-1 w-full border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-700 text-center" /></div>
               <div><label className="text-xs text-gray-600 font-medium">Precautionary buffer (%)</label><input type="number" min="0" max="50" value={battaTI?.bufferPct ?? 10} onChange={(e) => setTI((ti) => ({ ...ti, batta: { ...(ti.batta || battaTI || {}), bufferPct: parseInt(e.target.value) || 0 } }))} className="mt-1 w-full border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-700 text-center" /></div>
             </div>
           </div>
@@ -2392,7 +2400,6 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
       {activePanel === "fabricstock" && trussInv && (() => {
         const colourCat = (settings.colourCatalogue || []).map((c) => c.name);
         const rates = trussInv.rates || {};
-        const updateRates = (key, val) => setTrussInv((ti) => ({ ...ti, rates: { ...(ti.rates || {}), [key]: parseFloat(val) || 0 } }));
         const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade" || key === "hex" || key === "photo") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
         const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
         // One colour into all three fabrics at once: Liza (kg), Wall Masking and Velvet Curtains (pieces) share the same colour list, so a colour picked here
@@ -2445,8 +2452,8 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
             <div className={`bg-${themeColor}-50 border border-${themeColor}-200 rounded-2xl p-5 space-y-3`}>
               <div><p className={`font-bold text-${themeColor}-900`}>{emoji} {title}</p><p className={`text-xs text-${themeColor}-700 mt-0.5`}>Per-colour Old + New stock quantities + their two rental rates. Update the live quantities after each washing cycle.</p></div>
               <div className={`bg-white border border-${themeColor}-100 rounded-lg p-3 grid grid-cols-2 gap-3`}>
-                <div><label className="text-xs text-gray-600">Old-stock rental (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[rentalKey] || 0} onChange={(e) => updateRates(rentalKey, e.target.value)} className="mt-1 w-full border border-gray-200 rounded px-2 py-1 text-sm font-bold" /><p className="text-[10px] text-gray-400 mt-0.5">Default — what the guest build bills unless New is picked</p></div>
-                <div><label className={`text-xs text-${themeColor}-700 font-medium`}>New-stock rental (₹/{qtyLabel})</label><input type="number" min="0" step="1" value={rates[rentalKeyNew] || 0} onChange={(e) => updateRates(rentalKeyNew, e.target.value)} className={`mt-1 w-full border border-${themeColor}-300 rounded px-2 py-1 text-sm font-bold text-${themeColor}-800`} /><p className="text-[10px] text-gray-400 mt-0.5">Premium — billed when the salesperson picks New for this truss</p></div>
+                <div><label className="text-xs text-gray-600">Old-stock rental (₹/{qtyLabel})</label><RateInput value={rates[rentalKey] || 0} canChange={canChangeRates} onSave={(v) => saveRate(null, rentalKey, v)} ariaLabel={`${title} old-stock rental`} className={"mt-1 w-full border rounded px-2 py-1 text-sm font-bold " + (!(Number(rates[rentalKey]) > 0) ? "border-red-300 text-red-700" : "border-gray-200")} />{!(Number(rates[rentalKey]) > 0) && <p className="text-[10px] font-semibold text-red-600 mt-0.5">{"₹0 - Old fabric is billed at nothing"}</p>}<p className="text-[10px] text-gray-400 mt-0.5">Default — what the guest build bills unless New is picked</p></div>
+                <div><label className={`text-xs text-${themeColor}-700 font-medium`}>New-stock rental (₹/{qtyLabel})</label><RateInput value={rates[rentalKeyNew] || 0} canChange={canChangeRates} onSave={(v) => saveRate(null, rentalKeyNew, v)} ariaLabel={`${title} new-stock rental`} className={`mt-1 w-full border border-${themeColor}-300 rounded px-2 py-1 text-sm font-bold text-${themeColor}-800`} /><p className="text-[10px] text-gray-400 mt-0.5">Premium — billed when the salesperson picks New for this truss</p></div>
               </div>
               <p className={`text-[10px] text-${themeColor}-600`}>Deal Check's own per-colour view still consumes Old stock first, then New — anything beyond both also bills at the New rate. Build itself skips this and just bills whichever tier the salesperson picked, flat.</p>
               <div className={`bg-white border border-${themeColor}-100 rounded-lg overflow-hidden`}>
@@ -2577,6 +2584,8 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
         };
         return (
           <div className="space-y-4">
+            {!canChangeRates && <AdminOnlyNote />}
+            <RateHistory refreshKey={rateLogTick} keys={["lizaKgRate", "lizaKgRateNew", "maskingPieceRate", "maskingPieceRateNew", "curtainPieceRate", "curtainPieceRateNew"]} />
             <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4">
               <p className="font-bold text-indigo-900">🧵 Fabric Stock & Pricing</p>
               <p className="text-xs text-indigo-700 mt-1">Three fabrics with per-colour inventory: <strong>Liza fabric</strong> (kg), <strong>Wall masking panels</strong> (pieces), <strong>Velvet curtains</strong> (pieces). The salesperson picks Old (default) or New fabric per truss in Build, billed flat at that tier's rental rate below — shows up directly in the guest's price, not just Deal Check's internal tracking.</p>
