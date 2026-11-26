@@ -17,6 +17,13 @@ import { carpetNotesForRows } from "../../lib/ims/carpetPlan";
 import FabricBlock from "./FabricBlock.jsx";
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+// A figure as the supervisor counts it: in pieces for a line made of one piece size (Platform 8x4 - kept in sqft underneath, as the truck
+// loads it), else in the line's own unit. A part piece shows one decimal (51 sqft of 32 sqft pieces = 1.6 pc).
+const qtyText = (q, line) => {
+  const per = Number(line?.perPiece) || 0;
+  if (per > 0) return `${Math.round(((Number(q) || 0) / per) * 10) / 10} pc`;
+  return `${r2(q)}${line?.unit ? ` ${line.unit}` : ""}`;
+};
 
 // The "how many arrived" box: what is typed stays in the box until Enter or leaving it, then saves once (owner's QA audit
 // 2026-11-26: clearing the box saved "no figure" and snapped back to the planned one, so backspacing 10 and typing 3 gave 103,
@@ -113,23 +120,34 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         // Platform: the pieces to pull, as Planning's Inventory blocked list shows them (owner report 2026-11-27: Planning shows pieces, the
         // Site page only sqft). The line itself stays in sqft - trucks load it as one line - and the pieces are a note under it.
         const piecesOf = (it) => {
-          if (!trussInv || !/^platform structure/i.test(String(it.sub || "").trim()) || !Array.isArray(it.parts)) return "";
+          if (!trussInv || !/^platform structure/i.test(String(it.sub || "").trim()) || !Array.isArray(it.parts)) return null;
           try {
             const by = new Map();
             platformPullPlansByFn(it.parts.filter((p) => !p?.repeat), trussInv).forEach(({ plan }) => (plan?.pieces || []).forEach((p) => {
               const k = `${p.label}|${p.material}|${p.thicknessIn ?? ""}`;
               const cur = by.get(k) || { ...p, qty: 0 }; cur.qty += p.qty; by.set(k, cur);
             }));
-            return [...by.values()].filter((p) => p.qty > 0).map((p) => `${p.qty} pc ${p.label} ${PLATFORM_MATERIAL_LABEL[p.material] || p.material || ""}${p.thicknessIn ? ` ${p.thicknessIn}″` : ""}`.trim()).join(" · ");
-          } catch { return ""; }
+            const list = [...by.values()].filter((p) => p.qty > 0);
+            if (!list.length) return null;
+            const sizes = [...new Set(list.map((p) => Number(p.sqftPerPiece) || 0))];
+            return {
+              text: list.map((p) => `${p.qty} pc ${p.label} ${PLATFORM_MATERIAL_LABEL[p.material] || p.material || ""}${p.thicknessIn ? ` ${p.thicknessIn}″` : ""}`.trim()).join(" · "),
+              // one piece size: the line can be read in pieces (owner ask 2026-11-27: "need 4 pcs, not 128 sqft") - the truck still loads sqft
+              perPiece: sizes.length === 1 && sizes[0] > 0 ? sizes[0] : null,
+            };
+          } catch { return null; }
         };
         load.forEach((it) => {
           const key = truckKeyOf(it);
           const pcs = piecesOf(it);
           const id = d + "|" + key;
           const cv = choice.get(it.id);
+          const fresh = !need.has(id);
           const c = need.get(id) || { dept: d, key, qty: 0, label: cv?.name || it.name, photo: cv?.name ? (cv.photo || "") : (it.photo || ""), unit: it.qtyUnit || "", invId: it.invId || null,
-            notes: [...(cv?.notes || []).map((n) => n.text).filter(Boolean), ...(it.blockedOnly ? ["Blocked for this event in Inventory - not in Deal Check's list"] : []), ...(pcs ? [`Pieces: ${pcs}`] : [])] };
+            perPiece: pcs?.perPiece || null,
+            notes: [...(cv?.notes || []).map((n) => n.text).filter(Boolean), ...(it.blockedOnly ? ["Blocked for this event in Inventory - not in Deal Check's list"] : []), ...(pcs?.text ? [`Pieces: ${pcs.text}`] : [])] };
+          // the same line from another function: pieces only while every part is the same piece size
+          if (!fresh && c.perPiece !== (pcs?.perPiece || null)) c.perPiece = null;
           c.qty += Number(it.qty) || 0;
           need.set(id, c);
         });
@@ -195,7 +213,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   const atVenueRows = plan.atVenue;
   // In Planning's list but on no truck yet: its own "Not loaded" row - every kind of line (platform, carpet, print, recipe parts too).
   const missingItems = [...plan.need.values()].filter((n) => !(loadedByKey.get(n.dept + "|" + n.key) > 0))
-    .map((n) => ({ invId: n.dept + "|" + n.key, qty: n.qty, unit: n.unit, dept: n.dept, label: n.label, photo: n.photo, notes: n.notes || [] }))
+    .map((n) => ({ invId: n.dept + "|" + n.key, qty: n.qty, unit: n.unit, perPiece: n.perPiece || null, dept: n.dept, label: n.label, photo: n.photo, notes: n.notes || [] }))
     .sort((a, b) => String(a.label || "").localeCompare(String(b.label || "")) || String(a.dept || "").localeCompare(String(b.dept || "")));
 
   const allDepts = [...new Set([...manifest.flatMap((m) => m.lines.map((l) => l.dept)), ...transfers.map((t) => t.fromDept), ...missingItems.map((m) => m.dept), ...atVenueRows.map((r) => r.dept)])].filter(Boolean).sort();
@@ -390,7 +408,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
               </div>
               <div className="mt-2 ml-[50px]">
                 <span className="inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-700 tabular-nums">
-                  need {Math.round(m.qty * 100) / 100}{m.unit ? ` ${m.unit}` : ""} · arriving 0 · short {Math.round(m.qty * 100) / 100}{m.unit ? ` ${m.unit}` : ""}
+                  need {qtyText(m.qty, m)} · arriving {qtyText(0, m)} · short {qtyText(m.qty, m)}
                 </span>
               </div>
             </div>
@@ -427,7 +445,6 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         const nd = needOf(ln.dept, ln.key);
         const need = nd ? nd.qty : null;
         const arriving = loadedByKey.get(ln.dept + "|" + ln.key) || 0;
-        const unitTxt = nd?.unit ? ` ${nd.unit}` : "";
         const allCustom = ln.customQty > 0 && ln.customQty >= ln.planned + ln.extra;
         return (
           <div key={ln.truck.id + "|" + ln.dept + "|" + ln.key} className="px-4 py-3">
@@ -439,14 +456,14 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                   {r.flag
                     ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">⚑ {FLAG_REASONS.find((f) => f.key === r.flag)?.label || "Flagged"}</span>
                     : short
-                    ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">Short — {got} of {expected}</span>
+                    ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">Short — {qtyText(got, nd?.perPiece ? nd : null)} of {qtyText(expected, nd?.perPiece ? nd : null)}</span>
                     : confirmed
                     ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Confirmed OK</span>
                     : gone === 0
                     ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">{"Still loading"}</span>
                     : <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">Not arrived</span>}
-                  {onTheWay > 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 tabular-nums"><span>{onTheWay}</span> <span>{"on the way"}</span></span>}
-                  {gone > 0 && loadingQty > 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 tabular-nums"><span>{loadingQty}</span> <span>{"still loading"}</span></span>}
+                  {onTheWay > 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 tabular-nums"><span>{nd?.perPiece ? qtyText(onTheWay, nd) : onTheWay}</span> <span>{"on the way"}</span></span>}
+                  {gone > 0 && loadingQty > 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 tabular-nums"><span>{nd?.perPiece ? qtyText(loadingQty, nd) : loadingQty}</span> <span>{"still loading"}</span></span>}
                 </div>
                 {/* Dept badge, which truck/driver it's riding on, and a one-tap call — the whole reason
                     this is a flat items list instead of a truck-grouped accordion (owner ask
@@ -484,14 +501,15 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                 {need != null && (
                   <div className="mt-1.5">
                     <span className={"inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full tabular-nums " + (Math.max(0, need - arriving) > 0 ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700")}>
-                      need {Math.round(need * 100) / 100}{unitTxt} · arriving {Math.round(arriving * 100) / 100}{unitTxt} · short {Math.round(Math.max(0, need - arriving) * 100) / 100}{unitTxt}
+                      need {qtyText(need, nd)} · arriving {qtyText(arriving, nd)} · short {qtyText(Math.max(0, need - arriving), nd)}
                     </span>
                   </div>
                 )}
               </div>
               {canEdit ? (
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <GotBox value={got} onCommit={(v) => setLine(ln.truck.id, ln.dept, ln.key, { got: v, flag: r.flag, note: r.note })}
+                  <GotBox value={nd?.perPiece && got != null ? Math.round((Number(got) / nd.perPiece) * 10) / 10 : got}
+                    onCommit={(v) => setLine(ln.truck.id, ln.dept, ln.key, { got: v != null && nd?.perPiece ? Math.round(v * nd.perPiece * 100) / 100 : v, flag: r.flag, note: r.note })}
                     className={"w-14 h-8 rounded-lg text-center text-[12.5px] font-bold tabular-nums ring-1 focus:outline-none focus:ring-2 " + (short || r.flag ? "bg-red-50 ring-red-200 text-red-700" : "bg-gray-50 ring-gray-200 text-gray-800")} />
                   {/* One-tap "it's exactly what was planned" — the per-item replacement for the old
                       whole-truck "Arrived as planned" button, now scoped to just this line. Hidden on

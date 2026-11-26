@@ -15,7 +15,7 @@ describe("Site Receiving: fabric", () => {
     const html = base({ id: "E1", fabricPlan: { liza: [{ colour: "Powder Blue", qty: 12 }], curtain: [{ colour: "Maroon", qty: 6 }], masking: [] }, deptInventory: { Fabric: fabLines }, trucks: [] });
     expect(html).toContain("Liza Fabric - Powder Blue");
     expect(html).toContain("Velvet Curtains - Maroon");
-    expect(html).toMatch(/need <!-- -->12<!-- -->(<!-- -->)? kg/);
+    expect(html.replace(/<!-- -->/g, "")).toMatch(/need 12 kg/);
     expect(html).toContain("liza.jpg");
   });
   it("loaded on a truck (Planning's key for the line): weighed against the plan", () => {

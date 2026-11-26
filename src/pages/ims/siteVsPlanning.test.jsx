@@ -23,7 +23,7 @@ describe("Site Receiving = Planning's to-load list", () => {
     const html = render({ id: "E", deptInventory: { Tenting: [{ name: "Platform Structure", qty: 500, qtyUnit: "sqft" }] }, trucks: [] });
     expect(html).toContain("Platform Structure");
     expect(html).toContain("Not loaded");
-    expect(html).toMatch(/need <!-- -->500<!-- --> sqft/);
+    expect(html.replace(/<!-- -->/g, "")).toMatch(/need 500 sqft/);
   });
   it("loaded before a change and no longer in Planning's list: said in amber, never shown as fine", () => {
     const html = render({ id: "E", deptInventory: { Furniture: [{ name: "Chair", imsId: "CH", qty: 1 }] }, trucks: truck({ Fabric: { "inv:OLD": 10 }, Furniture: { "inv:CH": 1 } }) });
