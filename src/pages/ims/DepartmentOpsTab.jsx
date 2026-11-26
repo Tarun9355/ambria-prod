@@ -55,7 +55,7 @@ import { tripsOf } from "../../lib/ims/eventTrucks";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { isMyEvent, supervisorIdsOfUser, fixedAtVenue, addedSupervisorsOf, withAddedSupervisors } from "../../lib/ims/mySupervisorEvents";
 import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a site" search
-import { truckDetailsLocked } from "../../lib/ims/truckLock"; // vehicle / driver fixed once a truck is loaded
+import { truckDetailsLocked, truckLoadedOf } from "../../lib/ims/truckLock"; // vehicle / driver fixed once a truck is loaded
 import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
@@ -2938,6 +2938,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     saveEventTrucks(list => list.map(t => t.id === id ? { ...t, ...patch } : t));
   };
   const delTruck = async (id, n) => {
+    // a loaded truck (anything on any trip, or a trip gone) is never removed - its items and challan go with it (owner ask 2026-11-26)
+    if (truckLoadedOf(eventTruckList.find(t => t.id === id))) { alert(`Truck ${n} is loaded, so it can't be removed. Unload its items first.`); return; }
     if (!(await askDelete(`Remove Truck ${n}?`, "Removes it for every department sharing this event's trucks - anything loaded on any of its trips goes with it."))) return;
     saveEventTrucks(list => list.filter(t => t.id !== id));
   };
@@ -7368,13 +7370,15 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             })}
                           </div>
                         </button>
-                        {/* Removing a truck removes it for every department, so it is held back while
-                            another department has items on ANY of its trips. */}
-                        <button onClick={() => delTruck(t.id, truckNumById.get(t.id))} disabled={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0)))}
-                          aria-label={`Remove truck ${truckNumById.get(t.id)}`} title={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))) ? "Another department has items on this truck" : "Remove truck"}
-                          className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors">
+                        {/* Removing a truck removes it for every department, and everything on it: held back once it is loaded
+                            at all - by any department, on any trip, or a trip already gone (owner ask 2026-11-26). Empty: removable. */}
+                        {(() => { const loaded = truckLoadedOf(t); return (
+                        <button onClick={() => delTruck(t.id, truckNumById.get(t.id))} disabled={loaded}
+                          aria-label={`Remove truck ${truckNumById.get(t.id)}`} title={loaded ? "Loaded — a truck with items on it (or a trip gone) can't be removed" : "Remove truck"}
+                          className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-300 disabled:cursor-not-allowed transition-colors">
                           <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
                         </button>
+                        ); })()}
                       </div>
                       {openTruck === t.id && (<>
                       {/* Labelled, so the chips read as "pick one of these" rather than as tags

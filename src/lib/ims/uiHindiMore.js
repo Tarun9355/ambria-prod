@@ -485,6 +485,7 @@ Loading your venues… ¦ आपके वेन्यू लोड हो र�
 Who's bringing what, on which truck ¦ कौन क्या ला रहा है, किस ट्रक पर
 Locked — this truck is loaded. A different vehicle? Use “+ Add truck”. ¦ लॉक — इस ट्रक पर सामान लद चुका है। दूसरी गाड़ी है? “+ Add truck” से नया ट्रक बनाएँ।
 add phone · 10 digits ¦ फ़ोन जोड़ें · 10 अंक
+Loaded — a truck with items on it (or a trip gone) can't be removed ¦ लदा हुआ — जिस ट्रक पर सामान है (या ट्रिप निकल चुकी है) उसे हटाया नहीं जा सकता
 Search guest name or venue… ¦ गेस्ट का नाम या वेन्यू खोजें…
 No event matches this — try the guest's first name or the venue. ¦ कोई इवेंट नहीं मिला — गेस्ट का पहला नाम या वेन्यू लिखकर देखें।
 — choose — ¦ — चुनें —
