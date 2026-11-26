@@ -27,7 +27,7 @@ const fnDate = (eo) => {
 // One page for the whole event, every department together — not the per-department tabs the rest
 // of IMS uses. Built for the Site Supervisor role: a narrow login that only needs "what's arriving
 // on each truck, right now" and "who's actually on site", not the dept-head planning screens.
-export default function SiteSupervisorTab({ eventOrders, setEventOrders, inventory, settings, blocks, trussInv, rateCardCategories, authUser, supervisors = [] }) {
+export default function SiteSupervisorTab({ eventOrders, setEventOrders, inventory, settings, blocks, trussInv, rateCardCategories, authUser, supervisors = [], rcItems = [] }) {
   const [selId, setSelId] = useState(() => { try { return sessionStorage.getItem(PICK_KEY) || ""; } catch { return ""; } });
   // Was a Planned/Actual toggle — Actual already starts out showing exactly what was planned until
   // someone edits a figure, so a separate read-only "Planned" view never showed anything the Actual
@@ -128,7 +128,7 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
       </div>
 
       {section === "receiving" ? (
-        <SiteReceivingPanel sel={sel} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} authUser={authUser} mode={mode} settings={settings} trussInv={trussInv} />
+        <SiteReceivingPanel sel={sel} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} authUser={authUser} mode={mode} settings={settings} trussInv={trussInv} blocks={blocks} rcItems={rcItems} rateCardCategories={rateCardCategories} />
       ) : (
         <SiteCrewPanel sel={sel} setEventOrders={setEventOrders} settings={settings} inventory={inventory} authUser={authUser} catToDept={catToDept} mode={mode} />
       )}

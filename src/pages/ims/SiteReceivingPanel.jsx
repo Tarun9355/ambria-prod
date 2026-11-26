@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "../../lib/supabase";
-import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks, labelForLoadKey } from "../../lib/ims/eventTrucks";
+import { useMemo, useState } from "react";
+import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks } from "../../lib/ims/eventTrucks";
 import { FLAG_REASONS, receivingOf, lineReceipt, setItemReceiptPatch, clearItemReceiptPatch } from "../../lib/ims/receiving";
-import { catToDept } from "../../lib/ims/deptClassify";
+import { catToDept as sharedCatToDept, DEPTS } from "../../lib/ims/deptClassify";
 import { thumbUrl } from "../../lib/studio/thumb.js";
 import { actualsLockState } from "../../lib/ims/actualsLock";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { atVenueOfEvent } from "../../lib/ims/atVenue";
-import { FABRIC_KINDS, buildFabricGroups } from "../../lib/ims/fabricGroups";
+import { buildFabricGroups } from "../../lib/ims/fabricGroups";
 import { makeEventPlans } from "../../lib/ims/eventPlans";
+import { buildLiveFloralPlan } from "../../lib/ims/liveFloralPlan";
+import { truckKeyOf, mappedStockRowsOf, blockedGroupedFor, blockedFlatFor, loadSplitOf } from "../../lib/ims/deptLoadList";
 import FabricBlock from "./FabricBlock.jsx";
 
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
@@ -20,48 +21,63 @@ const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", 
 // old whole-truck "Arrived as planned" button entirely — that one used to mark every department on a
 // truck arrived in a single tap, which a dept head filtering to their own department could trigger by
 // accident for departments they'd never actually looked at.
-export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eventOrders, authUser, mode, settings, trussInv }) {
+export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eventOrders, authUser, mode, settings, trussInv, blocks = {}, rcItems = [], rateCardCategories = [] }) {
   const [flaggingKey, setFlaggingKey] = useState(null); // `${truckId}|${dept}|${key}` currently showing its issue panel
   // "all" (default) or one department — a supervisor checking in a truck usually cares about every
   // department on it, but a dept head who only wants to confirm THEIR OWN pieces arrived (owner ask
   // 2026-11-24) needs to cut the noise of every other department's lines on the same shared truck.
   const [deptFilter, setDeptFilter] = useState("all");
-  // The `functions` table's own `data.items` (per function, invId+qty, FOC items already split into
-  // a separate `focItems` array by Studio's own reconcile — see StudioApp.jsx's reconcileSoldInventoryBlocks
-  // — so nothing here needs to re-exclude them) is the same flat, kit-walked quantity list Studio
-  // keeps resynced for this exact event, independent of DepartmentOpsTab's own much heavier live
-  // Deal-Check recompute — reusing it here needs no new sync path, just a read.
-  const [fnItems, setFnItems] = useState([]);
-  // Fixed stock standing at the venue and items set to ♻ Repeat in Build are not loaded (Planning's "Already at the venue"):
-  // the same rule (lib/ims/atVenue), so they show here as at the venue, not as short (owner ask 2026-11-26).
+  // ── WHAT SHOULD COME: THE VERY LIST PLANNING LOADS FROM ── (owner's QA audit 2026-11-26)
+  // Each department's to-load list is built by lib/ims/deptLoadList - the code Dept Ops itself runs (Deal Check's department
+  // snapshot: kits as shell + this department's parts, recipe parts, Floral's mapped artificial items worked out live, Fabric
+  // folded per colour, platform / carpet / print / truss lines, less what stands at the venue) - and keyed by the same truck keys.
+  // It used to be worked out here from Studio's functions list instead, which disagreed with Planning in many ways (summed
+  // functions where Planning loads the peak, kits within kits, platform lines missing, mapped items "need 0", a kit part counted
+  // twice, the wrong department chip).
+  const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
+  const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   const fvSettings = useFixedVenueSettings(settings);
   const atVenueOf = useMemo(() => atVenueOfEvent(sel, fvSettings, inventory), [sel, fvSettings, inventory]);
-  // Planning's Fabric block (owner ask 2026-11-26: "as Planning shows it, at the top"): Liza / Velvet / Wall Masking, each with its
-  // colour photo and total, opening to its colours and zone-by-zone use - the same groups Dept Ops builds (lib/ims/fabricGroups),
-  // from the event's own layout and Deal Check's fabric plan. No money here.
-  const fabricGroups = useMemo(() => {
+  const liveFloral = useMemo(() => {
+    if (!sel) return null;
+    try { return buildLiveFloralPlan(sel.functionsDetail, { settings: settings || {}, rcItems, rateCardCategories, inventory }); } catch { return null; }
+  }, [sel, settings, rcItems, rateCardCategories, inventory]);
+  const plan = useMemo(() => {
+    const need = new Map(); // `${dept}|${truckKey}` -> { dept, key, qty, label, photo, unit, invId }
+    const atVenue = [];
+    let fabricGroups = [];
+    if (!sel) return { need, atVenue, fabricGroups };
+    let pl = null;
+    try { pl = makeEventPlans({ sel, inventory, blocks: {}, eventOrders, settings, trussInv }); } catch (e) { console.error("[site-receiving] plans:", e); }
+    // Planning's Fabric block (Liza / Velvet / Wall Masking, colour photo, total, zones) - shown on top, no money.
     try {
-      const pl = makeEventPlans({ sel, inventory, blocks: {}, eventOrders, settings, trussInv });
       const fnsF = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
-      return buildFabricGroups({ entries: pl.fabricEntriesOf(), lines: Array.isArray(sel?.deptInventory?.Fabric) ? sel.deptInventory.Fabric : [],
-        fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1, fnPalettes: pl.fabricPalettesOf() }).groups;
-    } catch (e) { console.error("[site-receiving] fabric groups:", e); return []; }
-  }, [sel, inventory, eventOrders, settings, trussInv]);
-  useEffect(() => {
-    let cancelled = false;
-    // Cleared IMMEDIATELY on every event switch, not just once the new fetch resolves — this panel
-    // isn't remounted when the event picker above changes `sel` (regression review, 2026-11-25): on
-    // a slow connection, the previous event's needs would otherwise still be showing against the
-    // NEW event's (empty) trucks, putting the wrong items' need/arriving/short rows into the list.
-    setFnItems([]);
-    if (!sel?.id) return;
-    supabase.from("functions").select("data").contains("data", { eventOrderId: sel.id }).then(({ data, error }) => {
-      if (cancelled) return;
-      if (error) { console.error("[site-receiving] functions fetch failed:", error.message); setFnItems([]); return; }
-      setFnItems((data || []).flatMap((r) => (Array.isArray(r.data?.items) ? r.data.items : [])));
+      fabricGroups = buildFabricGroups({ entries: pl ? pl.fabricEntriesOf() : [], lines: Array.isArray(sel?.deptInventory?.Fabric) ? sel.deptInventory.Fabric : [],
+        fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1, fnPalettes: pl ? pl.fabricPalettesOf() : null }).groups;
+    } catch (e) { console.error("[site-receiving] fabric groups:", e); }
+    let mapped = [];
+    try { mapped = mappedStockRowsOf(liveFloral, sel, inventory); } catch { /* no live floral plan: none */ }
+    const deptsHere = [...new Set([...DEPTS, ...Object.keys(sel?.deptInventory || {})])];
+    deptsHere.forEach((d) => {
+      try {
+        const grouped = blockedGroupedFor(d, { sel, inventory, blocks, catToDept, mappedStockRows: mapped });
+        if (!grouped.length) return;
+        const flat = blockedFlatFor(grouped, d, { sel, trussInv, fabricEntriesOf: pl?.fabricEntriesOf, fabricPalettesOf: pl?.fabricPalettesOf });
+        const { load, atVenue: av } = loadSplitOf(flat, atVenueOf);
+        load.forEach((it) => {
+          const key = truckKeyOf(it);
+          const id = d + "|" + key;
+          const c = need.get(id) || { dept: d, key, qty: 0, label: it.name, photo: it.photo || "", unit: it.qtyUnit || "", invId: it.invId || null };
+          c.qty += Number(it.qty) || 0;
+          need.set(id, c);
+        });
+        av.forEach(({ it, a }) => atVenue.push({ dept: d, key: truckKeyOf(it), label: it.name, photo: it.photo || "", qty: Number(it.fullQty ?? it.qty) || 0, unit: it.qtyUnit || "", a }));
+      } catch (e) { console.error("[site-receiving] dept list", d, e); }
     });
-    return () => { cancelled = true; };
-  }, [sel?.id]);
+    atVenue.sort((x, y) => String(x.label || "").localeCompare(String(y.label || "")));
+    return { need, atVenue, fabricGroups };
+  }, [sel, inventory, blocks, eventOrders, settings, trussInv, liveFloral, atVenueOf]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fabricGroups = plan.fabricGroups;
 
   const manifest = truckManifest(sel, inventory);
   const transfers = incomingTransfersFor(eventOrders, sel?.id);
@@ -73,92 +89,17 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // 2026-11-24: the old check read the grouped `manifest`, which still counts an empty truck as one
   // entry, so the panel rendered a blank page instead of either empty-state message).
   const allLines = manifest.flatMap(({ truck, lines }) => lines.map((ln) => ({ ...ln, truck })));
-  // Every item id Studio's build needs for this event, summed across every function, against how
-  // much of it has actually gone out on ANY truck OR arrived by inter-event transfer. Feeds both the
-  // "never loaded at all" rows below AND the need/arriving/short line now shown on every loaded line
-  // too (owner ask 2026-11-25) — so a PARTLY-loaded item (some qty loaded, short of what's needed)
-  // is visible right on its own truck line, not just the fully-unloaded case this started as.
-  const neededAllByInvId = new Map(); // invId -> { qty, dept } - everything the build uses
-  fnItems.forEach((it) => {
-    if (!it?.invId || !(Number(it.qty) > 0)) return;
-    const invId = String(it.invId);
-    const cur = neededAllByInvId.get(invId) || { qty: 0, dept: it.dept || "" };
-    cur.qty += Number(it.qty) || 0;
-    neededAllByInvId.set(invId, cur);
-  });
-  // ...and what Planning itself loads from: each department's Deal Check list (deptInventory), a kit as its shell plus every
-  // part - the same flat list Truck planning loads (keys "inv:<part>@<kit>"). An item the build list above lacks (a kit's part
-  // it did not carry - owner report 2026-11-26: Green Bottle Vase, part of a Glass Consol Table, read "need 0" while 4 were on a
-  // truck) takes its need from here; one the build list has keeps the build's figure, so nothing is counted twice.
-  const planNeed = new Map();
-  Object.entries(sel?.deptInventory || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach((x) => {
-    if (!x || x.foc) return;
-    const add = (id, q) => { if (!id || !(Number(q) > 0)) return; const k = String(id); const c = planNeed.get(k) || { qty: 0, dept: d }; c.qty += Number(q); planNeed.set(k, c); };
-    add(x.imsId, x.qty);
-    (Array.isArray(x.components) ? x.components : []).forEach((cp) => add(cp?.imsId, cp?.qty));
-  }));
-  planNeed.forEach((v, k) => { if (!neededAllByInvId.has(k)) neededAllByInvId.set(k, v); });
-  // What has to come on a truck: less what stands at the venue (fixed) and all of a Repeat item. Those are listed apart below.
-  const neededByInvId = new Map();
-  const atVenueRows = [];
-  neededAllByInvId.forEach(({ qty, dept }, invId) => {
-    const a = atVenueOf({ id: invId, invId, qty });
-    if (a.load > 0) neededByInvId.set(invId, { qty: a.load, dept });
-    if (a.repeat || a.fixed > 0) {
-      const inv = (inventory || []).find((i) => String(i.id) === invId);
-      atVenueRows.push({ invId, qty, a, dept: catToDept(inv?.cat || inv?.category || dept), ...labelForLoadKey("inv:" + invId, inventory) });
-    }
-  });
-  atVenueRows.sort((x, y) => String(x.label || "").localeCompare(String(y.label || "")));
-  const loadedByInvId = new Map();
-  allLines.forEach((ln) => { if (ln.invId) loadedByInvId.set(String(ln.invId), (loadedByInvId.get(String(ln.invId)) || 0) + Number(ln.planned || 0) + Number(ln.extra || 0)); });
-  // Same-day reuse from another event (incomingTransfersFor) never rides on one of THIS event's own
-  // trucks, so it was never going to show up in allLines above — without counting it too, an item
-  // genuinely arriving this way would wrongly read "need N · arriving 0 · short N" right next to the
-  // very transfer line (below) that says otherwise (regression review, 2026-11-25).
-  transfers.forEach((t) => { if (t.invId) loadedByInvId.set(String(t.invId), (loadedByInvId.get(String(t.invId)) || 0) + (Number(t.qty) || 0)); });
-  // ── FABRIC: LIZA / VELVET / WALL MASKING ── (owner ask 2026-11-26: "as Planning shows it") Not inventory items, so not in the
-  // functions' item list: the need is Deal Check's fabric plan (sel.fabricPlan, per fabric and colour - what Planning's Fabric
-  // department reads), and a truck carries it as "Liza Fabric - <colour>" (Truck planning's folded fabric line, keyed by name).
-  // What has to come, per fabric colour: the SAME colours the Fabric block above shows (fabricGroups - worked out live from the event's
-  // layout and palette, else Deal Check's record), not Deal Check's stored fabricPlan alone: that copy goes stale when the plan changes
-  // after the sync (owner report 2026-11-26: Ivory 2 kg short here while the block, like Planning, had only Maroon). Fabric standing on
-  // Repeat has no colours to pull, so nothing is asked of a truck for it.
-  const fabricNeed = new Map(); // "liza fabric - maroon" -> { label, qty, unit, photo }
-  // an event whose layout has not synced has no groups: Deal Check's stored plan is all there is
-  const fabricSource = fabricGroups.length ? fabricGroups
-    : FABRIC_KINDS.map((k) => ({ label: k.label, unit: k.unit, colours: Array.isArray(sel?.fabricPlan?.[k.key]) ? sel.fabricPlan[k.key] : [] }));
-  fabricSource.forEach((g) => (g.colours || []).forEach((c) => {
-    const q = Number(c?.qty) || 0;
-    if (q <= 0) return;
-    const label = `${g.label} - ${String(c.colour || "").trim() || "(unassigned)"}`;
-    const key = label.toLowerCase();
-    // the colour's reference photo: the block's, else a stock row of this colour that has one (in any fabric's stock - Admin shares them)
-    const sameCol = (x) => String(x?.colour || "").trim().toLowerCase() === String(c.colour || "").trim().toLowerCase() && x?.photo;
-    const photo = c.photo || FABRIC_KINDS.map((o) => (Array.isArray(trussInv?.[o.stockKey]) ? trussInv[o.stockKey] : []).find(sameCol)?.photo).find(Boolean) || "";
-    const cur = fabricNeed.get(key) || { label, qty: 0, unit: g.unit, photo };
-    cur.qty += q;
-    fabricNeed.set(key, cur);
-  }));
-  const fabricKeyOf = (ln) => (!ln?.invId && String(ln?.key || "").startsWith("nm:") ? String(ln.key).slice(3).split("|")[0].trim().toLowerCase() : null);
-  const fabricLoaded = new Map();
-  allLines.forEach((ln) => { const fk = fabricKeyOf(ln); if (fk && fabricNeed.has(fk)) fabricLoaded.set(fk, (fabricLoaded.get(fk) || 0) + Number(ln.planned || 0) + Number(ln.extra || 0)); });
-  const missingFabric = [...fabricNeed.entries()].filter(([fk]) => !(fabricLoaded.get(fk) > 0))
-    .map(([fk, f]) => ({ invId: "fab:" + fk, qty: f.qty, unit: f.unit, dept: "Fabric", label: f.label, photo: f.photo }));
-  const missingItems = [...neededByInvId.entries()]
-    .filter(([invId]) => !(loadedByInvId.get(invId) > 0))
-    .map(([invId, { qty, dept }]) => {
-      // The LIVE inventory category, not the snapshot `dept` saved onto this item the first time
-      // Studio ever synced it (regression review, 2026-11-25: that snapshot is never refreshed by a
-      // later category edit) — and WITHOUT settings.categoryDepartments, matching how
-      // DepartmentOpsTab.jsx's own catToDept(cat) calls resolve a truck line's department (no admin-
-      // override config there either), so a missing item lands under the same chip a dept head
-      // already sees it under everywhere else.
-      const inv = (inventory || []).find((i) => String(i.id) === invId);
-      return { invId, qty, dept: catToDept(inv?.cat || inv?.category || dept), ...labelForLoadKey("inv:" + invId, inventory) };
-    })
+  // what has gone out for each `${dept}|${key}` on any truck, plus same-day reuse arriving from another event
+  const loadedByKey = new Map();
+  allLines.forEach((ln) => { const id = ln.dept + "|" + ln.key; loadedByKey.set(id, (loadedByKey.get(id) || 0) + Number(ln.planned || 0) + Number(ln.extra || 0)); });
+  // Same-day reuse from another event never rides on one of THIS event's trucks - counted as arriving for its item.
+  transfers.forEach((t) => { if (t.invId) { const id = (t.fromDept || "") + "|inv:" + t.invId; loadedByKey.set(id, (loadedByKey.get(id) || 0) + (Number(t.qty) || 0)); } });
+  const needOf = (dept, key) => plan.need.get(dept + "|" + key) || null;
+  const atVenueRows = plan.atVenue;
+  // In Planning's list but on no truck yet: its own "Not loaded" row - every kind of line (platform, carpet, print, recipe parts too).
+  const missingItems = [...plan.need.values()].filter((n) => !(loadedByKey.get(n.dept + "|" + n.key) > 0))
+    .map((n) => ({ invId: n.dept + "|" + n.key, qty: n.qty, unit: n.unit, dept: n.dept, label: n.label, photo: n.photo }))
     .sort((a, b) => String(a.label || "").localeCompare(String(b.label || "")) || String(a.dept || "").localeCompare(String(b.dept || "")));
-  missingItems.push(...missingFabric);
 
   const allDepts = [...new Set([...manifest.flatMap((m) => m.lines.map((l) => l.dept)), ...transfers.map((t) => t.fromDept), ...missingItems.map((m) => m.dept), ...atVenueRows.map((r) => r.dept)])].filter(Boolean).sort();
   // Falls back to "all" the instant the picked department doesn't exist on THIS event (switching to
@@ -276,10 +217,8 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         const shortIds = new Set();
         combinedRows.forEach((row) => {
           if (row.kind === "missing") { shortIds.add("m|" + row.m.invId); return; }
-          const id = row.ln.invId ? String(row.ln.invId) : null;
-          if (id && (neededByInvId.get(id)?.qty ?? 0) > (loadedByInvId.get(id) || 0)) shortIds.add(id);
-          const fk = fabricKeyOf(row.ln);
-          if (fk && fabricNeed.has(fk) && fabricNeed.get(fk).qty > (fabricLoaded.get(fk) || 0)) shortIds.add("fab:" + fk);
+          const nd = needOf(row.ln.dept, row.ln.key);
+          if (nd && nd.qty > (loadedByKey.get(row.ln.dept + "|" + row.ln.key) || 0)) shortIds.add(row.ln.dept + "|" + row.ln.key);
         });
         const nShort = shortIds.size;
         return (
@@ -342,11 +281,12 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         // still gets a "need 0" row, not silence). Only skipped for a custom/named truck line with
         // no inventory id at all — there's no Studio quantity to compare it against.
         // a fabric line (Liza / Velvet / Masking by colour) is weighed against the fabric plan instead
-        const fabK = fabricKeyOf(ln);
-        const fab = fabK ? fabricNeed.get(fabK) : null;
-        const need = ln.invId ? (neededByInvId.get(String(ln.invId))?.qty ?? 0) : fab ? fab.qty : null;
-        const arriving = ln.invId ? (loadedByInvId.get(String(ln.invId)) || 0) : fab ? (fabricLoaded.get(fabK) || 0) : null;
-        const unitTxt = fab?.unit ? ` ${fab.unit}` : "";
+        // weighed against the same line in Planning's to-load list (same department, same truck key)
+        const nd = needOf(ln.dept, ln.key);
+        const need = nd ? nd.qty : null;
+        const arriving = loadedByKey.get(ln.dept + "|" + ln.key) || 0;
+        const unitTxt = nd?.unit ? ` ${nd.unit}` : "";
+        const allCustom = ln.customQty > 0 && ln.customQty >= ln.planned + ln.extra;
         return (
           <div key={ln.truck.id + "|" + ln.dept + "|" + ln.key} className="px-4 py-3">
             <div className="flex items-center gap-2.5">
@@ -380,13 +320,20 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                       {/* "not in the deal" only when it truly is not: the whole line was added on the truck and the build needs none of it.
                           An item the deal has, with some pieces added on the truck on top, says how many extra (a number and a fixed
                           phrase as separate pieces, so the Hindi screen finds the phrase). */}
-                      {(need == null || need === 0) && ln.customQty >= ln.planned + ln.extra
+                      {need == null && allCustom
                         ? "Added on truck · not in the deal"
                         : <><span>+{ln.customQty}</span> <span>{"extra, added on truck"}</span></>}
                     </span>
                   </div>
                 )}
-                {need != null && !(ln.customQty > 0 && need === 0) && (
+                {/* On a truck but not in Planning's list any more (the item was swapped out, a kit renamed, moved to another
+                    department after it was loaded): said so in amber - never shown as arrived and fine. */}
+                {need == null && !allCustom && (
+                  <div className="mt-1.5">
+                    <span className="inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800">{"Not in Planning's list now — loaded before a change"}</span>
+                  </div>
+                )}
+                {need != null && (
                   <div className="mt-1.5">
                     <span className={"inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full tabular-nums " + (Math.max(0, need - arriving) > 0 ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700")}>
                       need {Math.round(need * 100) / 100}{unitTxt} · arriving {Math.round(arriving * 100) / 100}{unitTxt} · short {Math.round(Math.max(0, need - arriving) * 100) / 100}{unitTxt}
@@ -456,24 +403,24 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
             <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">📌</span>
             <div className="min-w-0 flex-1">
               <div className="text-[15px] font-semibold text-gray-900">Already at the venue · not loaded</div>
-              <div className="text-xs text-gray-500 truncate">Fixed stock standing there, or set to Repeat in the build</div>
+              <div className="text-xs text-gray-500 truncate">Fixed stock standing there, set to Repeat in the build, or FOC</div>
             </div>
             <span className="shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 tabular-nums">{visibleAtVenue.length}</span>
           </div>
           <div className="divide-y divide-gray-100">
             {visibleAtVenue.map((r) => (
-              <div key={"av|" + r.invId} className="px-4 py-3 flex items-center gap-2.5">
+              <div key={"av|" + r.dept + "|" + r.key} className="px-4 py-3 flex items-center gap-2.5">
                 {r.photo ? <img src={thumbUrl(r.photo, 40)} loading="lazy" alt="" className="w-10 h-10 rounded-lg object-cover border border-gray-100 shrink-0" /> : <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center text-gray-300 text-sm shrink-0">📦</div>}
                 <div className="min-w-0 flex-1">
                   <div className="text-[13.5px] font-semibold text-gray-900 truncate">{r.label}</div>
                   <div className="flex items-center gap-1.5 flex-wrap mt-0.5 text-[10.5px]">
                     <span className="font-bold text-gray-500 bg-gray-50 rounded px-1.5 py-0.5">{DEPT_ICON[r.dept] || ""} {r.dept}</span>
                     <span className="text-gray-500 tabular-nums">
-                      {r.a.repeat ? `all ${r.qty} stay from before` : r.a.load > 0 ? `${r.a.fixed} of ${r.qty} standing here · ${r.a.load} on a truck` : `all ${r.qty} standing here`}
+                      {r.a.foc ? `all ${r.qty} FOC - left at the venue` : r.a.repeat ? `all ${r.qty} stay from before` : r.a.load > 0 ? `${r.a.fixed} of ${r.qty} standing here · ${r.a.load} on a truck` : `all ${r.qty} standing here`}
                     </span>
                   </div>
                 </div>
-                <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (r.a.repeat ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700")}>{r.a.repeat ? "♻ REPEAT" : "📌 FIXED"}</span>
+                <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (r.a.foc || r.a.repeat ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700")}>{r.a.foc ? "🎁 FOC" : r.a.repeat ? "♻ REPEAT" : "📌 FIXED"}</span>
               </div>
             ))}
           </div>

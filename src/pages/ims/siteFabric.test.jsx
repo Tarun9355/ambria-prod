@@ -9,26 +9,27 @@ const base = (sel) => renderToString(<SiteReceivingPanel sel={sel} setEventOrder
   trussInv={{ lizaStock: [{ colour: "Powder Blue", photo: "https://x/liza.jpg" }] }} />);
 
 describe("Site Receiving: fabric", () => {
+  // Deal Check's Fabric list (deptInventory.Fabric) is what Planning folds into one load line per fabric colour; Site reads the same list.
+  const fabLines = [{ id: "f1", name: "Liza Fabric (Old)", sub: "kg · stage", qty: 12, total: 3600 }, { id: "f2", name: "Velvet Curtains (Old)", sub: "pcs · entry", qty: 6, total: 600 }];
   it("a fabric not on any truck: its own row, short in its unit, with the colour's photo", () => {
-    const html = base({ id: "E1", fabricPlan: { liza: [{ colour: "Powder Blue", qty: 12 }], curtain: [{ colour: "Maroon", qty: 6 }], masking: [] }, trucks: [] });
+    const html = base({ id: "E1", fabricPlan: { liza: [{ colour: "Powder Blue", qty: 12 }], curtain: [{ colour: "Maroon", qty: 6 }], masking: [] }, deptInventory: { Fabric: fabLines }, trucks: [] });
     expect(html).toContain("Liza Fabric - Powder Blue");
     expect(html).toContain("Velvet Curtains - Maroon");
     expect(html).toMatch(/need <!-- -->12<!-- -->(<!-- -->)? kg/);
     expect(html).toContain("liza.jpg");
   });
-  it("loaded on a truck: the line weighs what is on trucks against the plan", () => {
-    const sel = { id: "E1", fabricPlan: { liza: [{ colour: "Powder Blue", qty: 12 }] },
-      trucks: [{ id: "T1", vehicle: "DL1", driver: "Raju", trips: [{ id: "a", status: "dispatched", loads: { Fabric: { "nm:liza fabric - powder blue": 8 } } }] }] };
+  it("loaded on a truck (Planning's key for the line): weighed against the plan", () => {
+    const sel = { id: "E1", fabricPlan: { liza: [{ colour: "Powder Blue", qty: 12 }] }, deptInventory: { Fabric: [fabLines[0]] },
+      trucks: [{ id: "T1", vehicle: "DL1", driver: "Raju", trips: [{ id: "a", status: "dispatched", loads: { Fabric: { "nm:liza fabric - powder blue|https://x/liza.jpg": 8 } } }] }] };
     const html = base(sel);
     expect(html).toMatch(/need <!-- -->12/);
     expect(html).toMatch(/arriving <!-- -->8/);
     expect(html).toMatch(/short <!-- -->4/);
   });
-  it("the colour's photo from a stock row that has one, else the same colour in another fabric's stock", () => {
-    const html = renderToString(<SiteReceivingPanel sel={{ id: "E1", fabricPlan: { liza: [{ colour: "Ivory", qty: 5 }], curtain: [{ colour: "Gold", qty: 2 }] }, trucks: [] }} setEventOrders={() => {}} inventory={[]} eventOrders={[]} authUser={{}} mode="actual" settings={{}}
-      trussInv={{ lizaStock: [{ colour: "Ivory" }, { colour: "ivory ", photo: "https://x/ivory.jpg" }], curtainStock: [{ colour: "Gold" }], maskingStock: [{ colour: "Gold", photo: "https://x/gold.jpg" }] }} />);
+  it("the colour's photo from a stock row that has one", () => {
+    const html = renderToString(<SiteReceivingPanel sel={{ id: "E1", fabricPlan: { liza: [{ colour: "Ivory", qty: 5 }] }, deptInventory: { Fabric: [{ ...fabLines[0], qty: 5 }] }, trucks: [] }} setEventOrders={() => {}} inventory={[]} eventOrders={[]} authUser={{}} mode="actual" settings={{}}
+      trussInv={{ lizaStock: [{ colour: "Ivory" }, { colour: "ivory ", photo: "https://x/ivory.jpg" }] }} />);
     expect(html).toContain("ivory.jpg");
-    expect(html).toContain("gold.jpg");
   });
   it("Planning's Fabric block on top: each fabric with its colours and total, no money", () => {
     const sel = { id: "E1", trucks: [], fabricPlan: { liza: [{ colour: "Ivory", qty: 160 }] },
