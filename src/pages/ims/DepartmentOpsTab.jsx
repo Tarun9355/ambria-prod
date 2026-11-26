@@ -25,6 +25,7 @@ import { carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRo
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import ElementChoicePlan from "./ElementChoicePlan.jsx";
 import { elementStockFor, choiceNotesForRows, preferenceNotesForRows } from "../../lib/ims/elementPlan";
+import { itemTakesChoices } from "../../lib/studio/elementPrefs.js";
 import { loadOnDate } from "../../lib/ims/loadByDate";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
 import { dcFabricMultOf, trussInvForMaterial, parseFlowerPalette, repeatCatFor } from "../../lib/studio/pricing";
@@ -1678,6 +1679,91 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     });
     return out;
   };
+  // A cushion cover or overlay named in several zones (or picked directly in one zone AND
+  // bolted on as part of a furniture kit in another — "part of Ivory Couple Couch 15") lands in
+  // Deal Check's cost-rollup snapshot as one SEPARATE entry per zone/source, even when every one
+  // of them resolves to the exact same physical design (same invId) — e.g. two rows both named
+  // "Cushion Cover Blue Potri" instead of one row for "need N total" (owner ask 2026-11-26: "if
+  // the cushion cover selected is the same show the single row with the total qty needed"). The
+  // choice/preference notes already quietly merge across these (choiceNotesForRows/
+  // preferenceNotesForRows below group by invId and attach every zone's note to whichever row
+  // happens to be first) — this does the same merge for the ROW itself (qty/rental/total), so the
+  // figures the notes sit next to actually match what they're describing. Scoped to items
+  // itemTakesChoices() recognises (overlays, and cushion COVERS specifically) — the same boundary
+  // this file's own choice/preference logic already draws, so nothing outside that scope is
+  // touched. A kit-whole row (isKit) is never merged into a plain item row — it is a different
+  // kind of line (the kit's own total, not one piece of stock).
+  //
+  // DISPLAY ONLY, wired into invBase (not blockedGroupedOf/blockedItems/blockedFlatOf) — same
+  // separation splitPlatformRows above uses, and for the same reason: truck loading, challan,
+  // receiving, dismantle and the PDF all key a saved load to a row by truckKey (invId, plus
+  // kitOf when set), computed from the ORIGINAL, unmerged rows. Merging there too would combine
+  // two rows that may already carry separate saved truck assignments into one, orphaning
+  // whichever one lost its row.
+  // Combines two rows' cost breakdowns the same way Deal Check's own addCalc does (DealCheckOverlay.jsx)
+  // — sum full/dateAdj/disc/short, union dms — so a merged row's 💡 How still foots to its own total
+  // instead of only explaining whichever source happened to come first.
+  const addFabricCalc = (a, b) => (!b ? a : !a ? { ...b, dms: [...(b.dms || [])] }
+    : { full: a.full + b.full, dateAdj: a.dateAdj + b.dateAdj, disc: a.disc + b.disc, short: a.short + b.short, dms: [...new Set([...(a.dms || []), ...(b.dms || [])])] });
+  const mergeFabricChoiceRows = (rows) => {
+    const invById = new Map((inventory || []).map((it) => [String(it.id), it]));
+    const groups = new Map(); // group key -> the merged row already pushed into `out`
+    const out = [];
+    rows.forEach((r) => {
+      const item = r.invId != null ? invById.get(String(r.invId)) : null;
+      if (r.isKit || !item || !itemTakesChoices(item)) { out.push(r); return; }
+      // Deal Check's own cost-rollup never merges rows across these three flags either (its own
+      // merge key is name|sub|imsId|prodOrBuy|foc|fromKit) — an FOC piece (left at the venue from a
+      // past event, billed ₹0, never loaded) or a Production/Buying piece (arranged outside stock,
+      // its own badge and notes) must stay its own row, never folded into a normal stocked row
+      // (regression review, 2026-11-26: merging an FOC share in would silently inflate the "to
+      // load" figure and hide the 🎁 FOC badge; merging a prodOrBuy share in would drop its
+      // BUYING/PRODUCTION badge and make choiceNotesForRows/preferenceNotesForRows skip its notes,
+      // since both explicitly exclude prodOrBuy lines).
+      const k = String(r.invId) + "|" + (r.prodOrBuy || "") + "|" + (r.foc ? "foc" : "");
+      const g = groups.get(k);
+      if (!g) {
+        const copy = { ...r, byFn: r.byFn ? { ...r.byFn } : null };
+        groups.set(k, copy); out.push(copy); return;
+      }
+      g.qty = (Number(g.qty) || 0) + (Number(r.qty) || 0);
+      g.rentalQty = (Number(g.rentalQty) || 0) + (Number(r.rentalQty) || 0);
+      g.total = (Number(g.total) || 0) + (Number(r.total) || 0);
+      g.shortQty = (Number(g.shortQty) || 0) + (Number(r.shortQty) || 0);
+      g.shortCost = (Number(g.shortCost) || 0) + (Number(r.shortCost) || 0);
+      g.kitPartsTotal = (Number(g.kitPartsTotal) || 0) + (Number(r.kitPartsTotal) || 0);
+      g.parts = [...(g.parts || []), ...(r.parts || [])];
+      if (r.outOfStock) g.outOfStock = true;
+      if (r.isSwapped && !g.isSwapped) { g.isSwapped = true; g.swappedFrom = r.swappedFrom; }
+      // A merged row can no longer point at a single kit, or a single kit's own component
+      // breakdown — once two different-sourced entries combine, "part of X" would misname
+      // whichever source didn't win, and a component list would describe only one of them.
+      if (g.fromKit !== r.fromKit) g.fromKit = null;
+      g.components = null; g.recipeParts = null;
+      // The row's OWN 💡 How breakdown: combine when both sources have one (addFabricCalc, same
+      // rule Deal Check itself uses to combine two cost entries), else drop it rather than show a
+      // breakdown that only explains part of the merged total — pieceRow marks the row so that
+      // fallback reads as the normal "rate × quantity" line instead of a misleading "synced before
+      // the breakdown existed" note (the same marker platformEngine's piece rows already use).
+      g.calc = (g.calc && r.calc) ? addFabricCalc(g.calc, r.calc) : null;
+      g.pieceRow = true;
+      if (r.byFn) {
+        g.byFn = g.byFn || {};
+        Object.entries(r.byFn).forEach(([fi, v]) => {
+          const cur = g.byFn[fi];
+          // Only an actual OVERLAP (this function appears in both sources) loses its calc — that
+          // combined figure describes two different sources at once, so the specific breakdown no
+          // longer applies. A function that appears in only ONE source's byFn keeps that source's
+          // own calc untouched — it's still exactly what it always was, just now living on a row
+          // that also covers other functions.
+          g.byFn[fi] = cur
+            ? { qty: (Number(cur.qty) || 0) + (Number(v.qty) || 0), rentalQty: (Number(cur.rentalQty) || 0) + (Number(v.rentalQty) || 0), total: (Number(cur.total) || 0) + (Number(v.total) || 0), calc: null }
+            : { ...v };
+        });
+      }
+    });
+    return out;
+  };
   const blockedGroupedOf = (d, swaps) => {
     if (!sel) return [];
     const snapD = (sel?.deptInventory && Array.isArray(sel.deptInventory[d])) ? sel.deptInventory[d] : null;
@@ -1744,7 +1830,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const blockedItemsGrouped = useMemo(() => blockedGroupedOf(dept, swapInfo), [sel, blocks, inventory, dept, swapInfo, mappedStockRows]);
   // Inventory Blocked's OWN display list only (trucks/PDF/receiving/dismantle all keep reading
   // blockedItemsGrouped/blockedItems directly, untouched — see splitPlatformRows above).
-  const invBase = useMemo(() => dept === "Tenting" ? splitPlatformRows(blockedItemsGrouped) : blockedItemsGrouped, [blockedItemsGrouped, trussInv, dept]);
+  const invBase = useMemo(() => dept === "Tenting" ? splitPlatformRows(blockedItemsGrouped) : dept === "Fabric" ? mergeFabricChoiceRows(blockedItemsGrouped) : blockedItemsGrouped, [blockedItemsGrouped, trussInv, dept, inventory]);
   // What this department is short of (owner ask 2026-11-15): named in red on the Inventory blocked tile and atop its panel.
   const invShortItems = useMemo(() => blockedItemsGrouped.filter(it => Number(it.shortQty) > 0), [blockedItemsGrouped]);
   const shortNames = (list, max) => list.slice(0, max).map(it => `${it.name} ×${it.shortQty}`).join(", ") + (list.length > max ? ` +${list.length - max} more` : "");
@@ -2180,7 +2266,21 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         // count kept showing the full need regardless, while every other figure on the row (qty,
         // rentalQty) correctly dropped to 0 (regression review finding #5, 2026-11-26).
         const pieceQty = it.sqftPerPiece > 0 ? Math.round(load / it.sqftPerPiece) : (fnRow?.pieceQty ?? it.pieceQty ?? null);
-        return { ...it, src: it, qty: load, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q), calc: fnRow ? (fnRow.calc || null) : null, pieceQty };
+        // kitPartsValue > 0 means part of this function's total came from outside byFn (a kit's own
+        // component, or — since the Fabric cushion/overlay merge — a different source row entirely)
+        // that fnRow's own breakdown never covered, so fnRow.calc alone would only explain part of
+        // `total` here. Null it in that case (falls back to the generic rate × quantity line, still
+        // correct since qty/total already account for it) rather than show a breakdown that quietly
+        // undercounts the real total (regression review, 2026-11-26).
+        const calc = fnRow && !kitPartsValue ? (fnRow.calc || null) : null;
+        // Nulling calc for the kitPartsValue case (any department, not just Fabric's merge — a
+        // Crystal Vedi's 12 WARM LED kit parts hit this too) needs its own pieceRow, independent of
+        // whether the row ITSELF came in already marked pieceRow — otherwise the fallback reads as
+        // "synced before the breakdown existed", sending ops looking for a fix that doesn't exist,
+        // when the real reason is simply that this function's share includes value fnRow's own
+        // breakdown never covered (regression review, 2026-11-26).
+        const pieceRow = it.pieceRow || kitPartsValue > 0;
+        return { ...it, src: it, qty: load, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q), calc, pieceRow, pieceQty };
       }).filter(Boolean)
     : invBase;
   const invWholeOnly = invScoped ? invBase.length - invShown.length : 0;
