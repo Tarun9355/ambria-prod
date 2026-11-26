@@ -1393,7 +1393,9 @@ export default function DealCheckOverlay({ ctx }) {
                   // string — platformEngine.js's platformFloorsFromParts reads these to attempt a real
                   // geometric tiling of the actual floor, not just match its sqft (billing is untouched;
                   // this is a physical-pieces display only, the same invariant as `dims` always was).
-                  (partsByFn[fnIdx] ||= []).push({ zone: rowsP.length > 1 ? `${zoneLbl} · floor ${rIdx + 1}` : zoneLbl, fn: fns.length > 1 ? (fn.fnType || "") : "", fnIdx, dims: `${L} × ${W}${qty > 1 ? ` ×${qty}` : ""}`, floorL: L, floorW: W, copies: qty, qty: Math.round(sqft * 100) / 100 });
+                  // repeat: the zone's Platform chip is on Repeat - the floor is already laid at the venue; IMS lists it as standing,
+                  // not to load (site audit 2026-11-27). Billing is untouched.
+                  (partsByFn[fnIdx] ||= []).push({ zone: rowsP.length > 1 ? `${zoneLbl} · floor ${rIdx + 1}` : zoneLbl, fn: fns.length > 1 ? (fn.fnType || "") : "", fnIdx, dims: `${L} × ${W}${qty > 1 ? ` ×${qty}` : ""}`, floorL: L, floorW: W, copies: qty, qty: Math.round(sqft * 100) / 100, ...(repeatCatFor(zc, "platform") ? { repeat: true } : {}) });
                 });
               });
             });
@@ -1475,7 +1477,7 @@ export default function DealCheckOverlay({ ctx }) {
                     photo: carpetItem ? imsField.photos(carpetItem)[0] || "" : (/new/i.test(cpInfo.label || "") ? row.cpPhoto || "" : ""),
                     qty: Math.round(area), unit: cRate, total: Math.round(cc), qtyUnit: "sqft",
                     // Where these sqft come from, for IMS's "how?" on the merged line.
-                    parts: [{ zone: rows.length > 1 ? `${zoneLbl} · floor ${rIdx + 1}` : zoneLbl, fn: fns.length > 1 ? (fn.fnType || "") : "", fnIdx: fi, dims: `${Number(fd.L) || Number(fd.S) || 0} × ${Number(fd.W) || Number(fd.S) || 0}`, qty: Math.round(area), rate: cRate, total: Math.round(cc) }],
+                    parts: [{ zone: rows.length > 1 ? `${zoneLbl} · floor ${rIdx + 1}` : zoneLbl, fn: fns.length > 1 ? (fn.fnType || "") : "", fnIdx: fi, dims: `${Number(fd.L) || Number(fd.S) || 0} × ${Number(fd.W) || Number(fd.S) || 0}`, qty: Math.round(area), rate: cRate, total: Math.round(cc), ...(repeatCatFor(zcz, "platform") ? { repeat: true } : {}) }],
                     sub: carpetItem ? imsField.subcategory(carpetItem) || "carpet" : "carpet",
                     imsId: carpetItem?.id,
                     fnIdx: fi, // listed in its own function's view in IMS (see the truss lines)

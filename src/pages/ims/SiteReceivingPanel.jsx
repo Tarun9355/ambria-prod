@@ -8,6 +8,7 @@ import { hasTabPerm } from "../../lib/ims/tabAccess";
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { atVenueOfEvent } from "../../lib/ims/atVenue";
 import { buildFabricGroups, fabricStandingOf } from "../../lib/ims/fabricGroups";
+import { platformPullPlansByFn, PLATFORM_MATERIAL_LABEL } from "../../lib/ims/platformEngine";
 import { makeEventPlans } from "../../lib/ims/eventPlans";
 import { buildLiveFloralPlan } from "../../lib/ims/liveFloralPlan";
 import { truckKeyOf, mappedStockRowsOf, blockedGroupedFor, blockedFlatFor, loadSplitOf, mergeLegacyTrucks, tripChallanRows, mergeAtVenueRows } from "../../lib/ims/deptLoadList";
@@ -109,12 +110,26 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           if (pl && d === "Fabric") choice = choiceNotesForRows(flat, pl.elementPlanOf().rows);
           else if (pl && d === "Tenting") choice = carpetNotesForRows(flat, pl.carpetPlanOf().rows);
         } catch { /* no plan for the choices: the line's own name */ }
+        // Platform: the pieces to pull, as Planning's Inventory blocked list shows them (owner report 2026-11-27: Planning shows pieces, the
+        // Site page only sqft). The line itself stays in sqft - trucks load it as one line - and the pieces are a note under it.
+        const piecesOf = (it) => {
+          if (!trussInv || !/^platform structure/i.test(String(it.sub || "").trim()) || !Array.isArray(it.parts)) return "";
+          try {
+            const by = new Map();
+            platformPullPlansByFn(it.parts.filter((p) => !p?.repeat), trussInv).forEach(({ plan }) => (plan?.pieces || []).forEach((p) => {
+              const k = `${p.label}|${p.material}|${p.thicknessIn ?? ""}`;
+              const cur = by.get(k) || { ...p, qty: 0 }; cur.qty += p.qty; by.set(k, cur);
+            }));
+            return [...by.values()].filter((p) => p.qty > 0).map((p) => `${p.qty} pc ${p.label} ${PLATFORM_MATERIAL_LABEL[p.material] || p.material || ""}${p.thicknessIn ? ` ${p.thicknessIn}″` : ""}`.trim()).join(" · ");
+          } catch { return ""; }
+        };
         load.forEach((it) => {
           const key = truckKeyOf(it);
+          const pcs = piecesOf(it);
           const id = d + "|" + key;
           const cv = choice.get(it.id);
           const c = need.get(id) || { dept: d, key, qty: 0, label: cv?.name || it.name, photo: cv?.name ? (cv.photo || "") : (it.photo || ""), unit: it.qtyUnit || "", invId: it.invId || null,
-            notes: [...(cv?.notes || []).map((n) => n.text).filter(Boolean), ...(it.blockedOnly ? ["Blocked for this event in Inventory - not in Deal Check's list"] : [])] };
+            notes: [...(cv?.notes || []).map((n) => n.text).filter(Boolean), ...(it.blockedOnly ? ["Blocked for this event in Inventory - not in Deal Check's list"] : []), ...(pcs ? [`Pieces: ${pcs}`] : [])] };
           c.qty += Number(it.qty) || 0;
           need.set(id, c);
         });
@@ -549,11 +564,11 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                   <div className="flex items-center gap-1.5 flex-wrap mt-0.5 text-[10.5px]">
                     <span className="font-bold text-gray-500 bg-gray-50 rounded px-1.5 py-0.5">{DEPT_ICON[r.dept] || ""} {r.dept}</span>
                     <span className="text-gray-500 tabular-nums">
-                      {(() => { const q = r.unit ? `${r.qty} ${r.unit}` : r.qty; return r.a.foc ? `all ${q} FOC - left at the venue` : r.a.repeat ? `all ${q} stay from before` : r.a.load > 0 ? `${r.a.fixed} of ${q} standing here · ${r.a.load} on a truck` : `all ${q} standing here`; })()}
+                      {(() => { const q = r.unit ? `${r.qty} ${r.unit}` : r.qty; return r.a.foc ? `all ${q} FOC - left at the venue` : r.a.repeat ? `all ${q} stay from before` : r.a.repeatPart > 0 ? `${r.a.repeatPart} of ${q} stay from before (♻ Repeat) · ${r.a.load} on a truck` : r.a.load > 0 ? `${r.a.fixed} of ${q} standing here · ${r.a.load} on a truck` : `all ${q} standing here`; })()}
                     </span>
                   </div>
                 </div>
-                <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (r.a.foc || r.a.repeat ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700")}>{r.a.foc ? "🎁 FOC" : r.a.repeat ? "♻ REPEAT" : "📌 FIXED"}</span>
+                <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (r.a.foc || r.a.repeat || r.a.repeatPart > 0 ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700")}>{r.a.foc ? "🎁 FOC" : r.a.repeat || r.a.repeatPart > 0 ? "♻ REPEAT" : "📌 FIXED"}</span>
               </div>
             ))}
           </div>

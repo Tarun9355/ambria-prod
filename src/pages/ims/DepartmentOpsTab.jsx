@@ -59,7 +59,7 @@ import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a si
 import { truckDetailsLocked, truckLoadedOf } from "../../lib/ims/truckLock";
 import { atVenueOfEvent, atVenueByRow } from "../../lib/ims/atVenue";
 import { makeFabricNeedCache } from "../../lib/ims/fabricNeed"; // fabric per colour, as the Fabric block reads it
-import { truckKeyOf, mappedStockRowsOf, kitPartOfDeptOf, blockedGroupedFor, blockedFlatFor, mergeLegacyTrucks } from "../../lib/ims/deptLoadList"; // what a department loads (shared with Site) // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
+import { truckKeyOf, mappedStockRowsOf, kitPartOfDeptOf, blockedGroupedFor, blockedFlatFor, mergeLegacyTrucks, standingPartsAtVenue } from "../../lib/ims/deptLoadList"; // what a department loads (shared with Site) // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
 import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
@@ -1760,12 +1760,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // What actually goes on a truck: each line at the qty still to load; lines with nothing to load are the "at the venue" list.
   // standing stock taken off ONCE per item across its rows (a kit part and the same item loose share the venue's pieces) - lib/ims/atVenue
   const atVenueRow = useMemo(() => atVenueByRow(blockedItems, atVenueOf), [blockedItems, atVenueOf]);
-  const atVenueOfRow = (it) => atVenueRow.get(it.id) || atVenueOf(it);
+  const atVenueOfRow = (it) => standingPartsAtVenue(it) || atVenueRow.get(it.id) || atVenueOf(it); // a Repeat floor of a Platform / carpet line is standing
   // the Inventory list's rows (grouped; a kit's shell and plain rows keep the flat row's id): for the whole event the same row-adjusted
   // figure as the truck list, so its FIXED badge and order agree with what is loaded; a one-function view keeps its own figure
   const invAtVenueRow = (it) => { const b = it?.src || it; return (invFn === "all" && b?.id != null && atVenueRow.get(b.id)) || atVenueOf(b); };
   const loadItems = useMemo(() => blockedItems.map(it => { const a = atVenueOfRow(it); return a.load === (Number(it.qty) || 0) ? it : { ...it, qty: a.load, fullQty: it.qty }; }).filter(it => (Number(it.qty) || 0) > 0), [blockedItems, atVenueOf, atVenueRow]);
-  const atVenueItems = useMemo(() => blockedItems.filter(it => { const a = atVenueOfRow(it); return a.repeat || a.fixed > 0 || a.foc; }), [blockedItems, atVenueOf, atVenueRow]);
+  const atVenueItems = useMemo(() => blockedItems.filter(it => { const a = atVenueOfRow(it); return a.repeat || a.repeatPart > 0 || a.fixed > 0 || a.foc; }), [blockedItems, atVenueOf, atVenueRow]);
   const rentalIncome = blockedItemsGrouped.reduce((s, x) => s + x.total, 0);
 
   // ── Department-saved data on the event order ──
@@ -7611,10 +7611,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           <div className="min-w-0 flex-1">
                             <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={nm}>{nm}</div>
                             <div className="mt-0.5 text-[11px] text-gray-500 tabular-nums">
-                              {a.foc ? `all ${it.qty} FOC - leave at venue` : a.repeat ? `all ${it.qty} stay from before` : a.load > 0 ? `${a.fixed} of ${it.qty} standing here · ${a.load} loaded above` : `all ${it.qty} standing here`}
+                              {a.foc ? `all ${it.qty} FOC - leave at venue` : a.repeat ? `all ${it.qty} stay from before` : a.repeatPart > 0 ? `${a.repeatPart} of ${it.qty}${it.qtyUnit ? " " + it.qtyUnit : ""} stay from before (♻ Repeat) · ${a.load} loaded above` : a.load > 0 ? `${a.fixed} of ${it.qty} standing here · ${a.load} loaded above` : `all ${it.qty} standing here`}
                             </div>
                           </div>
-                          <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (a.foc || a.repeat ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700")}>{a.foc ? "🎁 FOC" : a.repeat ? "♻ REPEAT" : "📌 FIXED"}</span>
+                          <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (a.foc || a.repeat || a.repeatPart > 0 ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700")}>{a.foc ? "🎁 FOC" : a.repeat || a.repeatPart > 0 ? "♻ REPEAT" : "📌 FIXED"}</span>
                         </div>
                       );
                     })}

@@ -97,8 +97,10 @@ export function planningUpcoming(eo, now = Date.now()) {
 // v29 (2026-11-22): the Florals detail also carries each element row's MAPPED artificial lines (floralDetail[fn].mappedZones)
 // - a "mapping" flower's pieces, one line per mapped inventory item, summed across every recipe ingredient that maps to it -
 // so the Dept Ops PDF's card for an element doesn't print the same physical piece twice under two different flower names.
-export const PLANNING_SNAPSHOT_VERSION = 29;
-const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-22T00:00:00Z");
+// v30 (2026-11-27): each Platform / carpet floor (the line's parts) says when its zone's Platform chip is on ♻ Repeat, so IMS lists that floor
+// as already at the venue instead of to load (site audit).
+export const PLANNING_SNAPSHOT_VERSION = 30;
+const PLANNING_SNAPSHOT_SHIPPED_AT = Date.parse("2026-11-27T00:00:00Z");
 export const planningSnapshotOutdated = (eo) => (Number(eo?.deptSnapVer) || 1) < PLANNING_SNAPSHOT_VERSION;
 
 // A booked deal whose Deal Check never reached IMS at all (no deptSyncedAt): Planning shows 0 crew and no income for it.
