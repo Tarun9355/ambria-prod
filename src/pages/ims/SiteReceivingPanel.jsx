@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks, labelForLoadKey } from "../../lib/ims/eventTrucks";
 import { FLAG_REASONS, receivingOf, lineReceipt, setItemReceiptPatch, clearItemReceiptPatch } from "../../lib/ims/receiving";
@@ -6,6 +6,8 @@ import { catToDept } from "../../lib/ims/deptClassify";
 import { thumbUrl } from "../../lib/studio/thumb.js";
 import { actualsLockState } from "../../lib/ims/actualsLock";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
+import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
+import { atVenueOfEvent } from "../../lib/ims/atVenue";
 
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 
@@ -27,6 +29,10 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // keeps resynced for this exact event, independent of DepartmentOpsTab's own much heavier live
   // Deal-Check recompute — reusing it here needs no new sync path, just a read.
   const [fnItems, setFnItems] = useState([]);
+  // Fixed stock standing at the venue and items set to ♻ Repeat in Build are not loaded (Planning's "Already at the venue"):
+  // the same rule (lib/ims/atVenue), so they show here as at the venue, not as short (owner ask 2026-11-26).
+  const fvSettings = useFixedVenueSettings(settings);
+  const atVenueOf = useMemo(() => atVenueOfEvent(sel, fvSettings, inventory), [sel, fvSettings, inventory]);
   useEffect(() => {
     let cancelled = false;
     // Cleared IMMEDIATELY on every event switch, not just once the new fetch resolves — this panel
@@ -58,14 +64,26 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // "never loaded at all" rows below AND the need/arriving/short line now shown on every loaded line
   // too (owner ask 2026-11-25) — so a PARTLY-loaded item (some qty loaded, short of what's needed)
   // is visible right on its own truck line, not just the fully-unloaded case this started as.
-  const neededByInvId = new Map(); // invId -> { qty, dept }
+  const neededAllByInvId = new Map(); // invId -> { qty, dept } - everything the build uses
   fnItems.forEach((it) => {
     if (!it?.invId || !(Number(it.qty) > 0)) return;
     const invId = String(it.invId);
-    const cur = neededByInvId.get(invId) || { qty: 0, dept: it.dept || "" };
+    const cur = neededAllByInvId.get(invId) || { qty: 0, dept: it.dept || "" };
     cur.qty += Number(it.qty) || 0;
-    neededByInvId.set(invId, cur);
+    neededAllByInvId.set(invId, cur);
   });
+  // What has to come on a truck: less what stands at the venue (fixed) and all of a Repeat item. Those are listed apart below.
+  const neededByInvId = new Map();
+  const atVenueRows = [];
+  neededAllByInvId.forEach(({ qty, dept }, invId) => {
+    const a = atVenueOf({ id: invId, invId, qty });
+    if (a.load > 0) neededByInvId.set(invId, { qty: a.load, dept });
+    if (a.repeat || a.fixed > 0) {
+      const inv = (inventory || []).find((i) => String(i.id) === invId);
+      atVenueRows.push({ invId, qty, a, dept: catToDept(inv?.cat || inv?.category || dept), ...labelForLoadKey("inv:" + invId, inventory) });
+    }
+  });
+  atVenueRows.sort((x, y) => String(x.label || "").localeCompare(String(y.label || "")));
   const loadedByInvId = new Map();
   allLines.forEach((ln) => { if (ln.invId) loadedByInvId.set(String(ln.invId), (loadedByInvId.get(String(ln.invId)) || 0) + Number(ln.planned || 0) + Number(ln.extra || 0)); });
   // Same-day reuse from another event (incomingTransfersFor) never rides on one of THIS event's own
@@ -87,7 +105,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
     })
     .sort((a, b) => String(a.label || "").localeCompare(String(b.label || "")) || String(a.dept || "").localeCompare(String(b.dept || "")));
 
-  const allDepts = [...new Set([...manifest.flatMap((m) => m.lines.map((l) => l.dept)), ...transfers.map((t) => t.fromDept), ...missingItems.map((m) => m.dept)])].filter(Boolean).sort();
+  const allDepts = [...new Set([...manifest.flatMap((m) => m.lines.map((l) => l.dept)), ...transfers.map((t) => t.fromDept), ...missingItems.map((m) => m.dept), ...atVenueRows.map((r) => r.dept)])].filter(Boolean).sort();
   // Falls back to "all" the instant the picked department doesn't exist on THIS event (switching to
   // a different event in the picker above doesn't remount this panel, so a stale filter from the
   // last event — one this event may not even have — would otherwise hide every item here with no
@@ -98,6 +116,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
     .sort((a, b) => String(a.label || "").localeCompare(String(b.label || "")) || String(a.dept || "").localeCompare(String(b.dept || "")));
   const visibleTransfers = activeFilter === "all" ? transfers : transfers.filter((t) => t.fromDept === activeFilter);
   const visibleMissing = missingItems.filter((m) => activeFilter === "all" || m.dept === activeFilter);
+  const visibleAtVenue = atVenueRows.filter((r) => activeFilter === "all" || r.dept === activeFilter);
   // Post-event actuals lock (lib/ims/actualsLock.js) — every write this panel makes is a receiving
   // actual, so once locked the whole panel is read-only.
   const lock = actualsLockState(sel, settings);
@@ -126,7 +145,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // usable on a locked event.
   const canEdit = mode === "actual" && !lock.locked && canSiteEdit;
 
-  if (allLines.length === 0 && transfers.length === 0 && missingItems.length === 0) {
+  if (allLines.length === 0 && transfers.length === 0 && missingItems.length === 0 && atVenueRows.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-100 p-8 text-center text-sm text-gray-400">
         {hasUnmigratedLegacyTrucks(sel)
@@ -338,6 +357,38 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
       </div>
         );
       })()}
+
+      {/* ── ALREADY AT THE VENUE · NOT LOADED ── the Planning list's twin: fixed stock standing there, or set to ♻ Repeat in Build.
+          Shown so the supervisor knows they are there, not counted short; a partly standing item says how many stand. */}
+      {visibleAtVenue.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 flex items-center gap-3">
+            <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">📌</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[15px] font-semibold text-gray-900">Already at the venue · not loaded</div>
+              <div className="text-xs text-gray-500 truncate">Fixed stock standing there, or set to Repeat in the build</div>
+            </div>
+            <span className="shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 tabular-nums">{visibleAtVenue.length}</span>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {visibleAtVenue.map((r) => (
+              <div key={"av|" + r.invId} className="px-4 py-3 flex items-center gap-2.5">
+                {r.photo ? <img src={thumbUrl(r.photo, 40)} loading="lazy" alt="" className="w-10 h-10 rounded-lg object-cover border border-gray-100 shrink-0" /> : <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center text-gray-300 text-sm shrink-0">📦</div>}
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13.5px] font-semibold text-gray-900 truncate">{r.label}</div>
+                  <div className="flex items-center gap-1.5 flex-wrap mt-0.5 text-[10.5px]">
+                    <span className="font-bold text-gray-500 bg-gray-50 rounded px-1.5 py-0.5">{DEPT_ICON[r.dept] || ""} {r.dept}</span>
+                    <span className="text-gray-500 tabular-nums">
+                      {r.a.repeat ? `all ${r.qty} stay from before` : r.a.load > 0 ? `${r.a.fixed} of ${r.qty} standing here · ${r.a.load} on a truck` : `all ${r.qty} standing here`}
+                    </span>
+                  </div>
+                </div>
+                <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (r.a.repeat ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700")}>{r.a.repeat ? "♻ REPEAT" : "📌 FIXED"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {visibleTransfers.length > 0 && (
         <div className="bg-sky-50 rounded-xl p-4">

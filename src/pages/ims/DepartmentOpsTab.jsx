@@ -19,7 +19,7 @@ import ChangeLogEntry from "../../components/shared/ChangeLogEntry";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { fetchOpsVendors } from "../../lib/ims/opsVendors";
-import { venueWithParent, standingQty, venueCalendarColor, VENUE_CALENDAR_LEGEND, siteSupervisorsFor } from "../../lib/ims/fixedVenues";
+import { venueWithParent, venueCalendarColor, VENUE_CALENDAR_LEGEND, siteSupervisorsFor } from "../../lib/ims/fixedVenues";
 import { useInhouseVenues } from "./SupervisorVenues.jsx";
 import { carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
@@ -55,7 +55,8 @@ import { tripsOf } from "../../lib/ims/eventTrucks";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { isMyEvent, supervisorIdsOfUser, fixedAtVenue, addedSupervisorsOf, withAddedSupervisors } from "../../lib/ims/mySupervisorEvents";
 import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a site" search
-import { truckDetailsLocked, truckLoadedOf } from "../../lib/ims/truckLock"; // vehicle / driver fixed once a truck is loaded
+import { truckDetailsLocked, truckLoadedOf } from "../../lib/ims/truckLock";
+import { atVenueOfEvent } from "../../lib/ims/atVenue"; // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
 import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
@@ -1789,50 +1790,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // functions' venues, up to the qty. Repeat: the item set to Repeat in Build (an element's ♻ Repeat) - it stays from before.
   // Neither is loaded: Truck planning lists them apart (to see, not to fill) and no challan carries them; an item only partly
   // standing loads the rest.
-  const atVenueOf = useMemo(() => {
-    const fnsV = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
-    const venues = [...new Set([sel?.venue, ...fnsV.map(f => f?.venue)].filter(Boolean))];
-    // Repeat only when EVERY use of the item is set to Repeat - one function repeating it while another needs it fresh still loads it.
-    const repeatIds = new Set(), freshIds = new Set();
-    // the venues of the functions that use each item - only their standing stock counts for it (two functions at two venues)
-    const venuesOfItem = new Map();
-    fnsV.forEach(f => Object.values(f?.elements || {}).forEach(list => (Array.isArray(list) ? list : []).forEach(el => {
-      const id = el?.invId || el?.imsId;
-      if (!id) return;
-      // A FOC'd instance of this item must not count as "fresh" here — it has its own, separate
-      // blockedItems row (never merged with a non-FOC row of the same id, see the merge key fix
-      // above) and is never loaded regardless. Folding it into freshIds would wrongly force a
-      // DIFFERENT, Repeat-marked instance of the same item id to lose its "already standing, don't
-      // load" status, since repeat only holds when EVERY use resolves non-fresh.
-      if (el?.foc) return;
-      (el?.repeatOverride === true ? repeatIds : freshIds).add(String(id));
-      const v = f?.venue || sel?.venue;
-      if (v) (venuesOfItem.get(String(id)) || venuesOfItem.set(String(id), new Set()).get(String(id))).add(v);
-      // a kit's parts (their own lines in the blocked list) go with the kit: repeated with it, or fresh with it
-      const kitItem = (inventory || []).find(i => String(i.id) === String(id));
-      const parts = Array.isArray(el?.kitOverrides) ? el.kitOverrides : (Array.isArray(kitItem?.subItems) ? kitItem.subItems : []);
-      parts.forEach(p => { if (p?.itemId) (el?.repeatOverride === true ? repeatIds : freshIds).add(String(p.itemId)); });
-    })));
-    const memo = new Map();
-    return (it) => {
-      if (!it) return { fixed: 0, repeat: false, load: 0 };
-      // FOC — left at the venue from a previous event (dcCostRollup's own FOC branch tags the row,
-      // DealCheckOverlay.jsx): never loaded, same as Fixed/Repeat, but its own distinct reason so the
-      // "leave at venue" badge below can say so rather than claiming it's standing stock or reused.
-      if (it.foc) return { fixed: 0, repeat: false, foc: true, load: 0 };
-      // keyed by the qty too: the same line can be read at the whole event's qty and at one function's
-      const mk = `${it.id}|${it.invId}|${it.qty}`;
-      if (memo.has(mk)) return memo.get(mk);
-      const qty = Number(it.qty) || 0;
-      // a kit part is not an element of its own: it falls back to every venue of the event
-      const vs = it.invId ? [...(venuesOfItem.get(String(it.invId)) || venues)] : [];
-      const fixed = it.invId ? Math.min(qty, Math.max(0, ...vs.map(v => standingQty(fvSettings, v, it.invId)))) : 0;
-      const repeat = !!it.invId && repeatIds.has(String(it.invId)) && !freshIds.has(String(it.invId));
-      const r = { fixed, repeat, load: repeat ? 0 : Math.max(0, qty - fixed) };
-      memo.set(mk, r);
-      return r;
-    };
-  }, [sel, fvSettings, inventory]);
+  // the rule lives in lib/ims/atVenue (shared with the Site page's Receiving, which lists these apart the same way)
+  const atVenueOf = useMemo(() => atVenueOfEvent(sel, fvSettings, inventory), [sel, fvSettings, inventory]);
   // What actually goes on a truck: each line at the qty still to load; lines with nothing to load are the "at the venue" list.
   const loadItems = useMemo(() => blockedItems.map(it => { const a = atVenueOf(it); return a.load === (Number(it.qty) || 0) ? it : { ...it, qty: a.load, fullQty: it.qty }; }).filter(it => (Number(it.qty) || 0) > 0), [blockedItems, atVenueOf]);
   const atVenueItems = useMemo(() => blockedItems.filter(it => { const a = atVenueOf(it); return a.repeat || a.fixed > 0 || a.foc; }), [blockedItems, atVenueOf]);
