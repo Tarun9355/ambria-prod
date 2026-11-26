@@ -43,4 +43,20 @@ describe("Site Receiving = Planning's to-load list", () => {
     expect(html).toContain("FOC");
     expect(html).not.toContain("Not loaded");
   });
+  it("a trip still Loading: 'Still loading', no tick; a received-short or flagged line counts as an arrival issue in the header", () => {
+    const sel = { id: "E", deptInventory: { Furniture: [{ name: "Chair", imsId: "CH", qty: 10 }, { name: "Candle Wall", imsId: "KW", qty: 2 }] },
+      trucks: [{ id: "T1", vehicle: "DL1", driver: "Raju", trips: [{ id: "a", status: "loading", loads: { Furniture: { "inv:CH": 10 } } }] },
+               { id: "T2", vehicle: "DL2", driver: "Ram", trips: [{ id: "b", status: "dispatched", loads: { Furniture: { "inv:KW": 2 } } }] }],
+      receiving: { trucks: { T2: { items: { Furniture: { "inv:KW": { got: 1 } } } } } } };
+    const html = renderToString(<SiteReceivingPanel sel={sel} setEventOrders={() => {}} inventory={inv} eventOrders={[sel]} authUser={{ role: "Admin", id: "u_admin" }} mode="actual" settings={{}} trussInv={{}} />);
+    expect(html).toContain("Still loading");
+    expect(html).toContain("arrival issues");
+  });
+  it("a reuse transfer from another event can be received: a count box and a flag", () => {
+    const sel = { id: "E", deptInventory: { Furniture: [{ name: "Chair", imsId: "CH", qty: 5 }] }, trucks: [] };
+    const other = { id: "O", clientName: "Other", deptOps: { Furniture: { movements: [{ id: "m1", type: "transfer", toEventId: "E", invId: "CH", name: "Chair", qty: 5 }] } } };
+    const html = renderToString(<SiteReceivingPanel sel={sel} setEventOrders={() => {}} inventory={inv} eventOrders={[sel, other]} authUser={{ role: "Admin", id: "u_admin" }} mode="actual" settings={{}} trussInv={{}} />);
+    expect(html).toContain("reused from another site");
+    expect(html).toContain('aria-label="Pieces arrived"');
+  });
 });

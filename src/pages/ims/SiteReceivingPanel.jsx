@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks } from "../../lib/ims/eventTrucks";
-import { FLAG_REASONS, receivingOf, lineReceipt, setItemReceiptPatch, clearItemReceiptPatch } from "../../lib/ims/receiving";
+import { FLAG_REASONS, receivingOf, lineReceipt, setItemReceiptPatch, clearItemReceiptPatch, setTransferReceiptPatch } from "../../lib/ims/receiving";
 import { catToDept as sharedCatToDept, DEPTS } from "../../lib/ims/deptClassify";
 import { thumbUrl } from "../../lib/studio/thumb.js";
 import { actualsLockState } from "../../lib/ims/actualsLock";
@@ -12,6 +12,27 @@ import { makeEventPlans } from "../../lib/ims/eventPlans";
 import { buildLiveFloralPlan } from "../../lib/ims/liveFloralPlan";
 import { truckKeyOf, mappedStockRowsOf, blockedGroupedFor, blockedFlatFor, loadSplitOf } from "../../lib/ims/deptLoadList";
 import FabricBlock from "./FabricBlock.jsx";
+
+// The "how many arrived" box: what is typed stays in the box until Enter or leaving it, then saves once (owner's QA audit
+// 2026-11-26: clearing the box saved "no figure" and snapped back to the planned one, so backspacing 10 and typing 3 gave 103,
+// and every keystroke wrote the whole event). Empty on leaving = back to the expected figure.
+function GotBox({ value, onCommit, className }) {
+  const [draft, setDraft] = useState(String(value ?? ""));
+  const editing = useRef(false);
+  useEffect(() => { if (!editing.current) setDraft(String(value ?? "")); }, [value]);
+  const commit = () => {
+    editing.current = false;
+    const v = draft.trim();
+    if (v === String(value ?? "")) return;
+    onCommit(v === "" ? null : Math.max(0, Number(v) || 0));
+  };
+  return (
+    <input type="number" min="0" inputMode="numeric" value={draft} aria-label="Pieces arrived"
+      onFocus={() => { editing.current = true; }} onChange={(e) => setDraft(e.target.value)} onBlur={commit}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { editing.current = false; setDraft(String(value ?? "")); e.currentTarget.blur(); } }}
+      className={className} />
+  );
+}
 
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 
@@ -221,6 +242,13 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           if (nd && nd.qty > (loadedByKey.get(row.ln.dept + "|" + row.ln.key) || 0)) shortIds.add(row.ln.dept + "|" + row.ln.key);
         });
         const nShort = shortIds.size;
+        // what the supervisor found on arrival: a line received short or flagged (the plan can be fully sourced and still arrive short)
+        const nIssues = combinedRows.filter((row) => {
+          if (row.kind !== "line") return false;
+          const ln = row.ln, r = lineReceipt(receiving.trucks[ln.truck.id], ln.dept, ln.key);
+          const gone = Math.max(0, ln.planned + ln.extra - (Number(ln.loadingQty) || 0));
+          return !!r.flag || (r.got != null && gone > 0 && Number(r.got) < gone);
+        }).length;
         return (
       <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
         <div className="px-4 py-3 bg-gray-50 flex items-center gap-3">
@@ -229,8 +257,11 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
             <div className="text-[15px] font-semibold text-gray-900">Receiving</div>
             <div className="text-xs text-gray-500 truncate">Who&apos;s bringing what, on which truck</div>
           </div>
-          <span className={"shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full " + (nShort > 0 ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700")}>
-            {nShort > 0 ? `⚠️ ${nShort} short` : "✓ all sourced"}
+          <span className="shrink-0 flex flex-col items-end gap-1">
+            <span className={"text-xs font-semibold px-2 py-0.5 rounded-full " + (nShort > 0 ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700")}>
+              {nShort > 0 ? `⚠️ ${nShort} short` : "✓ all sourced"}
+            </span>
+            {nIssues > 0 && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-600 text-white tabular-nums"><span>⚑ {nIssues}</span> <span>{"arrival issues"}</span></span>}
           </span>
         </div>
         <div className="divide-y divide-gray-100">
@@ -265,13 +296,17 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         }
         const ln = row.ln;
         const r = lineReceipt(receiving.trucks[ln.truck.id], ln.dept, ln.key);
-        const got = r.got != null ? r.got : (ln.planned + ln.extra);
-        const short = mode === "actual" && Number(got) < ln.planned + ln.extra;
+        // What has left so far: a trip still "Loading" has not gone (owner's QA audit 2026-11-26: those pieces read as arriving and
+        // a tick marked them received). Receipts stay one per truck line, against what has gone.
+        const loadingQty = Number(ln.loadingQty) || 0;
+        const gone = Math.max(0, ln.planned + ln.extra - loadingQty);
+        const got = r.got != null ? r.got : gone;
+        const short = mode === "actual" && gone > 0 && Number(got) < gone;
         // Also true from the OLD whole-truck "Arrived as planned" button, which only ever stamped
         // receiving.trucks[id].confirmedAt and never wrote a per-item `got` at all — without this,
         // every item on an already-confirmed truck reads as freshly "Not arrived" the moment this
         // panel switched from a per-truck to a per-item status (regression review, 2026-11-24).
-        const confirmed = !r.flag && !short && (r.got != null || !!receiving.trucks[ln.truck.id]?.confirmedAt);
+        const confirmed = gone > 0 && !r.flag && !short && (r.got != null || !!receiving.trucks[ln.truck.id]?.confirmedAt);
         const fk = flagKeyOf(ln.truck.id, ln);
         const showIssue = canEdit && (flaggingKey === fk || !!r.flag);
         // Against what Studio's build NEEDS overall (not what's on THIS line/truck) — same figure a
@@ -297,10 +332,13 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                   {r.flag
                     ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">⚑ {FLAG_REASONS.find((f) => f.key === r.flag)?.label || "Flagged"}</span>
                     : short
-                    ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">Short — {got} of {ln.planned + ln.extra}</span>
+                    ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">Short — {got} of {gone}</span>
                     : confirmed
                     ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Confirmed OK</span>
+                    : gone === 0
+                    ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">{"Still loading"}</span>
                     : <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">Not arrived</span>}
+                  {gone > 0 && loadingQty > 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 tabular-nums"><span>{loadingQty}</span> <span>{"still loading"}</span></span>}
                 </div>
                 {/* Dept badge, which truck/driver it's riding on, and a one-tap call — the whole reason
                     this is a flat items list instead of a truck-grouped accordion (owner ask
@@ -343,7 +381,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
               </div>
               {canEdit ? (
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <input type="number" min="0" value={got} onChange={(e) => { const v = e.target.value; setLine(ln.truck.id, ln.dept, ln.key, { got: v === "" ? null : v, flag: r.flag, note: r.note }); }}
+                  <GotBox value={got} onCommit={(v) => setLine(ln.truck.id, ln.dept, ln.key, { got: v, flag: r.flag, note: r.note })}
                     className={"w-14 h-8 rounded-lg text-center text-[12.5px] font-bold tabular-nums ring-1 focus:outline-none focus:ring-2 " + (short || r.flag ? "bg-red-50 ring-red-200 text-red-700" : "bg-gray-50 ring-gray-200 text-gray-800")} />
                   {/* One-tap "it's exactly what was planned" — the per-item replacement for the old
                       whole-truck "Arrived as planned" button, now scoped to just this line. Hidden on
@@ -351,8 +389,8 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                       elsewhere in this panel ("Clear this flag" below is gated on canSiteDel); this
                       button must never be a back door around that for someone with edit-only access
                       (regression review, 2026-11-24). */}
-                  {!confirmed && !r.flag && (
-                    <button onClick={() => setLine(ln.truck.id, ln.dept, ln.key, { got: ln.planned + ln.extra, flag: null, note: r.note })} title="Arrived as planned"
+                  {!confirmed && !r.flag && gone > 0 && (
+                    <button onClick={() => setLine(ln.truck.id, ln.dept, ln.key, { got: gone, flag: null, note: r.note })} title="Arrived as planned"
                       className="h-8 w-8 rounded-lg bg-emerald-50 text-emerald-700 text-sm font-bold hover:bg-emerald-100">✓</button>
                   )}
                   <button onClick={() => setFlaggingKey(showIssue ? null : fk)}
@@ -431,9 +469,35 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         <div className="bg-sky-50 rounded-xl p-4">
           <div className="text-[11px] font-bold uppercase tracking-wide text-sky-700 mb-2">Not tied to a truck — reused from another site</div>
           <div className="space-y-1.5">
-            {visibleTransfers.map((t, i) => (
-              <div key={i} className="text-[12px] text-sky-900">↪️ <b>{t.name}</b> ×{t.qty} from {t.fromEvent} ({t.fromDept}){t.vehicle || t.driver ? ` · ${[t.vehicle, t.driver].filter(Boolean).join(" · ")}` : ""}</div>
-            ))}
+            {visibleTransfers.map((t, i) => {
+              // received like a truck line (owner's QA audit 2026-11-26: they could only be read): how many came, a tick, or a flag
+              const tid = t.id || ("tr" + i);
+              const tr = receiving.transfers?.[tid] || {};
+              const tGot = tr.got != null ? tr.got : (Number(t.qty) || 0);
+              const tShort = tr.got != null && Number(tr.got) < (Number(t.qty) || 0);
+              const setT = (patch) => write((e) => setTransferReceiptPatch(e, tid, { got: tr.got, flag: tr.flag, note: tr.note, ...patch }, authUser?.name));
+              return (
+                <div key={tid} className="flex items-center gap-2 flex-wrap text-[12px] text-sky-900">
+                  <span className="min-w-0 flex-1">↪️ <b>{t.name}</b> ×{t.qty} from {t.fromEvent} ({t.fromDept}){t.vehicle || t.driver ? ` · ${[t.vehicle, t.driver].filter(Boolean).join(" · ")}` : ""}
+                    {tr.flag ? <span className="ml-1.5 text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">⚑ {FLAG_REASONS.find((f) => f.key === tr.flag)?.label || "Flagged"}</span>
+                      : tShort ? <span className="ml-1.5 text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">Short — {tr.got} of {t.qty}</span>
+                      : tr.got != null ? <span className="ml-1.5 text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Confirmed OK</span> : null}
+                  </span>
+                  {canEdit && (
+                    <span className="flex items-center gap-1.5 shrink-0">
+                      <GotBox value={tGot} onCommit={(v) => setT({ got: v })}
+                        className={"w-14 h-8 rounded-lg text-center text-[12.5px] font-bold tabular-nums ring-1 focus:outline-none focus:ring-2 " + (tShort || tr.flag ? "bg-red-50 ring-red-200 text-red-700" : "bg-white ring-sky-200 text-gray-800")} />
+                      {tr.got == null && !tr.flag && <button onClick={() => setT({ got: Number(t.qty) || 0, flag: null })} title="Arrived as planned" className="h-8 w-8 rounded-lg bg-emerald-50 text-emerald-700 text-sm font-bold hover:bg-emerald-100">✓</button>}
+                      <select value={tr.flag || ""} onChange={(e) => { const f = e.target.value; if (!f && !canSiteDel) return; setT({ flag: f || null, ...(f === "missing" ? { got: 0 } : {}) }); }} aria-label="Flag"
+                        className="h-8 rounded-lg bg-white ring-1 ring-sky-200 px-1.5 text-[11px] font-semibold text-gray-600">
+                        <option value="">⚑ Flag</option>
+                        {FLAG_REASONS.map((fr) => <option key={fr.key} value={fr.key}>{fr.label}</option>)}
+                      </select>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

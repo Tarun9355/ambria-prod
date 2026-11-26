@@ -491,6 +491,9 @@ Liza, velvet and masking - tap one for its colours and zones ¦ लीज़ा,
 Added on truck · not in the deal ¦ ट्रक पर जोड़ा · डील में नहीं
 extra, added on truck ¦ एक्स्ट्रा, ट्रक पर जोड़ा
 Not in Planning's list now — loaded before a change ¦ अब प्लानिंग की लिस्ट में नहीं — बदलाव से पहले लदा था
+Still loading ¦ अभी लद रहा है
+still loading ¦ अभी लद रहे हैं
+arrival issues ¦ आने में दिक्कत
 Loaded — a truck with items on it (or a trip gone) can't be removed ¦ लदा हुआ — जिस ट्रक पर सामान है (या ट्रिप निकल चुकी है) उसे हटाया नहीं जा सकता
 Search guest name or venue… ¦ गेस्ट का नाम या वेन्यू खोजें…
 No event matches this — try the guest's first name or the venue. ¦ कोई इवेंट नहीं मिला — गेस्ट का पहला नाम या वेन्यू लिखकर देखें।
