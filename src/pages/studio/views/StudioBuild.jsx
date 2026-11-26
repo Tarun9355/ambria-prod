@@ -1621,10 +1621,9 @@ export default function StudioBuild({ ctx }) {
   };
   const jumpToBottomBtn = (wide) => (
     <button type="button" onClick={jumpToBottom} title="Scroll down to Summary" aria-label="Scroll down to Summary"
-      style={{width:wide?"100%":38,marginTop:wide?8:0,display:"flex",flexDirection:wide?"row":"column",alignItems:"center",justifyContent:"center",gap:wide?6:4,
-        padding:wide?"8px 10px":"10px 0",borderRadius:10,border:`1px solid ${border}`,background:cardBg,color:accent,cursor:"pointer",fontFamily:"inherit"}}>
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M7 2.5v8.5M3 7.5 7 11.5l4-4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"/></svg>
-      <span style={{fontSize:9.5,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:textS,whiteSpace:"nowrap",...(wide?{}:{writingMode:"vertical-rl"})}}>{"Summary"}</span>
+      style={{width:wide?"100%":38,height:38,marginTop:wide?8:0,display:"flex",alignItems:"center",justifyContent:"center",
+        padding:0,borderRadius:10,border:`1px solid ${border}`,background:cardBg,color:accent,cursor:"pointer",fontFamily:"inherit"}}>
+      <svg width="16" height="16" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M7 2.5v8.5M3 7.5 7 11.5l4-4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"/></svg>
     </button>
   );
   // Sub-label under each tile's title. Read straight off zoneConfig — no cost maths here, so it
