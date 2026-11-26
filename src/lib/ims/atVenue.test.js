@@ -27,4 +27,18 @@ describe("atVenueOfEvent - fixed / repeat items are at the venue, not loaded", (
   it("no event: nothing is at the venue", () => {
     expect(atVenueOfEvent(null, {}, [])({ id: "x", invId: "x", qty: 1 })).toEqual({ fixed: 0, repeat: false, load: 1 });
   });
+  it("a zone set to Repeat (toggle or its Elements chip) repeats its items; an item's own Fresh chip still loads it", () => {
+    const s3 = { venue: "X", functionsDetail: [{
+      zones: { stage: { repeat: true }, entry: { repeatCats: { elements: true } }, bar: { repeat: true } },
+      elements: { stage: [{ invId: "a" }], entry: [{ invId: "b" }], bar: [{ invId: "c", repeatOverride: false }] },
+    }] };
+    const at3 = atVenueOfEvent(s3, {}, []);
+    expect(at3({ id: "a", invId: "a", qty: 2 })).toMatchObject({ repeat: true, load: 0 });
+    expect(at3({ id: "b", invId: "b", qty: 2 })).toMatchObject({ repeat: true, load: 0 });
+    expect(at3({ id: "c", invId: "c", qty: 2 })).toMatchObject({ repeat: false, load: 2 });
+  });
+  it("a zone's Repeat with its Elements chip set back to Fresh: loads", () => {
+    const s4 = { functionsDetail: [{ zones: { stage: { repeat: true, repeatCats: { elements: false } } }, elements: { stage: [{ invId: "a" }] } }] };
+    expect(atVenueOfEvent(s4, {}, [])({ id: "a", invId: "a", qty: 1 })).toMatchObject({ repeat: false, load: 1 });
+  });
 });

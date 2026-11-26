@@ -5,6 +5,7 @@
 // them, and the Site page's Receiving shows them as at the venue rather than short. An item only partly standing loads the rest.
 // Returns (item { id, invId, qty, foc }) → { fixed, repeat, foc, load }.
 import { standingQty } from "./fixedVenues";
+import { repeatCatFor } from "../studio/pricing.js";
 
 export function atVenueOfEvent(sel, fvSettings, inventory) {
   const fnsV = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
@@ -13,7 +14,11 @@ export function atVenueOfEvent(sel, fvSettings, inventory) {
   const repeatIds = new Set(), freshIds = new Set();
   // the venues of the functions that use each item - only their standing stock counts for it (two functions at two venues)
   const venuesOfItem = new Map();
-  fnsV.forEach(f => Object.values(f?.elements || {}).forEach(list => (Array.isArray(list) ? list : []).forEach(el => {
+  // An element repeats by its own ♻ chip (el.repeatOverride) or, with no chip of its own, by its zone's Repeat (the zone toggle or its
+  // Elements chip - repeatCatFor), the same rule Deal Check prices and trucks by. Reading only the element's own chip missed a whole
+  // zone set to Repeat (owner check 2026-11-26).
+  fnsV.forEach(f => Object.entries(f?.elements || {}).forEach(([zk, list]) => (Array.isArray(list) ? list : []).forEach(el => {
+    const isRepeat = typeof el?.repeatOverride === "boolean" ? el.repeatOverride : repeatCatFor(f?.zones?.[zk], "elements");
     const id = el?.invId || el?.imsId;
     if (!id) return;
     // A FOC'd instance of this item must not count as "fresh" here — it has its own, separate
@@ -22,13 +27,13 @@ export function atVenueOfEvent(sel, fvSettings, inventory) {
     // DIFFERENT, Repeat-marked instance of the same item id to lose its "already standing, don't
     // load" status, since repeat only holds when EVERY use resolves non-fresh.
     if (el?.foc) return;
-    (el?.repeatOverride === true ? repeatIds : freshIds).add(String(id));
+    (isRepeat ? repeatIds : freshIds).add(String(id));
     const v = f?.venue || sel?.venue;
     if (v) (venuesOfItem.get(String(id)) || venuesOfItem.set(String(id), new Set()).get(String(id))).add(v);
     // a kit's parts (their own lines in the blocked list) go with the kit: repeated with it, or fresh with it
     const kitItem = (inventory || []).find(i => String(i.id) === String(id));
     const parts = Array.isArray(el?.kitOverrides) ? el.kitOverrides : (Array.isArray(kitItem?.subItems) ? kitItem.subItems : []);
-    parts.forEach(p => { if (p?.itemId) (el?.repeatOverride === true ? repeatIds : freshIds).add(String(p.itemId)); });
+    parts.forEach(p => { if (p?.itemId) (isRepeat ? repeatIds : freshIds).add(String(p.itemId)); });
   })));
   const memo = new Map();
   return (it) => {
