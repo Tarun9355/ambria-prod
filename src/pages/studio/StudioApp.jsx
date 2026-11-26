@@ -6173,6 +6173,26 @@ export default function StudioApp() {
     st.timer = setTimeout(run, 300);
   }, [loadStudioFloralData]);
   useEffect(() => { loadStudioFloralData(); }, [loadStudioFloralData]);
+  // ── THE FLOWER LIST, ON ITS OWN AND FIRST ── (owner report 2026-11-26: many salespeople said Build's "Which flower?" picker did not
+  // load) The IMS Mandi list used to arrive only with the 9-table floral load above - on phone data it waited on the slowest of
+  // them, and a failed read became an empty list with nothing said ("No flowers in IMS Mandi yet."). Now it is read straight away
+  // by itself, with a status the picker shows (a skeleton while loading, Retry on a failure), and kept in step with that load.
+  const [studioMandi, setStudioMandi] = useState({ status: "loading", list: [] });
+  const loadStudioMandi = useCallback(async () => {
+    setStudioMandi((s) => (s.list.length ? s : { status: "loading", list: [] }));
+    try {
+      const rows = await fetchAll("mandi_flowers");
+      setStudioMandi({ status: "ok", list: assembleMandiCatalogueFromRows(rows) });
+    } catch (e) {
+      console.warn("[studio] mandi flowers did not load", e);
+      setStudioMandi((s) => (s.list.length ? s : { status: "error", list: [] }));
+    }
+  }, []);
+  useEffect(() => { loadStudioMandi(); }, [loadStudioMandi]);
+  useEffect(() => {
+    const l = studioFloralData?.mandiCatalogue;
+    if (Array.isArray(l) && l.length) setStudioMandi({ status: "ok", list: l });
+  }, [studioFloralData?.mandiCatalogue]);
 
   // Auto-derived artificial rate PER UNIT for a floral recipe element = Σ(recipe flowers × artificial
   // bunches-per-unit) × ₹/bunch × studio markup. Mirrors calcFnFloralSourcingCost's artificial cost so
@@ -16281,7 +16301,7 @@ export default function StudioApp() {
     // deal check
     dealCheckData, setDealCheckData, dealCheckLoading, setDealCheckLoading, dealCheckError, setDealCheckError, catDeptMap, saveCatDeptMap,
     // mount-loaded fallbacks so Build works before Deal Check opens (fixed-venue Repeat chip, floral auto-derive)
-    studioFloralData, sharedFloralSettings, venueParents, resolveTrVenue, venueRedirectNotice, setVenueRedirectNotice,
+    studioFloralData, sharedFloralSettings, venueParents, resolveTrVenue, venueRedirectNotice, setVenueRedirectNotice, studioMandi, loadStudioMandi,
     imsColourCatalogue, setImsColourCatalogue, imsPaletteCatalogue, setImsPaletteCatalogue, paletteCatalogueLoaded, imsPaintableCategories, setImsPaintableCategories,
     imsDefaultPaintCost, setImsDefaultPaintCost, savePaletteData, paintPickerTarget, setPaintPickerTarget, fabricPickerTarget, setFabricPickerTarget,
     dcPhotoOverrides, setDcPhotoOverrides, dcSkipped, setDcSkipped, dcProductionAccepted, setDcProductionAccepted, dcManualItems, setDcManualItems,

@@ -1294,7 +1294,7 @@ export default function StudioBuild({ ctx }) {
     // client / function meta
     clientName, clientDate, activeFnMeta, venue, fn, extraFunctions, setExtraFunctions, copyBuildsFromClient,
     clientPalette, setClientPalette, clientFlowerPalette, setClientFlowerPalette, clientLayoutUrl, setClientLayoutUrl,
-    studioFloralData, sharedFloralSettings, venueParents, loadAvailability, getStudioAvailable, activeBlocksForDate, freeOnActiveDate, openAvailModal, kitPartShorts,
+    studioFloralData, sharedFloralSettings, venueParents, studioMandi, loadStudioMandi, loadAvailability, getStudioAvailable, activeBlocksForDate, freeOnActiveDate, openAvailModal, kitPartShorts,
     activeFnIdx, collectAllFunctionData, rcSubcatFactors, rcFactorByKey, rcFloralModeByKey,
     // Build's kit edits also land in Deal Check's own per-card copy (see the kit editor below).
     setDcKitEdits, persistDcKitEditsNow, buildElCardKey,
@@ -1534,6 +1534,12 @@ export default function StudioBuild({ ctx }) {
   // date — the Smart dim tip (TrussCard, below) nets this off the raw IMS catalog count so it never
   // recommends a size that's actually spoken for elsewhere, and an "already clean" catalog match
   // that's fully booked out on this date still surfaces as a real shortage instead of going quiet.
+  // The IMS Mandi flowers for the picker and "+ Add element": the live list first (loaded on its own, StudioApp studioMandi), then the
+  // floral load's, then Deal Check's copy - Deal Check's could be an empty list from a failed read and hid a good one (owner report
+  // 2026-11-26: the flowers picker "not loading" for many).
+  const liveMandiCatalogue = (studioMandi?.list?.length ? studioMandi.list : null)
+    || (studioFloralData?.mandiCatalogue?.length ? studioFloralData.mandiCatalogue : null)
+    || dealCheckData?.mandiCatalogue || [];
   // studioFloralData.trussAlloc is the SAME per-date pool IMS's own Planning dashboards and
   // StudioApp's markSold pre-sale check (scanTrussStockShortage) already read — nothing new fetched.
   const trussReserved = useMemo(
@@ -2539,7 +2545,9 @@ export default function StudioBuild({ ctx }) {
     const anyOpen = Object.values(zoneElSearch || {}).some(v => (v || "").length >= 1);
     if (!anyOpen) return;
     const closeAll = () => { setZoneElSearch({}); setAddElPos(null); };
-    const onScroll = (e) => { if (e.target?.closest?.(".ael-widget")) return; closeAll(); };
+    // ...but not while its box has the focus: on a phone the keyboard opening, or a small drag, scrolls the page and used to close
+    // it before the row could be tapped (owner report 2026-11-26, the flowers picker "not opening")
+    const onScroll = (e) => { if (e.target?.closest?.(".ael-widget")) return; if (document.activeElement?.closest?.(".ael-widget")) return; closeAll(); };
     const onMouseDown = (e) => { if (e.target?.closest?.(".ael-widget")) return; closeAll(); };
     window.addEventListener("scroll", onScroll, true);
     document.addEventListener("mousedown", onMouseDown);
@@ -5307,13 +5315,13 @@ undefined
                       // flower which only ever prices through a recipe — Loose Petals (the original
                       // named exception) or any item the Mandi Prices admin has given a markup
                       // (isDirectMandiElement, lib/studio/pricing.js).
-                      const mandiCatalogue=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
+                      const mandiCatalogue=liveMandiCatalogue;
                       const mandiMatches=smartFilter(mandiCatalogue.filter(m=>isDirectMandiElement(m)),q,m=>[m.name]);
                       // Flowers (owner ask 2026-11-18): "flower" / "phool" offers the full picker (every IMS Mandi flower but the greens), and a
                       // flower's own name adds it straight as a Flowers card - 2x the mandi rate (pricing.mandiElUnitPrice). Items already
                       // addable above at their own markup (Jaimala, Loose Petals) are not listed twice.
                       const qt=q.trim();
-                      const fpBrowse=qt&&("flowers".startsWith(qt)||/flower|phool|फूल/.test(qt))?[{kind:"fpbrowse"}]:[];
+                      const fpBrowse=qt&&("flowers".startsWith(qt)||/flower|floral|phool|phul|fool|pushp|mandi|फूल|फुल/i.test(qt))?[{kind:"fpbrowse"}]:[];
                       // by name only, at most 30 (a category word like "flower" would list them all - "see all" is for that)
                       const fpMatches=smartFilter(mandiCatalogue.filter(m=>isFlowerPickChoice(m)),q,m=>[m.name]).slice(0,30);
                       const matches=[...fpBrowse,...invMatches.map(it=>({kind:"inv",it})),...patMatches.map(pt=>({kind:"pat",pt})),...mandiMatches.map(m=>({kind:"mandi",m})),...fpMatches.map(m=>({kind:"fp",m}))];
@@ -5527,7 +5535,7 @@ undefined
                   })() : null;
                   // A raw mandi flower (Loose Petals…) has no inventory row either: its picture is the chosen
                   // variant's, else the flower's own, else the first variant that has one.
-                  const mandiParent = (!thumbItem && el.mandiId) ? ((dealCheckData||studioFloralData)?.mandiCatalogue||[]).find(m=>m.id===el.mandiId) : null;
+                  const mandiParent = (!thumbItem && el.mandiId) ? (liveMandiCatalogue).find(m=>m.id===el.mandiId) : null;
                   const mandiVar = mandiParent ? (mandiParent.colorVariants||[]).find(v=>v.variantId===el.mandiVariantId) : null;
                   const mandiThumbSrc = mandiParent ? (mandiVar?.photoUrl || mandiParent.photoUrl || (mandiParent.colorVariants||[]).find(v=>v.photoUrl)?.photoUrl || null) : null;
                   const thumbSrc = thumbItem?.img || thumbItem?.photoUrls?.[0] || patternThumbSrc || mandiThumbSrc;
@@ -5696,7 +5704,7 @@ undefined
                         {!!el.flowerPick&&<button type="button" onClick={()=>{setFlowerPickQ("");setFlowerPicker({k,idx});}} title="Pick a different flower for this card"
                           style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:6,border:"1px solid rgba(219,39,119,0.4)",background:"transparent",color:"#DB2777",cursor:"pointer",fontFamily:"inherit"}}>🌸 Change flower</button>}
                         {!!el.mandiId&&(()=>{
-                          const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
+                          const mandiCat=liveMandiCatalogue;
                           const parent=mandiCat.find(m=>m.id===el.mandiId);
                           const variants=Array.isArray(parent?.colorVariants)?parent.colorVariants:[];
                           if(!variants.length) return null;
@@ -5711,7 +5719,7 @@ undefined
                         })()}
                         {/* pieces in one unit of a mandi flower (IMS Mandi "Pcs/Unit"), and in this card's qty - owner ask 2026-11-18 */}
                         {!!el.mandiId&&(()=>{
-                          const parent=((dealCheckData||studioFloralData)?.mandiCatalogue||[]).find(m=>m.id===el.mandiId);
+                          const parent=(liveMandiCatalogue).find(m=>m.id===el.mandiId);
                           const per=Number(parent?.gattharSize)||0;
                           const u=parent?.unit||el.unit||"";
                           if(!(per>0)||u==="piece") return null;
@@ -6737,7 +6745,7 @@ undefined
                 // items stay gated to one row per zone, same as before.
                 const inv=smartFilter((imsInventory||[]).filter(it=>!els.find(el=>el.invId===it.id)&&!kitCoveredIds.has(it.id)&&!isHiddenSubcat(it,rcSubcatFactors)),q,it=>[it.name,it.cat,it.subCat||it.subcategory]).slice(0,40).map(it=>({key:"inv:"+it.id,label:it.name,sub:(it.subCat||it.subcategory)?(it.subCat||it.subcategory)+" › "+(it.cat||""):(it.cat||""),src:it.img||it.photoUrls?.[0],make:()=>({name:it.name,qty:1,unit:it.unit,size:"",invId:it.id,addedAt:todayStr(),...freshOv})}));
                 const pat=smartFilter(recipeOnlyPatterns||[],q,pt=>[pt.name]).map(pt=>({key:"pat:"+pt.id,label:pt.name,sub:"🌺 Flower recipe",make:()=>({name:pt.name,qty:1,unit:pt.unit,size:"",patternId:pt.id,...freshOv})}));
-                const mandi=smartFilter(((dealCheckData||studioFloralData)?.mandiCatalogue||[]).filter(m=>isDirectMandiElement(m)),q,m=>[m.name]).map(m=>{const v=Array.isArray(m.colorVariants)?m.colorVariants:[];return {key:"mandi:"+m.id,label:m.name,sub:`🌸 Mandi · ${m.unit||"kg"}`,src:m.photoUrl,make:()=>({name:m.name,qty:1,unit:m.unit||"kg",size:"",mandiId:m.id,mandiVariantId:v.length===1?v[0].variantId:"",...freshOv})};});
+                const mandi=smartFilter((liveMandiCatalogue).filter(m=>isDirectMandiElement(m)),q,m=>[m.name]).map(m=>{const v=Array.isArray(m.colorVariants)?m.colorVariants:[];return {key:"mandi:"+m.id,label:m.name,sub:`🌸 Mandi · ${m.unit||"kg"}`,src:m.photoUrl,make:()=>({name:m.name,qty:1,unit:m.unit||"kg",size:"",mandiId:m.id,mandiVariantId:v.length===1?v[0].variantId:"",...freshOv})};});
                 return [...inv,...pat,...mandi];
               })():[];
               const prints=cfgCur.prints||[];
@@ -6984,7 +6992,8 @@ undefined
         A flower with several colours opens its variant picker straight after, as Jaimala's card does. */}
     {flowerPicker && (()=>{
       const {k,idx}=flowerPicker;
-      const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
+      const mandiStatus=studioMandi?.status||"ok";
+      const mandiCat=liveMandiCatalogue;
       const curEl=idx==null?null:(zoneElements[k]||[])[idx];
       const all=mandiCat.filter(isFlowerPickChoice).sort((a,b)=>String(a.name||"").localeCompare(String(b.name||"")));
       // IMS Mandi's own categories (all but the greens), as chips, A-Z, the count beside each
@@ -7014,8 +7023,25 @@ undefined
               })}
             </div>}
             <div style={{padding:"12px 18px 16px",overflowY:"auto",flex:1}}>
-              {list.length===0 ? (
-                <div style={{padding:30,textAlign:"center",color:textS,fontSize:13,fontStyle:"italic"}}>{all.length?`No flower matches "${flowerPickQ}".`:"No flowers in IMS Mandi yet."}</div>
+              {list.length===0 && !all.length && mandiStatus==="loading" ? (
+                /* still loading: card-shaped placeholders, so the picker reads as on its way, not empty */
+                <div aria-busy="true" aria-label="Loading flowers" style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:10}}>
+                  {Array.from({length:8}).map((_,i)=>(
+                    <div key={i} className="animate-pulse motion-reduce:animate-none" style={{padding:10,borderRadius:10,border:`1px solid ${border}`,display:"flex",flexDirection:"column",gap:8}}>
+                      <div style={{height:76,borderRadius:8,background:isDark?"rgba(255,255,255,0.08)":"#ECECEF"}}/>
+                      <div style={{height:12,width:"70%",borderRadius:6,background:isDark?"rgba(255,255,255,0.08)":"#ECECEF"}}/>
+                      <div style={{height:10,width:"45%",borderRadius:6,background:isDark?"rgba(255,255,255,0.06)":"#F2F2F4"}}/>
+                    </div>
+                  ))}
+                </div>
+              ) : list.length===0 && !all.length ? (
+                /* nothing came back: say so, and let them try again (a failed read used to look like "no flowers yet") */
+                <div style={{padding:30,textAlign:"center",color:textS,fontSize:13}}>
+                  <div>{mandiStatus==="error"?"Couldn't load the flowers - check the connection.":"No flowers in IMS Mandi yet."}</div>
+                  {loadStudioMandi&&<button type="button" onClick={()=>loadStudioMandi()} style={{marginTop:10,padding:"7px 14px",borderRadius:8,border:"1px solid #DB2777",background:"transparent",color:"#DB2777",fontWeight:600,fontSize:12.5,cursor:"pointer",fontFamily:"inherit"}}>Retry</button>}
+                </div>
+              ) : list.length===0 ? (
+                <div style={{padding:30,textAlign:"center",color:textS,fontSize:13,fontStyle:"italic"}}>{`No flower matches "${flowerPickQ}".`}</div>
               ) : (
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:10}}>
                   {list.map(m=>{
@@ -7057,7 +7083,7 @@ undefined
     })()}
     {mandiVariantPicker && (()=>{
       const {k,idx,mandiId}=mandiVariantPicker;
-      const mandiCat=(dealCheckData||studioFloralData)?.mandiCatalogue||[];
+      const mandiCat=liveMandiCatalogue;
       const parent=mandiCat.find(m=>m.id===mandiId);
       const variants=Array.isArray(parent?.colorVariants)?parent.colorVariants:[];
       const el=(zoneElements[k]||[])[idx];
