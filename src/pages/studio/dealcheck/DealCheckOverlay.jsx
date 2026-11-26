@@ -1113,7 +1113,9 @@ export default function DealCheckOverlay({ ctx }) {
                   addD(compDept, "rental", compShare);
                   // A component filed under the SAME department as the kit itself already shows up
                   // via the kit's own nested `components` list below — no separate card needed.
-                  if (compShare > 0 && compDept !== dD && deptInv[compDept]) {
+                  // a part with no rental of its own (₹0) still goes to its own department when the kit is billed - it was left under the
+                  // kit's department (site audit 2026-11-27: a ₹0 Pillar Candle of a Lighting kit listed under Lighting, not Floral)
+                  if ((compShare > 0 || (lineRental > 0 && !(cp.total > 0) && cp.qty > 0)) && compDept !== dD && deptInv[compDept]) {
                     deptInv[compDept].push({ name: cp.name, photo: cp.photo, qty: cp.qty, unit: cp.unit, total: Math.round(compShare), sub: cp.sub, imsId: cp.imsId, fromKit: item.name || c.name || "Item" });
                   }
                 });
@@ -1180,7 +1182,7 @@ export default function DealCheckOverlay({ ctx }) {
                   const compDept = catToDept(imsField.category(cp.ci) || cp.sub);
                   const compShare = cp.total * scale;
                   addD(compDept, "rental", compShare);
-                  if (compShare > 0 && compDept !== dD && deptInv[compDept]) {
+                  if ((compShare > 0 || (lineRental > 0 && !(cp.total > 0) && cp.qty > 0)) && compDept !== dD && deptInv[compDept]) { // ₹0 part: see above
                     deptInv[compDept].push({ name: cp.name, photo: cp.photo, qty: cp.qty, unit: cp.unit, total: Math.round(compShare), sub: cp.sub, imsId: cp.imsId, fromKit: item.name || "Item" });
                   }
                 });
