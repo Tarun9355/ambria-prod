@@ -167,8 +167,13 @@ export default function FabricBlock({ groups, fmt, onZoom, fnDates }) {
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold text-gray-900 truncate">{g.label}</span>
                   <span className="block text-[11px] text-gray-500 truncate">{g.colourText}</span>
+                  {/* The card's figure is always what is pulled from stock (new fabric only). When every zone is on ♻ Repeat that is 0 -
+                      the standing fabric is said beside it, as the curtains' card leaves its Repeat zones out (owner report 2026-11-27:
+                      Wall Masking all on Repeat still read "7 pcs" to send). */}
                   <span className="block text-[13px] font-bold text-gray-900 tabular-nums">
-                    {qtyShown(g.standingOnly ? g.qty : (g.pullQty ?? g.qty), g.unit)} {g.unit}{fmt && <span className="font-medium text-gray-400"> · {fmt(g.amount)}</span>}
+                    {qtyShown(g.standingOnly ? 0 : (g.pullQty ?? g.qty), g.unit)} {g.unit}
+                    {g.standingOnly && <span className="font-medium text-emerald-700"> · {qtyShown(g.qty, g.unit)} {g.unit} standing (♻ Repeat)</span>}
+                    {fmt && <span className="font-medium text-gray-400"> · {fmt(g.amount)}</span>}
                   </span>
                   {dates.length > 1 && (
                     <span className="block text-[11px] text-gray-500 tabular-nums truncate" title={dates.map((d) => `${dayLabel(d)}: ${qtyShown(r2(g.zones.filter((z) => dateOf(z) === d).reduce((a, z) => a + z.qty, 0)), g.unit)} ${g.unit}`).join("  ·  ")}>
