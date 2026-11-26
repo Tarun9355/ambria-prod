@@ -15,12 +15,15 @@ export function RateInput({ value, canChange, onSave, className, ariaLabel }) {
     editing.current = false;
     if (cancel.current) { cancel.current = false; setDraft(String(value ?? 0)); return; }
     const t = draft.trim();
-    const n = t === "" ? 0 : Number(t);
+    // an emptied or half-typed box ("", "12-") is not a 0 - it puts the saved rate back (QA re-test: clearing a box saved ₹0)
+    const n = t === "" ? NaN : Number(t);
     if (!Number.isFinite(n) || n < 0) { setDraft(String(value ?? 0)); return; }
     if (n === (Number(value) || 0)) { setDraft(String(value ?? 0)); return; }
+    // ₹0 bills that fabric / truss at nothing (the 23 Nov incident) - only on a yes
+    if (n === 0 && typeof window !== "undefined" && !window.confirm("Set this rate to ₹0? Everything billed at this rate will cost nothing.")) { setDraft(String(value ?? 0)); return; }
     setBusy(true);
-    const ok = await onSave(n);
-    setBusy(false);
+    let ok = false;
+    try { ok = await onSave(n); } catch { ok = false; } finally { setBusy(false); }
     if (!ok) setDraft(String(value ?? 0));
   };
   return (
@@ -58,11 +61,11 @@ export function RateHistory({ refreshKey = 0, keys = null }) {
   const keyText = keys ? keys.join(",") : "";
   const load = useCallback(async () => {
     setErr(false);
-    const { data, error } = await supabase.from("user_actions").select("id,user_name,target_name,ok,detail,created_at")
-      .eq("action", RATE_ACTION).order("created_at", { ascending: false }).limit(60);
+    let q = supabase.from("user_actions").select("id,user_name,target_name,ok,detail,created_at").eq("action", RATE_ACTION);
+    if (keyText) q = q.in("detail->>key", keyText.split(","));
+    const { data, error } = await q.order("created_at", { ascending: false }).limit(60);
     if (error) { setErr(true); setRows([]); return; }
-    const only = keyText ? keyText.split(",") : null;
-    setRows((data || []).filter((r) => !only || only.includes(r.detail?.key)));
+    setRows(data || []);
   }, [keyText]);
   useEffect(() => { if (open) load(); }, [open, refreshKey, load]);
   return (

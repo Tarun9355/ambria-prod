@@ -2721,22 +2721,22 @@ export default function IMS() {
       setError("Truss/fabric inventory hasn't finished loading — this change was NOT saved, to avoid overwriting real data with an empty placeholder. Reload the page and try again.");
       return;
     }
-    setTrussInvState((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      // Rates come from the database's row as it is now, never this tab's copy (lib/ims/trussRates withRatesOf): rates change only
-      // through saveTrussRate, and an old tab's stock edit used to write its old rates back with it.
-      // One at a time, in the order made (stock boxes save on every keystroke; a later keystroke's write must land last)
-      trackWrite(trussWriteChainRef.current = trussWriteChainRef.current.catch(() => {}).then(async () => {
-        let data = next;
-        try {
-          const { data: row } = await supabase.from("truss_inventory").select("data").eq("key", "main").maybeSingle();
-          if (row?.data && typeof row.data === "object") data = withRatesOf(next, row.data);
-        } catch { /* could not read: save as before */ }
-        const { error: e } = await retryingUpsert("truss_inventory", { key: "main", data }, "key");
-        if (e) setError(`Save failed: ${e.message}`);
-      }));
-      return next;
-    });
+    setTrussInvState((prev) => (typeof updater === "function" ? updater(prev) : updater));
+    // The change is applied to the row as it is in the database NOW, not to this tab's copy (QA re-test 2026-11-26: a stale tab's stock
+    // edit used to write back its old copy of everything - other colours' stock, rows, photos, factors, rates). Rates are always the
+    // database's own (lib/ims/trussRates withRatesOf): they change only through saveTrussRate. One save at a time, in the order made.
+    // Not started inside the state updater (StrictMode runs that twice).
+    trackWrite(trussWriteChainRef.current = trussWriteChainRef.current.catch(() => {}).then(async () => {
+      let fresh = null;
+      try {
+        const { data: row, error: re } = await supabase.from("truss_inventory").select("data").eq("key", "main").maybeSingle();
+        if (!re && row?.data && typeof row.data === "object") fresh = row.data;
+      } catch { /* handled below */ }
+      if (!fresh) { setError("Couldn't read the current truss / fabric stock — this change was NOT saved. Check the connection and try again."); return; }
+      const data = withRatesOf(typeof updater === "function" ? updater(fresh) : updater, fresh);
+      const { error: e } = await retryingUpsert("truss_inventory", { key: "main", data }, "key");
+      if (e) setError(`Save failed: ${e.message}`);
+    }));
   }, [trackWrite]);
 
   // ONE truss / fabric rate, Admin only, logged with the person's name (lib/ims/trussRates - owner report 2026-11-26: the Old fabric
@@ -2747,10 +2747,10 @@ export default function IMS() {
     if (readErr || !row?.data || typeof row.data !== "object") { setError("Couldn't read the current rates — the rate was NOT saved. Check the connection and try again."); return false; }
     const from = readTrussRate(row.data, mat, key);
     const to = Math.max(0, Number(value) || 0);
-    if (from === to) return true;
+    if (from === to) { setTrussInvState((prev) => applyTrussRate(prev, mat, key, to)); return true; }
     const next = applyTrussRate(row.data, mat, key, to);
     const { error: e } = await retryingUpsert("truss_inventory", { key: "main", data: next }, "key");
-    logWrite(user, RATE_ACTION, { targetType: "truss_rate", targetId: `${mat || "iron"}:${key}`, targetName: rateLabel(mat, key), ok: !e, error: e?.message, detail: { mat: mat || "iron", key, from, to } });
+    await logWrite(user, RATE_ACTION, { targetType: "truss_rate", targetId: `${mat || "iron"}:${key}`, targetName: rateLabel(mat, key), ok: !e, error: e?.message, detail: { mat: mat || "iron", key, from, to } });
     if (e) { setError(`Save failed: ${e.message}`); return false; }
     setTrussInvState((prev) => applyTrussRate(prev, mat, key, to)); // just the rate: this tab's own unsaved-yet stock edits stay
     return true;

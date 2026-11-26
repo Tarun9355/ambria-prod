@@ -2166,7 +2166,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
         const battaRate = battaInherited ? trussInv.rates?.battaRftRate : TI.rates?.battaRftRate;
         return (
         <div className="space-y-4">
-          {!canChangeRates && <AdminOnlyNote />}
+          {canEdit && !canChangeRates && <AdminOnlyNote />}
           <RateHistory refreshKey={rateLogTick} keys={["pillarRftRate", "beamRftRate", "battaRftRate"]} />
           {/* ── Material tabs ── */}
           <div className="flex gap-2">
@@ -2404,7 +2404,19 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
         // photo, In Build), the Liza kg conversion factors and the rates are Admin only.
         const fabAdmin = canEdit && ratesAdmin;
         const setTrussInvAdmin = fabAdmin ? setTrussInv : () => {};
-        const updateStock = (which, idx, key, val) => ((key === "colour" || key === "grade" || key === "hex" || key === "photo") ? setTrussInvAdmin : setTrussInv)((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade" || key === "hex" || key === "photo") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
+        // The row is found by its colour in whichever copy the change is applied to (the save applies it to the database's row as it is now,
+        // where another device may have added or removed a colour) - by position only when the colour is not there.
+        const updateStock = (which, idx, key, val) => {
+          const wasColour = (Array.isArray(trussInv[which]) ? trussInv[which] : [])[idx]?.colour;
+          ((key === "colour" || key === "grade" || key === "hex" || key === "photo") ? setTrussInvAdmin : setTrussInv)((ti) => {
+            const next = [...(ti[which] || [])];
+            const at = wasColour != null ? next.findIndex((r) => String(r?.colour || "").trim().toLowerCase() === String(wasColour).trim().toLowerCase()) : -1;
+            const j = at >= 0 ? at : idx;
+            if (!next[j]) return ti;
+            next[j] = { ...next[j], [key]: (key === "colour" || key === "grade" || key === "hex" || key === "photo") ? val : (parseFloat(val) || 0) };
+            return { ...ti, [which]: next };
+          });
+        };
         const addStockRow = (which, qtyField) => setTrussInvAdmin((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
         // One colour into all three fabrics at once: Liza (kg), Wall Masking and Velvet Curtains (pieces) share the same colour list, so a colour picked here
         // gets a row (0 old / 0 new) in each table that does not have it yet, with the reference photo of whichever table already has it.
@@ -2573,8 +2585,8 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                                 <span className={"inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " + (row.hideInBuild ? "translate-x-0.5" : "translate-x-[18px]")} />
                               </button>
                             </td>
-                            <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[qtyField] || 0} onChange={(e) => updateStock(which, i, qtyField, e.target.value)} className={`w-20 border border-gray-300 rounded px-2 py-1 text-xs font-bold text-center`} title="Old fabric in stock" /></td>
-                            <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[`${qtyField}New`] || 0} onChange={(e) => updateStock(which, i, `${qtyField}New`, e.target.value)} className={`w-20 border border-${themeColor}-300 rounded px-2 py-1 text-xs font-bold text-center text-${themeColor}-800`} title="New fabric in stock" /></td>
+                            <td className="px-2 py-1.5 text-center"><DraftInput type="number" min="0" step="1" inputMode="decimal" delay={700} disabled={!canEdit} aria-label={`${row.colour || "Colour"} old stock`} value={row[qtyField] || 0} onCommit={(v) => updateStock(which, i, qtyField, v)} className={`w-20 border border-gray-300 rounded px-2 py-1 text-xs font-bold text-center`} title="Old fabric in stock" /></td>
+                            <td className="px-2 py-1.5 text-center"><DraftInput type="number" min="0" step="1" inputMode="decimal" delay={700} disabled={!canEdit} aria-label={`${row.colour || "Colour"} new stock`} value={row[`${qtyField}New`] || 0} onCommit={(v) => updateStock(which, i, `${qtyField}New`, v)} className={`w-20 border border-${themeColor}-300 rounded px-2 py-1 text-xs font-bold text-center text-${themeColor}-800`} title="New fabric in stock" /></td>
                             <td className="px-2 py-1.5 text-center text-xs font-bold text-gray-700">{oldQ + newQ}</td>
                             <td className="px-2 py-1.5 text-center">{fabAdmin && <button onClick={() => removeStockRow(which, i)} aria-label={`Remove ${row.colour || "this colour"}`} className="text-red-400 hover:text-red-600 text-xs">✕</button>}</td>
                           </tr>

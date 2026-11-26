@@ -65,8 +65,8 @@ export function logView(user, action, opts) { enqueue(build(user, action, opts))
 /** A write attempt. Pass ok:false with the error when it failed — that is the point of this log. */
 export function logWrite(user, action, opts) {
   const row = build(user, action, opts);
-  // Failures jump the queue along with successes; both are sent immediately.
-  sendNow(row);
+  // Failures jump the queue along with successes; both are sent immediately. Returned so a caller can wait for the row (Rate history).
+  return sendNow(row);
 }
 
 /** Flush pending views when the tab is hidden or closing, so the last few clicks are not lost.

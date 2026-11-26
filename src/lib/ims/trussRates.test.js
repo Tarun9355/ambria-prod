@@ -48,4 +48,10 @@ describe("withRatesOf", () => {
     expect(out.materials.aluminium).toEqual({ pillars: [2] });
     expect(withRatesOf(stale, null)).toBe(stale);
   });
+  it("a material only the database has is kept whole; a stale tab's own material rates never win", () => {
+    const fresh = { rates: { lizaKgRate: 167 }, materials: { pole: { rates: { pillarRftRate: 12 }, pillars: [3] } } };
+    expect(withRatesOf({ rates: { lizaKgRate: 0 } }, fresh).materials).toEqual({ pole: { rates: { pillarRftRate: 12 }, pillars: [3] } });
+    const out = withRatesOf({ materials: { aluminium: { rates: { pillarRftRate: 99 }, pillars: [1] } } }, { rates: {}, materials: { aluminium: { pillars: [1] } } });
+    expect(out.materials.aluminium).toEqual({ pillars: [1] });
+  });
 });

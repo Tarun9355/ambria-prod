@@ -52,11 +52,16 @@ export const isAdminUser = (u) => (u?.role || "").toLowerCase() === "admin" || u
 // (the 23 Nov 19:49 / 19:51 pair: one open tab put every old rate back, another put the zeros back two minutes later).
 export function withRatesOf(next, fresh) {
   if (!next || typeof next !== "object" || !fresh || typeof fresh !== "object") return next;
-  const out = { ...next, rates: fresh.rates || next.rates || {} };
-  if (next.materials && typeof next.materials === "object") {
-    out.materials = Object.fromEntries(Object.entries(next.materials).map(([m, v]) => {
-      const fr = fresh.materials?.[m]?.rates;
-      return [m, fr ? { ...(v || {}), rates: fr } : v];
+  const out = { ...next, rates: fresh.rates || {} };
+  const nm = next.materials && typeof next.materials === "object" ? next.materials : {};
+  const fm = fresh.materials && typeof fresh.materials === "object" ? fresh.materials : {};
+  const names = [...new Set([...Object.keys(nm), ...Object.keys(fm)])];
+  if (names.length) {
+    // every material either copy has (one only in the database is kept whole); its rates always the database's
+    out.materials = Object.fromEntries(names.map((m) => {
+      const v = m in nm ? (nm[m] || {}) : (fm[m] || {});
+      const { rates: _ignored, ...rest } = v; // eslint-disable-line no-unused-vars
+      return [m, fm[m]?.rates ? { ...rest, rates: fm[m].rates } : rest];
     }));
   }
   return out;
