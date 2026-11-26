@@ -64,6 +64,10 @@ export function truckManifest(sel, inventory) {
   return trucks.map((t) => {
     const totals = new Map(); // `${dept}|${key}` -> { dept, key, planned, extra }
     tripsOf(t).forEach((trip) => {
+      // a trip still "Loading" has not left: its pieces are on the truck but not on their way (Receiving shows them apart)
+      const stillLoading = (trip?.status || "loading") === "loading";
+      // a trip marked At site / Returned has reached the site; Dispatched is still on its way
+      const reached = trip?.status === "at-site" || trip?.status === "returned";
       const depts = new Set([...Object.keys(trip.loads || {}), ...Object.keys(trip.extra || {}), ...Object.keys(trip.custom || {})]);
       depts.forEach((dept) => {
         const items = trip.loads?.[dept] || {};
@@ -76,6 +80,8 @@ export function truckManifest(sel, inventory) {
           const id = dept + "|" + key;
           const cur = totals.get(id) || { dept, key, planned: 0, extra: 0 };
           cur.planned += n; cur.extra += extraN;
+          if (stillLoading) cur.loadingQty = (cur.loadingQty || 0) + n + extraN;
+          if (reached) cur.arrivedQty = (cur.arrivedQty || 0) + n + extraN;
           totals.set(id, cur);
         });
         // Custom items (DepartmentOpsTab.jsx's addTripCustomItem — a department's own inventory pick,
@@ -90,6 +96,9 @@ export function truckManifest(sel, inventory) {
           const id = dept + "|" + key;
           const cur = totals.get(id) || { dept, key, planned: 0, extra: 0 };
           cur.planned += q;
+          cur.customQty = (cur.customQty || 0) + q; // added on the truck, not in the deal - Receiving says so instead of "need 0"
+          if (stillLoading) cur.loadingQty = (cur.loadingQty || 0) + q;
+          if (reached) cur.arrivedQty = (cur.arrivedQty || 0) + q;
           totals.set(id, cur);
         });
       });

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isLiveEventOrder } from "../../lib/ims/helpers";
 import { catToDept as sharedCatToDept } from "../../lib/ims/deptClassify";
-import { venueWithParent, venueCalendarColor, VENUE_CALENDAR_LEGEND } from "../../lib/ims/fixedVenues";
+import { venueWithParent, venueCalendarColor, VENUE_CALENDAR_LEGEND, siteSupervisorsFor } from "../../lib/ims/fixedVenues";
 import { actualsLockState, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
 import { logWrite } from "../../lib/studio/userActions";
 import { Modal } from "../../components/ui";
@@ -17,8 +17,27 @@ const SECTIONS = [
   { id: "receiving", label: "🚛 Receiving" },
   { id: "crew", label: "👷 Crew" },
 ];
-// "2026-11-03" → "3 Nov 2026" (the Planning header's way of saying when)
-const prettyDate = (d) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(d || "")) return d || ""; const dt = new Date(d + "T00:00:00"); return dt.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }); };
+// Every date and venue the event runs on, in words - "3–4 Nov 2026 · Grand", "3 Nov · Grand + 5 Nov · Aura (2026)" - the way Planning's
+// header says it (owner's QA audit 2026-11-26: Site showed one date, which could be a stale eo.date, and only the first venue).
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const datesVenuesOf = (eo, venueName) => {
+  const fns = Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : [];
+  const pairs = fns.length ? fns.map((f) => ({ date: String(f?.date || "").slice(0, 10), venue: f?.venue || eo?.venue || "" })) : [{ date: String(eo?.date || "").slice(0, 10), venue: eo?.venue || "" }];
+  const byVenue = new Map();
+  pairs.forEach(({ date, venue }) => { const a = byVenue.get(venue) || []; if (/^\d{4}-\d{2}-\d{2}$/.test(date)) a.push(date); byVenue.set(venue, a); });
+  const years = new Set([...byVenue.values()].flat().map((d) => d.slice(0, 4)));
+  const fmt = (ds) => {
+    const u = [...new Set(ds)].sort(); if (!u.length) return "";
+    const runs = [];
+    u.forEach((d) => { const last = runs[runs.length - 1]; const prev = last && last[last.length - 1]; if (prev && Date.parse(d) - Date.parse(prev) === 86400000) last.push(d); else runs.push([d]); });
+    return runs.map((r) => { const a = r[0], b = r[r.length - 1]; const ma = MON[+a.slice(5, 7) - 1], mb = MON[+b.slice(5, 7) - 1]; return r.length === 1 ? `${+a.slice(8)} ${ma}` : ma === mb ? `${+a.slice(8)}–${+b.slice(8)} ${ma}` : `${+a.slice(8)} ${ma} – ${+b.slice(8)} ${mb}`; }).join(", ");
+  };
+  const parts = [...byVenue.entries()].map(([v, ds]) => [fmt(ds), venueName(v)].filter(Boolean).join(" · ")).filter(Boolean);
+  const yr = years.size === 1 ? [...years][0] : "";
+  if (!parts.length) return "";
+  if (yr && byVenue.size === 1) { const [[v, ds]] = [...byVenue.entries()]; return [fmt(ds) + " " + yr, venueName(v)].filter(Boolean).join(" · "); }
+  return parts.join(" + ") + (yr ? ` (${yr})` : "");
+};
 const fnDate = (eo) => {
   const dates = [eo?.date, ...((Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : []).map((f) => f?.date))].filter(Boolean).map((d) => String(d).slice(0, 10));
   return dates.sort()[0] || "";
@@ -27,7 +46,7 @@ const fnDate = (eo) => {
 // One page for the whole event, every department together — not the per-department tabs the rest
 // of IMS uses. Built for the Site Supervisor role: a narrow login that only needs "what's arriving
 // on each truck, right now" and "who's actually on site", not the dept-head planning screens.
-export default function SiteSupervisorTab({ eventOrders, setEventOrders, inventory, settings, blocks, trussInv, rateCardCategories, authUser, supervisors = [] }) {
+export default function SiteSupervisorTab({ eventOrders, setEventOrders, inventory, settings, blocks, trussInv, rateCardCategories, authUser, supervisors = [], rcItems = [] }) {
   const [selId, setSelId] = useState(() => { try { return sessionStorage.getItem(PICK_KEY) || ""; } catch { return ""; } });
   // Was a Planned/Actual toggle — Actual already starts out showing exactly what was planned until
   // someone edits a figure, so a separate read-only "Planned" view never showed anything the Actual
@@ -43,6 +62,17 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
   // Filtered through the same isLiveEventOrder test the picker uses — a stale remembered id
   // (sessionStorage) for an event that's since gone pending/cancelled must not still open.
   const sel = (eventOrders || []).find((e) => e.id === selId && isLiveEventOrder(e)) || null;
+  // the supervisors fixed at the event's venues (Admin → Settings → Supervisors) as well as the ones added on it - as Planning's header
+  // lists them (owner's QA audit 2026-11-26: an in-house venue event showed nobody here)
+  const inhouse = useInhouseVenues(!!sel);
+  const supervisorsShown = useMemo(() => {
+    if (!sel) return [];
+    const added = addedSupervisorsOf(sel);
+    const ids = new Set(added.map((s) => s.id).filter((x) => x != null && x !== ""));
+    let venueSups = [];
+    try { venueSups = siteSupervisorsFor(settings, [...(Array.isArray(sel.functionsDetail) ? sel.functionsDetail.map((f) => f?.venue) : []), sel.venue], [...inhouse.properties, ...inhouse.inhouse], supervisors, inhouse.inhouse); } catch { /* none */ }
+    return [...venueSups.filter((s) => !ids.has(s.id)), ...added];
+  }, [sel, settings, supervisors, inhouse.properties, inhouse.inhouse]);
   const pick = (id) => { setSelId(id); try { sessionStorage.setItem(PICK_KEY, id); } catch { /* private window — fine, just won't be remembered */ } };
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
   const [reopenPrompt, setReopenPrompt] = useState(false);
@@ -75,13 +105,13 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
           <div className="min-w-0 flex-1">
             <div className="text-[16px] sm:text-[20px] font-semibold tracking-[-0.01em] text-gray-900 leading-tight sm:leading-snug truncate">{sel.clientName || "Event"}</div>
             <div className="mt-0.5 text-[13px] sm:text-sm font-medium text-gray-700 leading-snug truncate">
-              {[prettyDate(fnDate(sel)) || "no date", venueWithParent(settings, sel.functionsDetail?.[0]?.venue || sel.venue) || ""].filter(Boolean).join(" · ")}
+              {datesVenuesOf(sel, (v) => venueWithParent(settings, v) || v) || "no date"}
             </div>
             {sel.salesperson && <div className="text-[11.5px] sm:text-xs text-gray-400 leading-snug truncate">Booked by {sel.salesperson}</div>}
-            {addedSupervisorsOf(sel).length > 0 && (
+            {supervisorsShown.length > 0 && (
               <div className="mt-1 flex items-center gap-1.5 text-xs min-w-0">
                 <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
-                <span className="font-medium text-gray-700 truncate">{addedSupervisorsOf(sel).map((s) => s.name).join(", ")}</span>
+                <span className="font-medium text-gray-700 truncate">{supervisorsShown.map((s) => s.name).join(", ")}</span>
               </div>
             )}
           </div>
@@ -128,7 +158,7 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
       </div>
 
       {section === "receiving" ? (
-        <SiteReceivingPanel sel={sel} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} authUser={authUser} mode={mode} settings={settings} />
+        <SiteReceivingPanel sel={sel} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} authUser={authUser} mode={mode} settings={settings} trussInv={trussInv} blocks={blocks} rcItems={rcItems} rateCardCategories={rateCardCategories} />
       ) : (
         <SiteCrewPanel sel={sel} setEventOrders={setEventOrders} settings={settings} inventory={inventory} authUser={authUser} catToDept={catToDept} mode={mode} />
       )}

@@ -1,11 +1,50 @@
-import { useEffect, useState } from "react";
-import { supabase } from "../../lib/supabase";
-import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks, labelForLoadKey } from "../../lib/ims/eventTrucks";
-import { FLAG_REASONS, receivingOf, lineReceipt, setItemReceiptPatch, clearItemReceiptPatch } from "../../lib/ims/receiving";
-import { catToDept } from "../../lib/ims/deptClassify";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks, tripsOf } from "../../lib/ims/eventTrucks";
+import { FLAG_REASONS, receivingOf, lineReceipt, setItemReceiptPatch, clearItemReceiptPatch, setTransferReceiptPatch } from "../../lib/ims/receiving";
+import { catToDept as sharedCatToDept, DEPTS } from "../../lib/ims/deptClassify";
 import { thumbUrl } from "../../lib/studio/thumb.js";
 import { actualsLockState } from "../../lib/ims/actualsLock";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
+import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
+import { atVenueOfEvent } from "../../lib/ims/atVenue";
+import { buildFabricGroups } from "../../lib/ims/fabricGroups";
+import { makeEventPlans } from "../../lib/ims/eventPlans";
+import { buildLiveFloralPlan } from "../../lib/ims/liveFloralPlan";
+import { truckKeyOf, mappedStockRowsOf, blockedGroupedFor, blockedFlatFor, loadSplitOf, mergeLegacyTrucks, tripChallanRows } from "../../lib/ims/deptLoadList";
+import { choiceNotesForRows } from "../../lib/ims/elementPlan";
+import { carpetNotesForRows } from "../../lib/ims/carpetPlan";
+import FabricBlock from "./FabricBlock.jsx";
+
+// The "how many arrived" box: what is typed stays in the box until Enter or leaving it, then saves once (owner's QA audit
+// 2026-11-26: clearing the box saved "no figure" and snapped back to the planned one, so backspacing 10 and typing 3 gave 103,
+// and every keystroke wrote the whole event). Empty on leaving = back to the expected figure.
+// Saves only what this person actually typed (a re-test finding: focusing the box and leaving it without typing saved the old figure
+// over a newer one that had come in meanwhile - another supervisor's receipt, or a trip dispatched). Escape cancels, never saves.
+function GotBox({ value, onCommit, className }) {
+  const [draft, setDraft] = useState(String(value ?? ""));
+  const editing = useRef(false);
+  const dirty = useRef(false);
+  const cancel = useRef(false);
+  useEffect(() => { if (!editing.current) setDraft(String(value ?? "")); }, [value]);
+  const commit = () => {
+    editing.current = false;
+    const typed = dirty.current, cancelled = cancel.current;
+    dirty.current = false; cancel.current = false;
+    if (cancelled || !typed) { setDraft(String(value ?? "")); return; }
+    const v = draft.trim();
+    if (v === String(value ?? "")) return;
+    onCommit(v === "" ? null : Math.max(0, Number(v) || 0));
+  };
+  return (
+    <input type="number" min="0" inputMode="numeric" value={draft} aria-label="Pieces arrived"
+      onFocus={() => { editing.current = true; dirty.current = false; cancel.current = false; }}
+      onChange={(e) => { dirty.current = true; setDraft(e.target.value); }} onBlur={commit}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { cancel.current = true; e.currentTarget.blur(); } }}
+      className={className} />
+  );
+}
+
+const TRIP_LABEL = { loading: "Loading", dispatched: "Dispatched", "at-site": "At site", returned: "Returned" };
 
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 
@@ -15,35 +54,80 @@ const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", 
 // old whole-truck "Arrived as planned" button entirely — that one used to mark every department on a
 // truck arrived in a single tap, which a dept head filtering to their own department could trigger by
 // accident for departments they'd never actually looked at.
-export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eventOrders, authUser, mode, settings }) {
+export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eventOrders, authUser, mode, settings, trussInv, blocks = {}, rcItems = [], rateCardCategories = [] }) {
   const [flaggingKey, setFlaggingKey] = useState(null); // `${truckId}|${dept}|${key}` currently showing its issue panel
   // "all" (default) or one department — a supervisor checking in a truck usually cares about every
   // department on it, but a dept head who only wants to confirm THEIR OWN pieces arrived (owner ask
   // 2026-11-24) needs to cut the noise of every other department's lines on the same shared truck.
   const [deptFilter, setDeptFilter] = useState("all");
-  // The `functions` table's own `data.items` (per function, invId+qty, FOC items already split into
-  // a separate `focItems` array by Studio's own reconcile — see StudioApp.jsx's reconcileSoldInventoryBlocks
-  // — so nothing here needs to re-exclude them) is the same flat, kit-walked quantity list Studio
-  // keeps resynced for this exact event, independent of DepartmentOpsTab's own much heavier live
-  // Deal-Check recompute — reusing it here needs no new sync path, just a read.
-  const [fnItems, setFnItems] = useState([]);
-  useEffect(() => {
-    let cancelled = false;
-    // Cleared IMMEDIATELY on every event switch, not just once the new fetch resolves — this panel
-    // isn't remounted when the event picker above changes `sel` (regression review, 2026-11-25): on
-    // a slow connection, the previous event's needs would otherwise still be showing against the
-    // NEW event's (empty) trucks, putting the wrong items' need/arriving/short rows into the list.
-    setFnItems([]);
-    if (!sel?.id) return;
-    supabase.from("functions").select("data").contains("data", { eventOrderId: sel.id }).then(({ data, error }) => {
-      if (cancelled) return;
-      if (error) { console.error("[site-receiving] functions fetch failed:", error.message); setFnItems([]); return; }
-      setFnItems((data || []).flatMap((r) => (Array.isArray(r.data?.items) ? r.data.items : [])));
+  // ── WHAT SHOULD COME: THE VERY LIST PLANNING LOADS FROM ── (owner's QA audit 2026-11-26)
+  // Each department's to-load list is built by lib/ims/deptLoadList - the code Dept Ops itself runs (Deal Check's department
+  // snapshot: kits as shell + this department's parts, recipe parts, Floral's mapped artificial items worked out live, Fabric
+  // folded per colour, platform / carpet / print / truss lines, less what stands at the venue) - and keyed by the same truck keys.
+  // It used to be worked out here from Studio's functions list instead, which disagreed with Planning in many ways (summed
+  // functions where Planning loads the peak, kits within kits, platform lines missing, mapped items "need 0", a kit part counted
+  // twice, the wrong department chip).
+  const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
+  const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
+  const fvSettings = useFixedVenueSettings(settings);
+  const atVenueOf = useMemo(() => atVenueOfEvent(sel, fvSettings, inventory), [sel, fvSettings, inventory]);
+  const liveFloral = useMemo(() => {
+    if (!sel) return null;
+    try { return buildLiveFloralPlan(sel.functionsDetail, { settings: settings || {}, rcItems, rateCardCategories, inventory }); } catch { return null; }
+  }, [sel, settings, rcItems, rateCardCategories, inventory]);
+  const plan = useMemo(() => {
+    const need = new Map(); // `${dept}|${truckKey}` -> { dept, key, qty, label, photo, unit, invId }
+    const atVenue = [];
+    const flatByDept = new Map();
+    let fabricGroups = [];
+    if (!sel) return { need, atVenue, fabricGroups, trucks: [], flatByDept };
+    let pl = null;
+    try { pl = makeEventPlans({ sel, inventory, blocks, eventOrders, settings, trussInv }); } catch (e) { console.error("[site-receiving] plans:", e); }
+    // Planning's Fabric block (Liza / Velvet / Wall Masking, colour photo, total, zones) - shown on top, no money.
+    try {
+      const fnsF = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+      fabricGroups = buildFabricGroups({ entries: pl ? pl.fabricEntriesOf() : [], lines: Array.isArray(sel?.deptInventory?.Fabric) ? sel.deptInventory.Fabric : [],
+        fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1, fnPalettes: pl ? pl.fabricPalettesOf() : null }).groups;
+    } catch (e) { console.error("[site-receiving] fabric groups:", e); }
+    let mapped = [];
+    try { mapped = mappedStockRowsOf(liveFloral, sel, inventory); } catch { /* no live floral plan: none */ }
+    const deptsHere = [...new Set([...DEPTS, ...Object.keys(sel?.deptInventory || {})])];
+    deptsHere.forEach((d) => {
+      try {
+        const grouped = blockedGroupedFor(d, { sel, inventory, blocks, catToDept, mappedStockRows: mapped });
+        if (!grouped.length) return;
+        const flat = blockedFlatFor(grouped, d, { sel, trussInv, fabricEntriesOf: pl?.fabricEntriesOf, fabricPalettesOf: pl?.fabricPalettesOf });
+        flatByDept.set(d, flat);
+        const { load, atVenue: av } = loadSplitOf(flat, atVenueOf);
+        // The design Planning chose for an overlay / cushion cover (Fabric) or a carpet floor (Tenting) - what is actually on the
+        // truck - with the line's notes ("not decided yet ..."), as Planning's truck list and challan name it (owner's QA audit
+        // 2026-11-26: Site still named sales' 1st choice).
+        let choice = new Map();
+        try {
+          if (pl && d === "Fabric") choice = choiceNotesForRows(flat, pl.elementPlanOf().rows);
+          else if (pl && d === "Tenting") choice = carpetNotesForRows(flat, pl.carpetPlanOf().rows);
+        } catch { /* no plan for the choices: the line's own name */ }
+        load.forEach((it) => {
+          const key = truckKeyOf(it);
+          const id = d + "|" + key;
+          const cv = choice.get(it.id);
+          const c = need.get(id) || { dept: d, key, qty: 0, label: cv?.name || it.name, photo: cv?.name ? (cv.photo || "") : (it.photo || ""), unit: it.qtyUnit || "", invId: it.invId || null,
+            notes: (cv?.notes || []).map((n) => n.text).filter(Boolean) };
+          c.qty += Number(it.qty) || 0;
+          need.set(id, c);
+        });
+        av.forEach(({ it, a }) => atVenue.push({ dept: d, key: truckKeyOf(it), label: it.name, photo: it.photo || "", qty: Number(it.fullQty ?? it.qty) || 0, unit: it.qtyUnit || "", a }));
+      } catch (e) { console.error("[site-receiving] dept list", d, e); }
     });
-    return () => { cancelled = true; };
-  }, [sel?.id]);
+    atVenue.sort((x, y) => String(x.label || "").localeCompare(String(y.label || "")));
+    // the trucks as Planning reads them: the shared list with any department's older per-department trucks folded in
+    let trucks = Array.isArray(sel.trucks) ? sel.trucks : [];
+    try { trucks = mergeLegacyTrucks(sel, (d) => flatByDept.get(d) || []); } catch (e) { console.error("[site-receiving] legacy trucks:", e); }
+    return { need, atVenue, fabricGroups, trucks, flatByDept };
+  }, [sel, inventory, blocks, eventOrders, settings, trussInv, liveFloral, atVenueOf]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fabricGroups = plan.fabricGroups;
 
-  const manifest = truckManifest(sel, inventory);
+  const manifest = truckManifest(sel ? { ...sel, trucks: plan.trucks } : sel, inventory);
   const transfers = incomingTransfersFor(eventOrders, sel?.id);
   const receiving = receivingOf(sel);
   // Flattened — every line carries its OWN truck back-reference, so the list is items-first; a
@@ -53,41 +137,29 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // 2026-11-24: the old check read the grouped `manifest`, which still counts an empty truck as one
   // entry, so the panel rendered a blank page instead of either empty-state message).
   const allLines = manifest.flatMap(({ truck, lines }) => lines.map((ln) => ({ ...ln, truck })));
-  // Every item id Studio's build needs for this event, summed across every function, against how
-  // much of it has actually gone out on ANY truck OR arrived by inter-event transfer. Feeds both the
-  // "never loaded at all" rows below AND the need/arriving/short line now shown on every loaded line
-  // too (owner ask 2026-11-25) — so a PARTLY-loaded item (some qty loaded, short of what's needed)
-  // is visible right on its own truck line, not just the fully-unloaded case this started as.
-  const neededByInvId = new Map(); // invId -> { qty, dept }
-  fnItems.forEach((it) => {
-    if (!it?.invId || !(Number(it.qty) > 0)) return;
-    const invId = String(it.invId);
-    const cur = neededByInvId.get(invId) || { qty: 0, dept: it.dept || "" };
-    cur.qty += Number(it.qty) || 0;
-    neededByInvId.set(invId, cur);
+  // what has gone out for each `${dept}|${key}` on any truck, plus same-day reuse arriving from another event
+  const loadedByKey = new Map();
+  allLines.forEach((ln) => { const id = ln.dept + "|" + ln.key; loadedByKey.set(id, (loadedByKey.get(id) || 0) + Number(ln.planned || 0) + Number(ln.extra || 0)); });
+  // Same-day reuse from another event never rides on one of THIS event's trucks - counted as arriving for its item.
+  // Matched to the need line it covers: its own department and key, else the first need line with that inventory id in any
+  // department or kit (a re-test finding: a kit part "inv:X@kit", or an item the other event filed elsewhere, never matched).
+  transfers.forEach((t) => {
+    if (!t.invId) return;
+    let id = (t.fromDept || "") + "|inv:" + t.invId;
+    if (!plan.need.has(id)) {
+      const hit = [...plan.need.values()].find((n) => n.invId && String(n.invId) === String(t.invId));
+      if (hit) id = hit.dept + "|" + hit.key;
+    }
+    loadedByKey.set(id, (loadedByKey.get(id) || 0) + (Number(t.qty) || 0));
   });
-  const loadedByInvId = new Map();
-  allLines.forEach((ln) => { if (ln.invId) loadedByInvId.set(String(ln.invId), (loadedByInvId.get(String(ln.invId)) || 0) + Number(ln.planned || 0) + Number(ln.extra || 0)); });
-  // Same-day reuse from another event (incomingTransfersFor) never rides on one of THIS event's own
-  // trucks, so it was never going to show up in allLines above — without counting it too, an item
-  // genuinely arriving this way would wrongly read "need N · arriving 0 · short N" right next to the
-  // very transfer line (below) that says otherwise (regression review, 2026-11-25).
-  transfers.forEach((t) => { if (t.invId) loadedByInvId.set(String(t.invId), (loadedByInvId.get(String(t.invId)) || 0) + (Number(t.qty) || 0)); });
-  const missingItems = [...neededByInvId.entries()]
-    .filter(([invId]) => !(loadedByInvId.get(invId) > 0))
-    .map(([invId, { qty, dept }]) => {
-      // The LIVE inventory category, not the snapshot `dept` saved onto this item the first time
-      // Studio ever synced it (regression review, 2026-11-25: that snapshot is never refreshed by a
-      // later category edit) — and WITHOUT settings.categoryDepartments, matching how
-      // DepartmentOpsTab.jsx's own catToDept(cat) calls resolve a truck line's department (no admin-
-      // override config there either), so a missing item lands under the same chip a dept head
-      // already sees it under everywhere else.
-      const inv = (inventory || []).find((i) => String(i.id) === invId);
-      return { invId, qty, dept: catToDept(inv?.cat || inv?.category || dept), ...labelForLoadKey("inv:" + invId, inventory) };
-    })
+  const needOf = (dept, key) => plan.need.get(dept + "|" + key) || null;
+  const atVenueRows = plan.atVenue;
+  // In Planning's list but on no truck yet: its own "Not loaded" row - every kind of line (platform, carpet, print, recipe parts too).
+  const missingItems = [...plan.need.values()].filter((n) => !(loadedByKey.get(n.dept + "|" + n.key) > 0))
+    .map((n) => ({ invId: n.dept + "|" + n.key, qty: n.qty, unit: n.unit, dept: n.dept, label: n.label, photo: n.photo, notes: n.notes || [] }))
     .sort((a, b) => String(a.label || "").localeCompare(String(b.label || "")) || String(a.dept || "").localeCompare(String(b.dept || "")));
 
-  const allDepts = [...new Set([...manifest.flatMap((m) => m.lines.map((l) => l.dept)), ...transfers.map((t) => t.fromDept), ...missingItems.map((m) => m.dept)])].filter(Boolean).sort();
+  const allDepts = [...new Set([...manifest.flatMap((m) => m.lines.map((l) => l.dept)), ...transfers.map((t) => t.fromDept), ...missingItems.map((m) => m.dept), ...atVenueRows.map((r) => r.dept)])].filter(Boolean).sort();
   // Falls back to "all" the instant the picked department doesn't exist on THIS event (switching to
   // a different event in the picker above doesn't remount this panel, so a stale filter from the
   // last event — one this event may not even have — would otherwise hide every item here with no
@@ -98,6 +170,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
     .sort((a, b) => String(a.label || "").localeCompare(String(b.label || "")) || String(a.dept || "").localeCompare(String(b.dept || "")));
   const visibleTransfers = activeFilter === "all" ? transfers : transfers.filter((t) => t.fromDept === activeFilter);
   const visibleMissing = missingItems.filter((m) => activeFilter === "all" || m.dept === activeFilter);
+  const visibleAtVenue = atVenueRows.filter((r) => activeFilter === "all" || r.dept === activeFilter);
   // Post-event actuals lock (lib/ims/actualsLock.js) — every write this panel makes is a receiving
   // actual, so once locked the whole panel is read-only.
   const lock = actualsLockState(sel, settings);
@@ -126,7 +199,31 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // usable on a locked event.
   const canEdit = mode === "actual" && !lock.locked && canSiteEdit;
 
-  if (allLines.length === 0 && transfers.length === 0 && missingItems.length === 0) {
+  // Truck numbers as Planning gives them (sorted by the number in the id, else list order), so "Truck 2" is the same truck on both pages
+  const truckNum = (() => { const nOf = (id) => { const n = Number(String(id || "").replace(/^trk_/, "")); return Number.isFinite(n) ? n : 0; }; return new Map([...plan.trucks].sort((x, y) => nOf(x.id) - nOf(y.id)).map((t, i) => [t.id, i + 1])); })();
+  // A trip's combined challan in a new window, as Planning prints it (item, department, qty), with the design Planning chose.
+  const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const printChallan = (truck, trip, n, tripN, rows) => {
+    const w = window.open("", "_blank");
+    if (!w) return;
+    const body = rows.map((it) => {
+      const name = plan.need.get(it.dept + "|" + it.key)?.label || it.name;
+      return `<tr><td>${esc(name)}${it.added ? ' <span style="font-size:11px;color:#92400e">(added, not in Build)</span>' : ""}</td><td>${esc(it.dept)}</td><td style="text-align:center">${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}</td></tr>`;
+    }).join("");
+    const when = (Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).map((f) => [f?.date, f?.venue].filter(Boolean).join(" · ")).filter(Boolean).join(" + ") || sel?.date || "-";
+    w.document.write(`<html><head><title>Combined Challan — Truck ${n} · Trip ${tripN}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
+      <h2>🚚 Ambria — Combined Challan · Truck ${n} · Trip ${tripN}</h2>
+      <p>Event: ${esc(sel?.clientName || "-")} &nbsp;|&nbsp; ${esc(when)}</p>
+      <p>Vehicle: ${esc(truck.vehicle || "______")} &nbsp;|&nbsp; Driver: ${esc(truck.driver || "______")} &nbsp;|&nbsp; Phone: ${esc(truck.phone || "______")}</p>
+      <h4>Inventory on this trip — every department</h4>
+      <table><tr><th>Item</th><th>Dept</th><th>Qty</th></tr>${body || '<tr><td colspan="3" style="text-align:center;color:#999">No items assigned to this trip</td></tr>'}</table>
+      <br><p>Dispatched by: _______________ &nbsp;&nbsp; Received by: _______________</p>
+      <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
+      <button onclick="window.print()">🖨️ Print</button></body></html>`);
+    w.document.close();
+  };
+
+  if (allLines.length === 0 && transfers.length === 0 && missingItems.length === 0 && atVenueRows.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-100 p-8 text-center text-sm text-gray-400">
         {hasUnmigratedLegacyTrucks(sel)
@@ -181,16 +278,39 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           Nothing for {activeFilter} for this event yet.
         </div>
       )}
+      {fabricGroups.length > 0 && (activeFilter === "all" || activeFilter === "Fabric") && (
+        <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 flex items-center gap-3">
+            <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🧵</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[15px] font-semibold text-gray-900">Fabric</div>
+              <div className="text-xs text-gray-500 truncate">Liza, velvet and masking - tap one for its colours and zones</div>
+            </div>
+          </div>
+          <div className="p-2.5">
+            <FabricBlock groups={fabricGroups} fnDates={(Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).map((f) => String(f?.date || "").slice(0, 10))} />
+          </div>
+        </div>
+      )}
+
       {/* One raised card holding every item, rows split by hairlines - the Planning Receiving card's look (owner ask 2026-11-25),
           instead of a floating card per item. Its head says what it is and how many items are still short. */}
       {combinedRows.length > 0 && (() => {
         const shortIds = new Set();
         combinedRows.forEach((row) => {
           if (row.kind === "missing") { shortIds.add("m|" + row.m.invId); return; }
-          const id = row.ln.invId ? String(row.ln.invId) : null;
-          if (id && (neededByInvId.get(id)?.qty ?? 0) > (loadedByInvId.get(id) || 0)) shortIds.add(id);
+          const nd = needOf(row.ln.dept, row.ln.key);
+          if (nd && nd.qty > (loadedByKey.get(row.ln.dept + "|" + row.ln.key) || 0)) shortIds.add(row.ln.dept + "|" + row.ln.key);
         });
         const nShort = shortIds.size;
+        // what the supervisor found on arrival: a line received short or flagged (the plan can be fully sourced and still arrive short)
+        const nIssues = combinedRows.filter((row) => {
+          if (row.kind !== "line") return false;
+          const ln = row.ln, r = lineReceipt(receiving.trucks[ln.truck.id], ln.dept, ln.key);
+          const gone = Math.max(0, ln.planned + ln.extra - (Number(ln.loadingQty) || 0));
+          const expected = (Number(ln.arrivedQty) || 0) > 0 ? Number(ln.arrivedQty) : gone;
+          return !!r.flag || (r.got != null && expected > 0 && Number(r.got) < expected);
+        }).length;
         return (
       <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
         <div className="px-4 py-3 bg-gray-50 flex items-center gap-3">
@@ -199,8 +319,11 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
             <div className="text-[15px] font-semibold text-gray-900">Receiving</div>
             <div className="text-xs text-gray-500 truncate">Who&apos;s bringing what, on which truck</div>
           </div>
-          <span className={"shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full " + (nShort > 0 ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700")}>
-            {nShort > 0 ? `⚠️ ${nShort} short` : "✓ all sourced"}
+          <span className="shrink-0 flex flex-col items-end gap-1">
+            <span className={"text-xs font-semibold px-2 py-0.5 rounded-full " + (nShort > 0 ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700")}>
+              {nShort > 0 ? `⚠️ ${nShort} short` : "✓ all sourced"}
+            </span>
+            {nIssues > 0 && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-600 text-white tabular-nums"><span>⚑ {nIssues}</span> <span>{"arrival issues"}</span></span>}
           </span>
         </div>
         <div className="divide-y divide-gray-100">
@@ -223,11 +346,12 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                     <span className="font-bold text-gray-500 bg-gray-50 rounded px-1.5 py-0.5">{DEPT_ICON[m.dept] || ""} {m.dept}</span>
                     <span className="text-gray-500">No truck assigned yet.</span>
                   </div>
+                  {m.notes?.length > 0 && <div className="mt-1 text-[11px] text-gray-500 leading-snug">{m.notes.join(" · ")}</div>}
                 </div>
               </div>
               <div className="mt-2 ml-[50px]">
                 <span className="inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-700 tabular-nums">
-                  need {Math.round(m.qty * 100) / 100} · arriving 0 · short {Math.round(m.qty * 100) / 100}
+                  need {Math.round(m.qty * 100) / 100}{m.unit ? ` ${m.unit}` : ""} · arriving 0 · short {Math.round(m.qty * 100) / 100}{m.unit ? ` ${m.unit}` : ""}
                 </span>
               </div>
             </div>
@@ -235,13 +359,22 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         }
         const ln = row.ln;
         const r = lineReceipt(receiving.trucks[ln.truck.id], ln.dept, ln.key);
-        const got = r.got != null ? r.got : (ln.planned + ln.extra);
-        const short = mode === "actual" && Number(got) < ln.planned + ln.extra;
+        // What has left so far: a trip still "Loading" has not gone (owner's QA audit 2026-11-26: those pieces read as arriving and
+        // a tick marked them received). Receipts stay one per truck line, against what has gone.
+        const loadingQty = Number(ln.loadingQty) || 0;
+        const gone = Math.max(0, ln.planned + ln.extra - loadingQty);
+        // Receipts are one per truck line, so a truck's second trip still on its way must not make the first trip's receipt "short"
+        // (a re-test finding): once any trip is marked At site / Returned, a receipt is weighed against what has reached the site.
+        const arrivedQty = Number(ln.arrivedQty) || 0;
+        const expected = arrivedQty > 0 ? arrivedQty : gone;
+        const onTheWay = arrivedQty > 0 ? Math.max(0, gone - arrivedQty) : 0;
+        const got = r.got != null ? r.got : gone;
+        const short = mode === "actual" && expected > 0 && Number(got) < expected;
         // Also true from the OLD whole-truck "Arrived as planned" button, which only ever stamped
         // receiving.trucks[id].confirmedAt and never wrote a per-item `got` at all — without this,
         // every item on an already-confirmed truck reads as freshly "Not arrived" the moment this
         // panel switched from a per-truck to a per-item status (regression review, 2026-11-24).
-        const confirmed = !r.flag && !short && (r.got != null || !!receiving.trucks[ln.truck.id]?.confirmedAt);
+        const confirmed = gone > 0 && !r.flag && !short && (r.got != null || !!receiving.trucks[ln.truck.id]?.confirmedAt);
         const fk = flagKeyOf(ln.truck.id, ln);
         const showIssue = canEdit && (flaggingKey === fk || !!r.flag);
         // Against what Studio's build NEEDS overall (not what's on THIS line/truck) — same figure a
@@ -250,22 +383,31 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         // loaded or not loaded" — so a line loaded beyond/outside what Studio's build asked for
         // still gets a "need 0" row, not silence). Only skipped for a custom/named truck line with
         // no inventory id at all — there's no Studio quantity to compare it against.
-        const need = ln.invId ? (neededByInvId.get(String(ln.invId))?.qty ?? 0) : null;
-        const arriving = ln.invId ? (loadedByInvId.get(String(ln.invId)) || 0) : null;
+        // a fabric line (Liza / Velvet / Masking by colour) is weighed against the fabric plan instead
+        // weighed against the same line in Planning's to-load list (same department, same truck key)
+        const nd = needOf(ln.dept, ln.key);
+        const need = nd ? nd.qty : null;
+        const arriving = loadedByKey.get(ln.dept + "|" + ln.key) || 0;
+        const unitTxt = nd?.unit ? ` ${nd.unit}` : "";
+        const allCustom = ln.customQty > 0 && ln.customQty >= ln.planned + ln.extra;
         return (
           <div key={ln.truck.id + "|" + ln.dept + "|" + ln.key} className="px-4 py-3">
             <div className="flex items-center gap-2.5">
-              {ln.photo ? <img src={thumbUrl(ln.photo, 40)} loading="lazy" alt="" className="w-10 h-10 rounded-lg object-cover border border-gray-100 shrink-0" /> : <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center text-gray-300 text-sm shrink-0">📦</div>}
+              {(nd?.photo || ln.photo) ? <img src={thumbUrl(nd?.photo || ln.photo, 40)} loading="lazy" alt="" className="w-10 h-10 rounded-lg object-cover border border-gray-100 shrink-0" /> : <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center text-gray-300 text-sm shrink-0">📦</div>}
               <div className="min-w-0 flex-1">
                 <div className="text-[13.5px] font-semibold text-gray-900 truncate flex items-center gap-1.5 flex-wrap">
-                  {ln.label}
+                  {nd?.label || ln.label}
                   {r.flag
                     ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">⚑ {FLAG_REASONS.find((f) => f.key === r.flag)?.label || "Flagged"}</span>
                     : short
-                    ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">Short — {got} of {ln.planned + ln.extra}</span>
+                    ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">Short — {got} of {expected}</span>
                     : confirmed
                     ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Confirmed OK</span>
+                    : gone === 0
+                    ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">{"Still loading"}</span>
                     : <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">Not arrived</span>}
+                  {onTheWay > 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 tabular-nums"><span>{onTheWay}</span> <span>{"on the way"}</span></span>}
+                  {gone > 0 && loadingQty > 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 tabular-nums"><span>{loadingQty}</span> <span>{"still loading"}</span></span>}
                 </div>
                 {/* Dept badge, which truck/driver it's riding on, and a one-tap call — the whole reason
                     this is a flat items list instead of a truck-grouped accordion (owner ask
@@ -277,17 +419,40 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                     <a href={`tel:${ln.truck.phone}`} className="font-semibold text-blue-600 hover:underline">📞 Call{ln.truck.driver ? ` ${ln.truck.driver}` : ""}</a>
                   )}
                 </div>
+                {/* Planning's note on a chosen design (overlay / cushion / carpet): which one was chosen, or that it is not decided yet */}
+                {nd?.notes?.length > 0 && <div className="mt-1 text-[11px] text-gray-500 leading-snug">{nd.notes.join(" · ")}</div>}
+                {/* added on the truck at dispatch ("Add an item not in this deal") - not in the build, so there is no need to weigh it
+                    against: said plainly instead of "need 0" (owner report 2026-11-26) */}
+                {ln.customQty > 0 && (
+                  <div className="mt-1.5">
+                    <span className="inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 tabular-nums">
+                      {/* "not in the deal" only when it truly is not: the whole line was added on the truck and the build needs none of it.
+                          An item the deal has, with some pieces added on the truck on top, says how many extra (a number and a fixed
+                          phrase as separate pieces, so the Hindi screen finds the phrase). */}
+                      {need == null && allCustom
+                        ? "Added on truck · not in the deal"
+                        : <><span>+{ln.customQty}</span> <span>{"extra, added on truck"}</span></>}
+                    </span>
+                  </div>
+                )}
+                {/* On a truck but not in Planning's list any more (the item was swapped out, a kit renamed, moved to another
+                    department after it was loaded): said so in amber - never shown as arrived and fine. */}
+                {need == null && !allCustom && (
+                  <div className="mt-1.5">
+                    <span className="inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800">{"Not in Planning's list now — loaded before a change"}</span>
+                  </div>
+                )}
                 {need != null && (
                   <div className="mt-1.5">
                     <span className={"inline-block text-[11.5px] font-semibold px-2 py-0.5 rounded-full tabular-nums " + (Math.max(0, need - arriving) > 0 ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700")}>
-                      need {Math.round(need * 100) / 100} · arriving {Math.round(arriving * 100) / 100} · short {Math.round(Math.max(0, need - arriving) * 100) / 100}
+                      need {Math.round(need * 100) / 100}{unitTxt} · arriving {Math.round(arriving * 100) / 100}{unitTxt} · short {Math.round(Math.max(0, need - arriving) * 100) / 100}{unitTxt}
                     </span>
                   </div>
                 )}
               </div>
               {canEdit ? (
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <input type="number" min="0" value={got} onChange={(e) => { const v = e.target.value; setLine(ln.truck.id, ln.dept, ln.key, { got: v === "" ? null : v, flag: r.flag, note: r.note }); }}
+                  <GotBox value={got} onCommit={(v) => setLine(ln.truck.id, ln.dept, ln.key, { got: v, flag: r.flag, note: r.note })}
                     className={"w-14 h-8 rounded-lg text-center text-[12.5px] font-bold tabular-nums ring-1 focus:outline-none focus:ring-2 " + (short || r.flag ? "bg-red-50 ring-red-200 text-red-700" : "bg-gray-50 ring-gray-200 text-gray-800")} />
                   {/* One-tap "it's exactly what was planned" — the per-item replacement for the old
                       whole-truck "Arrived as planned" button, now scoped to just this line. Hidden on
@@ -295,8 +460,8 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                       elsewhere in this panel ("Clear this flag" below is gated on canSiteDel); this
                       button must never be a back door around that for someone with edit-only access
                       (regression review, 2026-11-24). */}
-                  {!confirmed && !r.flag && (
-                    <button onClick={() => setLine(ln.truck.id, ln.dept, ln.key, { got: ln.planned + ln.extra, flag: null, note: r.note })} title="Arrived as planned"
+                  {!confirmed && !r.flag && gone > 0 && (
+                    <button onClick={() => setLine(ln.truck.id, ln.dept, ln.key, { got: gone, flag: null, note: r.note })} title="Arrived as planned"
                       className="h-8 w-8 rounded-lg bg-emerald-50 text-emerald-700 text-sm font-bold hover:bg-emerald-100">✓</button>
                   )}
                   <button onClick={() => setFlaggingKey(showIssue ? null : fk)}
@@ -339,13 +504,109 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         );
       })()}
 
+      {/* ── ALREADY AT THE VENUE · NOT LOADED ── the Planning list's twin: fixed stock standing there, or set to ♻ Repeat in Build.
+          Shown so the supervisor knows they are there, not counted short; a partly standing item says how many stand. */}
+      {visibleAtVenue.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 flex items-center gap-3">
+            <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">📌</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[15px] font-semibold text-gray-900">Already at the venue · not loaded</div>
+              <div className="text-xs text-gray-500 truncate">Fixed stock standing there, set to Repeat in the build, or FOC</div>
+            </div>
+            <span className="shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 tabular-nums">{visibleAtVenue.length}</span>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {visibleAtVenue.map((r) => (
+              <div key={"av|" + r.dept + "|" + r.key} className="px-4 py-3 flex items-center gap-2.5">
+                {r.photo ? <img src={thumbUrl(r.photo, 40)} loading="lazy" alt="" className="w-10 h-10 rounded-lg object-cover border border-gray-100 shrink-0" /> : <div className="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center text-gray-300 text-sm shrink-0">📦</div>}
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13.5px] font-semibold text-gray-900 truncate">{r.label}</div>
+                  <div className="flex items-center gap-1.5 flex-wrap mt-0.5 text-[10.5px]">
+                    <span className="font-bold text-gray-500 bg-gray-50 rounded px-1.5 py-0.5">{DEPT_ICON[r.dept] || ""} {r.dept}</span>
+                    <span className="text-gray-500 tabular-nums">
+                      {r.a.foc ? `all ${r.qty} FOC - left at the venue` : r.a.repeat ? `all ${r.qty} stay from before` : r.a.load > 0 ? `${r.a.fixed} of ${r.qty} standing here · ${r.a.load} on a truck` : `all ${r.qty} standing here`}
+                    </span>
+                  </div>
+                </div>
+                <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (r.a.foc || r.a.repeat ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700")}>{r.a.foc ? "🎁 FOC" : r.a.repeat ? "♻ REPEAT" : "📌 FIXED"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── TRUCKS & CHALLANS ── every truck and trip on the event, with its combined challan (every department's items on that
+          run) to print - the same rows Planning's challan prints (lib/ims/deptLoadList tripChallanRows), the chosen design's name. */}
+      {plan.trucks.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 flex items-center gap-3">
+            <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🚛</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[15px] font-semibold text-gray-900">{"Trucks & challans"}</div>
+              <div className="text-xs text-gray-500 truncate">{"Each trip's challan - every department's items on it"}</div>
+            </div>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {plan.trucks.map((t, ti) => tripsOf(t).map((tr, ri, all) => {
+              const rows = tripChallanRows(tr, (d) => plan.flatByDept.get(d) || []);
+              const st = tr.status || "loading";
+              return (
+                <div key={t.id + "|" + tr.id} className="px-4 py-2.5 flex items-center gap-3 flex-wrap">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13.5px] font-semibold text-gray-900 truncate">
+                      <span>{"Truck"} {truckNum.get(t.id) || ti + 1}</span>{all.length > 1 && <span className="text-gray-500 font-medium"> · <span>{"Trip"}</span> {ri + 1}</span>}
+                      <span className="ml-1.5 text-gray-500 font-medium tabular-nums">{[t.vehicle, t.driver].filter(Boolean).join(" · ") || "—"}</span>
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
+                      <span className={"font-bold px-1.5 py-0.5 rounded-full " + (st === "loading" ? "bg-amber-50 text-amber-700" : st === "returned" ? "bg-gray-100 text-gray-500" : "bg-emerald-50 text-emerald-700")}>{TRIP_LABEL[st] || st}</span>
+                      <span className="text-gray-500 tabular-nums">{rows.length} <span>{"items"}</span></span>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => printChallan(t, tr, truckNum.get(t.id) || ti + 1, ri + 1, rows)} disabled={!rows.length}
+                    className="shrink-0 h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors">
+                    {"Print challan"}
+                  </button>
+                </div>
+              );
+            }))}
+          </div>
+        </div>
+      )}
+
       {visibleTransfers.length > 0 && (
         <div className="bg-sky-50 rounded-xl p-4">
           <div className="text-[11px] font-bold uppercase tracking-wide text-sky-700 mb-2">Not tied to a truck — reused from another site</div>
           <div className="space-y-1.5">
-            {visibleTransfers.map((t, i) => (
-              <div key={i} className="text-[12px] text-sky-900">↪️ <b>{t.name}</b> ×{t.qty} from {t.fromEvent} ({t.fromDept}){t.vehicle || t.driver ? ` · ${[t.vehicle, t.driver].filter(Boolean).join(" · ")}` : ""}</div>
-            ))}
+            {visibleTransfers.map((t, i) => {
+              // received like a truck line (owner's QA audit 2026-11-26: they could only be read): how many came, a tick, or a flag
+              const tid = t.id || ("tr" + i);
+              const tr = receiving.transfers?.[tid] || {};
+              const tGot = tr.got != null ? tr.got : (Number(t.qty) || 0);
+              const tShort = tr.got != null && Number(tr.got) < (Number(t.qty) || 0);
+              const setT = (patch) => write((e) => setTransferReceiptPatch(e, tid, { got: tr.got, flag: tr.flag, note: tr.note, ...patch }, authUser?.name));
+              return (
+                <div key={tid} className="flex items-center gap-2 flex-wrap text-[12px] text-sky-900">
+                  <span className="min-w-0 flex-1">↪️ <b>{t.name}</b> ×{t.qty} from {t.fromEvent} ({t.fromDept}){t.vehicle || t.driver ? ` · ${[t.vehicle, t.driver].filter(Boolean).join(" · ")}` : ""}
+                    {tr.flag ? <span className="ml-1.5 text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">⚑ {FLAG_REASONS.find((f) => f.key === tr.flag)?.label || "Flagged"}</span>
+                      : tShort ? <span className="ml-1.5 text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">Short — {tr.got} of {t.qty}</span>
+                      : tr.got != null ? <span className="ml-1.5 text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Confirmed OK</span> : null}
+                  </span>
+                  {canEdit && (
+                    <span className="flex items-center gap-1.5 shrink-0">
+                      <GotBox value={tGot} onCommit={(v) => setT({ got: v })}
+                        className={"w-14 h-8 rounded-lg text-center text-[12.5px] font-bold tabular-nums ring-1 focus:outline-none focus:ring-2 " + (tShort || tr.flag ? "bg-red-50 ring-red-200 text-red-700" : "bg-white ring-sky-200 text-gray-800")} />
+                      {tr.got == null && !tr.flag && <button onClick={() => setT({ got: Number(t.qty) || 0, flag: null })} title="Arrived as planned" className="h-8 w-8 rounded-lg bg-emerald-50 text-emerald-700 text-sm font-bold hover:bg-emerald-100">✓</button>}
+                      <select value={tr.flag || ""} onChange={(e) => { const f = e.target.value; if (!f && !canSiteDel) return; setT({ flag: f || null, ...(f === "missing" ? { got: 0 } : {}) }); }} aria-label="Flag"
+                        className="h-8 rounded-lg bg-white ring-1 ring-sky-200 px-1.5 text-[11px] font-semibold text-gray-600">
+                        <option value="">⚑ Flag</option>
+                        {FLAG_REASONS.map((fr) => <option key={fr.key} value={fr.key}>{fr.label}</option>)}
+                      </select>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

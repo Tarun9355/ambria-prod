@@ -483,6 +483,22 @@ No functions at your venues this month, and none you are the Site Supervisor of 
 + Add supervisor ¦ + सुपरवाइज़र जोड़ें
 Loading your venues… ¦ आपके वेन्यू लोड हो रहे हैं…
 Who's bringing what, on which truck ¦ कौन क्या ला रहा है, किस ट्रक पर
+Locked — this truck is loaded. A different vehicle? Use “+ Add truck”. ¦ लॉक — इस ट्रक पर सामान लद चुका है। दूसरी गाड़ी है? “+ Add truck” से नया ट्रक बनाएँ।
+add phone · 10 digits ¦ फ़ोन जोड़ें · 10 अंक
+Already at the venue · not loaded ¦ पहले से वेन्यू पर · लोड नहीं होगा
+Fixed stock standing there, set to Repeat in the build, or FOC ¦ वेन्यू पर पहले से लगा स्टॉक, बिल्ड में Repeat, या FOC
+Liza, velvet and masking - tap one for its colours and zones ¦ लीज़ा, वेलवेट और मास्किंग - रंग और ज़ोन देखने के लिए दबाएँ
+Added on truck · not in the deal ¦ ट्रक पर जोड़ा · डील में नहीं
+extra, added on truck ¦ एक्स्ट्रा, ट्रक पर जोड़ा
+Not in Planning's list now — loaded before a change ¦ अब प्लानिंग की लिस्ट में नहीं — बदलाव से पहले लदा था
+Still loading ¦ अभी लद रहा है
+Trucks & challans ¦ ट्रक और चालान
+Each trip's challan - every department's items on it ¦ हर ट्रिप का चालान - उस पर हर डिपार्टमेंट का सामान
+Print challan ¦ चालान प्रिंट करें
+on the way ¦ रास्ते में
+still loading ¦ अभी लद रहे हैं
+arrival issues ¦ आने में दिक्कत
+Loaded — a truck with items on it (or a trip gone) can't be removed ¦ लदा हुआ — जिस ट्रक पर सामान है (या ट्रिप निकल चुकी है) उसे हटाया नहीं जा सकता
 Search guest name or venue… ¦ गेस्ट का नाम या वेन्यू खोजें…
 No event matches this — try the guest's first name or the venue. ¦ कोई इवेंट नहीं मिला — गेस्ट का पहला नाम या वेन्यू लिखकर देखें।
 — choose — ¦ — चुनें —

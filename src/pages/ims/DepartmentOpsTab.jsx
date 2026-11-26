@@ -19,7 +19,7 @@ import ChangeLogEntry from "../../components/shared/ChangeLogEntry";
 import { hasIMSPerm } from "../../lib/ims/constants";
 import { fetchOpsExpenses } from "../../lib/ims/opsExpenses";
 import { fetchOpsVendors } from "../../lib/ims/opsVendors";
-import { venueWithParent, standingQty, venueCalendarColor, VENUE_CALENDAR_LEGEND, siteSupervisorsFor } from "../../lib/ims/fixedVenues";
+import { venueWithParent, venueCalendarColor, VENUE_CALENDAR_LEGEND, siteSupervisorsFor } from "../../lib/ims/fixedVenues";
 import { useInhouseVenues } from "./SupervisorVenues.jsx";
 import { carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRows } from "../../lib/ims/carpetPlan";
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
@@ -56,6 +56,10 @@ import { tripsOf } from "../../lib/ims/eventTrucks";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { isMyEvent, supervisorIdsOfUser, fixedAtVenue, addedSupervisorsOf, withAddedSupervisors } from "../../lib/ims/mySupervisorEvents";
 import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a site" search
+import { truckDetailsLocked, truckLoadedOf } from "../../lib/ims/truckLock";
+import { atVenueOfEvent, atVenueByRow } from "../../lib/ims/atVenue";
+import { makeFabricNeedCache } from "../../lib/ims/fabricNeed"; // fabric per colour, as the Fabric block reads it
+import { truckKeyOf, mappedStockRowsOf, kitPartOfDeptOf, blockedGroupedFor, blockedFlatFor, mergeLegacyTrucks } from "../../lib/ims/deptLoadList"; // what a department loads (shared with Site) // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
 import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
@@ -138,6 +142,7 @@ const truckMissingOf = (t) => {
     ph > 0 && ph !== 10 && "Phone",
   ].filter(Boolean);
 };
+
 
 // A row of chips that scrolls sideways on a phone, with "+N ›" / "‹" buttons on its edges for the chips out of view - a row cut
 // at the edge did not say "scroll" (owner 2026-11-21: "isme pta toh chale scroll krna hai"). Same hint as IMS Inventory's category row.
@@ -1496,34 +1501,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // functions on the same date at the same venue share one set (max), different venues / dates add up —
   // the peak date is the row's qty. A plain sum showed 160 to load for two same-day functions needing 80
   // each while the ledger held 80 (test-agent finding R2, 2026-11-20).
-  const mappedStockRows = useMemo(() => {
-    const byItem = new Map();
-    const reqByFnIdx = {};
-    Object.entries(liveFloral?.floralDetail || {}).forEach(([fnKey, fd]) => (fd?.art?.mapped || []).forEach((m) => {
-      if (!m.mappedItemId || !(m.pcs > 0)) return;
-      const cur = byItem.get(m.mappedItemId) || { pcs: 0, pcsExact: 0, cost: 0, forNames: new Set() };
-      cur.pcs += m.pcs; cur.pcsExact += Number(m.pcsExact) || m.pcs; cur.cost += Number(m.cost) || 0;
-      String(m.realFlowerName || "").split(", ").forEach(n => n && cur.forNames.add(n));
-      byItem.set(m.mappedItemId, cur);
-      const slot = reqByFnIdx[fnKey] || (reqByFnIdx[fnKey] = {});
-      slot[m.mappedItemId] = (slot[m.mappedItemId] || 0) + m.pcs;
-    }));
-    const fnsForReq = (Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).map((f, i) => fnFromDetail(f, i)).filter(Boolean);
-    const byDate = reqByDateFrom(fnsForReq, reqByFnIdx);
-    const peak = {};
-    Object.values(byDate).forEach((slot) => Object.entries(slot).forEach(([id, q]) => { peak[id] = Math.max(peak[id] || 0, q); }));
-    const out = [];
-    byItem.forEach((v, id) => {
-      const item = (inventory || []).find(i => String(i.id) === String(id));
-      if (!item) return;
-      const qty = peak[id] > 0 ? peak[id] : v.pcs; // a function with no date can't be bucketed — its own count stands
-      out.push({ id: "mapped:" + id, invId: id, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, rentalQty: qty, unit: 0, total: 0, sub: item.subCat || item.subcategory || "", qtyUnit: "", stockOnly: true, mappedFor: [...v.forNames].filter(Boolean).join(", "),
-        // shown on the row for reference (owner ask 2026-11-20: "price kyu ni aara") but NOT in total/unit, so the
-        // blocked total (rentalIncome) never counts it — it is already inside Floral's artificial total
-        infoRate: v.pcsExact > 0 ? Math.round((v.cost / v.pcsExact) * 100) / 100 : 0, infoTotal: Math.round(v.cost) });
-    });
-    return out;
-  }, [liveFloral, inventory, sel]);
+  const mappedStockRows = useMemo(() => mappedStockRowsOf(liveFloral, sel, inventory), [liveFloral, inventory, sel]); // lib/ims/deptLoadList
 
   // ── Department income snapshot (pushed from Deal Check → matches Studio exactly) ──
   const deptIncome = (sel?.deptIncome && sel.deptIncome[dept]) || null;
@@ -1562,15 +1540,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // A kit's row carries ALL of its parts, but each part belongs to a department of its own (and Deal Check already files it there as a
   // `fromKit` row). So a department's kit lists only the parts that are that department's: a part whose department cannot be told stays,
   // and so does one no other department holds as its own row (never lost from every list).
-  const kitPartOfDept = (cp, kitName, d0) => {
-    const ci = cp?.imsId ? (inventory || []).find(i => String(i.id) === String(cp.imsId)) : null;
-    const d = catToDept((ci && (ci.cat || ci.category)) || cp?.sub || "");
-    if (!d || d === d0) return true;
-    const kn = String(kitName || "").trim().toLowerCase(), pn = String(cp?.name || "").trim().toLowerCase();
-    const heldElsewhere = (Array.isArray(sel?.deptInventory?.[d]) ? sel.deptInventory[d] : []).some(r => String(r?.fromKit || "").trim().toLowerCase() === kn
-      && ((cp?.imsId && r?.imsId && String(r.imsId) === String(cp.imsId)) || String(r?.name || "").trim().toLowerCase() === pn));
-    return !heldElsewhere;
-  };
+  const kitPartOfDept = kitPartOfDeptOf({ sel, inventory, catToDept }); // lib/ims/deptLoadList
   // ── Blocked inventory: prefer the Deal Check snapshot; fall back to IMS blocks if not synced ──
   // GROUPED view (kit as one line + its components) — used for the inventory/income display.
   // blockedGroupedOf(d, swaps): any department's list - the shared Fabric & Tenting book reads both.
@@ -1764,68 +1734,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     });
     return out;
   };
-  const blockedGroupedOf = (d, swaps) => {
-    if (!sel) return [];
-    const snapD = (sel?.deptInventory && Array.isArray(sel.deptInventory[d])) ? sel.deptInventory[d] : null;
-    if (snapD && snapD.length) {
-      // fromKit carried through from the snapshot: Deal Check splits a kit's parts across
-      // departments by each part's own category, so a row can be a component of a kit owned by
-      // another department. It is the only record of that parent, and the PDF needs it to avoid
-      // reporting a bolted-on part as a loose item.
-      const rows = snapD.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components.filter(cp => kitPartOfDept(cp, x.name, d)) : null, kitPartsTotal: Array.isArray(x.components) ? x.components.reduce((t, c) => t + (Number(c.total) || 0), 0) : 0, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swaps.has(x.name), swappedFrom: swaps.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null, foc: !!x.foc }));
-      // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
-      // knowing apart from what's actually reserved), then everything else, FOC last (nothing to
-      // chase or load for it) — the order requested for this list. Stable within each group:
-      // Array.prototype.sort is stable, so ties keep the snapshot's own order (whichever function/
-      // zone order dcCostRollup built them in).
-      // Floral: plus the Mapping flowers' artificial items (mappedStockRows, live) — Deal Check's snapshot
-      // never had them. Not on the no-snapshot path below: that one reads the blocks ledger, where Studio's
-      // reconcile already reserves them, so they show there on their own.
-      const rank = (it) => (it.foc ? 3 : it.shortQty > 0 ? 0 : it.prodOrBuy ? 1 : 2);
-      const sorted = rows.sort((a, b) => rank(a) - rank(b));
-      if (d !== "Floral" || !mappedStockRows.length) return sorted;
-      // The same item already on the list in its own right (used directly in Build) is ONE row (owner ask
-      // 2026-11-20: "ye dono same hai toh inko ek hi mai dikhao"): qty to load = both together, while ₹ stays
-      // the item's own line — billQty keeps rate and total on its own qty; the mapped part (its ₹ is in the
-      // artificial total) is spelled out in the row's How (mappedPart).
-      const standalone = [];
-      let merged = sorted;
-      mappedStockRows.forEach((m) => {
-        const k = merged.findIndex((r) => r.invId && String(r.invId) === String(m.invId) && !r.isKit && !r.fromKit && !r.stockOnly && !r.mappedPart);
-        if (k < 0) { standalone.push(m); return; }
-        const r = merged[k];
-        const own = Number(r.rentalQty ?? r.qty) || 0;
-        merged = merged.map((x, j) => j !== k ? x : { ...r, qty: (Number(r.qty) || 0) + m.qty, rentalQty: own + m.qty, billQty: own, mappedFor: m.mappedFor, mappedPart: { qty: m.qty, infoRate: m.infoRate, infoTotal: m.infoTotal, mappedFor: m.mappedFor } });
-      });
-      if (!standalone.length) return merged;
-      // Right under the "Artificial flowers / greens" rows (owner ask 2026-11-20: "inko artificial ke niche hi
-      // dikha de") — they are the artificial side too; at the end when this event has no such row.
-      const isArtRow = (it) => /^artificial (flowers|greens)$/i.test(String(it.name || "").trim());
-      let at = -1;
-      merged.forEach((it, i) => { if (isArtRow(it)) at = i; });
-      if (at < 0) return [...merged, ...standalone];
-      return [...merged.slice(0, at + 1), ...standalone, ...merged.slice(at + 1)];
-    }
-    const out = [];
-    Object.entries(blocks || {}).forEach(([itemId, arr]) => {
-      // isLiveBlockStatus (bug 14): one shared "is this entry live" definition, not a third
-      // unfiltered count that disagreed with both Studio's and IMS's own.
-      // an item added on a truck (not in the deal) has its own block (TRUCK_EXTRA_SRC) and its own section - not counted here twice
-      const qty = (arr || []).filter(b => b.eventId === sel.id && isLiveBlockStatus(b) && b.source !== TRUCK_EXTRA_SRC).reduce((s, b) => s + blockEntryQty(b), 0);
-      if (qty <= 0) return;
-      const item = (inventory || []).find(i => String(i.id) === String(itemId));
-      if (!item) return;
-      if (catToDept(item.cat || item.category) !== d) return;
-      const unit = Number(item.price ?? item.rentalCost) || 0;
-      // A Mapping flower's artificial item reserved by Studio's reconcile: its ₹ is already inside Floral's
-      // artificial total (artStockTotal), so here it is stock only, tagged like on the snapshot path —
-      // priced at rental it was counted twice in the blocked total (test-agent finding R6, 2026-11-20).
-      const mappedRow = d === "Floral" ? mappedStockRows.find(r => String(r.invId) === String(itemId)) : null;
-      if (mappedRow) { out.push({ ...mappedRow, qty, rentalQty: qty }); return; }
-      out.push({ id: itemId, invId: itemId, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, unit, total: unit * qty, sub: item.subCat || item.subcategory || "" });
-    });
-    return out.sort((a, b) => b.total - a.total);
-  };
+  // lib/ims/deptLoadList (shared with the Site page's Receiving, so both read one list)
+  const blockedGroupedOf = (d, swaps) => blockedGroupedFor(d, { sel, inventory, blocks, catToDept, mappedStockRows, swaps });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const blockedItemsGrouped = useMemo(() => blockedGroupedOf(dept, swapInfo), [sel, blocks, inventory, dept, swapInfo, mappedStockRows]);
   // Inventory Blocked's OWN display list only (trucks/PDF/receiving/dismantle all keep reading
@@ -1837,35 +1747,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // FLAT view — kits expanded into the kit shell + each component as its own physical row. Used by
   // Loading & dispatch, Receiving and Dismantle (the ops manager loads/moves each real item).
   // blockedFlatOf(grouped, d): any department's flat list (the shared Fabric & Tenting book).
-  const blockedFlatOf = (grouped, d) => {
-    const out = [];
-    grouped.forEach(it => {
-      const hasComponents = it.isKit && Array.isArray(it.components) && it.components.length;
-      const hasRecipeParts = it.isKit && Array.isArray(it.recipeParts) && it.recipeParts.length;
-      if (hasComponents || hasRecipeParts) {
-        const partsSum = it.kitPartsTotal != null ? it.kitPartsTotal : (it.components || []).reduce((s, c) => s + (Number(c.total) || 0), 0);
-        out.push({ ...it, isKit: false, components: null, recipeParts: null, total: Math.max(0, (Number(it.total) || 0) - partsSum) }); // kit shell (its own base value)
-        (it.components || []).forEach((cp, ci) => out.push({ id: it.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, photo: cp.photo || "", qty: Number(cp.qty) || 0, unit: cp.unit || 0, total: Number(cp.total) || 0, sub: cp.sub || "", kitOf: it.name }));
-        // A kit's flower RECIPE parts (Tree: Flower Trail, Flower Bunch) are not inventory — no
-        // imsId, no money (priced in Build/floral cost already) — but were never split into their
-        // own row here, the only place that turns a kit into the flat list the truck-loading screen
-        // and the Dept PDF's loading/item rows actually read. The grouped-list "Kits" page already
-        // named them (it reads `recipeParts` off the grouped row directly); this flat list did not,
-        // so a kit's recipe silently never appeared on the loading checklist or the PDF's item rows
-        // (owner report, 2026-11-12 — the Tree kit's "Chandelier Tree Floral Recipe").
-        (it.recipeParts || []).forEach((rp, ri) => out.push({ id: it.id + "__r" + ri, invId: null, name: rp.name, photo: rp.photo || "", qty: Number(rp.qty) || 0, qtyUnit: rp.uom || "", unit: 0, total: 0, sub: "", kitOf: it.name, isRecipe: true, stockOnly: true }));
-      } else out.push(it);
-    });
-    // Fabric: the per-zone Liza / Velvet / Masking lines become one load line per fabric colour (with the colour's photo), so Truck planning, the loading
-    // checklist and receiving name what is physically loaded instead of the same fabric once per zone with no photo.
-    if (d === "Fabric" && sel) {
-      try {
-        const g = buildFabricGroups({ entries: fabricEntriesOf(), lines: grouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: false, fnPalettes: fabricPalettesOf() }).groups;
-        return foldFabricLines(out, g);
-      } catch { return out; }
-    }
-    return out;
-  };
+  const blockedFlatOf = (grouped, d) => blockedFlatFor(grouped, d, { sel, trussInv, fabricEntriesOf, fabricPalettesOf }); // lib/ims/deptLoadList
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const blockedItems = useMemo(() => blockedFlatOf(blockedItemsGrouped, dept), [blockedItemsGrouped, dept, sel, trussInv]);
   // ── ALREADY AT THE VENUE: FIXED OR REPEAT (owner ask 2026-11-11) ──
@@ -1873,53 +1755,17 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // functions' venues, up to the qty. Repeat: the item set to Repeat in Build (an element's ♻ Repeat) - it stays from before.
   // Neither is loaded: Truck planning lists them apart (to see, not to fill) and no challan carries them; an item only partly
   // standing loads the rest.
-  const atVenueOf = useMemo(() => {
-    const fnsV = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
-    const venues = [...new Set([sel?.venue, ...fnsV.map(f => f?.venue)].filter(Boolean))];
-    // Repeat only when EVERY use of the item is set to Repeat - one function repeating it while another needs it fresh still loads it.
-    const repeatIds = new Set(), freshIds = new Set();
-    // the venues of the functions that use each item - only their standing stock counts for it (two functions at two venues)
-    const venuesOfItem = new Map();
-    fnsV.forEach(f => Object.values(f?.elements || {}).forEach(list => (Array.isArray(list) ? list : []).forEach(el => {
-      const id = el?.invId || el?.imsId;
-      if (!id) return;
-      // A FOC'd instance of this item must not count as "fresh" here — it has its own, separate
-      // blockedItems row (never merged with a non-FOC row of the same id, see the merge key fix
-      // above) and is never loaded regardless. Folding it into freshIds would wrongly force a
-      // DIFFERENT, Repeat-marked instance of the same item id to lose its "already standing, don't
-      // load" status, since repeat only holds when EVERY use resolves non-fresh.
-      if (el?.foc) return;
-      (el?.repeatOverride === true ? repeatIds : freshIds).add(String(id));
-      const v = f?.venue || sel?.venue;
-      if (v) (venuesOfItem.get(String(id)) || venuesOfItem.set(String(id), new Set()).get(String(id))).add(v);
-      // a kit's parts (their own lines in the blocked list) go with the kit: repeated with it, or fresh with it
-      const kitItem = (inventory || []).find(i => String(i.id) === String(id));
-      const parts = Array.isArray(el?.kitOverrides) ? el.kitOverrides : (Array.isArray(kitItem?.subItems) ? kitItem.subItems : []);
-      parts.forEach(p => { if (p?.itemId) (el?.repeatOverride === true ? repeatIds : freshIds).add(String(p.itemId)); });
-    })));
-    const memo = new Map();
-    return (it) => {
-      if (!it) return { fixed: 0, repeat: false, load: 0 };
-      // FOC — left at the venue from a previous event (dcCostRollup's own FOC branch tags the row,
-      // DealCheckOverlay.jsx): never loaded, same as Fixed/Repeat, but its own distinct reason so the
-      // "leave at venue" badge below can say so rather than claiming it's standing stock or reused.
-      if (it.foc) return { fixed: 0, repeat: false, foc: true, load: 0 };
-      // keyed by the qty too: the same line can be read at the whole event's qty and at one function's
-      const mk = `${it.id}|${it.invId}|${it.qty}`;
-      if (memo.has(mk)) return memo.get(mk);
-      const qty = Number(it.qty) || 0;
-      // a kit part is not an element of its own: it falls back to every venue of the event
-      const vs = it.invId ? [...(venuesOfItem.get(String(it.invId)) || venues)] : [];
-      const fixed = it.invId ? Math.min(qty, Math.max(0, ...vs.map(v => standingQty(fvSettings, v, it.invId)))) : 0;
-      const repeat = !!it.invId && repeatIds.has(String(it.invId)) && !freshIds.has(String(it.invId));
-      const r = { fixed, repeat, load: repeat ? 0 : Math.max(0, qty - fixed) };
-      memo.set(mk, r);
-      return r;
-    };
-  }, [sel, fvSettings, inventory]);
+  // the rule lives in lib/ims/atVenue (shared with the Site page's Receiving, which lists these apart the same way)
+  const atVenueOf = useMemo(() => atVenueOfEvent(sel, fvSettings, inventory), [sel, fvSettings, inventory]);
   // What actually goes on a truck: each line at the qty still to load; lines with nothing to load are the "at the venue" list.
-  const loadItems = useMemo(() => blockedItems.map(it => { const a = atVenueOf(it); return a.load === (Number(it.qty) || 0) ? it : { ...it, qty: a.load, fullQty: it.qty }; }).filter(it => (Number(it.qty) || 0) > 0), [blockedItems, atVenueOf]);
-  const atVenueItems = useMemo(() => blockedItems.filter(it => { const a = atVenueOf(it); return a.repeat || a.fixed > 0 || a.foc; }), [blockedItems, atVenueOf]);
+  // standing stock taken off ONCE per item across its rows (a kit part and the same item loose share the venue's pieces) - lib/ims/atVenue
+  const atVenueRow = useMemo(() => atVenueByRow(blockedItems, atVenueOf), [blockedItems, atVenueOf]);
+  const atVenueOfRow = (it) => atVenueRow.get(it.id) || atVenueOf(it);
+  // the Inventory list's rows (grouped; a kit's shell and plain rows keep the flat row's id): for the whole event the same row-adjusted
+  // figure as the truck list, so its FIXED badge and order agree with what is loaded; a one-function view keeps its own figure
+  const invAtVenueRow = (it) => { const b = it?.src || it; return (invFn === "all" && b?.id != null && atVenueRow.get(b.id)) || atVenueOf(b); };
+  const loadItems = useMemo(() => blockedItems.map(it => { const a = atVenueOfRow(it); return a.load === (Number(it.qty) || 0) ? it : { ...it, qty: a.load, fullQty: it.qty }; }).filter(it => (Number(it.qty) || 0) > 0), [blockedItems, atVenueOf, atVenueRow]);
+  const atVenueItems = useMemo(() => blockedItems.filter(it => { const a = atVenueOfRow(it); return a.repeat || a.fixed > 0 || a.foc; }), [blockedItems, atVenueOf, atVenueRow]);
   const rentalIncome = blockedItemsGrouped.reduce((s, x) => s + x.total, 0);
 
   // ── Department-saved data on the event order ──
@@ -2785,7 +2631,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // key. The photo only joins the key when there is one, so every item that never carried one
   // (Platform, Batta, Fabric, Print, Truss pieces — all pushed with photo:"") keeps the exact key a
   // truck load was already saved under.
-  const truckKey = (it) => it.invId ? "inv:" + it.invId + (it.kitOf ? "@" + String(it.kitOf).toLowerCase() : "") : "nm:" + String(it.name || "").trim().toLowerCase() + (it.photo ? "|" + it.photo : "");
+  const truckKey = truckKeyOf; // lib/ims/deptLoadList
   // Per department: itemKey → { perUnit (share of one truck per piece), perTruck, basis } or null.
   const truckShares = useMemo(() => {
     const out = {};
@@ -2821,47 +2667,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // nothing loaded, an explicit {}), that's authoritative and is never overwritten by stale array
   // data. A legacy row with no vehicle typed yet has nothing to match by and surfaces as its own,
   // separate truck, same as before any of this existed.
-  const eventTruckList = (() => {
-    // flatDeptItems(d) now does real work (the same rich blockedGroupedOf/blockedFlatOf pipeline a
-    // department's own screen uses, not a cheap one-off reconstruction) - cached per department HERE
-    // so a department with several old legacy truck rows only pays for it once, not once per row.
-    const itemsByDept = new Map();
-    const itemsOf = (d) => { if (!itemsByDept.has(d)) itemsByDept.set(d, flatDeptItems(d)); return itemsByDept.get(d); };
-    const legacyByPlate = new Map(); // vehicle number (trimmed, lowercase) -> { ...truck fields, byDept }
-    const noPlate = [];
-    Object.entries(sel?.deptOps || {}).forEach(([d, od]) => {
-      (Array.isArray(od?.trucks) ? od.trucks : []).forEach(t => {
-        const items = itemsOf(d), ld = {};
-        Object.entries(t.items || {}).forEach(([k, q]) => { const it = items.find(x => "inv:" + x.id === k); if (it && Number(q) > 0) ld[truckKey(it)] = Number(q); });
-        const plateKey = String(t.vehicle || "").trim().toLowerCase();
-        if (!plateKey) { noPlate.push({ id: t.id, vehicle: "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", loads: { [d]: ld } }); return; }
-        if (!legacyByPlate.has(plateKey)) legacyByPlate.set(plateKey, { id: t.id, vehicle: t.vehicle || "", driver: t.driver || "", phone: t.phone || "", status: t.status || "loading", byDept: {} });
-        legacyByPlate.get(plateKey).byDept[d] = ld;
-      });
-    });
-    const usedPlates = new Set();
-    const base = (Array.isArray(sel?.trucks) ? sel.trucks : []).map(t => {
-      const plateKey = String(t.vehicle || "").trim().toLowerCase();
-      const legacy = plateKey ? legacyByPlate.get(plateKey) : null;
-      if (!legacy) return t;
-      usedPlates.add(plateKey);
-      // Already split into trips - legacy data predates trips entirely, so a still-missing
-      // department folds onto trip 1 (never a new trip of its own); a department already present on
-      // ANY trip is left alone, same "never overwrite real data" rule as the pre-trips version.
-      if (Array.isArray(t.trips) && t.trips.length) {
-        const missing = {};
-        let changed = false;
-        Object.entries(legacy.byDept).forEach(([d, ld]) => { if (!t.trips.some(tr => tr.loads?.[d])) { missing[d] = ld; changed = true; } });
-        if (!changed) return t;
-        return { ...t, trips: t.trips.map((tr, i) => i === 0 ? { ...tr, loads: { ...(tr.loads || {}), ...missing } } : tr) };
-      }
-      let loads = t.loads || {}, changed = false;
-      Object.entries(legacy.byDept).forEach(([d, ld]) => { if (!loads[d]) { loads = { ...loads, [d]: ld }; changed = true; } });
-      return changed ? { ...t, loads } : t;
-    });
-    legacyByPlate.forEach((legacy, plateKey) => { if (!usedPlates.has(plateKey)) base.push({ id: legacy.id, vehicle: legacy.vehicle, driver: legacy.driver, phone: legacy.phone, status: legacy.status, loads: legacy.byDept }); });
-    return [...base, ...noPlate];
-  })();
+  // lib/ims/deptLoadList mergeLegacyTrucks (shared with the Site page)
+  const eventTruckList = mergeLegacyTrucks(sel, flatDeptItems);
   const saveEventTrucks = (fn) => {
     if (!sel || !canEditPlanning) return;
     const next = fn(eventTruckList);
@@ -3022,6 +2829,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // existing truck, not a second truck - this just says so instead of silently allowing the
   // duplicate for someone to notice later.
   const setTruck = (id, patch) => {
+    // vehicle / driver are fixed once the truck is loaded (truckDetailsLocked) - a different vehicle is a new truck
+    const cur = eventTruckList.find(t => t.id === id);
+    if (cur && truckDetailsLocked(cur) && ((patch.vehicle != null && patch.vehicle !== cur.vehicle) || (patch.driver != null && patch.driver !== cur.driver) || (patch.phone != null && String(cur.phone || "").trim() && patch.phone !== cur.phone))) {
+      alert("This truck is already loaded, so its vehicle, driver and phone can't be changed. A different vehicle? Use \"+ Add truck\".");
+      return;
+    }
     if (patch.vehicle != null && String(patch.vehicle).trim()) {
       const plateKey = String(patch.vehicle).trim().toLowerCase();
       const dupIdx = eventTruckList.findIndex(t => t.id !== id && String(t.vehicle || "").trim().toLowerCase() === plateKey);
@@ -3030,6 +2843,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     saveEventTrucks(list => list.map(t => t.id === id ? { ...t, ...patch } : t));
   };
   const delTruck = async (id, n) => {
+    // a loaded truck (anything on any trip, or a trip gone) is never removed - its items and challan go with it (owner ask 2026-11-26)
+    if (truckLoadedOf(eventTruckList.find(t => t.id === id))) { alert(`Truck ${n} is loaded, so it can't be removed. Unload its items first.`); return; }
     if (!(await askDelete(`Remove Truck ${n}?`, "Removes it for every department sharing this event's trucks - anything loaded on any of its trips goes with it."))) return;
     saveEventTrucks(list => list.filter(t => t.id !== id));
   };
@@ -3774,12 +3589,15 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // Same-day contention: fabric the SAME stock is committed to on OTHER events on the same date —
   // so each event is checked against the remainder after the others (the same Liza can't be in two
   // places on the same day).
+  // Each event's fabric per colour as the Fabric block works it out (lib/ims/fabricNeed) - not Deal Check's stored fabricPlan, which
+  // goes stale when the plan changes after a sync (owner report 2026-11-26). One cache per render's inputs.
+  const fabricNeedFor = useMemo(() => makeFabricNeedCache({ inventory, eventOrders, settings, trussInv }), [inventory, eventOrders, settings, trussInv]);
   const sameDayReserved = (date, exclId, ftKey, colour) => {
     if (!date) return 0;
     let s = 0;
     (eventOrders || []).forEach(eo => {
-      if (eo.id === exclId || eventDate(eo) !== date || !eo.fabricPlan) return;
-      (Array.isArray(eo.fabricPlan[ftKey]) ? eo.fabricPlan[ftKey] : []).forEach(r => { if ((r.colour || "") === colour) s += Number(r.qty) || 0; });
+      if (eo.id === exclId || eventDate(eo) !== date || (eo.status && !isLiveEventOrder(eo)) || (!eo.fabricPlan && !eo.functionsDetail)) return;
+      (fabricNeedFor(eo)[ftKey] || []).forEach(r => { if ((r.colour || "") === colour) s += Number(r.qty) || 0; });
     });
     return s;
   };
@@ -3789,8 +3607,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // idle doesn't help an Old-stock requirement, and vice versa; same-day contention is split by tier
   // for the same reason (an Old reservation elsewhere can't eat into what THIS event needs in New).
   // fabricReqRowsOf(): any tab can build it (the shared Fabric & Tenting book prints it from the Tenting tab too).
-  const fabricReqRowsOf = () => sel?.fabricPlan ? FABRIC_TYPES.map(ft => {
-    const req = Array.isArray(sel.fabricPlan[ft.key]) ? sel.fabricPlan[ft.key] : [];
+  const fabricReqRowsOf = () => sel ? FABRIC_TYPES.map(ft => {
+    const req = fabricNeedFor(sel)[ft.key] || [];
     const rows = req.map(r => {
       const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 };
       const stock = av.old + av.new;
@@ -3823,9 +3641,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     if (dept !== "Fabric") return [];
     const out = [];
     (eventOrders || []).forEach(eo => {
-      const d = eventDate(eo); if (!d || d < today || !eo.fabricPlan) return;
+      const d = eventDate(eo); if (!d || d < today || (eo.status && !isLiveEventOrder(eo)) || (!eo.fabricPlan && !eo.functionsDetail)) return;
+      const need = fabricNeedFor(eo);
       FABRIC_TYPES.forEach(ft => {
-        (Array.isArray(eo.fabricPlan[ft.key]) ? eo.fabricPlan[ft.key] : []).forEach(r => {
+        (need[ft.key] || []).forEach(r => {
           const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 };
           const otherDay = sameDayReserved(d, eo.id, ft.key, r.colour);
           const short = (Number(r.qty) || 0) - Math.max(0, (av.old + av.new) - otherDay);
@@ -3843,7 +3662,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       });
     });
     return out.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
-  }, [dept, eventOrders, fabricAvail, today, settings, trussInv]);
+  }, [dept, eventOrders, fabricAvail, today, settings, trussInv, fabricNeedFor]);
 
   // A plain name→value breakdown table — Truss Labour's pillar count and Fabric Bangali's sqft are
   // each a straight SUM per contributing element/zone (no per-row batch/need division the way
@@ -6233,7 +6052,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   </div>}
                   {/* items already at the venue (📌 Fixed / ♻ Repeat, atVenueOf) go last - nothing to load for them; the rest keep their order */}
                   {invShown.filter(it => !fabricGroupInfo.groupedLineIds.has(it.id) && !isDupArtificial(it))
-                    .map((it, i) => { const a = atVenueOf(it.src || it); return { it, i, last: (a.repeat || a.fixed > 0) ? 1 : a.foc ? 2 : 0 }; })
+                    .map((it, i) => { const a = invAtVenueRow(it); return { it, i, last: (a.repeat || a.fixed > 0) ? 1 : a.foc ? 2 : 0 }; })
                     .sort((x, y) => x.last - y.last || x.i - y.i).map(x => x.it).map(it => {
                     // ── TWO DIFFERENT QUANTITIES, ON PURPOSE ──
                     // `qty` ("To load") is the true physical peak: the most this item is ever
@@ -6300,7 +6119,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                 </span>}
                                 {/* already at the venue - not loaded (atVenueOf): set to Repeat in Build, or standing stock of the fixed venue */}
                                 {(() => {
-                                  const a = atVenueOf(it.src || it);
+                                  const a = invAtVenueRow(it);
                                   if (a.foc) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-bold" title="FOC - left at venue from a previous event, not billed, not loaded">🎁 FOC – LEAVE AT VENUE</span>;
                                   if (a.repeat) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-bold" title="Set to Repeat - stays from before, not loaded">♻ REPEAT</span>;
                                   if (a.fixed > 0) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 font-bold" title="Standing stock at this fixed venue - not loaded">📌 FIXED{a.load > 0 ? ` · ${a.fixed}` : ""}</span>;
@@ -7460,19 +7279,35 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                             })}
                           </div>
                         </button>
-                        {/* Removing a truck removes it for every department, so it is held back while
-                            another department has items on ANY of its trips. */}
-                        <button onClick={() => delTruck(t.id, truckNumById.get(t.id))} disabled={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0)))}
-                          aria-label={`Remove truck ${truckNumById.get(t.id)}`} title={t.trips.some(trip => Object.entries(trip.loads || {}).some(([d, ld]) => d !== dept && Object.values(ld || {}).some(q => Number(q) > 0))) ? "Another department has items on this truck" : "Remove truck"}
-                          className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-300 transition-colors">
+                        {/* Removing a truck removes it for every department, and everything on it: held back once it is loaded
+                            at all - by any department, on any trip, or a trip already gone (owner ask 2026-11-26). Empty: removable. */}
+                        {(() => { const loaded = truckLoadedOf(t); return (
+                        <button onClick={() => delTruck(t.id, truckNumById.get(t.id))} disabled={loaded}
+                          aria-label={`Remove truck ${truckNumById.get(t.id)}`} title={loaded ? "Loaded — a truck with items on it (or a trip gone) can't be removed" : "Remove truck"}
+                          className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-300 disabled:cursor-not-allowed transition-colors">
                           <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
                         </button>
+                        ); })()}
                       </div>
                       {openTruck === t.id && (<>
                       {/* Labelled, so the chips read as "pick one of these" rather than as tags
                           already applied to the truck. Vehicle and driver stacked in the chip,
                           not joined by a dot, so the plate number leads. Truck-level - shared by
                           every trip it makes. */}
+                      {truckDetailsLocked(t) ? (
+                        /* loaded: the vehicle / driver / phone are shown, not editable (truckDetailsLocked) - only an empty phone can be filled */
+                        <div className="rounded-lg bg-gray-50 ring-1 ring-gray-200 px-3 py-2.5">
+                          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-sm">
+                            <span className="inline-flex items-center gap-1.5 font-semibold text-gray-900 tabular-nums"><span aria-hidden="true">🔒</span>{t.vehicle}</span>
+                            <span className="text-gray-700 capitalize">{String(t.driver || "").toLowerCase()}</span>
+                            {String(t.phone || "").trim()
+                              ? <a href={"tel:" + t.phone} className="text-emerald-700 font-semibold tabular-nums hover:underline">📞 {t.phone}</a>
+                              : <TruckTextBox value="" clean={phone10} onCommit={v => { if (v && v.length === 10) setTruck(t.id, { phone: v }); }} inputMode="numeric" maxLength={10} placeholder="add phone · 10 digits"
+                                  className="h-8 w-40 rounded-lg bg-white ring-1 ring-gray-200 px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />}
+                          </div>
+                          <div className="mt-1 text-[11px] text-gray-500">{"Locked — this truck is loaded. A different vehicle? Use “+ Add truck”."}</div>
+                        </div>
+                      ) : (<>
                       {eventTrucks.length > 0 && (
                         <div>
                           <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Pick from fleet</div>
@@ -7498,6 +7333,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           );
                         })}
                       </div>
+                      </>)}
                       <button onClick={() => addTrip(t.id)} disabled={truckMissing(t).length > 0} title={truckMissing(t).length > 0 ? `Fill ${truckMissing(t).join(", ")} first` : undefined} className="h-8 px-3 rounded-lg ring-1 ring-dashed ring-gray-300 text-gray-500 hover:text-gray-700 hover:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-semibold transition-colors">+ Add trip</button>
                       {/* ── EACH TRIP IS ITS OWN RUN ── its own status, its own challan, its own items
                           (owner ask, 2026-11-23: "the same truck makes multiple trips... for trip 2,
@@ -7673,7 +7509,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Already at the venue · not loaded</div>
                   <div className="mt-2 rounded-lg bg-gray-50 divide-y divide-gray-100">
                     {atVenueItems.map(it => {
-                      const a = atVenueOf(it);
+                      const a = atVenueOfRow(it);
                       const nm = choiceViewAll.get(it.id)?.name || it.name;
                       return (
                         <div key={"av:" + it.id} className="flex items-center gap-2.5 px-2.5 py-2">
