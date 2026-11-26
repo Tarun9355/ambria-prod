@@ -32,7 +32,7 @@ import { dcFabricMultOf, trussInvForMaterial, parseFlowerPalette, repeatCatFor }
 import { trussBaseArea } from "../../lib/studio/taxonomy";
 import { isTrussFoc } from "../../lib/studio/foc.js";
 import { resolveBeamSegment, resolvePillarHeight } from "../../lib/ims/trussEngine";
-import { platformPullPlan, platformPullPlansByFn, platformFloorsFromParts, PLATFORM_MATERIAL_LABEL } from "../../lib/ims/platformEngine";
+import { platformPullPlan, platformPullPlansByFn, platformFloorsFromParts, platformsForMaterial, platformMaterialOf, PLATFORM_MATERIAL_LABEL } from "../../lib/ims/platformEngine";
 import { RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_BOX } from "../../lib/studio/brand.js";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
@@ -2686,8 +2686,88 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       if (!m.has(sub)) m.set(sub, []);
       m.get(sub).push(i);
     });
+    // Truss pillars/beams, Platform pieces (Tenting), and Liza Fabric/Velvet Curtains/Wall Masking by
+    // colour (Fabric) are never rows in the `inventory` table at all (owner report, 2026-11-26) —
+    // they live in the separate admin-configured `trussInv` structure (Admin → Truss / Fabric Stock &
+    // Pricing), so "Add an item not in this deal" never offered them. Synthesized here into the same
+    // {id, name, subCat, qty} shape a real inventory row has — confirmed addTripCustomItem only ever
+    // reads those three fields (plus an optional photo), so these slot into the exact same picker and
+    // write path as any catalog item, with no photo (trussInv rows mostly don't carry one, same as any
+    // custom item with none) except fabric colours, which do.
+    //
+    // `virtual: true` marks every one of these — NOT a real inventory id, so it must never be written
+    // to the shared stock-ledger `blocks` table: `truckExtraQtyByItem` (and `truckExtraElements`,
+    // built from it) skip a virtual row (regression review, 2026-11-26, caught the first cut sending
+    // synthetic ids like "truss:pillars:iron:8" into `apply_block_ops`, which granted them
+    // unconditionally since no matching inventory row exists to check stock against — junk rows in a
+    // table other deals' bookings can read). `truckExtraRowsOf`/this tab's own `truckExtraRows`
+    // (Dept Ops' own extras list, Deal Check's read-only "Added on trucks" panel) still SHOW a
+    // virtual row, just priced at ₹0 and never crew-counted — visible, not hidden, since truss/
+    // platform/fabric stock and rates live entirely outside the regular per-item pricing/manpower
+    // engines; costing them properly is a deliberate follow-up, not attempted here.
+    //
+    // Deduplicated by id across every call: Admin Settings' fabric stock tables don't stop an admin
+    // typing the same colour into a table twice (`addStockRow`, AdminSettingsTab.jsx), which would
+    // otherwise give two picker cards the same React key and id — the second with that id wins
+    // silently if that ever happens, rather than crashing or merging their stock (regression review).
+    const seenIds = new Set();
+    const addVirtual = (sub, items) => {
+      const fresh = items.filter((it) => {
+        if (seenIds.has(it.id)) return false;
+        seenIds.add(it.id);
+        return true;
+      });
+      if (fresh.length) m.set(sub, [...(m.get(sub) || []), ...fresh.map((it) => ({ ...it, virtual: true }))]);
+    };
+    if (dept === "Tenting" && trussInv) {
+      // Iron's own skeleton lives at the top level (trussInv.pillars/.beams); every other material
+      // (Aluminium, Pole, …) has its OWN separate table under trussInv.materials[mat] — the same
+      // per-material split trussEngine.js's own pool-feasibility check reads (see its stockTableFor).
+      const stockTableFor = (mat, kind) => (mat === "iron" ? (trussInv?.[kind] || {}) : (trussInv?.materials?.[mat]?.[kind] || {}));
+      const allMats = ["iron", ...Object.keys(trussInv?.materials || {})];
+      ["pillars", "beams"].forEach((kind) => {
+        const sub = kind === "pillars" ? "Truss Pillar" : "Truss Beam";
+        const items = [];
+        allMats.forEach((mat) => {
+          Object.entries(stockTableFor(mat, kind)).forEach(([size, row]) => {
+            const matLabel = mat === "iron" ? "" : ` · ${mat.charAt(0).toUpperCase()}${mat.slice(1)}`;
+            // The admin-configured "Display name" already reads "Pillar 8ft"/"Beam 8ft" (its own
+            // "+ Add Size" seeds exactly that) — used on its OWN, never prefixed with `sub` again
+            // ("Truss Pillar" + "Pillar 8ft" doubled the word, regression review). `size` itself is a
+            // bare number ("8"), never a unit, so the no-display-name fallback needs its own "ft".
+            const label = (row?.name && String(row.name).trim()) || `${sub} ${size}ft`;
+            items.push({ id: `truss:${kind}:${mat}:${size}`, name: `${label}${matLabel}`, subCat: sub, qty: Math.max(0, Math.floor(Number(row?.stock) || 0)) });
+          });
+        });
+        addVirtual(sub, items);
+      });
+      const platformItems = platformsForMaterial(trussInv, null)
+        .filter((r) => (Number(r.lengthFt) || 0) > 0 && (Number(r.widthFt) || 0) > 0)
+        .map((r, i) => {
+          const mat = platformMaterialOf(r);
+          const label = (r.label && String(r.label).trim()) || `${r.lengthFt}×${r.widthFt}ft`;
+          return { id: `platform:${r.id ?? i}`, name: `${label} · ${PLATFORM_MATERIAL_LABEL[mat] || mat}`, subCat: "Platform", qty: Math.max(0, Math.floor(Number(r.stock) || 0)) };
+        });
+      addVirtual("Platform", platformItems);
+    }
+    if (dept === "Fabric" && trussInv) {
+      // Same colour-stock tables Admin → Settings → Fabric Stock & Pricing edits (lizaStock in kg,
+      // curtainStock/maskingStock in pieces) — Old + New stock shown as one combined "in stock" figure,
+      // matching how this picker already shows a plain stock count for every other item.
+      [["lizaStock", "Liza Fabric", "stockKg", "kg"], ["curtainStock", "Velvet Curtains", "stockPieces", "pcs"], ["maskingStock", "Wall Masking", "stockPieces", "pcs"]].forEach(([which, label, qtyField, unitLabel]) => {
+        const rows = Array.isArray(trussInv[which]) ? trussInv[which] : [];
+        const items = rows.map((r) => ({
+          // Keyed by COLOUR, not array position — an admin reordering or deleting a different
+          // colour row must never silently repoint an already-added truck item at the wrong colour,
+          // or merge two different colours under one id on a later load (regression review).
+          id: `fabric:${which}:${String(r.colour || "").trim().toLowerCase()}`, name: `${label} - ${r.colour || "Unnamed colour"} (${unitLabel})`, subCat: label,
+          qty: (Number(r[qtyField]) || 0) + (Number(r[`${qtyField}New`]) || 0), img: r.photo || "",
+        }));
+        addVirtual(label, items);
+      });
+    }
     return m;
-  }, [inventory, dept, settings?.categoryDepartments]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [inventory, dept, settings?.categoryDepartments, trussInv]); // eslint-disable-line react-hooks/exhaustive-deps
   // This department's view of the shared trucks, in the shape the rest of the tab already reads —
   // items keyed "inv:"+listId — so the challans, the PDF and Receiving carry on unchanged.
   const keyByListId = new Map(blockedItems.map(it => ["inv:" + it.id, truckKey(it)]));
@@ -2916,7 +2996,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // dispatched while the modal was open, writes nothing)
   const addTripCustomItem = (id, tripId, invItem, qty) => {
     if (!canEditPlanning || !isActiveTrip(id, tripId) || !invItem || !(Number(qty) > 0)) return false;
-    const row = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), invId: invItem.id, name: invItem.name, sub: invItem.subCat || invItem.subcategory || "", qty: Number(qty) };
+    // virtual (trussInv-backed, not a real inventory row) and img (so a fabric colour's photo
+    // survives onto the added row instead of the "already added" list falling back to a plain
+    // 📦 box, which only ever looks up `inventory` for a photo — regression review, 2026-11-26)
+    // carried straight off the picked item.
+    const row = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), invId: invItem.id, name: invItem.name, sub: invItem.subCat || invItem.subcategory || "", qty: Number(qty), virtual: !!invItem.virtual, img: invItem.img || "" };
     setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, custom: { ...(tr.custom || {}), [dept]: [...((tr.custom || {})[dept] || []), row] } } : tr));
     return true;
   };
@@ -2974,18 +3058,24 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     eventTruckList.forEach(t => tripsOf(t).forEach(tr => Object.entries(tr.custom || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach(c => {
       const q = Number(c.qty) || 0;
       if (q <= 0 || !c.invId) return;
-      const cur = m.get(c.invId) || { invId: c.invId, name: c.name, sub: c.sub || "", qty: 0, byDept: {} };
+      const cur = m.get(c.invId) || { invId: c.invId, name: c.name, sub: c.sub || "", img: c.img || "", qty: 0, byDept: {} };
       cur.qty += q; cur.byDept[d] = (cur.byDept[d] || 0) + q;
       m.set(c.invId, cur);
     }))));
     return m;
   }, [eventTruckList]);
   // This department's, priced at the item's rent (Inventory's rental price) - shown in Inventory blocked, not billed to the client.
+  // A virtual (trussInv-backed, not a real inventory row — truss pillars/beams, platform pieces,
+  // fabric colours) row still shows up here, visible to whoever's looking (Dept Ops, Deal Check's
+  // read-only "Added on trucks" panel) — just at ₹0 (no `inv` match, so no rate) rather than hidden
+  // entirely, which would otherwise make it look like nothing was ever added (regression review,
+  // 2026-11-26). Its own stored name/photo (`c.img`, stashed at add-time since there's no inventory
+  // row to look one up from) cover what `inv` can't.
   const truckExtraRows = useMemo(() => [...truckExtrasAll.values()].filter(x => (x.byDept[dept] || 0) > 0).map(x => {
     const inv = (inventory || []).find(i => String(i.id) === String(x.invId));
     const qty = x.byDept[dept];
     const rate = Number(inv?.price ?? inv?.rentalCost) || 0;
-    const photo = inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || "";
+    const photo = inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || x.img || "";
     return { invId: x.invId, name: inv?.name || x.name, sub: x.sub || inv?.subCat || inv?.subcategory || "", qty, rate, total: Math.round(qty * rate), photo };
   }), [truckExtrasAll, dept, inventory]);
   const truckExtraTotal = truckExtraRows.reduce((s, r) => s + r.total, 0);
@@ -7444,8 +7534,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
                                 {trip.custom.map(c => (
                                   <div key={c.id} className="flex items-center gap-2.5 px-2.5 py-2">
-                                    {/* its photo from Inventory, like every other loaded item (tap for the big one) */}
-                                    {(() => { const inv = (inventory || []).find(i => String(i.id) === String(c.invId)); const ph = inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || ""; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
+                                    {/* its photo from Inventory, like every other loaded item (tap for the big one) — or the
+                                        row's own stored photo for a virtual (trussInv-backed) item, which has no inventory
+                                        row to look up at all (regression review, 2026-11-26: a fabric colour's photo was
+                                        shown in the picker, then silently replaced by the 📦 placeholder once added). */}
+                                    {(() => { const inv = (inventory || []).find(i => String(i.id) === String(c.invId)); const ph = inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || c.img || ""; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
                                     <div className="min-w-0 flex-1">
                                       <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2">{c.name}</div>
                                       <div className="mt-0.5 text-[10px] text-amber-700">{c.sub || "—"} · not in Build/Deal Check</div>

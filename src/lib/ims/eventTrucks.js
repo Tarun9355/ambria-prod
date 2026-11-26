@@ -97,13 +97,29 @@ export function truckManifest(sel, inventory) {
           const cur = totals.get(id) || { dept, key, planned: 0, extra: 0 };
           cur.planned += q;
           cur.customQty = (cur.customQty || 0) + q; // added on the truck, not in the deal - Receiving says so instead of "need 0"
+          // A virtual (trussInv-backed, not a real inventory row — truss pillars/beams, platform
+          // pieces, fabric colours; DepartmentOpsTab.jsx's "Add an item not in this deal") row's
+          // invId never resolves in `inventory` below, and labelForLoadKey's own fallback for an
+          // unresolved "inv:" key is the raw id itself — a supervisor here would see literally
+          // "truss:pillars:iron:8" with no photo (regression review, 2026-11-26). Stash the row's
+          // own name/photo so the final label below can use it instead, never overwritten by a
+          // later row sharing this id (same item, several trips) that happens to carry neither.
+          if (row.name) cur.customLabel = cur.customLabel || row.name;
+          if (row.img) cur.customPhoto = cur.customPhoto || row.img;
           if (stillLoading) cur.loadingQty = (cur.loadingQty || 0) + q;
           if (reached) cur.arrivedQty = (cur.arrivedQty || 0) + q;
           totals.set(id, cur);
         });
       });
     });
-    const lines = [...totals.values()].map((v) => ({ ...v, ...labelForLoadKey(v.key, inventory) }));
+    const lines = [...totals.values()].map((v) => {
+      const resolved = labelForLoadKey(v.key, inventory);
+      // labelForLoadKey's own fallback for an "inv:" key with no matching inventory row is the raw
+      // id itself — true for a virtual (trussInv-backed) custom item, which has no inventory row by
+      // design. Use its own stored name/photo (stashed above) instead, when there is one.
+      const useCustom = resolved.invId && !(inventory || []).some((i) => String(i.id) === String(resolved.invId)) && v.customLabel;
+      return useCustom ? { ...v, ...resolved, label: v.customLabel, photo: v.customPhoto || "" } : { ...v, ...resolved };
+    });
     return { truck: t, lines };
   });
 }

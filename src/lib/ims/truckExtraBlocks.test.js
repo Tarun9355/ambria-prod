@@ -21,6 +21,11 @@ describe("truckExtraRowsOf (Deal Check's 'Added on trucks' rows and its internal
     expect(new Set(rows.map(r => r.key)).size).toBe(rows.length);
   });
   it("no trucks: nothing", () => { expect(truckExtraRowsOf(undefined, inv, tripsOf)).toEqual([]); });
+  it("a virtual (trussInv-backed) row still shows up — visible, just priced at ₹0 — with its own stored name/photo standing in for the missing inventory row", () => {
+    const trucks = [{ id: "T1", vehicle: "DL1", trips: [{ id: "r1", custom: { Tenting: [{ id: "v", invId: "truss:pillars:iron:8", name: "Truss Pillar 8ft", img: "pillar.jpg", qty: 2 }] } }] }];
+    const rows = truckExtraRowsOf(trucks, inv, tripsOf);
+    expect(rows).toEqual([{ key: "T1|r1|v", name: "Truss Pillar 8ft", sub: "", dept: "Tenting", qty: 2, rate: 0, total: 0, photo: "pillar.jpg", where: "DL1", status: "loading" }]);
+  });
 });
 
 const trips = (t) => t.trips;
@@ -33,6 +38,18 @@ describe("truckExtraQtyByItem", () => {
       { id: "b", trips: [{ custom: { Tenting: [{ invId: "i1", qty: 1 }, { name: "no id", qty: 5 }] } }] },
     ];
     expect([...truckExtraQtyByItem(trucks, trips)]).toEqual([["i1", 6]]);
+  });
+  it("never includes a virtual (trussInv-backed) row — it has no real inventory id to reserve stock against", () => {
+    const trucks = [{ id: "a", trips: [{ custom: { Tenting: [
+      { invId: "i1", qty: 2 },
+      { invId: "truss:pillars:iron:8", qty: 5, virtual: true },
+      { invId: "platform:plat_1", qty: 1, virtual: true },
+    ] } }] }];
+    expect([...truckExtraQtyByItem(trucks, trips)]).toEqual([["i1", 2]]);
+  });
+  it("the id-prefix guard catches a synthetic id even without the virtual flag set (defense in depth)", () => {
+    const trucks = [{ id: "a", trips: [{ custom: { Fabric: [{ invId: "fabric:lizaStock:ivory", qty: 9 }] } }] }];
+    expect([...truckExtraQtyByItem(trucks, trips)]).toEqual([]);
   });
 });
 

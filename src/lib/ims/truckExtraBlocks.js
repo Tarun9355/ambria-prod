@@ -6,18 +6,32 @@ import { isLiveBlockStatus, blockEntryQty } from "./liveBlocks";
 export const TRUCK_EXTRA_SRC = "ims-truck-extra";
 
 // Every department's added items, per inventory id, summed over every truck and trip: Map<invId, qty>.
+// A `virtual` row (trussInv-backed — truss pillars/beams, platform pieces, fabric colours; "Add an
+// item not in this deal", IMS Dept Ops → Loading & dispatch) has no real inventory id at all, so it
+// must never reach this Map — it feeds apply_block_ops (truckExtraBlockOps, DepartmentOpsTab.jsx),
+// which would otherwise write a synthetic id like "truss:pillars:iron:8" into the shared `blocks`
+// stock ledger as a brand-new item, with stock lookup finding nothing to check it against and the
+// RPC granting any quantity unconditionally (regression review, 2026-11-26). The id-prefix check is
+// a second, independent guard (not the primary one — that's the `virtual` flag) in case a future
+// custom-row writer ever forgets to set it: these three prefixes are reserved for virtual items
+// alone (see deptInventoryBySub, DepartmentOpsTab.jsx) and a real inventory id is never shaped like
+// one (confirmed: real ids are "I" + 10 alphanumerics, no colon).
+const isVirtualId = (id) => /^(truss|platform|fabric):/.test(String(id || ""));
 export function truckExtraQtyByItem(trucks, tripsOf) {
   const m = new Map();
   (trucks || []).forEach((t) => (tripsOf ? tripsOf(t) : t?.trips || []).forEach((tr) => Object.values(tr?.custom || {}).forEach((rows) => (Array.isArray(rows) ? rows : []).forEach((c) => {
     const q = Number(c?.qty) || 0;
-    if (q <= 0 || !c?.invId) return;
+    if (q <= 0 || !c?.invId || c?.virtual || isVirtualId(c.invId)) return;
     m.set(String(c.invId), (m.get(String(c.invId)) || 0) + q);
   }))));
   return m;
 }
 
 // Every row added on a truck, for showing and costing (Studio's Deal Check): one per row as added, with its inventory item's
-// photo and rent (price ?? rentalCost, as the rest of the app reads it). Rows with no qty are left out.
+// photo and rent (price ?? rentalCost, as the rest of the app reads it). Rows with no qty are left out. A virtual
+// (trussInv-backed, no real inventory row) row still shows up here — visible rather than hidden, same reasoning as
+// DepartmentOpsTab.jsx's own truckExtraRows — just priced at ₹0 since there's no inventory rate to read, with its own
+// stored name/photo (`c.name`/`c.img`, stashed at add-time) standing in for the missing inventory lookup.
 export function truckExtraRowsOf(trucks, inventory, tripsOf) {
   const out = [];
   (Array.isArray(trucks) ? trucks : []).forEach((t) => {
@@ -30,7 +44,7 @@ export function truckExtraRowsOf(trucks, inventory, tripsOf) {
       const rate = Number(inv?.price ?? inv?.rentalCost) || 0;
       out.push({
         key: `${t.id}|${tr.id}|${c.id}`, name: inv?.name || c.name, sub: c.sub || inv?.subCat || "", dept: d, qty: q, rate, total: Math.round(rate * q),
-        photo: inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || "",
+        photo: inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || c.img || "",
         where: [t.vehicle || "Truck", trips.length > 1 ? `Trip ${tri + 1}` : "", t.driver || ""].filter(Boolean).join(" · "), status: tr.status || "loading",
       });
     })));
