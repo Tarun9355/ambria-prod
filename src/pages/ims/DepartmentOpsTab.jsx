@@ -57,7 +57,8 @@ import { isMyEvent, supervisorIdsOfUser, fixedAtVenue, addedSupervisorsOf, withA
 import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a site" search
 import { truckDetailsLocked, truckLoadedOf } from "../../lib/ims/truckLock";
 import { atVenueOfEvent } from "../../lib/ims/atVenue";
-import { makeFabricNeedCache } from "../../lib/ims/fabricNeed"; // fabric per colour, as the Fabric block reads it // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
+import { makeFabricNeedCache } from "../../lib/ims/fabricNeed"; // fabric per colour, as the Fabric block reads it
+import { truckKeyOf, mappedStockRowsOf, kitPartOfDeptOf, blockedGroupedFor, blockedFlatFor } from "../../lib/ims/deptLoadList"; // what a department loads (shared with Site) // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
 import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
@@ -1499,34 +1500,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // functions on the same date at the same venue share one set (max), different venues / dates add up —
   // the peak date is the row's qty. A plain sum showed 160 to load for two same-day functions needing 80
   // each while the ledger held 80 (test-agent finding R2, 2026-11-20).
-  const mappedStockRows = useMemo(() => {
-    const byItem = new Map();
-    const reqByFnIdx = {};
-    Object.entries(liveFloral?.floralDetail || {}).forEach(([fnKey, fd]) => (fd?.art?.mapped || []).forEach((m) => {
-      if (!m.mappedItemId || !(m.pcs > 0)) return;
-      const cur = byItem.get(m.mappedItemId) || { pcs: 0, pcsExact: 0, cost: 0, forNames: new Set() };
-      cur.pcs += m.pcs; cur.pcsExact += Number(m.pcsExact) || m.pcs; cur.cost += Number(m.cost) || 0;
-      String(m.realFlowerName || "").split(", ").forEach(n => n && cur.forNames.add(n));
-      byItem.set(m.mappedItemId, cur);
-      const slot = reqByFnIdx[fnKey] || (reqByFnIdx[fnKey] = {});
-      slot[m.mappedItemId] = (slot[m.mappedItemId] || 0) + m.pcs;
-    }));
-    const fnsForReq = (Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).map((f, i) => fnFromDetail(f, i)).filter(Boolean);
-    const byDate = reqByDateFrom(fnsForReq, reqByFnIdx);
-    const peak = {};
-    Object.values(byDate).forEach((slot) => Object.entries(slot).forEach(([id, q]) => { peak[id] = Math.max(peak[id] || 0, q); }));
-    const out = [];
-    byItem.forEach((v, id) => {
-      const item = (inventory || []).find(i => String(i.id) === String(id));
-      if (!item) return;
-      const qty = peak[id] > 0 ? peak[id] : v.pcs; // a function with no date can't be bucketed — its own count stands
-      out.push({ id: "mapped:" + id, invId: id, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, rentalQty: qty, unit: 0, total: 0, sub: item.subCat || item.subcategory || "", qtyUnit: "", stockOnly: true, mappedFor: [...v.forNames].filter(Boolean).join(", "),
-        // shown on the row for reference (owner ask 2026-11-20: "price kyu ni aara") but NOT in total/unit, so the
-        // blocked total (rentalIncome) never counts it — it is already inside Floral's artificial total
-        infoRate: v.pcsExact > 0 ? Math.round((v.cost / v.pcsExact) * 100) / 100 : 0, infoTotal: Math.round(v.cost) });
-    });
-    return out;
-  }, [liveFloral, inventory, sel]);
+  const mappedStockRows = useMemo(() => mappedStockRowsOf(liveFloral, sel, inventory), [liveFloral, inventory, sel]); // lib/ims/deptLoadList
 
   // ── Department income snapshot (pushed from Deal Check → matches Studio exactly) ──
   const deptIncome = (sel?.deptIncome && sel.deptIncome[dept]) || null;
@@ -1565,15 +1539,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // A kit's row carries ALL of its parts, but each part belongs to a department of its own (and Deal Check already files it there as a
   // `fromKit` row). So a department's kit lists only the parts that are that department's: a part whose department cannot be told stays,
   // and so does one no other department holds as its own row (never lost from every list).
-  const kitPartOfDept = (cp, kitName, d0) => {
-    const ci = cp?.imsId ? (inventory || []).find(i => String(i.id) === String(cp.imsId)) : null;
-    const d = catToDept((ci && (ci.cat || ci.category)) || cp?.sub || "");
-    if (!d || d === d0) return true;
-    const kn = String(kitName || "").trim().toLowerCase(), pn = String(cp?.name || "").trim().toLowerCase();
-    const heldElsewhere = (Array.isArray(sel?.deptInventory?.[d]) ? sel.deptInventory[d] : []).some(r => String(r?.fromKit || "").trim().toLowerCase() === kn
-      && ((cp?.imsId && r?.imsId && String(r.imsId) === String(cp.imsId)) || String(r?.name || "").trim().toLowerCase() === pn));
-    return !heldElsewhere;
-  };
+  const kitPartOfDept = kitPartOfDeptOf({ sel, inventory, catToDept }); // lib/ims/deptLoadList
   // ── Blocked inventory: prefer the Deal Check snapshot; fall back to IMS blocks if not synced ──
   // GROUPED view (kit as one line + its components) — used for the inventory/income display.
   // blockedGroupedOf(d, swaps): any department's list - the shared Fabric & Tenting book reads both.
@@ -1682,68 +1648,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     });
     return out;
   };
-  const blockedGroupedOf = (d, swaps) => {
-    if (!sel) return [];
-    const snapD = (sel?.deptInventory && Array.isArray(sel.deptInventory[d])) ? sel.deptInventory[d] : null;
-    if (snapD && snapD.length) {
-      // fromKit carried through from the snapshot: Deal Check splits a kit's parts across
-      // departments by each part's own category, so a row can be a component of a kit owned by
-      // another department. It is the only record of that parent, and the PDF needs it to avoid
-      // reporting a bolted-on part as a loose item.
-      const rows = snapD.map((x, i) => ({ id: x.name + i, invId: x.imsId || null, name: x.name, photo: x.photo || "", qty: x.qty || 0, rentalQty: x.rentalQty != null ? x.rentalQty : (x.qty || 0), byFn: x.byFn || null, calc: x.calc || null, unit: x.unit || 0, total: x.total || 0, sub: x.sub || "", isKit: !!x.isKit, fromKit: x.fromKit || null, components: Array.isArray(x.components) ? x.components.filter(cp => kitPartOfDept(cp, x.name, d)) : null, kitPartsTotal: Array.isArray(x.components) ? x.components.reduce((t, c) => t + (Number(c.total) || 0), 0) : 0, recipeParts: Array.isArray(x.recipeParts) ? x.recipeParts : null, shortQty: x.shortQty || 0, shortCost: x.shortCost || 0, outOfStock: !!x.outOfStock, prodOrBuy: x.prodOrBuy || null, isSwapped: swaps.has(x.name), swappedFrom: swaps.get(x.name)?.swappedFrom || null, qtyUnit: x.qtyUnit || "", parts: Array.isArray(x.parts) ? x.parts : null, foc: !!x.foc }));
-      // Short items first (need chasing/ordering), then Production/Buying (not real stock — worth
-      // knowing apart from what's actually reserved), then everything else, FOC last (nothing to
-      // chase or load for it) — the order requested for this list. Stable within each group:
-      // Array.prototype.sort is stable, so ties keep the snapshot's own order (whichever function/
-      // zone order dcCostRollup built them in).
-      // Floral: plus the Mapping flowers' artificial items (mappedStockRows, live) — Deal Check's snapshot
-      // never had them. Not on the no-snapshot path below: that one reads the blocks ledger, where Studio's
-      // reconcile already reserves them, so they show there on their own.
-      const rank = (it) => (it.foc ? 3 : it.shortQty > 0 ? 0 : it.prodOrBuy ? 1 : 2);
-      const sorted = rows.sort((a, b) => rank(a) - rank(b));
-      if (d !== "Floral" || !mappedStockRows.length) return sorted;
-      // The same item already on the list in its own right (used directly in Build) is ONE row (owner ask
-      // 2026-11-20: "ye dono same hai toh inko ek hi mai dikhao"): qty to load = both together, while ₹ stays
-      // the item's own line — billQty keeps rate and total on its own qty; the mapped part (its ₹ is in the
-      // artificial total) is spelled out in the row's How (mappedPart).
-      const standalone = [];
-      let merged = sorted;
-      mappedStockRows.forEach((m) => {
-        const k = merged.findIndex((r) => r.invId && String(r.invId) === String(m.invId) && !r.isKit && !r.fromKit && !r.stockOnly && !r.mappedPart);
-        if (k < 0) { standalone.push(m); return; }
-        const r = merged[k];
-        const own = Number(r.rentalQty ?? r.qty) || 0;
-        merged = merged.map((x, j) => j !== k ? x : { ...r, qty: (Number(r.qty) || 0) + m.qty, rentalQty: own + m.qty, billQty: own, mappedFor: m.mappedFor, mappedPart: { qty: m.qty, infoRate: m.infoRate, infoTotal: m.infoTotal, mappedFor: m.mappedFor } });
-      });
-      if (!standalone.length) return merged;
-      // Right under the "Artificial flowers / greens" rows (owner ask 2026-11-20: "inko artificial ke niche hi
-      // dikha de") — they are the artificial side too; at the end when this event has no such row.
-      const isArtRow = (it) => /^artificial (flowers|greens)$/i.test(String(it.name || "").trim());
-      let at = -1;
-      merged.forEach((it, i) => { if (isArtRow(it)) at = i; });
-      if (at < 0) return [...merged, ...standalone];
-      return [...merged.slice(0, at + 1), ...standalone, ...merged.slice(at + 1)];
-    }
-    const out = [];
-    Object.entries(blocks || {}).forEach(([itemId, arr]) => {
-      // isLiveBlockStatus (bug 14): one shared "is this entry live" definition, not a third
-      // unfiltered count that disagreed with both Studio's and IMS's own.
-      // an item added on a truck (not in the deal) has its own block (TRUCK_EXTRA_SRC) and its own section - not counted here twice
-      const qty = (arr || []).filter(b => b.eventId === sel.id && isLiveBlockStatus(b) && b.source !== TRUCK_EXTRA_SRC).reduce((s, b) => s + blockEntryQty(b), 0);
-      if (qty <= 0) return;
-      const item = (inventory || []).find(i => String(i.id) === String(itemId));
-      if (!item) return;
-      if (catToDept(item.cat || item.category) !== d) return;
-      const unit = Number(item.price ?? item.rentalCost) || 0;
-      // A Mapping flower's artificial item reserved by Studio's reconcile: its ₹ is already inside Floral's
-      // artificial total (artStockTotal), so here it is stock only, tagged like on the snapshot path —
-      // priced at rental it was counted twice in the blocked total (test-agent finding R6, 2026-11-20).
-      const mappedRow = d === "Floral" ? mappedStockRows.find(r => String(r.invId) === String(itemId)) : null;
-      if (mappedRow) { out.push({ ...mappedRow, qty, rentalQty: qty }); return; }
-      out.push({ id: itemId, invId: itemId, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, unit, total: unit * qty, sub: item.subCat || item.subcategory || "" });
-    });
-    return out.sort((a, b) => b.total - a.total);
-  };
+  // lib/ims/deptLoadList (shared with the Site page's Receiving, so both read one list)
+  const blockedGroupedOf = (d, swaps) => blockedGroupedFor(d, { sel, inventory, blocks, catToDept, mappedStockRows, swaps });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const blockedItemsGrouped = useMemo(() => blockedGroupedOf(dept, swapInfo), [sel, blocks, inventory, dept, swapInfo, mappedStockRows]);
   // Inventory Blocked's OWN display list only (trucks/PDF/receiving/dismantle all keep reading
@@ -1755,35 +1661,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // FLAT view — kits expanded into the kit shell + each component as its own physical row. Used by
   // Loading & dispatch, Receiving and Dismantle (the ops manager loads/moves each real item).
   // blockedFlatOf(grouped, d): any department's flat list (the shared Fabric & Tenting book).
-  const blockedFlatOf = (grouped, d) => {
-    const out = [];
-    grouped.forEach(it => {
-      const hasComponents = it.isKit && Array.isArray(it.components) && it.components.length;
-      const hasRecipeParts = it.isKit && Array.isArray(it.recipeParts) && it.recipeParts.length;
-      if (hasComponents || hasRecipeParts) {
-        const partsSum = it.kitPartsTotal != null ? it.kitPartsTotal : (it.components || []).reduce((s, c) => s + (Number(c.total) || 0), 0);
-        out.push({ ...it, isKit: false, components: null, recipeParts: null, total: Math.max(0, (Number(it.total) || 0) - partsSum) }); // kit shell (its own base value)
-        (it.components || []).forEach((cp, ci) => out.push({ id: it.id + "__c" + ci, invId: cp.imsId || null, name: cp.name, photo: cp.photo || "", qty: Number(cp.qty) || 0, unit: cp.unit || 0, total: Number(cp.total) || 0, sub: cp.sub || "", kitOf: it.name }));
-        // A kit's flower RECIPE parts (Tree: Flower Trail, Flower Bunch) are not inventory — no
-        // imsId, no money (priced in Build/floral cost already) — but were never split into their
-        // own row here, the only place that turns a kit into the flat list the truck-loading screen
-        // and the Dept PDF's loading/item rows actually read. The grouped-list "Kits" page already
-        // named them (it reads `recipeParts` off the grouped row directly); this flat list did not,
-        // so a kit's recipe silently never appeared on the loading checklist or the PDF's item rows
-        // (owner report, 2026-11-12 — the Tree kit's "Chandelier Tree Floral Recipe").
-        (it.recipeParts || []).forEach((rp, ri) => out.push({ id: it.id + "__r" + ri, invId: null, name: rp.name, photo: rp.photo || "", qty: Number(rp.qty) || 0, qtyUnit: rp.uom || "", unit: 0, total: 0, sub: "", kitOf: it.name, isRecipe: true, stockOnly: true }));
-      } else out.push(it);
-    });
-    // Fabric: the per-zone Liza / Velvet / Masking lines become one load line per fabric colour (with the colour's photo), so Truck planning, the loading
-    // checklist and receiving name what is physically loaded instead of the same fabric once per zone with no photo.
-    if (d === "Fabric" && sel) {
-      try {
-        const g = buildFabricGroups({ entries: fabricEntriesOf(), lines: grouped, fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: false, fnPalettes: fabricPalettesOf() }).groups;
-        return foldFabricLines(out, g);
-      } catch { return out; }
-    }
-    return out;
-  };
+  const blockedFlatOf = (grouped, d) => blockedFlatFor(grouped, d, { sel, trussInv, fabricEntriesOf, fabricPalettesOf }); // lib/ims/deptLoadList
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const blockedItems = useMemo(() => blockedFlatOf(blockedItemsGrouped, dept), [blockedItemsGrouped, dept, sel, trussInv]);
   // ── ALREADY AT THE VENUE: FIXED OR REPEAT (owner ask 2026-11-11) ──
@@ -2647,7 +2525,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // key. The photo only joins the key when there is one, so every item that never carried one
   // (Platform, Batta, Fabric, Print, Truss pieces — all pushed with photo:"") keeps the exact key a
   // truck load was already saved under.
-  const truckKey = (it) => it.invId ? "inv:" + it.invId + (it.kitOf ? "@" + String(it.kitOf).toLowerCase() : "") : "nm:" + String(it.name || "").trim().toLowerCase() + (it.photo ? "|" + it.photo : "");
+  const truckKey = truckKeyOf; // lib/ims/deptLoadList
   // Per department: itemKey → { perUnit (share of one truck per piece), perTruck, basis } or null.
   const truckShares = useMemo(() => {
     const out = {};
