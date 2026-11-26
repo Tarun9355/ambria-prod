@@ -56,7 +56,8 @@ import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { isMyEvent, supervisorIdsOfUser, fixedAtVenue, addedSupervisorsOf, withAddedSupervisors } from "../../lib/ims/mySupervisorEvents";
 import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a site" search
 import { truckDetailsLocked, truckLoadedOf } from "../../lib/ims/truckLock";
-import { atVenueOfEvent } from "../../lib/ims/atVenue"; // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
+import { atVenueOfEvent } from "../../lib/ims/atVenue";
+import { makeFabricNeedCache } from "../../lib/ims/fabricNeed"; // fabric per colour, as the Fabric block reads it // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
 import { logWrite } from "../../lib/studio/userActions";
 
 import { qtyShown, roundKg } from "../../lib/ims/qtyShown";
@@ -3643,12 +3644,15 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // Same-day contention: fabric the SAME stock is committed to on OTHER events on the same date —
   // so each event is checked against the remainder after the others (the same Liza can't be in two
   // places on the same day).
+  // Each event's fabric per colour as the Fabric block works it out (lib/ims/fabricNeed) - not Deal Check's stored fabricPlan, which
+  // goes stale when the plan changes after a sync (owner report 2026-11-26). One cache per render's inputs.
+  const fabricNeedFor = useMemo(() => makeFabricNeedCache({ inventory, eventOrders, settings, trussInv }), [inventory, eventOrders, settings, trussInv]);
   const sameDayReserved = (date, exclId, ftKey, colour) => {
     if (!date) return 0;
     let s = 0;
     (eventOrders || []).forEach(eo => {
-      if (eo.id === exclId || eventDate(eo) !== date || !eo.fabricPlan) return;
-      (Array.isArray(eo.fabricPlan[ftKey]) ? eo.fabricPlan[ftKey] : []).forEach(r => { if ((r.colour || "") === colour) s += Number(r.qty) || 0; });
+      if (eo.id === exclId || eventDate(eo) !== date || (eo.status && !isLiveEventOrder(eo)) || (!eo.fabricPlan && !eo.functionsDetail)) return;
+      (fabricNeedFor(eo)[ftKey] || []).forEach(r => { if ((r.colour || "") === colour) s += Number(r.qty) || 0; });
     });
     return s;
   };
@@ -3658,8 +3662,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // idle doesn't help an Old-stock requirement, and vice versa; same-day contention is split by tier
   // for the same reason (an Old reservation elsewhere can't eat into what THIS event needs in New).
   // fabricReqRowsOf(): any tab can build it (the shared Fabric & Tenting book prints it from the Tenting tab too).
-  const fabricReqRowsOf = () => sel?.fabricPlan ? FABRIC_TYPES.map(ft => {
-    const req = Array.isArray(sel.fabricPlan[ft.key]) ? sel.fabricPlan[ft.key] : [];
+  const fabricReqRowsOf = () => sel ? FABRIC_TYPES.map(ft => {
+    const req = fabricNeedFor(sel)[ft.key] || [];
     const rows = req.map(r => {
       const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 };
       const stock = av.old + av.new;
@@ -3692,9 +3696,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     if (dept !== "Fabric") return [];
     const out = [];
     (eventOrders || []).forEach(eo => {
-      const d = eventDate(eo); if (!d || d < today || !eo.fabricPlan) return;
+      const d = eventDate(eo); if (!d || d < today || (eo.status && !isLiveEventOrder(eo)) || (!eo.fabricPlan && !eo.functionsDetail)) return;
+      const need = fabricNeedFor(eo);
       FABRIC_TYPES.forEach(ft => {
-        (Array.isArray(eo.fabricPlan[ft.key]) ? eo.fabricPlan[ft.key] : []).forEach(r => {
+        (need[ft.key] || []).forEach(r => {
           const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 };
           const otherDay = sameDayReserved(d, eo.id, ft.key, r.colour);
           const short = (Number(r.qty) || 0) - Math.max(0, (av.old + av.new) - otherDay);
@@ -3712,7 +3717,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       });
     });
     return out.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
-  }, [dept, eventOrders, fabricAvail, today, settings, trussInv]);
+  }, [dept, eventOrders, fabricAvail, today, settings, trussInv, fabricNeedFor]);
 
   // A plain name→value breakdown table — Truss Labour's pillar count and Fabric Bangali's sqft are
   // each a straight SUM per contributing element/zone (no per-row batch/need division the way
