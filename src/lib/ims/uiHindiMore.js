@@ -492,6 +492,9 @@ Added on truck · not in the deal ¦ ट्रक पर जोड़ा · ड�
 extra, added on truck ¦ एक्स्ट्रा, ट्रक पर जोड़ा
 Not in Planning's list now — loaded before a change ¦ अब प्लानिंग की लिस्ट में नहीं — बदलाव से पहले लदा था
 Still loading ¦ अभी लद रहा है
+Trucks & challans ¦ ट्रक और चालान
+Each trip's challan - every department's items on it ¦ हर ट्रिप का चालान - उस पर हर डिपार्टमेंट का सामान
+Print challan ¦ चालान प्रिंट करें
 still loading ¦ अभी लद रहे हैं
 arrival issues ¦ आने में दिक्कत
 Loaded — a truck with items on it (or a trip gone) can't be removed ¦ लदा हुआ — जिस ट्रक पर सामान है (या ट्रिप निकल चुकी है) उसे हटाया नहीं जा सकता

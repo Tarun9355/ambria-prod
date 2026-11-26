@@ -68,4 +68,11 @@ describe("Site Receiving = Planning's to-load list", () => {
     expect(html).toMatch(/Candle Wall[^]*?need <!-- -->2<!-- -->(<!-- -->)? · arriving <!-- -->2/);
     expect(html).not.toContain("Not loaded");
   });
+  it("Trucks & challans: each truck and trip with its status and a Print challan button", () => {
+    const html = render({ id: "E", deptInventory: { Furniture: [{ name: "Chair", imsId: "CH", qty: 4 }] },
+      trucks: [{ id: "T1", vehicle: "DL1", driver: "Raju", trips: [{ id: "a", status: "dispatched", loads: { Furniture: { "inv:CH": 4 } } }, { id: "b", status: "loading", loads: {} }] }] });
+    expect(html).toContain("Trucks &amp; challans");
+    expect(html).toContain("Print challan");
+    expect(html).toContain("Dispatched");
+  });
 });

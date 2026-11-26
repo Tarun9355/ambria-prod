@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks } from "../../lib/ims/eventTrucks";
+import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks, tripsOf } from "../../lib/ims/eventTrucks";
 import { FLAG_REASONS, receivingOf, lineReceipt, setItemReceiptPatch, clearItemReceiptPatch, setTransferReceiptPatch } from "../../lib/ims/receiving";
 import { catToDept as sharedCatToDept, DEPTS } from "../../lib/ims/deptClassify";
 import { thumbUrl } from "../../lib/studio/thumb.js";
@@ -10,7 +10,7 @@ import { atVenueOfEvent } from "../../lib/ims/atVenue";
 import { buildFabricGroups } from "../../lib/ims/fabricGroups";
 import { makeEventPlans } from "../../lib/ims/eventPlans";
 import { buildLiveFloralPlan } from "../../lib/ims/liveFloralPlan";
-import { truckKeyOf, mappedStockRowsOf, blockedGroupedFor, blockedFlatFor, loadSplitOf, mergeLegacyTrucks } from "../../lib/ims/deptLoadList";
+import { truckKeyOf, mappedStockRowsOf, blockedGroupedFor, blockedFlatFor, loadSplitOf, mergeLegacyTrucks, tripChallanRows } from "../../lib/ims/deptLoadList";
 import { choiceNotesForRows } from "../../lib/ims/elementPlan";
 import { carpetNotesForRows } from "../../lib/ims/carpetPlan";
 import FabricBlock from "./FabricBlock.jsx";
@@ -35,6 +35,8 @@ function GotBox({ value, onCommit, className }) {
       className={className} />
   );
 }
+
+const TRIP_LABEL = { loading: "Loading", dispatched: "Dispatched", "at-site": "At site", returned: "Returned" };
 
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 
@@ -70,7 +72,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
     const atVenue = [];
     const flatByDept = new Map();
     let fabricGroups = [];
-    if (!sel) return { need, atVenue, fabricGroups, trucks: [] };
+    if (!sel) return { need, atVenue, fabricGroups, trucks: [], flatByDept };
     let pl = null;
     try { pl = makeEventPlans({ sel, inventory, blocks: {}, eventOrders, settings, trussInv }); } catch (e) { console.error("[site-receiving] plans:", e); }
     // Planning's Fabric block (Liza / Velvet / Wall Masking, colour photo, total, zones) - shown on top, no money.
@@ -113,7 +115,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
     // the trucks as Planning reads them: the shared list with any department's older per-department trucks folded in
     let trucks = Array.isArray(sel.trucks) ? sel.trucks : [];
     try { trucks = mergeLegacyTrucks(sel, (d) => flatByDept.get(d) || []); } catch (e) { console.error("[site-receiving] legacy trucks:", e); }
-    return { need, atVenue, fabricGroups, trucks };
+    return { need, atVenue, fabricGroups, trucks, flatByDept };
   }, [sel, inventory, blocks, eventOrders, settings, trussInv, liveFloral, atVenueOf]); // eslint-disable-line react-hooks/exhaustive-deps
   const fabricGroups = plan.fabricGroups;
 
@@ -178,6 +180,30 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // Only gates WRITE controls (confirm/flag/edit) — view-only things (reading a flag's reason) stay
   // usable on a locked event.
   const canEdit = mode === "actual" && !lock.locked && canSiteEdit;
+
+  // Truck numbers as Planning gives them (sorted by the number in the id, else list order), so "Truck 2" is the same truck on both pages
+  const truckNum = (() => { const nOf = (id) => { const n = Number(String(id || "").replace(/^trk_/, "")); return Number.isFinite(n) ? n : 0; }; return new Map([...plan.trucks].sort((x, y) => nOf(x.id) - nOf(y.id)).map((t, i) => [t.id, i + 1])); })();
+  // A trip's combined challan in a new window, as Planning prints it (item, department, qty), with the design Planning chose.
+  const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const printChallan = (truck, trip, n, tripN, rows) => {
+    const w = window.open("", "_blank");
+    if (!w) return;
+    const body = rows.map((it) => {
+      const name = plan.need.get(it.dept + "|" + it.key)?.label || it.name;
+      return `<tr><td>${esc(name)}${it.added ? ' <span style="font-size:11px;color:#92400e">(added, not in Build)</span>' : ""}</td><td>${esc(it.dept)}</td><td style="text-align:center">${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}</td></tr>`;
+    }).join("");
+    const when = (Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).map((f) => [f?.date, f?.venue].filter(Boolean).join(" · ")).filter(Boolean).join(" + ") || sel?.date || "-";
+    w.document.write(`<html><head><title>Combined Challan — Truck ${n} · Trip ${tripN}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
+      <h2>🚚 Ambria — Combined Challan · Truck ${n} · Trip ${tripN}</h2>
+      <p>Event: ${esc(sel?.clientName || "-")} &nbsp;|&nbsp; ${esc(when)}</p>
+      <p>Vehicle: ${esc(truck.vehicle || "______")} &nbsp;|&nbsp; Driver: ${esc(truck.driver || "______")} &nbsp;|&nbsp; Phone: ${esc(truck.phone || "______")}</p>
+      <h4>Inventory on this trip — every department</h4>
+      <table><tr><th>Item</th><th>Dept</th><th>Qty</th></tr>${body || '<tr><td colspan="3" style="text-align:center;color:#999">No items assigned to this trip</td></tr>'}</table>
+      <br><p>Dispatched by: _______________ &nbsp;&nbsp; Received by: _______________</p>
+      <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
+      <button onclick="window.print()">🖨️ Print</button></body></html>`);
+    w.document.close();
+  };
 
   if (allLines.length === 0 && transfers.length === 0 && missingItems.length === 0 && atVenueRows.length === 0) {
     return (
@@ -481,6 +507,44 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                 <span className={"shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded " + (r.a.foc || r.a.repeat ? "bg-violet-100 text-violet-700" : "bg-sky-100 text-sky-700")}>{r.a.foc ? "🎁 FOC" : r.a.repeat ? "♻ REPEAT" : "📌 FIXED"}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── TRUCKS & CHALLANS ── every truck and trip on the event, with its combined challan (every department's items on that
+          run) to print - the same rows Planning's challan prints (lib/ims/deptLoadList tripChallanRows), the chosen design's name. */}
+      {plan.trucks.length > 0 && (
+        <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 flex items-center gap-3">
+            <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🚛</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[15px] font-semibold text-gray-900">{"Trucks & challans"}</div>
+              <div className="text-xs text-gray-500 truncate">{"Each trip's challan - every department's items on it"}</div>
+            </div>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {plan.trucks.map((t, ti) => tripsOf(t).map((tr, ri, all) => {
+              const rows = tripChallanRows(tr, (d) => plan.flatByDept.get(d) || []);
+              const st = tr.status || "loading";
+              return (
+                <div key={t.id + "|" + tr.id} className="px-4 py-2.5 flex items-center gap-3 flex-wrap">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13.5px] font-semibold text-gray-900 truncate">
+                      <span>{"Truck"} {truckNum.get(t.id) || ti + 1}</span>{all.length > 1 && <span className="text-gray-500 font-medium"> · <span>{"Trip"}</span> {ri + 1}</span>}
+                      <span className="ml-1.5 text-gray-500 font-medium tabular-nums">{[t.vehicle, t.driver].filter(Boolean).join(" · ") || "—"}</span>
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
+                      <span className={"font-bold px-1.5 py-0.5 rounded-full " + (st === "loading" ? "bg-amber-50 text-amber-700" : st === "returned" ? "bg-gray-100 text-gray-500" : "bg-emerald-50 text-emerald-700")}>{TRIP_LABEL[st] || st}</span>
+                      <span className="text-gray-500 tabular-nums">{rows.length} <span>{"items"}</span></span>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => printChallan(t, tr, truckNum.get(t.id) || ti + 1, ri + 1, rows)} disabled={!rows.length}
+                    className="shrink-0 h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors">
+                    {"Print challan"}
+                  </button>
+                </div>
+              );
+            }))}
           </div>
         </div>
       )}

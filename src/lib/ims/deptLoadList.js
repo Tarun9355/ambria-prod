@@ -13,6 +13,16 @@ import { reqByDateFrom } from "../studio/soldBlocksPlan";
 import { buildFabricGroups, foldFabricLines } from "./fabricGroups";
 import { atVenueByRow } from "./atVenue";
 
+// One id -> item index per inventory list (the list is replaced, never mutated, when it changes), so looking items up row by row
+// is not a scan of 600+ items each time (owner's QA audit 2026-11-26: the Site page did that for every row).
+const invIndex = new WeakMap();
+const itemById = (inventory, id) => {
+  if (!Array.isArray(inventory) || id == null) return null;
+  let m = invIndex.get(inventory);
+  if (!m) { m = new Map(inventory.filter(Boolean).map((i) => [String(i.id), i])); invIndex.set(inventory, m); }
+  return m.get(String(id)) || null;
+};
+
 // A load line's truck key: "inv:<id>" (a kit part "inv:<id>@<kit name>"), else "nm:<name>" (with "|<photo>" when it has one, so two
 // colours of one material never share a load).
 export const truckKeyOf = (it) => it.invId ? "inv:" + it.invId + (it.kitOf ? "@" + String(it.kitOf).toLowerCase() : "") : "nm:" + String(it.name || "").trim().toLowerCase() + (it.photo ? "|" + it.photo : "");
@@ -39,7 +49,7 @@ export function mappedStockRowsOf(liveFloral, sel, inventory) {
   Object.values(byDate).forEach((slot) => Object.entries(slot).forEach(([id, q]) => { peak[id] = Math.max(peak[id] || 0, q); }));
   const out = [];
   byItem.forEach((v, id) => {
-    const item = (inventory || []).find(i => String(i.id) === String(id));
+    const item = itemById(inventory, id);
     if (!item) return;
     const qty = peak[id] > 0 ? peak[id] : v.pcs; // a function with no date can't be bucketed — its own count stands
     out.push({ id: "mapped:" + id, invId: id, name: item.name, photo: item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "", qty, rentalQty: qty, unit: 0, total: 0, sub: item.subCat || item.subcategory || "", qtyUnit: "", stockOnly: true, mappedFor: [...v.forNames].filter(Boolean).join(", "),
@@ -54,7 +64,7 @@ export function mappedStockRowsOf(liveFloral, sel, inventory) {
 // and so does one no other department holds as its own row (never lost from every list).
 export function kitPartOfDeptOf({ sel, inventory, catToDept }) {
   return (cp, kitName, d0) => {
-    const ci = cp?.imsId ? (inventory || []).find(i => String(i.id) === String(cp.imsId)) : null;
+    const ci = cp?.imsId ? itemById(inventory, cp.imsId) : null;
     const d = catToDept((ci && (ci.cat || ci.category)) || cp?.sub || "");
     if (!d || d === d0) return true;
     const kn = String(kitName || "").trim().toLowerCase(), pn = String(cp?.name || "").trim().toLowerCase();
@@ -100,7 +110,7 @@ export function blockedGroupedFor(d, { sel, inventory, blocks, catToDept, mapped
     // an item added on a truck (not in the deal) has its own block (TRUCK_EXTRA_SRC) and its own section - not counted here twice
     const qty = (arr || []).filter(b => b.eventId === sel.id && isLiveBlockStatus(b) && b.source !== TRUCK_EXTRA_SRC).reduce((s, b) => s + blockEntryQty(b), 0);
     if (qty <= 0) return;
-    const item = (inventory || []).find(i => String(i.id) === String(itemId));
+    const item = itemById(inventory, itemId);
     if (!item) return;
     if (catToDept(item.cat || item.category) !== d) return;
     const unit = Number(item.price ?? item.rentalCost) || 0;
@@ -195,3 +205,28 @@ export function mergeLegacyTrucks(sel, flatItemsOf) {
   legacyByPlate.forEach((legacy, plateKey) => { if (!usedPlates.has(plateKey)) base.push({ id: legacy.id, vehicle: legacy.vehicle, driver: legacy.driver, phone: legacy.phone, status: legacy.status, loads: legacy.byDept }); });
   return [...base, ...noPlate];
 }
+
+// What rides on ONE trip, every department together - a combined challan's rows, matched the way Planning's own challan matches them
+// (each department's flat list against that trip's loads / extra by truck key; items added on the truck by department alone).
+// Used by the Site page's per-truck challan (owner's QA audit 2026-11-26: a supervisor had no challan on the Site page).
+export function tripChallanRows(trip, flatItemsOf) {
+  const out = [];
+  if (!trip) return out;
+  Object.keys(trip.loads || {}).forEach((d) => {
+    const mine = trip.loads?.[d] || {}, mineX = trip.extra?.[d] || {};
+    (flatItemsOf(d) || []).forEach((it) => {
+      const k = truckKeyOf(it);
+      const q = Number(mine[k]) || 0, x = Number(mineX[k]) || 0;
+      if (q <= 0 && x <= 0) return;
+      out.push({ dept: d, key: k, name: it.name || "", sub: it.sub || "", qty: q, extra: x, added: false });
+    });
+  });
+  Object.keys(trip.custom || {}).forEach((d) => {
+    (trip.custom[d] || []).forEach((c) => {
+      if (!(Number(c?.qty) > 0)) return;
+      out.push({ dept: d, key: c.invId ? "inv:" + c.invId : "", name: c.name || "", sub: c.sub || "", qty: Number(c.qty), extra: 0, added: true });
+    });
+  });
+  return out;
+}
+
