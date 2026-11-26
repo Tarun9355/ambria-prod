@@ -39,4 +39,13 @@ describe("Site Receiving: fabric", () => {
     expect(html).not.toContain("48,000");
     expect(html.indexOf(">Fabric<")).toBeLessThan(html.indexOf(">Receiving<"));
   });
+  it("the rows follow the Fabric block's colours, not a stale stored plan: a colour the plan no longer has is not asked for", () => {
+    // stored plan (stale): Ivory 2 + Maroon 13. The block's groups come from the priced lines + that record, so here they agree -
+    // the check is that a row is drawn from the same groups the block shows: Velvet has no line, so no velvet row either.
+    const sel = { id: "E1", trucks: [], fabricPlan: { liza: [{ colour: "Maroon", qty: 15 }], curtain: [{ colour: "Ivory", qty: 2 }] },
+      deptInventory: { Fabric: [{ id: "f1", name: "Liza Fabric (Old)", sub: "kg · stage", qty: 15, total: 4500 }] } };
+    const html = base(sel);
+    expect(html).toContain("Liza Fabric - Maroon");
+    expect(html).not.toContain("Velvet Curtains - Ivory");
+  });
 });

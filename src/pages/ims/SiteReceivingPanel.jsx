@@ -108,19 +108,23 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // ── FABRIC: LIZA / VELVET / WALL MASKING ── (owner ask 2026-11-26: "as Planning shows it") Not inventory items, so not in the
   // functions' item list: the need is Deal Check's fabric plan (sel.fabricPlan, per fabric and colour - what Planning's Fabric
   // department reads), and a truck carries it as "Liza Fabric - <colour>" (Truck planning's folded fabric line, keyed by name).
-  const fabricNeed = new Map(); // "liza fabric - powder blue" -> { label, qty, unit, photo }
-  FABRIC_KINDS.forEach((k) => (Array.isArray(sel?.fabricPlan?.[k.key]) ? sel.fabricPlan[k.key] : []).forEach((r) => {
-    const q = Number(r?.qty) || 0;
+  // What has to come, per fabric colour: the SAME colours the Fabric block above shows (fabricGroups - worked out live from the event's
+  // layout and palette, else Deal Check's record), not Deal Check's stored fabricPlan alone: that copy goes stale when the plan changes
+  // after the sync (owner report 2026-11-26: Ivory 2 kg short here while the block, like Planning, had only Maroon). Fabric standing on
+  // Repeat has no colours to pull, so nothing is asked of a truck for it.
+  const fabricNeed = new Map(); // "liza fabric - maroon" -> { label, qty, unit, photo }
+  // an event whose layout has not synced has no groups: Deal Check's stored plan is all there is
+  const fabricSource = fabricGroups.length ? fabricGroups
+    : FABRIC_KINDS.map((k) => ({ label: k.label, unit: k.unit, colours: Array.isArray(sel?.fabricPlan?.[k.key]) ? sel.fabricPlan[k.key] : [] }));
+  fabricSource.forEach((g) => (g.colours || []).forEach((c) => {
+    const q = Number(c?.qty) || 0;
     if (q <= 0) return;
-    const colour = String(r.colour || "").trim() || "(unassigned)";
-    const label = `${k.label} - ${colour}`;
+    const label = `${g.label} - ${String(c.colour || "").trim() || "(unassigned)"}`;
     const key = label.toLowerCase();
-    // the colour's reference photo: a row of this fabric's stock that has one (a colour can have several rows - grades - and the
-    // first need not carry the photo), else the same colour's photo in another fabric's stock (Admin shares them the same way)
-    const sameCol = (x) => String(x?.colour || "").trim().toLowerCase() === colour.toLowerCase() && x?.photo;
-    const photo = (Array.isArray(trussInv?.[k.stockKey]) ? trussInv[k.stockKey] : []).find(sameCol)?.photo
-      || FABRIC_KINDS.map((o) => (Array.isArray(trussInv?.[o.stockKey]) ? trussInv[o.stockKey] : []).find(sameCol)?.photo).find(Boolean) || "";
-    const cur = fabricNeed.get(key) || { label, qty: 0, unit: k.unit, photo };
+    // the colour's reference photo: the block's, else a stock row of this colour that has one (in any fabric's stock - Admin shares them)
+    const sameCol = (x) => String(x?.colour || "").trim().toLowerCase() === String(c.colour || "").trim().toLowerCase() && x?.photo;
+    const photo = c.photo || FABRIC_KINDS.map((o) => (Array.isArray(trussInv?.[o.stockKey]) ? trussInv[o.stockKey] : []).find(sameCol)?.photo).find(Boolean) || "";
+    const cur = fabricNeed.get(key) || { label, qty: 0, unit: g.unit, photo };
     cur.qty += q;
     fabricNeed.set(key, cur);
   }));
