@@ -200,8 +200,12 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
     const standingOnly = zones.length > 0 && zones.every((z) => z.standing);
     const standingCols = standingOnly ? [...new Set(zones.flatMap((z) => (z.colours || []).map((c) => c.colour)))] : [];
     const firstStanding = standingOnly ? zones.flatMap((z) => z.colours || [])[0] : null;
+    // What is pulled from stock: the colours added up - each colour is rounded UP to a whole kg / piece, so this can be a little more
+    // than the zones' exact total (owner report 2026-11-26, Rajiv Tangri: Maroon 10 + Ivory 8 = 18 kg, while the card said 16 kg).
+    // The whole event's only: the colours are the whole event's, a one-function view keeps the zones' figure.
+    const pullQty = (onlyFi === null || onlyFi === undefined) && colours.length ? r2(colours.reduce((s, c) => s + (Number(c.qty) || 0), 0)) : null;
     groups.push({
-      key: kind.key, label: kind.label, unit: kind.unit, emoji: kind.emoji, qty, amount, zones, colours, standingOnly,
+      key: kind.key, label: kind.label, unit: kind.unit, emoji: kind.emoji, qty, pullQty, amount, zones, colours, standingOnly,
       photo: colours[0]?.photo || firstStanding?.photo || "", hex: colours[0]?.hex || firstStanding?.hex || "",
       colourText: colours.length ? colours.map((c) => `${c.colour} ${c.qty} ${kind.unit}`).join(" · ")
         : standingOnly ? `♻ Repeat · standing${standingCols.length ? " " + standingCols.join(", ") : ""}` : "No colour picked yet",
