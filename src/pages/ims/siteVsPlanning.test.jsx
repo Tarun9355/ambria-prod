@@ -75,4 +75,21 @@ describe("Site Receiving = Planning's to-load list", () => {
     expect(html).toContain("Print challan");
     expect(html).toContain("Dispatched");
   });
+  it("a reuse transfer of a kit's part counts as arriving for that part (keyed inv:X@kit)", () => {
+    const sel = { id: "E", deptInventory: { Lighting: [{ name: "Candle Wall", imsId: "KW", qty: 1, isKit: true, components: [{ name: "Lamp", imsId: "LP", qty: 4 }] }] },
+      trucks: truck({ Lighting: { "inv:KW": 1 } }) };
+    const other = { id: "O", clientName: "Other", deptOps: { Furniture: { movements: [{ id: "m1", type: "transfer", toEventId: "E", invId: "LP", name: "Lamp", qty: 4 }] } } };
+    const html = renderToString(<SiteReceivingPanel sel={sel} setEventOrders={() => {}} inventory={[...inv, { id: "LP", name: "Lamp", cat: "Lighting" }]} eventOrders={[sel, other]} authUser={{}} mode="actual" settings={{}} trussInv={{}} />);
+    expect(html).not.toMatch(/Lamp[^]*?Not loaded/);
+    expect(html).toContain("all sourced");
+  });
+  it("trip 1 at site and received, trip 2 still on its way: not short, '5 on the way'", () => {
+    const sel = { id: "E", deptInventory: { Furniture: [{ name: "Chair", imsId: "CH", qty: 15 }] },
+      trucks: [{ id: "T1", vehicle: "DL1", driver: "Raju", trips: [{ id: "a", status: "at-site", loads: { Furniture: { "inv:CH": 10 } } }, { id: "b", status: "dispatched", loads: { Furniture: { "inv:CH": 5 } } }] }],
+      receiving: { trucks: { T1: { items: { Furniture: { "inv:CH": { got: 10 } } } } } } };
+    const html = render(sel);
+    expect(html).toContain("on the way");
+    expect(html).not.toContain("arrival issues");
+    expect(html).not.toContain("Short —");
+  });
 });

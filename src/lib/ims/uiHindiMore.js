@@ -495,6 +495,7 @@ Still loading ¦ अभी लद रहा है
 Trucks & challans ¦ ट्रक और चालान
 Each trip's challan - every department's items on it ¦ हर ट्रिप का चालान - उस पर हर डिपार्टमेंट का सामान
 Print challan ¦ चालान प्रिंट करें
+on the way ¦ रास्ते में
 still loading ¦ अभी लद रहे हैं
 arrival issues ¦ आने में दिक्कत
 Loaded — a truck with items on it (or a trip gone) can't be removed ¦ लदा हुआ — जिस ट्रक पर सामान है (या ट्रिप निकल चुकी है) उसे हटाया नहीं जा सकता

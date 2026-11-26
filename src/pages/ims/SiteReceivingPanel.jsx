@@ -18,20 +18,28 @@ import FabricBlock from "./FabricBlock.jsx";
 // The "how many arrived" box: what is typed stays in the box until Enter or leaving it, then saves once (owner's QA audit
 // 2026-11-26: clearing the box saved "no figure" and snapped back to the planned one, so backspacing 10 and typing 3 gave 103,
 // and every keystroke wrote the whole event). Empty on leaving = back to the expected figure.
+// Saves only what this person actually typed (a re-test finding: focusing the box and leaving it without typing saved the old figure
+// over a newer one that had come in meanwhile - another supervisor's receipt, or a trip dispatched). Escape cancels, never saves.
 function GotBox({ value, onCommit, className }) {
   const [draft, setDraft] = useState(String(value ?? ""));
   const editing = useRef(false);
+  const dirty = useRef(false);
+  const cancel = useRef(false);
   useEffect(() => { if (!editing.current) setDraft(String(value ?? "")); }, [value]);
   const commit = () => {
     editing.current = false;
+    const typed = dirty.current, cancelled = cancel.current;
+    dirty.current = false; cancel.current = false;
+    if (cancelled || !typed) { setDraft(String(value ?? "")); return; }
     const v = draft.trim();
     if (v === String(value ?? "")) return;
     onCommit(v === "" ? null : Math.max(0, Number(v) || 0));
   };
   return (
     <input type="number" min="0" inputMode="numeric" value={draft} aria-label="Pieces arrived"
-      onFocus={() => { editing.current = true; }} onChange={(e) => setDraft(e.target.value)} onBlur={commit}
-      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { editing.current = false; setDraft(String(value ?? "")); e.currentTarget.blur(); } }}
+      onFocus={() => { editing.current = true; dirty.current = false; cancel.current = false; }}
+      onChange={(e) => { dirty.current = true; setDraft(e.target.value); }} onBlur={commit}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { cancel.current = true; e.currentTarget.blur(); } }}
       className={className} />
   );
 }
@@ -74,7 +82,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
     let fabricGroups = [];
     if (!sel) return { need, atVenue, fabricGroups, trucks: [], flatByDept };
     let pl = null;
-    try { pl = makeEventPlans({ sel, inventory, blocks: {}, eventOrders, settings, trussInv }); } catch (e) { console.error("[site-receiving] plans:", e); }
+    try { pl = makeEventPlans({ sel, inventory, blocks, eventOrders, settings, trussInv }); } catch (e) { console.error("[site-receiving] plans:", e); }
     // Planning's Fabric block (Liza / Velvet / Wall Masking, colour photo, total, zones) - shown on top, no money.
     try {
       const fnsF = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
@@ -103,7 +111,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           const key = truckKeyOf(it);
           const id = d + "|" + key;
           const cv = choice.get(it.id);
-          const c = need.get(id) || { dept: d, key, qty: 0, label: cv?.name || it.name, photo: cv?.photo || it.photo || "", unit: it.qtyUnit || "", invId: it.invId || null,
+          const c = need.get(id) || { dept: d, key, qty: 0, label: cv?.name || it.name, photo: cv?.name ? (cv.photo || "") : (it.photo || ""), unit: it.qtyUnit || "", invId: it.invId || null,
             notes: (cv?.notes || []).map((n) => n.text).filter(Boolean) };
           c.qty += Number(it.qty) || 0;
           need.set(id, c);
@@ -133,7 +141,17 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   const loadedByKey = new Map();
   allLines.forEach((ln) => { const id = ln.dept + "|" + ln.key; loadedByKey.set(id, (loadedByKey.get(id) || 0) + Number(ln.planned || 0) + Number(ln.extra || 0)); });
   // Same-day reuse from another event never rides on one of THIS event's trucks - counted as arriving for its item.
-  transfers.forEach((t) => { if (t.invId) { const id = (t.fromDept || "") + "|inv:" + t.invId; loadedByKey.set(id, (loadedByKey.get(id) || 0) + (Number(t.qty) || 0)); } });
+  // Matched to the need line it covers: its own department and key, else the first need line with that inventory id in any
+  // department or kit (a re-test finding: a kit part "inv:X@kit", or an item the other event filed elsewhere, never matched).
+  transfers.forEach((t) => {
+    if (!t.invId) return;
+    let id = (t.fromDept || "") + "|inv:" + t.invId;
+    if (!plan.need.has(id)) {
+      const hit = [...plan.need.values()].find((n) => n.invId && String(n.invId) === String(t.invId));
+      if (hit) id = hit.dept + "|" + hit.key;
+    }
+    loadedByKey.set(id, (loadedByKey.get(id) || 0) + (Number(t.qty) || 0));
+  });
   const needOf = (dept, key) => plan.need.get(dept + "|" + key) || null;
   const atVenueRows = plan.atVenue;
   // In Planning's list but on no truck yet: its own "Not loaded" row - every kind of line (platform, carpet, print, recipe parts too).
@@ -290,7 +308,8 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           if (row.kind !== "line") return false;
           const ln = row.ln, r = lineReceipt(receiving.trucks[ln.truck.id], ln.dept, ln.key);
           const gone = Math.max(0, ln.planned + ln.extra - (Number(ln.loadingQty) || 0));
-          return !!r.flag || (r.got != null && gone > 0 && Number(r.got) < gone);
+          const expected = (Number(ln.arrivedQty) || 0) > 0 ? Number(ln.arrivedQty) : gone;
+          return !!r.flag || (r.got != null && expected > 0 && Number(r.got) < expected);
         }).length;
         return (
       <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
@@ -344,8 +363,13 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         // a tick marked them received). Receipts stay one per truck line, against what has gone.
         const loadingQty = Number(ln.loadingQty) || 0;
         const gone = Math.max(0, ln.planned + ln.extra - loadingQty);
+        // Receipts are one per truck line, so a truck's second trip still on its way must not make the first trip's receipt "short"
+        // (a re-test finding): once any trip is marked At site / Returned, a receipt is weighed against what has reached the site.
+        const arrivedQty = Number(ln.arrivedQty) || 0;
+        const expected = arrivedQty > 0 ? arrivedQty : gone;
+        const onTheWay = arrivedQty > 0 ? Math.max(0, gone - arrivedQty) : 0;
         const got = r.got != null ? r.got : gone;
-        const short = mode === "actual" && gone > 0 && Number(got) < gone;
+        const short = mode === "actual" && expected > 0 && Number(got) < expected;
         // Also true from the OLD whole-truck "Arrived as planned" button, which only ever stamped
         // receiving.trucks[id].confirmedAt and never wrote a per-item `got` at all — without this,
         // every item on an already-confirmed truck reads as freshly "Not arrived" the moment this
@@ -376,12 +400,13 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                   {r.flag
                     ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">⚑ {FLAG_REASONS.find((f) => f.key === r.flag)?.label || "Flagged"}</span>
                     : short
-                    ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">Short — {got} of {gone}</span>
+                    ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700">Short — {got} of {expected}</span>
                     : confirmed
                     ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Confirmed OK</span>
                     : gone === 0
                     ? <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">{"Still loading"}</span>
                     : <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">Not arrived</span>}
+                  {onTheWay > 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 tabular-nums"><span>{onTheWay}</span> <span>{"on the way"}</span></span>}
                   {gone > 0 && loadingQty > 0 && <span className="text-[9.5px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 tabular-nums"><span>{loadingQty}</span> <span>{"still loading"}</span></span>}
                 </div>
                 {/* Dept badge, which truck/driver it's riding on, and a one-tap call — the whole reason

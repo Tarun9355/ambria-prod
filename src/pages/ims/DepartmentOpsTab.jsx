@@ -1675,6 +1675,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // standing stock taken off ONCE per item across its rows (a kit part and the same item loose share the venue's pieces) - lib/ims/atVenue
   const atVenueRow = useMemo(() => atVenueByRow(blockedItems, atVenueOf), [blockedItems, atVenueOf]);
   const atVenueOfRow = (it) => atVenueRow.get(it.id) || atVenueOf(it);
+  // the Inventory list's rows (grouped; a kit's shell and plain rows keep the flat row's id): for the whole event the same row-adjusted
+  // figure as the truck list, so its FIXED badge and order agree with what is loaded; a one-function view keeps its own figure
+  const invAtVenueRow = (it) => { const b = it?.src || it; return (invFn === "all" && b?.id != null && atVenueRow.get(b.id)) || atVenueOf(b); };
   const loadItems = useMemo(() => blockedItems.map(it => { const a = atVenueOfRow(it); return a.load === (Number(it.qty) || 0) ? it : { ...it, qty: a.load, fullQty: it.qty }; }).filter(it => (Number(it.qty) || 0) > 0), [blockedItems, atVenueOf, atVenueRow]);
   const atVenueItems = useMemo(() => blockedItems.filter(it => { const a = atVenueOfRow(it); return a.repeat || a.fixed > 0 || a.foc; }), [blockedItems, atVenueOf, atVenueRow]);
   const rentalIncome = blockedItemsGrouped.reduce((s, x) => s + x.total, 0);
@@ -5949,7 +5952,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   </div>}
                   {/* items already at the venue (📌 Fixed / ♻ Repeat, atVenueOf) go last - nothing to load for them; the rest keep their order */}
                   {invShown.filter(it => !fabricGroupInfo.groupedLineIds.has(it.id) && !isDupArtificial(it))
-                    .map((it, i) => { const a = atVenueOf(it.src || it); return { it, i, last: (a.repeat || a.fixed > 0) ? 1 : a.foc ? 2 : 0 }; })
+                    .map((it, i) => { const a = invAtVenueRow(it); return { it, i, last: (a.repeat || a.fixed > 0) ? 1 : a.foc ? 2 : 0 }; })
                     .sort((x, y) => x.last - y.last || x.i - y.i).map(x => x.it).map(it => {
                     // ── TWO DIFFERENT QUANTITIES, ON PURPOSE ──
                     // `qty` ("To load") is the true physical peak: the most this item is ever
@@ -6016,7 +6019,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                 </span>}
                                 {/* already at the venue - not loaded (atVenueOf): set to Repeat in Build, or standing stock of the fixed venue */}
                                 {(() => {
-                                  const a = atVenueOf(it.src || it);
+                                  const a = invAtVenueRow(it);
                                   if (a.foc) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-bold" title="FOC - left at venue from a previous event, not billed, not loaded">🎁 FOC – LEAVE AT VENUE</span>;
                                   if (a.repeat) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 font-bold" title="Set to Repeat - stays from before, not loaded">♻ REPEAT</span>;
                                   if (a.fixed > 0) return <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 font-bold" title="Standing stock at this fixed venue - not loaded">📌 FIXED{a.load > 0 ? ` · ${a.fixed}` : ""}</span>;
