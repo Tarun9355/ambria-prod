@@ -215,6 +215,23 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
 // colour ("Liza Fabric - Powder Blue", 112 kg, with the colour's photo), or one line for the fabric when no colour is picked yet.
 // `flat` is the list, `groups` come from buildFabricGroups (whole event). Lines that are not fabric lines keep their place; the folded lines go where the
 // first fabric line was.
+// What a fabric's ♻ Repeat zones already have standing at the venue (no new fabric loaded for them), per colour when the zone's
+// colour is known: [{ key, label, colour, qty, unit, photo }]. Owner ask 2026-11-26: the site / ops must see the exact extra to bring,
+// with what is already there from the Repeat zones apart.
+export function fabricStandingOf(groups) {
+  const out = [];
+  (Array.isArray(groups) ? groups : []).forEach((g) => {
+    const by = new Map();
+    (g.zones || []).filter((z) => z.standing && z.qty > 0).forEach((z) => {
+      const cols = (z.colours || []).filter((c) => c.qty > 0);
+      if (!cols.length) { const cur = by.get("") || { colour: "", qty: 0, photo: "" }; cur.qty += z.qty; by.set("", cur); return; }
+      cols.forEach((c) => { const k = colourKey(c.colour); const cur = by.get(k) || { colour: c.colour, qty: 0, photo: c.photo || "" }; cur.qty += c.qty; by.set(k, cur); });
+    });
+    by.forEach((v) => out.push({ key: g.key, label: v.colour ? `${g.label} - ${v.colour}` : g.label, colour: v.colour, qty: r2(v.qty), unit: g.unit, photo: v.photo || g.photo || "" }));
+  });
+  return out;
+}
+
 export function foldFabricLines(flat, groups) {
   const list = Array.isArray(flat) ? flat : [];
   if (!list.some((l) => isFabricLine(l)) || !Array.isArray(groups) || !groups.length) return list;
@@ -222,10 +239,16 @@ export function foldFabricLines(flat, groups) {
   groups.forEach((g) => {
     const colours = (g.colours || []).filter((c) => c.qty > 0);
     const sum = colours.reduce((s, c) => s + c.qty, 0);
+    // a ♻ Repeat zone's fabric is already standing at the venue: never part of what is loaded (the colours above already leave it out)
+    const standing = r2((g.zones || []).filter((z) => z.standing).reduce((s, z) => s + (Number(z.qty) || 0), 0));
     if (colours.length) {
       colours.forEach((c) => folded.push({ id: `fabric:${g.key}:${c.colour}`, invId: null, name: `${g.label} - ${c.colour}`, photo: c.photo || "", hex: c.hex || "", qty: c.qty, qtyUnit: g.unit, unit: 0,
         total: sum > 0 ? Math.round((g.amount * c.qty) / sum) : 0, sub: `${g.unit} · fabric`, prodOrBuy: null, byFn: null }));
-    } else folded.push({ id: `fabric:${g.key}`, invId: null, name: g.label, photo: "", hex: "", qty: g.qty, qtyUnit: g.unit, unit: 0, total: g.amount, sub: `${g.unit} · fabric`, prodOrBuy: null, byFn: null });
+    } else {
+      // no colour picked yet: the fabric's total less its Repeat zones (owner report 2026-11-26: Liza 33.58 kg "need" counted the Repeat zones' fabric too)
+      const fresh = r2(Math.max(0, (Number(g.qty) || 0) - standing));
+      if (fresh > 0) folded.push({ id: `fabric:${g.key}`, invId: null, name: g.label, photo: "", hex: "", qty: fresh, qtyUnit: g.unit, unit: 0, total: g.amount, sub: `${g.unit} · fabric`, prodOrBuy: null, byFn: null });
+    }
   });
   const out = [];
   let placed = false;

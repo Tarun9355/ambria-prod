@@ -7,13 +7,15 @@ import { actualsLockState } from "../../lib/ims/actualsLock";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { atVenueOfEvent } from "../../lib/ims/atVenue";
-import { buildFabricGroups } from "../../lib/ims/fabricGroups";
+import { buildFabricGroups, fabricStandingOf } from "../../lib/ims/fabricGroups";
 import { makeEventPlans } from "../../lib/ims/eventPlans";
 import { buildLiveFloralPlan } from "../../lib/ims/liveFloralPlan";
 import { truckKeyOf, mappedStockRowsOf, blockedGroupedFor, blockedFlatFor, loadSplitOf, mergeLegacyTrucks, tripChallanRows } from "../../lib/ims/deptLoadList";
 import { choiceNotesForRows } from "../../lib/ims/elementPlan";
 import { carpetNotesForRows } from "../../lib/ims/carpetPlan";
 import FabricBlock from "./FabricBlock.jsx";
+
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 // The "how many arrived" box: what is typed stays in the box until Enter or leaving it, then saves once (owner's QA audit
 // 2026-11-26: clearing the box saved "no figure" and snapped back to the planned one, so backspacing 10 and typing 3 gave 103,
@@ -119,6 +121,22 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         av.forEach(({ it, a }) => atVenue.push({ dept: d, key: truckKeyOf(it), label: it.name, photo: it.photo || "", qty: Number(it.fullQty ?? it.qty) || 0, unit: it.qtyUnit || "", a }));
       } catch (e) { console.error("[site-receiving] dept list", d, e); }
     });
+    // ♻ Repeat zones' fabric (Liza / curtains / masking) is already standing at the venue: listed there, and its need line says how much
+    // more is there besides what comes on the trucks (owner ask 2026-11-26: show the exact extra to bring)
+    try {
+      const standing = fabricStandingOf(fabricGroups);
+      standing.forEach((s) => {
+        atVenue.push({ dept: "Fabric", key: `fabric:${s.key}:repeat:${s.colour}`, label: s.label, photo: s.photo, qty: s.qty, unit: s.unit, a: { repeat: true, fixed: 0, foc: false, load: 0 } });
+      });
+      const repeatByKind = new Map();
+      standing.forEach((s) => repeatByKind.set(s.key, r2((repeatByKind.get(s.key) || 0) + s.qty)));
+      need.forEach((n) => {
+        if (n.dept !== "Fabric" || !String(n.key).startsWith("nm:")) return;
+        const g = (fabricGroups || []).find((x) => String(n.label || "").startsWith(x.label));
+        const rq = g ? repeatByKind.get(g.key) : 0;
+        if (rq > 0) n.notes = [...(n.notes || []), `Only the extra to bring - ${rq} ${g.unit} more already at the venue (♻ Repeat zones)`];
+      });
+    } catch (e) { console.error("[site-receiving] repeat fabric:", e); }
     atVenue.sort((x, y) => String(x.label || "").localeCompare(String(y.label || "")));
     // the trucks as Planning reads them: the shared list with any department's older per-department trucks folded in
     let trucks = Array.isArray(sel.trucks) ? sel.trucks : [];
@@ -525,7 +543,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                   <div className="flex items-center gap-1.5 flex-wrap mt-0.5 text-[10.5px]">
                     <span className="font-bold text-gray-500 bg-gray-50 rounded px-1.5 py-0.5">{DEPT_ICON[r.dept] || ""} {r.dept}</span>
                     <span className="text-gray-500 tabular-nums">
-                      {r.a.foc ? `all ${r.qty} FOC - left at the venue` : r.a.repeat ? `all ${r.qty} stay from before` : r.a.load > 0 ? `${r.a.fixed} of ${r.qty} standing here · ${r.a.load} on a truck` : `all ${r.qty} standing here`}
+                      {(() => { const q = r.unit ? `${r.qty} ${r.unit}` : r.qty; return r.a.foc ? `all ${q} FOC - left at the venue` : r.a.repeat ? `all ${q} stay from before` : r.a.load > 0 ? `${r.a.fixed} of ${q} standing here · ${r.a.load} on a truck` : `all ${q} standing here`; })()}
                     </span>
                   </div>
                 </div>
