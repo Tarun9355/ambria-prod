@@ -11,6 +11,7 @@ import { TRUCK_EXTRA_SRC } from "./truckExtraBlocks";
 import { fnFromDetail } from "./liveFloralPlan";
 import { reqByDateFrom } from "../studio/soldBlocksPlan";
 import { buildFabricGroups, foldFabricLines } from "./fabricGroups";
+import { atVenueByRow } from "./atVenue";
 
 // A load line's truck key: "inv:<id>" (a kit part "inv:<id>@<kit name>"), else "nm:<name>" (with "|<photo>" when it has one, so two
 // colours of one material never share a load).
@@ -140,8 +141,9 @@ export function blockedFlatFor(grouped, d, { sel, trussInv, fabricEntriesOf, fab
 // lines with nothing to load are the "at the venue" list.
 export function loadSplitOf(flat, atVenueOf) {
   const load = [], atVenue = [];
+  const byRow = atVenueByRow(flat, atVenueOf); // standing stock taken off once per item across its rows
   (flat || []).forEach((it) => {
-    const a = atVenueOf(it);
+    const a = byRow.get(it.id) || atVenueOf(it);
     if (a.repeat || a.fixed > 0 || a.foc) atVenue.push({ it, a });
     const q = a.load === (Number(it.qty) || 0) ? it : { ...it, qty: a.load, fullQty: it.qty };
     if ((Number(q.qty) || 0) > 0) load.push(q);

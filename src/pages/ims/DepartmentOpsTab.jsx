@@ -56,7 +56,7 @@ import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { isMyEvent, supervisorIdsOfUser, fixedAtVenue, addedSupervisorsOf, withAddedSupervisors } from "../../lib/ims/mySupervisorEvents";
 import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a site" search
 import { truckDetailsLocked, truckLoadedOf } from "../../lib/ims/truckLock";
-import { atVenueOfEvent } from "../../lib/ims/atVenue";
+import { atVenueOfEvent, atVenueByRow } from "../../lib/ims/atVenue";
 import { makeFabricNeedCache } from "../../lib/ims/fabricNeed"; // fabric per colour, as the Fabric block reads it
 import { truckKeyOf, mappedStockRowsOf, kitPartOfDeptOf, blockedGroupedFor, blockedFlatFor, mergeLegacyTrucks } from "../../lib/ims/deptLoadList"; // what a department loads (shared with Site) // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
 import { logWrite } from "../../lib/studio/userActions";
@@ -1672,8 +1672,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // the rule lives in lib/ims/atVenue (shared with the Site page's Receiving, which lists these apart the same way)
   const atVenueOf = useMemo(() => atVenueOfEvent(sel, fvSettings, inventory), [sel, fvSettings, inventory]);
   // What actually goes on a truck: each line at the qty still to load; lines with nothing to load are the "at the venue" list.
-  const loadItems = useMemo(() => blockedItems.map(it => { const a = atVenueOf(it); return a.load === (Number(it.qty) || 0) ? it : { ...it, qty: a.load, fullQty: it.qty }; }).filter(it => (Number(it.qty) || 0) > 0), [blockedItems, atVenueOf]);
-  const atVenueItems = useMemo(() => blockedItems.filter(it => { const a = atVenueOf(it); return a.repeat || a.fixed > 0 || a.foc; }), [blockedItems, atVenueOf]);
+  // standing stock taken off ONCE per item across its rows (a kit part and the same item loose share the venue's pieces) - lib/ims/atVenue
+  const atVenueRow = useMemo(() => atVenueByRow(blockedItems, atVenueOf), [blockedItems, atVenueOf]);
+  const atVenueOfRow = (it) => atVenueRow.get(it.id) || atVenueOf(it);
+  const loadItems = useMemo(() => blockedItems.map(it => { const a = atVenueOfRow(it); return a.load === (Number(it.qty) || 0) ? it : { ...it, qty: a.load, fullQty: it.qty }; }).filter(it => (Number(it.qty) || 0) > 0), [blockedItems, atVenueOf, atVenueRow]);
+  const atVenueItems = useMemo(() => blockedItems.filter(it => { const a = atVenueOfRow(it); return a.repeat || a.fixed > 0 || a.foc; }), [blockedItems, atVenueOf, atVenueRow]);
   const rentalIncome = blockedItemsGrouped.reduce((s, x) => s + x.total, 0);
 
   // ── Department-saved data on the event order ──
@@ -7403,7 +7406,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">Already at the venue · not loaded</div>
                   <div className="mt-2 rounded-lg bg-gray-50 divide-y divide-gray-100">
                     {atVenueItems.map(it => {
-                      const a = atVenueOf(it);
+                      const a = atVenueOfRow(it);
                       const nm = choiceViewAll.get(it.id)?.name || it.name;
                       return (
                         <div key={"av:" + it.id} className="flex items-center gap-2.5 px-2.5 py-2">

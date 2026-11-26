@@ -55,3 +55,24 @@ export function atVenueOfEvent(sel, fvSettings, inventory) {
     return r;
   };
 }
+
+// The same, over a whole list of load rows at once: an item standing at the venue is taken off ONCE across its rows (owner's QA
+// audit 2026-11-26: 10 standing pieces of an item used as a kit part ×10 and loose ×10 were taken off each row, so neither loaded).
+// Rows are served in list order, each taking what is still standing. Returns Map(row.id -> { fixed, repeat, foc, load }).
+export function atVenueByRow(rows, atVenueOf) {
+  const left = new Map();
+  const out = new Map();
+  (rows || []).forEach((it) => {
+    if (!it) return;
+    const a = atVenueOf(it);
+    if (!it.invId || a.repeat || a.foc || !(a.fixed > 0)) { out.set(it.id, a); return; }
+    const id = String(it.invId);
+    if (!left.has(id)) left.set(id, atVenueOf({ id: "__standing:" + id, invId: it.invId, qty: 1e9 }).fixed || 0);
+    const qty = Number(it.qty) || 0;
+    const fixed = Math.min(qty, left.get(id));
+    left.set(id, left.get(id) - fixed);
+    out.set(it.id, { ...a, fixed, load: Math.max(0, qty - fixed) });
+  });
+  return out;
+}
+

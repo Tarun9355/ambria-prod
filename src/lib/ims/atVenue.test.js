@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { atVenueOfEvent } from "./atVenue";
+import { atVenueOfEvent, atVenueByRow } from "./atVenue";
 
 // fixed venue "Pushpanjali" with 4 standing sofas (i1); a Repeat chair (i2); a fresh table (i3)
 const fv = { fixedVenues: [{ name: "Pushpanjali", items: [{ invId: "i1", qty: 4 }] }] };
@@ -40,5 +40,13 @@ describe("atVenueOfEvent - fixed / repeat items are at the venue, not loaded", (
   it("a zone's Repeat with its Elements chip set back to Fresh: loads", () => {
     const s4 = { functionsDetail: [{ zones: { stage: { repeat: true, repeatCats: { elements: false } } }, elements: { stage: [{ invId: "a" }] } }] };
     expect(atVenueOfEvent(s4, {}, [])({ id: "a", invId: "a", qty: 1 })).toMatchObject({ repeat: false, load: 1 });
+  });
+  it("standing stock is taken off once across an item's rows (a kit part and the same item loose)", () => {
+    const fv2 = { fixedVenues: [{ name: "Pushpanjali", items: [{ invId: "i1", qty: 10 }] }] };
+    const s5 = { venue: "Pushpanjali", functionsDetail: [{ venue: "Pushpanjali", elements: { z: [{ invId: "i1" }] } }] };
+    const rows = [{ id: "kitpart", invId: "i1", qty: 10, kitOf: "Kit" }, { id: "loose", invId: "i1", qty: 10 }];
+    const m = atVenueByRow(rows, atVenueOfEvent(s5, fv2, []));
+    expect(m.get("kitpart")).toMatchObject({ fixed: 10, load: 0 });
+    expect(m.get("loose")).toMatchObject({ fixed: 0, load: 10 });
   });
 });
