@@ -177,7 +177,8 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
     const qty = r2(zones.reduce((s, z) => s + z.qty, 0));
     const amount = (onlyFi === null || onlyFi === undefined) ? allFnAmount : Math.round(zones.reduce((s, z) => s + (z.exactAmount ?? z.amount), 0));
     const stockRows = Array.isArray(stock?.[kind.stockKey]) ? stock[kind.stockKey] : [];
-    const stockOf = (name) => stockRows.find((r) => r && colourKey(r.colour) === colourKey(name)) || {};
+    // a colour can have several stock rows (grades): the one carrying the reference photo first, so the photo is not lost to a bare row
+    const stockOf = (name) => stockRows.find((r) => r && colourKey(r.colour) === colourKey(name) && r.photo) || stockRows.find((r) => r && colourKey(r.colour) === colourKey(name)) || {};
     // the colours of the whole fabric: worked out live when every row of it belongs to a function with a palette, else what Deal Check recorded
     const planColours = (anyEntry && allLive)
       ? [...liveGroup.values()].map((g) => ({ colour: g.colour, qty: Math.ceil(g.old + g.new), qtyOld: Math.ceil(g.old), qtyNew: Math.ceil(g.new) })).filter((c) => c.qty > 0)

@@ -102,8 +102,12 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
     const colour = String(r.colour || "").trim() || "(unassigned)";
     const label = `${k.label} - ${colour}`;
     const key = label.toLowerCase();
-    const stock = (Array.isArray(trussInv?.[k.stockKey]) ? trussInv[k.stockKey] : []).find((x) => String(x?.colour || "").trim().toLowerCase() === colour.toLowerCase()) || {};
-    const cur = fabricNeed.get(key) || { label, qty: 0, unit: k.unit, photo: stock.photo || "" };
+    // the colour's reference photo: a row of this fabric's stock that has one (a colour can have several rows - grades - and the
+    // first need not carry the photo), else the same colour's photo in another fabric's stock (Admin shares them the same way)
+    const sameCol = (x) => String(x?.colour || "").trim().toLowerCase() === colour.toLowerCase() && x?.photo;
+    const photo = (Array.isArray(trussInv?.[k.stockKey]) ? trussInv[k.stockKey] : []).find(sameCol)?.photo
+      || FABRIC_KINDS.map((o) => (Array.isArray(trussInv?.[o.stockKey]) ? trussInv[o.stockKey] : []).find(sameCol)?.photo).find(Boolean) || "";
+    const cur = fabricNeed.get(key) || { label, qty: 0, unit: k.unit, photo };
     cur.qty += q;
     fabricNeed.set(key, cur);
   }));

@@ -24,4 +24,10 @@ describe("Site Receiving: fabric", () => {
     expect(html).toMatch(/arriving <!-- -->8/);
     expect(html).toMatch(/short <!-- -->4/);
   });
+  it("the colour's photo from a stock row that has one, else the same colour in another fabric's stock", () => {
+    const html = renderToString(<SiteReceivingPanel sel={{ id: "E1", fabricPlan: { liza: [{ colour: "Ivory", qty: 5 }], curtain: [{ colour: "Gold", qty: 2 }] }, trucks: [] }} setEventOrders={() => {}} inventory={[]} eventOrders={[]} authUser={{}} mode="actual" settings={{}}
+      trussInv={{ lizaStock: [{ colour: "Ivory" }, { colour: "ivory ", photo: "https://x/ivory.jpg" }], curtainStock: [{ colour: "Gold" }], maskingStock: [{ colour: "Gold", photo: "https://x/gold.jpg" }] }} />);
+    expect(html).toContain("ivory.jpg");
+    expect(html).toContain("gold.jpg");
+  });
 });
