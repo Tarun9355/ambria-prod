@@ -5,7 +5,6 @@ import AdminSettingsTab from "./AdminSettingsTab.jsx";
 import StructurePlanningTab from "./StructurePlanningTab.jsx";
 import DepartmentOpsTab from "./DepartmentOpsTab.jsx";
 import { hasTabPerm, userSubTabs } from "../../lib/ims/tabAccess";
-import { isAdminUser } from "../../lib/ims/trussRates";
 
 // Faithful to the reference PlanningTab wrapper (sub-tabs: Truss / Paint / Truss&Batta /
 // Fabric Stock). Manpower and Boxes & Challans were decommissioned — no longer needed.
@@ -55,7 +54,6 @@ export default function PlanningTab({ prodRequests, projects, functions, setFunc
   // same answer. Dept Ops computes its own copy internally instead (it already has its own
   // authUser/settings and its own, more specific events_manpower gate to reconcile this against).
   const canEditPlanning = hasTabPerm(authUser, settings, "ims", "planning", "edit");
-  // Fabric Stock (Liza / curtain / masking stock, colours and rates): Admin only (owner ask 2026-11-26, after the Old rates were set to 0)
   return (
     // `relative isolate` so the glow layer's -z-10 stays inside this page's own stacking context:
     // it paints behind the Planning content only, never over the nav rail or the header.
@@ -80,7 +78,7 @@ export default function PlanningTab({ prodRequests, projects, functions, setFunc
       {sub === "paint" && <PaintPlanningTab projects={projects} functions={functions} inventory={inventory} settings={settings} />}
       {sub === "trussbatta" && <AdminSettingsTab mode="trussbatta" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} saveTrussRate={saveTrussRate} authUser={authUser} canEdit={canEditPlanning} />}
       {sub === "platformconfig" && <AdminSettingsTab mode="platformconfig" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} canEdit={canEditPlanning} />}
-      {sub === "fabricstock" && <AdminSettingsTab mode="fabricstock" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} saveTrussRate={saveTrussRate} authUser={authUser} canEdit={canEditPlanning && isAdminUser(authUser)} />}
+      {sub === "fabricstock" && <AdminSettingsTab mode="fabricstock" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} saveTrussRate={saveTrussRate} authUser={authUser} canEdit={canEditPlanning} />}
       {sub === "truck" && <AdminSettingsTab mode="truck" settings={settings} setSettings={setSettings} studio={studio} trussInv={trussInv} setTrussInv={setTrussInv} rateCardCategories={rateCardCategories} rcItems={rcItems} rcCats={rcCats} inventory={inventory} canEdit={canEditPlanning} />}
     </div>
   );

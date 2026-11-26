@@ -35,10 +35,10 @@ export function RateInput({ value, canChange, onSave, className, ariaLabel }) {
   );
 }
 
-export function AdminOnlyNote() {
+export function AdminOnlyNote({ text = "Only an Admin can change rates" }) {
   return (
     <div className="rounded-lg bg-gray-100 text-gray-600 text-xs font-semibold px-3 py-2 inline-flex items-center gap-1.5">
-      <span aria-hidden="true">🔒</span>{"Only an Admin can change rates"}
+      <span aria-hidden="true">🔒</span><span>{text}</span>
     </div>
   );
 }

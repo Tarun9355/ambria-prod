@@ -570,7 +570,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
           mount (Planning's Truss & Batta / Platform / Fabric Stock / Truck, Flowers' Mandi /
           Recipes); Admin → Settings itself always passes the canEdit=true default. */}
       {forcedMode && !canEdit && (
-        <div className="rounded-lg bg-gray-100 text-gray-500 text-xs font-semibold px-3 py-2 inline-flex items-center gap-1.5">{mode === "fabricstock" ? "🔒 View only — only an Admin can edit Fabric Stock" : "👁 View only — your access here doesn't include editing"}</div>
+        <div className="rounded-lg bg-gray-100 text-gray-500 text-xs font-semibold px-3 py-2 inline-flex items-center gap-1.5">👁 View only — your access here doesn't include editing</div>
       )}
       {!forcedMode && <Tabs tabs={panelsShown} active={panel} onChange={setPanel} />}
       {!forcedMode && panel === "masterdata" && (
@@ -2400,8 +2400,12 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
       {activePanel === "fabricstock" && trussInv && (() => {
         const colourCat = (settings.colourCatalogue || []).map((c) => c.name);
         const rates = trussInv.rates || {};
-        const updateStock = (which, idx, key, val) => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade" || key === "hex" || key === "photo") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
-        const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
+        // Owner ask 2026-11-26: a department head updates the stock QUANTITIES only (Old / New kg or pcs); colours (add, remove, name,
+        // photo, In Build), the Liza kg conversion factors and the rates are Admin only.
+        const fabAdmin = canEdit && ratesAdmin;
+        const setTrussInvAdmin = fabAdmin ? setTrussInv : () => {};
+        const updateStock = (which, idx, key, val) => ((key === "colour" || key === "grade" || key === "hex" || key === "photo") ? setTrussInvAdmin : setTrussInv)((ti) => { const next = [...(ti[which] || [])]; next[idx] = { ...next[idx], [key]: (key === "colour" || key === "grade" || key === "hex" || key === "photo") ? val : (parseFloat(val) || 0) }; return { ...ti, [which]: next }; });
+        const addStockRow = (which, qtyField) => setTrussInvAdmin((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
         // One colour into all three fabrics at once: Liza (kg), Wall Masking and Velvet Curtains (pieces) share the same colour list, so a colour picked here
         // gets a row (0 old / 0 new) in each table that does not have it yet, with the reference photo of whichever table already has it.
         const FABRIC_TABLES = [["lizaStock", "stockKg"], ["maskingStock", "stockPieces"], ["curtainStock", "stockPieces"]];
@@ -2414,7 +2418,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
           const name = colourCat.length ? catalogueColour(typed, colourCat) : typed;
           if (!name) { setAddColourErr(`"${typed}" is not in the Colour Catalogue - pick one from the chips above (a colour that is not in the list has to be added to the colour catalogue first).`); return; }
           setAddColourErr("");
-          setTrussInv((ti) => {
+          setTrussInvAdmin((ti) => {
             const photo = FABRIC_TABLES.map(([w]) => (ti[w] || []).find((r) => sameColour(r.colour, name) && r.photo)?.photo).find(Boolean);
             const next = { ...ti };
             FABRIC_TABLES.forEach(([which, qtyField]) => {
@@ -2429,15 +2433,15 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
         const removeColourFromAll = async (name) => {
           const holding = FABRIC_TABLES.flatMap(([which, qtyField]) => (trussInv[which] || []).filter((r) => sameColour(r.colour, name) && ((Number(r[qtyField]) || 0) + (Number(r[`${qtyField}New`]) || 0)) > 0));
           if (holding.length && !(await confirm({ title: `Remove ${name} from all three fabrics?`, body: `${holding.length === 1 ? "One of its rows still holds" : "Some of its rows still hold"} stock; that stock will be gone from the count.` }))) return;
-          setTrussInv((ti) => {
+          setTrussInvAdmin((ti) => {
             const next = { ...ti };
             FABRIC_TABLES.forEach(([which]) => { next[which] = (ti[which] || []).filter((r) => !sameColour(r.colour, name)); });
             return next;
           });
         };
         const removeStockRow = async (which, idx) => {
-          if (!(await confirm({ title: "Remove this stock row?", body: "It will no longer count towards the truss / fabric stock." }))) return;
-          setTrussInv((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
+          if (!fabAdmin || !(await confirm({ title: "Remove this stock row?", body: "It will no longer count towards the truss / fabric stock." }))) return;
+          setTrussInvAdmin((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
         };
         // No more fresh-purchase-price / markup-% pair (2026-10-15): the salesperson now picks Old or
         // New fabric explicitly per truss (StudioBuild.jsx's Fabric toggle) and it bills flat at that
@@ -2466,7 +2470,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                       <span aria-hidden="true" className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400">🔍</span>
                     </div>
                   )}
-                  <button onClick={() => addStockRow(which, qtyField)} className={`text-xs bg-${themeColor}-600 hover:bg-${themeColor}-700 text-white px-2.5 py-1 rounded font-medium`}>+ Add Colour</button>
+                  {fabAdmin && <button onClick={() => addStockRow(which, qtyField)} className={`text-xs bg-${themeColor}-600 hover:bg-${themeColor}-700 text-white px-2.5 py-1 rounded font-medium`}>+ Add Colour</button>}
                 </div>
                 {stock.length === 0 ? (
                   <div className="px-3 py-4 text-xs text-gray-400 italic text-center">No colours added yet. Tap + Add Colour to start.</div>
@@ -2529,7 +2533,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                                 return (
                                   <>
                                     <button type="button"
-                                      onClick={() => { setFabricPhotoMenuOpen((k) => k === photoKey ? null : photoKey); hidePreview(); }}
+                                      onClick={() => { if (!fabAdmin) return; setFabricPhotoMenuOpen((k) => k === photoKey ? null : photoKey); hidePreview(); }}
                                       onMouseEnter={showPreview} onMouseLeave={hidePreview}
                                       className="block cursor-pointer">
                                       {row.photo ? <img src={thumbUrl(row.photo, 36)} loading="lazy" decoding="async" alt={row.colour} className="w-9 h-9 rounded object-cover border border-gray-300" title="Click to replace" />
@@ -2557,20 +2561,22 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                               })()}
                             </td>
                             <td className="px-2 py-1.5">
-                              <CatalogueColourInput value={row.colour || ""} names={colourCat} listId={`${which}-colours`} onCommit={(v) => updateStock(which, i, "colour", v)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
+                              {fabAdmin
+                                ? <CatalogueColourInput value={row.colour || ""} names={colourCat} listId={`${which}-colours`} onCommit={(v) => updateStock(which, i, "colour", v)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
+                                : <span className="block px-2 py-1 text-xs font-medium text-gray-800">{row.colour || "—"}</span>}
                             </td>
                             <td className="px-2 py-1.5 text-center">
                               {/* Availability, per fabric: off keeps the row (stock, photo) but Build's Fabric Palette stops offering this colour for this fabric. */}
-                              <button type="button" role="switch" aria-checked={!row.hideInBuild} aria-label={`${row.colour || "Colour"} available in Build`} onClick={() => setTrussInv((ti) => { const next = [...(ti[which] || [])]; next[i] = { ...next[i], hideInBuild: !next[i].hideInBuild }; return { ...ti, [which]: next }; })}
+                              <button type="button" role="switch" disabled={!fabAdmin} aria-checked={!row.hideInBuild} aria-label={`${row.colour || "Colour"} available in Build`} onClick={() => setTrussInvAdmin((ti) => { const next = [...(ti[which] || [])]; next[i] = { ...next[i], hideInBuild: !next[i].hideInBuild }; return { ...ti, [which]: next }; })}
                                 title={row.hideInBuild ? "Hidden in Build — tap to show" : "Shown in Build — tap to hide"}
-                                className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors " + (row.hideInBuild ? "bg-gray-300" : `bg-${themeColor}-600`)}>
+                                className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed " + (row.hideInBuild ? "bg-gray-300" : `bg-${themeColor}-600`)}>
                                 <span className={"inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " + (row.hideInBuild ? "translate-x-0.5" : "translate-x-[18px]")} />
                               </button>
                             </td>
                             <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[qtyField] || 0} onChange={(e) => updateStock(which, i, qtyField, e.target.value)} className={`w-20 border border-gray-300 rounded px-2 py-1 text-xs font-bold text-center`} title="Old fabric in stock" /></td>
                             <td className="px-2 py-1.5 text-center"><input type="number" min="0" step="1" value={row[`${qtyField}New`] || 0} onChange={(e) => updateStock(which, i, `${qtyField}New`, e.target.value)} className={`w-20 border border-${themeColor}-300 rounded px-2 py-1 text-xs font-bold text-center text-${themeColor}-800`} title="New fabric in stock" /></td>
                             <td className="px-2 py-1.5 text-center text-xs font-bold text-gray-700">{oldQ + newQ}</td>
-                            <td className="px-2 py-1.5 text-center"><button onClick={() => removeStockRow(which, i)} className="text-red-400 hover:text-red-600 text-xs">✕</button></td>
+                            <td className="px-2 py-1.5 text-center">{fabAdmin && <button onClick={() => removeStockRow(which, i)} aria-label={`Remove ${row.colour || "this colour"}`} className="text-red-400 hover:text-red-600 text-xs">✕</button>}</td>
                           </tr>
                         );
                       })}
@@ -2584,7 +2590,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
         };
         return (
           <div className="space-y-4">
-            {canEdit && !canChangeRates && <AdminOnlyNote />}
+            {canEdit && !fabAdmin && <AdminOnlyNote text="Only an Admin can change rates, colours and the conversion factors - you can update the stock quantities" />}
             <RateHistory refreshKey={rateLogTick} keys={["lizaKgRate", "lizaKgRateNew", "maskingPieceRate", "maskingPieceRateNew", "curtainPieceRate", "curtainPieceRateNew"]} />
             <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4">
               <p className="font-bold text-indigo-900">🧵 Fabric Stock & Pricing</p>
@@ -2593,27 +2599,30 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
             <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 space-y-3">
               <p className="font-bold text-rose-900">🧮 Liza kg Conversion Factors</p>
               <p className="text-xs text-rose-700">How much Liza fabric (kg) is needed per RFT of truss wrap, and per sqft of ceiling drape at each density.</p>
+              <fieldset disabled={!fabAdmin} className="m-0 p-0 border-0 min-w-0 disabled:opacity-60">
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-white border border-rose-100 rounded-lg p-3">
                   <p className="text-xs font-bold text-rose-800 mb-2">U Truss + Half Box (Frame wrap)</p>
                   <label className="text-xs text-gray-600">kg per RFT (pillars + beams)</label>
-                  <input type="number" min="0" step="0.01" value={trussInv.fabricFactors?.kgPerRftWrap ?? 0.3} onChange={(e) => setTrussInv((ti) => ({ ...ti, fabricFactors: { ...(ti.fabricFactors || {}), kgPerRftWrap: parseFloat(e.target.value) || 0 } }))} className="mt-1 w-full border border-rose-200 rounded px-2 py-1 text-sm font-bold" />
+                  <input type="number" min="0" step="0.01" value={trussInv.fabricFactors?.kgPerRftWrap ?? 0.3} onChange={(e) => setTrussInvAdmin((ti) => ({ ...ti, fabricFactors: { ...(ti.fabricFactors || {}), kgPerRftWrap: parseFloat(e.target.value) || 0 } }))} className="mt-1 w-full border border-rose-200 rounded px-2 py-1 text-sm font-bold" />
                 </div>
                 <div className="bg-white border border-rose-100 rounded-lg p-3">
                   <p className="text-xs font-bold text-rose-800 mb-2">Full Box (Ceiling drape) — kg per sqft</p>
                   <div className="grid grid-cols-3 gap-2">
                     {[["Minimum", "kgPerSqftMinimum", 0.03], ["Moderate", "kgPerSqftModerate", 0.05], ["Dense", "kgPerSqftDense", 0.08]].map(([l, k, dv]) => (
-                      <div key={k}><label className="text-[10px] text-gray-600">{l}</label><input type="number" min="0" step="0.01" value={trussInv.fabricFactors?.[k] ?? dv} onChange={(e) => setTrussInv((ti) => ({ ...ti, fabricFactors: { ...(ti.fabricFactors || {}), [k]: parseFloat(e.target.value) || 0 } }))} className="mt-1 w-full border border-rose-200 rounded px-2 py-1 text-xs font-bold text-center" /></div>
+                      <div key={k}><label className="text-[10px] text-gray-600">{l}</label><input type="number" min="0" step="0.01" value={trussInv.fabricFactors?.[k] ?? dv} onChange={(e) => setTrussInvAdmin((ti) => ({ ...ti, fabricFactors: { ...(ti.fabricFactors || {}), [k]: parseFloat(e.target.value) || 0 } }))} className="mt-1 w-full border border-rose-200 rounded px-2 py-1 text-xs font-bold text-center" /></div>
                     ))}
                   </div>
                 </div>
               </div>
+              </fieldset>
             </div>
             <div className="bg-white border border-indigo-200 rounded-2xl p-4 space-y-2.5">
               <div>
                 <p className="font-bold text-indigo-900">🎨 Add a colour to all three fabrics</p>
                 <p className="text-xs text-gray-500 mt-0.5">Tap a colour and it gets a row (0 old / 0 new) in Liza Fabric, Wall Masking Panels and Velvet Curtains together. A colour already in a table is left as it is. Tap a ticked colour to take it out of all three again.</p>
               </div>
+              <fieldset disabled={!fabAdmin} className="m-0 p-0 border-0 min-w-0 space-y-2.5 disabled:opacity-60">
               {colourCat.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {(settings.colourCatalogue || []).map((c) => {
@@ -2636,6 +2645,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                 <button type="submit" className="shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 text-xs font-semibold">+ Add to all three</button>
               </form>
               {addColourErr && <p role="alert" className="text-[11px] text-red-600">{addColourErr}</p>}
+              </fieldset>
             </div>
             {renderFabric("Liza Fabric", "🧣", "rose", "lizaStock", "stockKg", "kg", "lizaKgRate", "lizaKgRateNew")}
             {renderFabric("Wall Masking Panels", "🧱", "orange", "maskingStock", "stockPieces", "pcs", "maskingPieceRate", "maskingPieceRateNew")}
