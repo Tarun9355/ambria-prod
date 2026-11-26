@@ -183,7 +183,7 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
     const planColours = (anyEntry && allLive)
       ? [...liveGroup.values()].map((g) => ({ colour: g.colour, qty: Math.ceil(g.old + g.new), qtyOld: Math.ceil(g.old), qtyNew: Math.ceil(g.new) })).filter((c) => c.qty > 0)
       : (Array.isArray(fabricPlan?.[kind.key]) ? fabricPlan[kind.key] : []);
-    const colours = planColours
+    let colours = planColours
       .map((c) => {
         const s = stockOf(c.colour);
         return { colour: c.colour || "(unassigned)", qty: r2(c.qty), qtyOld: r2(c.qtyOld), qtyNew: r2(c.qtyNew), photo: s.photo || "", hex: s.hex || "" };
@@ -201,6 +201,10 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
     const standingOnly = zones.length > 0 && zones.every((z) => z.standing);
     const standingCols = standingOnly ? [...new Set(zones.flatMap((z) => (z.colours || []).map((c) => c.colour)))] : [];
     const firstStanding = standingOnly ? zones.flatMap((z) => z.colours || [])[0] : null;
+    // Every zone on Repeat pulls nothing, whatever an older Deal Check sync recorded: an event whose zones were set to Repeat after its
+    // last sync still carries that sync's colours (fabricPlan), which the load list would load while the same pieces are listed as
+    // standing at the venue (test report 2026-11-27). The live palette path has no colours here already.
+    if (standingOnly) colours = [];
     // What is pulled from stock - always the NEW fabric only (a ♻ Repeat zone's fabric is already standing at the venue):
     //  - colours picked (whole event): the colours added up, each rounded UP to a whole kg / piece, so a little more than the zones'
     //    exact figure (owner report 2026-11-26, Rajiv Tangri: Maroon 10 + Ivory 8 = 18 kg while the card said 16 kg);

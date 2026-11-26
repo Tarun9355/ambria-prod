@@ -200,6 +200,7 @@ Repeat / standing / reuse discount ¦ रिपीट / पहले से ल�
 Repeat zone: this fabric is already standing - nothing new is pulled from stock ¦ रिपीट ज़ोन: यह फ़ैब्रिक पहले से लगा है - स्टॉक से नया कुछ नहीं निकलेगा
 Every zone is on ♻ Repeat — this fabric is already standing, so nothing new is pulled from stock. Each zone's colour is below. ¦ हर ज़ोन ♻ रिपीट पर है — यह फ़ैब्रिक पहले से लगा है, इसलिए स्टॉक से नया कुछ नहीं निकलेगा। हर ज़ोन का रंग नीचे है।
 standing (♻ Repeat) ¦ पहले से लगा (♻ रिपीट)
+already standing (♻ Repeat) ¦ पहले से लगा (♻ रिपीट)
 Requires "Manage Manpower" ¦ "Manage Manpower" की इजाज़त चाहिए
 Rest of ¦ बाकी —
 Reused ¦ दोबारा इस्तेमाल
