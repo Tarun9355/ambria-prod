@@ -25,13 +25,14 @@ import { carpetStockFor, validDecision, carpetNotesForRows, carpetPrefNotesForRo
 import CarpetPickerModal from "./CarpetPickerModal.jsx";
 import ElementChoicePlan from "./ElementChoicePlan.jsx";
 import { elementStockFor, choiceNotesForRows, preferenceNotesForRows } from "../../lib/ims/elementPlan";
+import { itemTakesChoices } from "../../lib/studio/elementPrefs.js";
 import { loadOnDate } from "../../lib/ims/loadByDate";
 import { orderZoneKeys } from "../../lib/ims/zoneOrder";
 import { dcFabricMultOf, trussInvForMaterial, parseFlowerPalette, repeatCatFor } from "../../lib/studio/pricing";
 import { trussBaseArea } from "../../lib/studio/taxonomy";
 import { isTrussFoc } from "../../lib/studio/foc.js";
 import { resolveBeamSegment, resolvePillarHeight } from "../../lib/ims/trussEngine";
-import { platformPullPlan, platformPullPlansByFn, platformFloorsFromParts, PLATFORM_MATERIAL_LABEL } from "../../lib/ims/platformEngine";
+import { platformPullPlan, platformPullPlansByFn, platformFloorsFromParts, platformsForMaterial, platformMaterialOf, PLATFORM_MATERIAL_LABEL } from "../../lib/ims/platformEngine";
 import { RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_BOX } from "../../lib/studio/brand.js";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
@@ -1648,13 +1649,98 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     });
     return out;
   };
+  // A cushion cover or overlay named in several zones (or picked directly in one zone AND
+  // bolted on as part of a furniture kit in another — "part of Ivory Couple Couch 15") lands in
+  // Deal Check's cost-rollup snapshot as one SEPARATE entry per zone/source, even when every one
+  // of them resolves to the exact same physical design (same invId) — e.g. two rows both named
+  // "Cushion Cover Blue Potri" instead of one row for "need N total" (owner ask 2026-11-26: "if
+  // the cushion cover selected is the same show the single row with the total qty needed"). The
+  // choice/preference notes already quietly merge across these (choiceNotesForRows/
+  // preferenceNotesForRows below group by invId and attach every zone's note to whichever row
+  // happens to be first) — this does the same merge for the ROW itself (qty/rental/total), so the
+  // figures the notes sit next to actually match what they're describing. Scoped to items
+  // itemTakesChoices() recognises (overlays, and cushion COVERS specifically) — the same boundary
+  // this file's own choice/preference logic already draws, so nothing outside that scope is
+  // touched. A kit-whole row (isKit) is never merged into a plain item row — it is a different
+  // kind of line (the kit's own total, not one piece of stock).
+  //
+  // DISPLAY ONLY, wired into invBase (not blockedGroupedOf/blockedItems/blockedFlatOf) — same
+  // separation splitPlatformRows above uses, and for the same reason: truck loading, challan,
+  // receiving, dismantle and the PDF all key a saved load to a row by truckKey (invId, plus
+  // kitOf when set), computed from the ORIGINAL, unmerged rows. Merging there too would combine
+  // two rows that may already carry separate saved truck assignments into one, orphaning
+  // whichever one lost its row.
+  // Combines two rows' cost breakdowns the same way Deal Check's own addCalc does (DealCheckOverlay.jsx)
+  // — sum full/dateAdj/disc/short, union dms — so a merged row's 💡 How still foots to its own total
+  // instead of only explaining whichever source happened to come first.
+  const addFabricCalc = (a, b) => (!b ? a : !a ? { ...b, dms: [...(b.dms || [])] }
+    : { full: a.full + b.full, dateAdj: a.dateAdj + b.dateAdj, disc: a.disc + b.disc, short: a.short + b.short, dms: [...new Set([...(a.dms || []), ...(b.dms || [])])] });
+  const mergeFabricChoiceRows = (rows) => {
+    const invById = new Map((inventory || []).map((it) => [String(it.id), it]));
+    const groups = new Map(); // group key -> the merged row already pushed into `out`
+    const out = [];
+    rows.forEach((r) => {
+      const item = r.invId != null ? invById.get(String(r.invId)) : null;
+      if (r.isKit || !item || !itemTakesChoices(item)) { out.push(r); return; }
+      // Deal Check's own cost-rollup never merges rows across these three flags either (its own
+      // merge key is name|sub|imsId|prodOrBuy|foc|fromKit) — an FOC piece (left at the venue from a
+      // past event, billed ₹0, never loaded) or a Production/Buying piece (arranged outside stock,
+      // its own badge and notes) must stay its own row, never folded into a normal stocked row
+      // (regression review, 2026-11-26: merging an FOC share in would silently inflate the "to
+      // load" figure and hide the 🎁 FOC badge; merging a prodOrBuy share in would drop its
+      // BUYING/PRODUCTION badge and make choiceNotesForRows/preferenceNotesForRows skip its notes,
+      // since both explicitly exclude prodOrBuy lines).
+      const k = String(r.invId) + "|" + (r.prodOrBuy || "") + "|" + (r.foc ? "foc" : "");
+      const g = groups.get(k);
+      if (!g) {
+        const copy = { ...r, byFn: r.byFn ? { ...r.byFn } : null };
+        groups.set(k, copy); out.push(copy); return;
+      }
+      g.qty = (Number(g.qty) || 0) + (Number(r.qty) || 0);
+      g.rentalQty = (Number(g.rentalQty) || 0) + (Number(r.rentalQty) || 0);
+      g.total = (Number(g.total) || 0) + (Number(r.total) || 0);
+      g.shortQty = (Number(g.shortQty) || 0) + (Number(r.shortQty) || 0);
+      g.shortCost = (Number(g.shortCost) || 0) + (Number(r.shortCost) || 0);
+      g.kitPartsTotal = (Number(g.kitPartsTotal) || 0) + (Number(r.kitPartsTotal) || 0);
+      g.parts = [...(g.parts || []), ...(r.parts || [])];
+      if (r.outOfStock) g.outOfStock = true;
+      if (r.isSwapped && !g.isSwapped) { g.isSwapped = true; g.swappedFrom = r.swappedFrom; }
+      // A merged row can no longer point at a single kit, or a single kit's own component
+      // breakdown — once two different-sourced entries combine, "part of X" would misname
+      // whichever source didn't win, and a component list would describe only one of them.
+      if (g.fromKit !== r.fromKit) g.fromKit = null;
+      g.components = null; g.recipeParts = null;
+      // The row's OWN 💡 How breakdown: combine when both sources have one (addFabricCalc, same
+      // rule Deal Check itself uses to combine two cost entries), else drop it rather than show a
+      // breakdown that only explains part of the merged total — pieceRow marks the row so that
+      // fallback reads as the normal "rate × quantity" line instead of a misleading "synced before
+      // the breakdown existed" note (the same marker platformEngine's piece rows already use).
+      g.calc = (g.calc && r.calc) ? addFabricCalc(g.calc, r.calc) : null;
+      g.pieceRow = true;
+      if (r.byFn) {
+        g.byFn = g.byFn || {};
+        Object.entries(r.byFn).forEach(([fi, v]) => {
+          const cur = g.byFn[fi];
+          // Only an actual OVERLAP (this function appears in both sources) loses its calc — that
+          // combined figure describes two different sources at once, so the specific breakdown no
+          // longer applies. A function that appears in only ONE source's byFn keeps that source's
+          // own calc untouched — it's still exactly what it always was, just now living on a row
+          // that also covers other functions.
+          g.byFn[fi] = cur
+            ? { qty: (Number(cur.qty) || 0) + (Number(v.qty) || 0), rentalQty: (Number(cur.rentalQty) || 0) + (Number(v.rentalQty) || 0), total: (Number(cur.total) || 0) + (Number(v.total) || 0), calc: null }
+            : { ...v };
+        });
+      }
+    });
+    return out;
+  };
   // lib/ims/deptLoadList (shared with the Site page's Receiving, so both read one list)
   const blockedGroupedOf = (d, swaps) => blockedGroupedFor(d, { sel, inventory, blocks, catToDept, mappedStockRows, swaps });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const blockedItemsGrouped = useMemo(() => blockedGroupedOf(dept, swapInfo), [sel, blocks, inventory, dept, swapInfo, mappedStockRows]);
   // Inventory Blocked's OWN display list only (trucks/PDF/receiving/dismantle all keep reading
   // blockedItemsGrouped/blockedItems directly, untouched — see splitPlatformRows above).
-  const invBase = useMemo(() => dept === "Tenting" ? splitPlatformRows(blockedItemsGrouped) : blockedItemsGrouped, [blockedItemsGrouped, trussInv, dept]);
+  const invBase = useMemo(() => dept === "Tenting" ? splitPlatformRows(blockedItemsGrouped) : dept === "Fabric" ? mergeFabricChoiceRows(blockedItemsGrouped) : blockedItemsGrouped, [blockedItemsGrouped, trussInv, dept, inventory]);
   // What this department is short of (owner ask 2026-11-15): named in red on the Inventory blocked tile and atop its panel.
   const invShortItems = useMemo(() => blockedItemsGrouped.filter(it => Number(it.shortQty) > 0), [blockedItemsGrouped]);
   const shortNames = (list, max) => list.slice(0, max).map(it => `${it.name} ×${it.shortQty}`).join(", ") + (list.length > max ? ` +${list.length - max} more` : "");
@@ -2026,7 +2112,21 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         // count kept showing the full need regardless, while every other figure on the row (qty,
         // rentalQty) correctly dropped to 0 (regression review finding #5, 2026-11-26).
         const pieceQty = it.sqftPerPiece > 0 ? Math.round(load / it.sqftPerPiece) : (fnRow?.pieceQty ?? it.pieceQty ?? null);
-        return { ...it, src: it, qty: load, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q), calc: fnRow ? (fnRow.calc || null) : null, pieceQty };
+        // kitPartsValue > 0 means part of this function's total came from outside byFn (a kit's own
+        // component, or — since the Fabric cushion/overlay merge — a different source row entirely)
+        // that fnRow's own breakdown never covered, so fnRow.calc alone would only explain part of
+        // `total` here. Null it in that case (falls back to the generic rate × quantity line, still
+        // correct since qty/total already account for it) rather than show a breakdown that quietly
+        // undercounts the real total (regression review, 2026-11-26).
+        const calc = fnRow && !kitPartsValue ? (fnRow.calc || null) : null;
+        // Nulling calc for the kitPartsValue case (any department, not just Fabric's merge — a
+        // Crystal Vedi's 12 WARM LED kit parts hit this too) needs its own pieceRow, independent of
+        // whether the row ITSELF came in already marked pieceRow — otherwise the fallback reads as
+        // "synced before the breakdown existed", sending ops looking for a fix that doesn't exist,
+        // when the real reason is simply that this function's share includes value fnRow's own
+        // breakdown never covered (regression review, 2026-11-26).
+        const pieceRow = it.pieceRow || kitPartsValue > 0;
+        return { ...it, src: it, qty: load, rentalQty: q, total, shortQty: Math.min(Number(it.shortQty) || 0, q), calc, pieceRow, pieceQty };
       }).filter(Boolean)
     : invBase;
   const invWholeOnly = invScoped ? invBase.length - invShown.length : 0;
@@ -2586,8 +2686,88 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       if (!m.has(sub)) m.set(sub, []);
       m.get(sub).push(i);
     });
+    // Truss pillars/beams, Platform pieces (Tenting), and Liza Fabric/Velvet Curtains/Wall Masking by
+    // colour (Fabric) are never rows in the `inventory` table at all (owner report, 2026-11-26) —
+    // they live in the separate admin-configured `trussInv` structure (Admin → Truss / Fabric Stock &
+    // Pricing), so "Add an item not in this deal" never offered them. Synthesized here into the same
+    // {id, name, subCat, qty} shape a real inventory row has — confirmed addTripCustomItem only ever
+    // reads those three fields (plus an optional photo), so these slot into the exact same picker and
+    // write path as any catalog item, with no photo (trussInv rows mostly don't carry one, same as any
+    // custom item with none) except fabric colours, which do.
+    //
+    // `virtual: true` marks every one of these — NOT a real inventory id, so it must never be written
+    // to the shared stock-ledger `blocks` table: `truckExtraQtyByItem` (and `truckExtraElements`,
+    // built from it) skip a virtual row (regression review, 2026-11-26, caught the first cut sending
+    // synthetic ids like "truss:pillars:iron:8" into `apply_block_ops`, which granted them
+    // unconditionally since no matching inventory row exists to check stock against — junk rows in a
+    // table other deals' bookings can read). `truckExtraRowsOf`/this tab's own `truckExtraRows`
+    // (Dept Ops' own extras list, Deal Check's read-only "Added on trucks" panel) still SHOW a
+    // virtual row, just priced at ₹0 and never crew-counted — visible, not hidden, since truss/
+    // platform/fabric stock and rates live entirely outside the regular per-item pricing/manpower
+    // engines; costing them properly is a deliberate follow-up, not attempted here.
+    //
+    // Deduplicated by id across every call: Admin Settings' fabric stock tables don't stop an admin
+    // typing the same colour into a table twice (`addStockRow`, AdminSettingsTab.jsx), which would
+    // otherwise give two picker cards the same React key and id — the second with that id wins
+    // silently if that ever happens, rather than crashing or merging their stock (regression review).
+    const seenIds = new Set();
+    const addVirtual = (sub, items) => {
+      const fresh = items.filter((it) => {
+        if (seenIds.has(it.id)) return false;
+        seenIds.add(it.id);
+        return true;
+      });
+      if (fresh.length) m.set(sub, [...(m.get(sub) || []), ...fresh.map((it) => ({ ...it, virtual: true }))]);
+    };
+    if (dept === "Tenting" && trussInv) {
+      // Iron's own skeleton lives at the top level (trussInv.pillars/.beams); every other material
+      // (Aluminium, Pole, …) has its OWN separate table under trussInv.materials[mat] — the same
+      // per-material split trussEngine.js's own pool-feasibility check reads (see its stockTableFor).
+      const stockTableFor = (mat, kind) => (mat === "iron" ? (trussInv?.[kind] || {}) : (trussInv?.materials?.[mat]?.[kind] || {}));
+      const allMats = ["iron", ...Object.keys(trussInv?.materials || {})];
+      ["pillars", "beams"].forEach((kind) => {
+        const sub = kind === "pillars" ? "Truss Pillar" : "Truss Beam";
+        const items = [];
+        allMats.forEach((mat) => {
+          Object.entries(stockTableFor(mat, kind)).forEach(([size, row]) => {
+            const matLabel = mat === "iron" ? "" : ` · ${mat.charAt(0).toUpperCase()}${mat.slice(1)}`;
+            // The admin-configured "Display name" already reads "Pillar 8ft"/"Beam 8ft" (its own
+            // "+ Add Size" seeds exactly that) — used on its OWN, never prefixed with `sub` again
+            // ("Truss Pillar" + "Pillar 8ft" doubled the word, regression review). `size` itself is a
+            // bare number ("8"), never a unit, so the no-display-name fallback needs its own "ft".
+            const label = (row?.name && String(row.name).trim()) || `${sub} ${size}ft`;
+            items.push({ id: `truss:${kind}:${mat}:${size}`, name: `${label}${matLabel}`, subCat: sub, qty: Math.max(0, Math.floor(Number(row?.stock) || 0)) });
+          });
+        });
+        addVirtual(sub, items);
+      });
+      const platformItems = platformsForMaterial(trussInv, null)
+        .filter((r) => (Number(r.lengthFt) || 0) > 0 && (Number(r.widthFt) || 0) > 0)
+        .map((r, i) => {
+          const mat = platformMaterialOf(r);
+          const label = (r.label && String(r.label).trim()) || `${r.lengthFt}×${r.widthFt}ft`;
+          return { id: `platform:${r.id ?? i}`, name: `${label} · ${PLATFORM_MATERIAL_LABEL[mat] || mat}`, subCat: "Platform", qty: Math.max(0, Math.floor(Number(r.stock) || 0)) };
+        });
+      addVirtual("Platform", platformItems);
+    }
+    if (dept === "Fabric" && trussInv) {
+      // Same colour-stock tables Admin → Settings → Fabric Stock & Pricing edits (lizaStock in kg,
+      // curtainStock/maskingStock in pieces) — Old + New stock shown as one combined "in stock" figure,
+      // matching how this picker already shows a plain stock count for every other item.
+      [["lizaStock", "Liza Fabric", "stockKg", "kg"], ["curtainStock", "Velvet Curtains", "stockPieces", "pcs"], ["maskingStock", "Wall Masking", "stockPieces", "pcs"]].forEach(([which, label, qtyField, unitLabel]) => {
+        const rows = Array.isArray(trussInv[which]) ? trussInv[which] : [];
+        const items = rows.map((r) => ({
+          // Keyed by COLOUR, not array position — an admin reordering or deleting a different
+          // colour row must never silently repoint an already-added truck item at the wrong colour,
+          // or merge two different colours under one id on a later load (regression review).
+          id: `fabric:${which}:${String(r.colour || "").trim().toLowerCase()}`, name: `${label} - ${r.colour || "Unnamed colour"} (${unitLabel})`, subCat: label,
+          qty: (Number(r[qtyField]) || 0) + (Number(r[`${qtyField}New`]) || 0), img: r.photo || "",
+        }));
+        addVirtual(label, items);
+      });
+    }
     return m;
-  }, [inventory, dept, settings?.categoryDepartments]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [inventory, dept, settings?.categoryDepartments, trussInv]); // eslint-disable-line react-hooks/exhaustive-deps
   // This department's view of the shared trucks, in the shape the rest of the tab already reads —
   // items keyed "inv:"+listId — so the challans, the PDF and Receiving carry on unchanged.
   const keyByListId = new Map(blockedItems.map(it => ["inv:" + it.id, truckKey(it)]));
@@ -2816,7 +2996,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // dispatched while the modal was open, writes nothing)
   const addTripCustomItem = (id, tripId, invItem, qty) => {
     if (!canEditPlanning || !isActiveTrip(id, tripId) || !invItem || !(Number(qty) > 0)) return false;
-    const row = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), invId: invItem.id, name: invItem.name, sub: invItem.subCat || invItem.subcategory || "", qty: Number(qty) };
+    // virtual (trussInv-backed, not a real inventory row) and img (so a fabric colour's photo
+    // survives onto the added row instead of the "already added" list falling back to a plain
+    // 📦 box, which only ever looks up `inventory` for a photo — regression review, 2026-11-26)
+    // carried straight off the picked item.
+    const row = { id: "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), invId: invItem.id, name: invItem.name, sub: invItem.subCat || invItem.subcategory || "", qty: Number(qty), virtual: !!invItem.virtual, img: invItem.img || "" };
     setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, custom: { ...(tr.custom || {}), [dept]: [...((tr.custom || {})[dept] || []), row] } } : tr));
     return true;
   };
@@ -2874,18 +3058,24 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     eventTruckList.forEach(t => tripsOf(t).forEach(tr => Object.entries(tr.custom || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach(c => {
       const q = Number(c.qty) || 0;
       if (q <= 0 || !c.invId) return;
-      const cur = m.get(c.invId) || { invId: c.invId, name: c.name, sub: c.sub || "", qty: 0, byDept: {} };
+      const cur = m.get(c.invId) || { invId: c.invId, name: c.name, sub: c.sub || "", img: c.img || "", qty: 0, byDept: {} };
       cur.qty += q; cur.byDept[d] = (cur.byDept[d] || 0) + q;
       m.set(c.invId, cur);
     }))));
     return m;
   }, [eventTruckList]);
   // This department's, priced at the item's rent (Inventory's rental price) - shown in Inventory blocked, not billed to the client.
+  // A virtual (trussInv-backed, not a real inventory row — truss pillars/beams, platform pieces,
+  // fabric colours) row still shows up here, visible to whoever's looking (Dept Ops, Deal Check's
+  // read-only "Added on trucks" panel) — just at ₹0 (no `inv` match, so no rate) rather than hidden
+  // entirely, which would otherwise make it look like nothing was ever added (regression review,
+  // 2026-11-26). Its own stored name/photo (`c.img`, stashed at add-time since there's no inventory
+  // row to look one up from) cover what `inv` can't.
   const truckExtraRows = useMemo(() => [...truckExtrasAll.values()].filter(x => (x.byDept[dept] || 0) > 0).map(x => {
     const inv = (inventory || []).find(i => String(i.id) === String(x.invId));
     const qty = x.byDept[dept];
     const rate = Number(inv?.price ?? inv?.rentalCost) || 0;
-    const photo = inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || "";
+    const photo = inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || x.img || "";
     return { invId: x.invId, name: inv?.name || x.name, sub: x.sub || inv?.subCat || inv?.subcategory || "", qty, rate, total: Math.round(qty * rate), photo };
   }), [truckExtrasAll, dept, inventory]);
   const truckExtraTotal = truckExtraRows.reduce((s, r) => s + r.total, 0);
@@ -7344,8 +7534,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
                                 {trip.custom.map(c => (
                                   <div key={c.id} className="flex items-center gap-2.5 px-2.5 py-2">
-                                    {/* its photo from Inventory, like every other loaded item (tap for the big one) */}
-                                    {(() => { const inv = (inventory || []).find(i => String(i.id) === String(c.invId)); const ph = inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || ""; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
+                                    {/* its photo from Inventory, like every other loaded item (tap for the big one) — or the
+                                        row's own stored photo for a virtual (trussInv-backed) item, which has no inventory
+                                        row to look up at all (regression review, 2026-11-26: a fabric colour's photo was
+                                        shown in the picker, then silently replaced by the 📦 placeholder once added). */}
+                                    {(() => { const inv = (inventory || []).find(i => String(i.id) === String(c.invId)); const ph = inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || c.img || ""; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
                                     <div className="min-w-0 flex-1">
                                       <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2">{c.name}</div>
                                       <div className="mt-0.5 text-[10px] text-amber-700">{c.sub || "—"} · not in Build/Deal Check</div>
