@@ -499,6 +499,8 @@ Each trip's challan - every department's items on it ¦ हर ट्रिप �
 Print challan ¦ चालान प्रिंट करें
 Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन बदल सकता है
 All functions ¦ सभी फ़ंक्शन
+Repeat with nothing set up here before: ¦ यहाँ पहले कुछ नहीं लगा, फिर भी रिपीट:
+its items are listed to bring. Ask sales to check the Repeat chips in Build. ¦ इसका सामान लाने की लिस्ट में है। सेल्स से बिल्ड में रिपीट चिप जाँचने को कहें।
 Goes to: ¦ कहाँ जाएगा:
 not set - counts for every function on the Site page ¦ तय नहीं - साइट पेज पर हर फ़ंक्शन में गिना जाएगा
 Showing this function's items and the trips going to it. A trip with no destination set in Planning counts for every function. ¦ इस फ़ंक्शन का सामान और इसके लिए जाने वाली ट्रिप दिख रही हैं। जिस ट्रिप की मंज़िल प्लानिंग में तय नहीं, वह हर फ़ंक्शन में गिनी जाती है।

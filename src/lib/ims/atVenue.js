@@ -6,9 +6,15 @@
 // Returns (item { id, invId, qty, foc }) → { fixed, repeat, foc, load }.
 import { standingQty } from "./fixedVenues";
 import { repeatCatFor } from "../studio/pricing.js";
+import { repeatBackedOfEvent } from "../repeatGuard.js";
+import { isLiveEventOrder } from "./helpers.js";
 
-export function atVenueOfEvent(sel, fvSettings, inventory) {
+// eventOrders (optional): the other events, so a Repeat with nothing standing at its venue is loaded, not trusted (lib/repeatGuard).
+// The returned function carries repeatWithoutSetup: [{ fi, venue, date }] - the functions whose Repeat had nothing behind it.
+export function atVenueOfEvent(sel, fvSettings, inventory, eventOrders = null) {
   const fnsV = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+  const backed = eventOrders ? repeatBackedOfEvent(sel, eventOrders, isLiveEventOrder) : null;
+  const unbacked = new Map(); // fi -> { fi, venue, date }
   const venues = [...new Set([sel?.venue, ...fnsV.map(f => f?.venue)].filter(Boolean))];
   // Repeat only when EVERY use of the item is set to Repeat - one function repeating it while another needs it fresh still loads it.
   const repeatIds = new Set(), freshIds = new Set();
@@ -29,7 +35,11 @@ export function atVenueOfEvent(sel, fvSettings, inventory) {
   // Elements chip - repeatCatFor), the same rule Deal Check prices and trucks by. Reading only the element's own chip missed a whole
   // zone set to Repeat (owner check 2026-11-26).
   fnsV.forEach((f, fi) => Object.entries(f?.elements || {}).forEach(([zk, list]) => (Array.isArray(list) ? list : []).forEach(el => {
-    const isRepeat = typeof el?.repeatOverride === "boolean" ? el.repeatOverride : repeatCatFor(f?.zones?.[zk], "elements");
+    const markedRepeat = typeof el?.repeatOverride === "boolean" ? el.repeatOverride : repeatCatFor(f?.zones?.[zk], "elements");
+    // a Repeat with no setup standing at this venue just before (no earlier function of the booking there, no other event there the
+    // same or previous day) is loaded like a fresh item - and reported (venue audit 2026-11-27)
+    const isRepeat = markedRepeat && (!backed || backed.has(fi));
+    if (markedRepeat && !isRepeat && !unbacked.has(fi)) unbacked.set(fi, { fi, venue: f?.venue || sel?.venue || "", date: String(f?.date || "").slice(0, 10) });
     const id = el?.invId || el?.imsId;
     if (!id) return;
     // A FOC'd instance of this item must not count as "fresh" here — it has its own, separate
@@ -54,7 +64,7 @@ export function atVenueOfEvent(sel, fvSettings, inventory) {
     });
   })));
   const memo = new Map();
-  return (it) => {
+  const fn = (it) => {
     if (!it) return { fixed: 0, repeat: false, load: 0 };
     // FOC — left at the venue from a previous event (dcCostRollup's own FOC branch tags the row,
     // DealCheckOverlay.jsx): never loaded, same as Fixed/Repeat, but its own distinct reason so the
@@ -86,6 +96,9 @@ export function atVenueOfEvent(sel, fvSettings, inventory) {
     memo.set(mk, r);
     return r;
   };
+  fn.repeatWithoutSetup = [...unbacked.values()];
+  fn.repeatBacked = backed;
+  return fn;
 }
 
 // The same, over a whole list of load rows at once: an item standing at the venue is taken off ONCE across its rows (owner's QA

@@ -7,9 +7,13 @@ import { ZONE_META, trussBaseArea } from "../studio/taxonomy";
 import { calcZoneTrussPreview, calcZoneFabric, repeatCatFor, scaleTrussPreview } from "../studio/pricing";
 import { carpetFloorsOf, planCarpets } from "./carpetPlan";
 import { isTrussFoc } from "../studio/foc.js";
+import { repeatBackedOfEvent } from "../repeatGuard.js";
+import { isLiveEventOrder } from "./helpers.js";
 import { planElements } from "./elementPlan";
 
 export function makeEventPlans({ sel, inventory, blocks, eventOrders, settings, trussInv }) {
+  // which functions' ♻ Repeat has a setup standing at the venue (lib/repeatGuard) - an unbacked one takes new fabric
+  const repeatBacked = eventOrders ? repeatBackedOfEvent(sel, eventOrders, isLiveEventOrder) : { has: () => true };
   // ── TRUSS PLAN ── (the Truss tab of Deal Check, for the people who build it)
   // Every truss row of every function on the event: Customer demand vs Physical footprint, the
   // pillars / beams / batta it takes and its fabric (Liza / curtains / masking) with the colours
@@ -49,7 +53,7 @@ export function makeEventPlans({ sel, inventory, blocks, eventOrders, settings, 
       photo: e.fn?.elSelectedPhoto?.[e.zk]?.src || "", fab: e.fab, row: e.row,
       // a repeat zone reuses standing fabric: no new colour is worked out for it; an FOC truss's fabric is already up at the venue too, as Deal
       // Check counts it (site audit 2026-11-27: FOC fabric was counted as fabric to bring)
-      repeat: !!repeatCatFor(e.fn?.zones?.[e.zk], "truss") || isTrussFoc(e.row) || isTrussFoc(e.fn?.zones?.[e.zk]),
+      repeat: (!!repeatCatFor(e.fn?.zones?.[e.zk], "truss") && repeatBacked.has(e.fi)) || isTrussFoc(e.row) || isTrussFoc(e.fn?.zones?.[e.zk]),
     }));
     // A zone with loose fabric but no truss (Build's Elements "🧵 Loose fabric", owner ask 2026-11-17) is not a truss row, so
     // the truss plan skips it - added here with no drape of its own, or its Liza / masking / curtains never reach the Fabric
@@ -63,7 +67,7 @@ export function makeEventPlans({ sel, inventory, blocks, eventOrders, settings, 
         if (!(Array.isArray(zc.looseFabric) && zc.looseFabric.some((lf) => (Number(lf?.qty) || 0) > 0))) return;
         const zLabel = (fn?.zoneNames?.[zk]) || ZONE_META[zk]?.label || String(zk).replace(/[_-]+/g, " ").replace(/\w/g, (c) => c.toUpperCase());
         out.push({ fi, zk, ri: 0, zLabel, fnLabel: fn?.type || `Function ${fi + 1}`, photo: fn?.elSelectedPhoto?.[zk]?.src || "",
-          fab: { lizaKg: 0, curtainPieces: 0, maskingPieces: 0 }, row: zc, repeat: !!repeatCatFor(zc, "truss") });
+          fab: { lizaKg: 0, curtainPieces: 0, maskingPieces: 0 }, row: zc, repeat: !!repeatCatFor(zc, "truss") && repeatBacked.has(fi) });
       });
     });
     return out;

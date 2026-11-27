@@ -1305,7 +1305,7 @@ export default function StudioBuild({ ctx }) {
     // zone photo groups (hand-picked leading photos, keyed by zone + function)
     zoneGroups = {}, writeZoneGroup,
     // date demand
-    dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient, guestPriceMultiplier, activeCrossFnReuseQty, activeSiblingFnInvUse = {}, activeSiblingFnSubcatOpportunity = {},
+    dateTypes, clientLedger, activeClientId, saveClientLedger, hideDiscountFromClient, guestPriceMultiplier, activeCrossFnReuseQty, activeRepeatBacked = true, activeSiblingFnInvUse = {}, activeSiblingFnSubcatOpportunity = {},
     // build canvas
     setShowCosts, grandTotal, agencyFeeAmt, totalCost, transportCalc, pricingReady,
     savedInsps, setStep, setPreviewImg,
@@ -4817,6 +4817,7 @@ undefined
               <input type="number" min="1" step="1" value={scaleDraft[k] ?? String(zoneScaleVal(k))} onClick={e=>e.stopPropagation()} onChange={e=>{const v=e.target.value;setScaleDraft(p=>({...p,[k]:v}));}} onBlur={()=>commitScale(k)} onKeyDown={e=>{e.stopPropagation();if(e.key==="Enter")e.currentTarget.blur();if(e.key==="Escape"){setScaleDraft(p=>{const n={...p};delete n[k];return n;});e.currentTarget.blur();}}} onFocus={e=>e.target.select()} style={{width:52,padding:"2px 3px",borderRadius:6,border:`1px solid ${border}`,background:cardBg,color:textP,fontSize:12,fontWeight:700,textAlign:"center",MozAppearance:"textfield"}} />
               {elSelectedPhoto[k]?.isLibrary&&<span onClick={e=>{e.stopPropagation();recalibrateZoneScale(k);}} title="Quantities look off for this scale? Re-derive them from the selected photo's recipe (fixes a stale count left over from an old save; discards manual qty edits in this zone)." style={{cursor:"pointer",color:accent,fontSize:11,padding:"1px 2px",lineHeight:1}}>↻</span>}
             </span>}
+            {isOn&&isRepeat(k)&&!activeRepeatBacked&&<span title="Nothing is set up at this venue just before this function - no earlier function of this deal here, and no other event here the same or previous day. Ops will load it as new." style={{fontSize:10,fontWeight:700,padding:"3px 8px",borderRadius:10,border:"1px solid #F59E0B",background:"#FEF3C7",color:"#92400E"}}>⚠ No setup here before</span>}
             {isOn&&<span onClick={e=>{e.stopPropagation();toggleRepeat(k);}} title={isRepeat(k)?"Reusing an existing setup — discounted rental, no build labour":"New build this time — full rental + labour + transport"} style={{cursor:"pointer",fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:10,border:`1px solid ${isRepeat(k)?"#059669":border}`,background:isRepeat(k)?"#05966918":"transparent",color:isRepeat(k)?"#059669":textS}}><span style={{display:"inline-flex",alignItems:"center",gap:5}}>{isRepeat(k)?<IconRepeat size={11}/>:<IconSparkle size={11}/>}{isRepeat(k)?"Repeat":"Fresh"}</span></span>}
             <div style={{width:44,height:26,borderRadius:13,background:isOn?"#444":"#D1D5DB",position:"relative",cursor:"pointer"}} onClick={e=>{e.stopPropagation();toggleEl(k);}}><div style={{width:22,height:22,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:isOn?20:2,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.15)"}}/></div>
           </div>

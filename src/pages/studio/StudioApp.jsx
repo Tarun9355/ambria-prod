@@ -10,6 +10,7 @@
 //
 // Persistence: the reference's Redis kvGet/reliableSave port verbatim through
 // the Supabase `settings`-table shim (src/lib/ims/kv).
+import { repeatBackedFns } from "../../lib/repeatGuard.js";
 import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, useTransition, lazy, Suspense } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import { changeOwnPassword } from "../../lib/auth";
@@ -7150,6 +7151,25 @@ export default function StudioApp() {
   // Layout, same TDZ reasoning as collectAllFunctionDataRef — totalCost (declared above this) reads
   // the ref instead of the memo directly.
   useLayoutEffect(() => { activeCrossFnReuseQtyRef.current = activeCrossFnReuseQty; });
+  // Whether a ♻ Repeat on this function has a setup standing at its venue just before - an earlier function of this deal there, or another
+  // booked event there the same or previous day (lib/repeatGuard). Build warns on a Repeat that has none, and IMS loads it (venue audit
+  // 2026-11-27: Amit Gulati's Pushpanjali marked Repeat while the 27th was at Exotica).
+  const activeRepeatBacked = useMemo(() => {
+    try {
+      const all = collectAllFunctionData();
+      const me = all[activeFnIdx];
+      if (!me) return true;
+      const mine = all.map((f) => ({ venue: f.fnVenue, date: f.fnDate, shift: f.fnShift }));
+      const myEo = eventOrderFor(eventOrders, activeClientId, clientName);
+      const others = [];
+      (eventOrders || []).forEach((eo) => {
+        if (!eo || (myEo && eo.id === myEo.id) || eo.clientId === activeClientId || eo.status === "cancelled") return;
+        const efs = Array.isArray(eo.functionsDetail) && eo.functionsDetail.length ? eo.functionsDetail : [{ venue: eo.venue, date: eo.date }];
+        efs.forEach((f) => others.push({ venue: f?.venue || eo.venue, date: f?.date || eo.date }));
+      });
+      return repeatBackedFns(mine, others).has(activeFnIdx);
+    } catch { return true; }
+  }, [collectAllFunctionData, activeFnIdx, eventOrders, activeClientId, clientName]);
   // invId → sibling function names (same venue, same/next day) that also use that item — drives the
   // orange rate on Build's element cards. Deliberately NOT gated by hideDiscountFromClient or the Filler
   // date rule: it is a heads-up for the salesperson, not a price change.
@@ -16219,7 +16239,7 @@ export default function StudioApp() {
     // duplicate against the empty ledger it left behind — exactly the bug being fixed here.
     ledgerLoadError,
     deleteSessionRows: designDeleteSessionRows,
-    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger: designSaveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
+    showClientForm, setShowClientForm, clientLedger, setClientLedger, saveClientLedger: designSaveClientLedger, activeClientId, setActiveClientId, clientSearch, setClientSearch, hideDiscountFromClient, guestPriceMultiplier, dateCategoryMultiplierFor, activeCrossFnReuseQty, activeRepeatBacked, activeSiblingFnInvUse, activeSiblingFnSubcatOpportunity,
     snapshotBuildState, restoreBuildState, switchActiveFn, fnSnapHasData, fnSnapHasBuild,
     pendingFnTotalsRemapRef, reindexDealCheckStateForRemoval, reindexEventOrderForRemoval,
     lastFnRemoval, setLastFnRemoval, autoSaveBuild,

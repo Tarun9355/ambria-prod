@@ -205,10 +205,12 @@ export function blockedFlatFor(grouped, d, { sel, trussInv, fabricEntriesOf, fab
 
 // A line whose own parts say some floors are on ♻ Repeat (Platform / carpet, Deal Check v30): that much is standing at the venue. Returns the
 // at-venue figure for loadSplitOf / Planning's truck list, or null for a line with no such parts.
-export function standingPartsAtVenue(it) {
-  if (!it || !Array.isArray(it.parts) || !it.parts.some((p) => p?.repeat)) return null;
+export function standingPartsAtVenue(it, repeatBacked = null) {
+  // a floor's Repeat counts only when its function's Repeat has a setup standing at the venue (lib/repeatGuard)
+  const isStanding = (p) => p?.repeat && (!repeatBacked || p.fnIdx == null || repeatBacked.has(Number(p.fnIdx)));
+  if (!it || !Array.isArray(it.parts) || !it.parts.some(isStanding)) return null;
   const qty = Number(it.qty) || 0;
-  const standing = Math.min(qty, Math.round(it.parts.filter((p) => p?.repeat).reduce((s, p) => s + (Number(p.qty) || 0), 0) * 100) / 100);
+  const standing = Math.min(qty, Math.round(it.parts.filter(isStanding).reduce((s, p) => s + (Number(p.qty) || 0), 0) * 100) / 100);
   if (!(standing > 0)) return null;
   return standing >= qty ? { repeat: true, fixed: 0, foc: false, load: 0 } : { repeat: false, repeatPart: standing, fixed: 0, foc: false, load: Math.round((qty - standing) * 100) / 100 };
 }
@@ -219,7 +221,7 @@ export function loadSplitOf(flat, atVenueOf) {
   const load = [], atVenue = [];
   const byRow = atVenueByRow(flat, atVenueOf); // standing stock taken off once per item across its rows
   (flat || []).forEach((it) => {
-    const a = standingPartsAtVenue(it) || byRow.get(it.id) || atVenueOf(it);
+    const a = standingPartsAtVenue(it, atVenueOf?.repeatBacked) || byRow.get(it.id) || atVenueOf(it);
     if (a.repeat || a.repeatPart > 0 || a.fixed > 0 || a.foc) atVenue.push({ it, a });
     const q = a.load === (Number(it.qty) || 0) ? it : { ...it, qty: a.load, fullQty: it.qty };
     if ((Number(q.qty) || 0) > 0) load.push(q);

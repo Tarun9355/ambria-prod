@@ -86,7 +86,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   const fvSettings = useFixedVenueSettings(settings);
-  const atVenueOf = useMemo(() => atVenueOfEvent(sel, fvSettings, inventory), [sel, fvSettings, inventory]);
+  const atVenueOf = useMemo(() => atVenueOfEvent(sel, fvSettings, inventory, eventOrders), [sel, fvSettings, inventory, eventOrders]);
   const liveFloral = useMemo(() => {
     if (!sel) return null;
     try { return buildLiveFloralPlan(sel.functionsDetail, { settings: settings || {}, rcItems, rateCardCategories, inventory }); } catch { return null; }
@@ -334,6 +334,14 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
       {mode === "actual" && !lock.locked && !canSiteEdit && (
         <div className="rounded-xl bg-gray-100 text-gray-500 px-4 py-2.5 text-xs font-semibold flex items-center gap-2">
           👁 View only — your access to Site doesn't include editing
+        </div>
+      )}
+      {/* A ♻ Repeat with nothing set up at its venue just before is loaded like a new item (lib/repeatGuard) - said so, so sales can fix the Build */}
+      {(atVenueOf.repeatWithoutSetup || []).length > 0 && (
+        <div role="alert" className="rounded-xl bg-amber-50 ring-1 ring-amber-200 px-3 py-2 text-[12px] text-amber-900">
+          <b>{"Repeat with nothing set up here before:"}</b>{" "}
+          {atVenueOf.repeatWithoutSetup.map((u) => [fnsOfSel[u.fi]?.type, u.venue, u.date].filter(Boolean).join(" · ")).join(", ")}
+          {" - "}{"its items are listed to bring. Ask sales to check the Repeat chips in Build."}
         </div>
       )}
       {/* One function, like Planning's chips: its own items, its own venue's standing stock, its own fabric and platform */}

@@ -1756,11 +1756,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // Neither is loaded: Truck planning lists them apart (to see, not to fill) and no challan carries them; an item only partly
   // standing loads the rest.
   // the rule lives in lib/ims/atVenue (shared with the Site page's Receiving, which lists these apart the same way)
-  const atVenueOf = useMemo(() => atVenueOfEvent(sel, fvSettings, inventory), [sel, fvSettings, inventory]);
+  const atVenueOf = useMemo(() => atVenueOfEvent(sel, fvSettings, inventory, eventOrders), [sel, fvSettings, inventory, eventOrders]);
   // What actually goes on a truck: each line at the qty still to load; lines with nothing to load are the "at the venue" list.
   // standing stock taken off ONCE per item across its rows (a kit part and the same item loose share the venue's pieces) - lib/ims/atVenue
   const atVenueRow = useMemo(() => atVenueByRow(blockedItems, atVenueOf), [blockedItems, atVenueOf]);
-  const atVenueOfRow = (it) => standingPartsAtVenue(it) || atVenueRow.get(it.id) || atVenueOf(it); // a Repeat floor of a Platform / carpet line is standing
+  const atVenueOfRow = (it) => standingPartsAtVenue(it, atVenueOf.repeatBacked) || atVenueRow.get(it.id) || atVenueOf(it); // a Repeat floor of a Platform / carpet line is standing
   // the Inventory list's rows (grouped; a kit's shell and plain rows keep the flat row's id): for the whole event the same row-adjusted
   // figure as the truck list, so its FIXED badge and order agree with what is loaded; a one-function view keeps its own figure
   // one function's view: that function's own venue's standing stock (venue audit 2026-11-27 - it read the whole event's)
@@ -5974,6 +5974,14 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 </div>
                 <div className="shrink-0 rounded-lg bg-white px-2.5 py-1 text-[15px] font-bold text-gray-900 tabular-nums whitespace-nowrap shadow-[0_1px_2px_rgba(16,24,40,0.06)]">{/* the event's total takes in what was added on trucks (owner 2026-11-25: "overall cost update ni kr ra"); a function's view leaves them out - they are not tied to one function */}{fmt(invScoped ? invShownTotal : invBlockedTotal + truckExtraTotal)}</div>
               </div>
+              {/* a ♻ Repeat with nothing set up at its venue just before: loaded like a new item (lib/repeatGuard, venue audit 2026-11-27) */}
+              {(atVenueOf.repeatWithoutSetup || []).length > 0 && (
+                <div role="alert" className="m-2.5 mb-0 px-3 py-2 rounded-xl bg-amber-50 ring-1 ring-amber-200 text-[12px] text-amber-900">
+                  <b>{"Repeat with nothing set up here before:"}</b>{" "}
+                  {atVenueOf.repeatWithoutSetup.map((u) => [mpFns[u.fi]?.type, u.venue, u.date].filter(Boolean).join(" · ")).join(", ")}
+                  {" - "}{"its items are listed to bring. Ask sales to check the Repeat chips in Build."}
+                </div>
+              )}
               {/* what is short, first thing under the head (owner ask 2026-11-15) - each item and how many are missing */}
               {invShortItems.length > 0 && (
                 <div role="alert" className="m-2.5 mb-0 px-3 py-2 rounded-xl bg-red-50 ring-1 ring-red-200 text-red-700">
