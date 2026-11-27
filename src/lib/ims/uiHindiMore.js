@@ -498,6 +498,8 @@ Trucks & challans ¦ ट्रक और चालान
 Each trip's challan - every department's items on it ¦ हर ट्रिप का चालान - उस पर हर डिपार्टमेंट का सामान
 Print challan ¦ चालान प्रिंट करें
 Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन बदल सकता है
+All functions ¦ सभी फ़ंक्शन
+Showing this function's items only. Trucks don't say which venue they go to yet, so "arriving" counts every truck of the event. ¦ सिर्फ़ इस फ़ंक्शन का सामान दिख रहा है। ट्रक अभी नहीं बताते कि वे किस वेन्यू जाएँगे, इसलिए "arriving" में इवेंट के सारे ट्रक गिने जाते हैं।
 BLOCKED · NOT IN DEAL CHECK ¦ ब्लॉक है · डील चेक में नहीं
 Blocked for this event in Inventory - not in Deal Check's list ¦ इन्वेंटरी में इस इवेंट के लिए ब्लॉक है - डील चेक की लिस्ट में नहीं
 Only an Admin can change rates, colours and the conversion factors - you can update the stock quantities ¦ रेट, रंग और कन्वर्ज़न फ़ैक्टर सिर्फ़ एडमिन बदल सकता है - आप स्टॉक की मात्रा बदल सकते हैं

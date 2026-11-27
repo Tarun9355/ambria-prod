@@ -9,6 +9,7 @@ import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { atVenueOfEvent } from "../../lib/ims/atVenue";
 import { buildFabricGroups, fabricStandingOf } from "../../lib/ims/fabricGroups";
 import { platformPullPlansByFn, PLATFORM_MATERIAL_LABEL } from "../../lib/ims/platformEngine";
+import { scopeLineToFn, qtyMapsOfFn } from "../../lib/ims/siteFunctionScope";
 import { makeEventPlans } from "../../lib/ims/eventPlans";
 import { buildLiveFloralPlan } from "../../lib/ims/liveFloralPlan";
 import { truckKeyOf, mappedStockRowsOf, blockedGroupedFor, blockedFlatFor, loadSplitOf, mergeLegacyTrucks, tripChallanRows, mergeAtVenueRows } from "../../lib/ims/deptLoadList";
@@ -70,6 +71,11 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // department on it, but a dept head who only wants to confirm THEIR OWN pieces arrived (owner ask
   // 2026-11-24) needs to cut the noise of every other department's lines on the same shared truck.
   const [deptFilter, setDeptFilter] = useState("all");
+  // One function of the booking, or all (owner ask 2026-11-27: function-wise like Planning - one client at Exotica on the 27th and
+  // Pushpanjali on the 28th). Held per event, so opening another event starts at All.
+  const [fnPick, setFnPick] = useState({ id: null, fi: "all" });
+  const fnsOfSel = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+  const fnSel = fnPick.id === sel?.id && fnPick.fi !== "all" && fnsOfSel[fnPick.fi] ? fnPick.fi : "all";
   // ── WHAT SHOULD COME: THE VERY LIST PLANNING LOADS FROM ── (owner's QA audit 2026-11-26)
   // Each department's to-load list is built by lib/ims/deptLoadList - the code Dept Ops itself runs (Deal Check's department
   // snapshot: kits as shell + this department's parts, recipe parts, Floral's mapped artificial items worked out live, Fabric
@@ -85,19 +91,27 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
     if (!sel) return null;
     try { return buildLiveFloralPlan(sel.functionsDetail, { settings: settings || {}, rcItems, rateCardCategories, inventory }); } catch { return null; }
   }, [sel, settings, rcItems, rateCardCategories, inventory]);
-  const plan = useMemo(() => {
+  const plans = useMemo(() => {
+   // fi: null = the whole event, else one function (its own needs, its own venue's standing stock, its own fabric / platform parts)
+   const build = (fi) => {
+    const fd = fi == null ? null : (Array.isArray(sel?.functionsDetail) ? sel.functionsDetail[fi] : null);
+    const fnMaps = fd ? qtyMapsOfFn(fd, inventory) : null;
+    const atVenueUse = fd?.venue ? (it) => atVenueOf({ ...it, venue: fd.venue }) : atVenueOf;
     const need = new Map(); // `${dept}|${truckKey}` -> { dept, key, qty, label, photo, unit, invId }
     let atVenue = [];
     const flatByDept = new Map();
     let fabricGroups = [];
+    let fabricGroupsAll = [];
     if (!sel) return { need, atVenue, fabricGroups, trucks: [], flatByDept };
     let pl = null;
     try { pl = makeEventPlans({ sel, inventory, blocks, eventOrders, settings, trussInv }); } catch (e) { console.error("[site-receiving] plans:", e); }
     // Planning's Fabric block (Liza / Velvet / Wall Masking, colour photo, total, zones) - shown on top, no money.
     try {
       const fnsF = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
-      fabricGroups = buildFabricGroups({ entries: pl ? pl.fabricEntriesOf() : [], lines: Array.isArray(sel?.deptInventory?.Fabric) ? sel.deptInventory.Fabric : [],
-        fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1, fnPalettes: pl ? pl.fabricPalettesOf() : null }).groups;
+      const fabArgs = { entries: pl ? pl.fabricEntriesOf() : [], lines: Array.isArray(sel?.deptInventory?.Fabric) ? sel.deptInventory.Fabric : [],
+        fabricPlan: sel?.fabricPlan, stock: trussInv, multiFn: fnsF.length > 1, fnPalettes: pl ? pl.fabricPalettesOf() : null };
+      fabricGroupsAll = buildFabricGroups(fabArgs).groups;
+      fabricGroups = fd ? buildFabricGroups({ ...fabArgs, onlyFi: fi }).groups : fabricGroupsAll;
     } catch (e) { console.error("[site-receiving] fabric groups:", e); }
     let mapped = [];
     try { mapped = mappedStockRowsOf(liveFloral, sel, inventory); } catch { /* no live floral plan: none */ }
@@ -108,7 +122,8 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         if (!grouped.length) return;
         const flat = blockedFlatFor(grouped, d, { sel, trussInv, fabricEntriesOf: pl?.fabricEntriesOf, fabricPalettesOf: pl?.fabricPalettesOf });
         flatByDept.set(d, flat);
-        const { load, atVenue: av } = loadSplitOf(flat, atVenueOf);
+        const flatUse = fd ? flat.map((it) => scopeLineToFn(it, { fd, fi, inventory, blocks, eventId: sel.id, fabricGroups: fabricGroupsAll, maps: fnMaps })).filter(Boolean) : flat;
+        const { load, atVenue: av } = loadSplitOf(flatUse, atVenueUse);
         // The design Planning chose for an overlay / cushion cover (Fabric) or a carpet floor (Tenting) - what is actually on the
         // truck - with the line's notes ("not decided yet ..."), as Planning's truck list and challan name it (owner's QA audit
         // 2026-11-26: Site still named sales' 1st choice).
@@ -181,7 +196,12 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
     let trucks = Array.isArray(sel.trucks) ? sel.trucks : [];
     try { trucks = mergeLegacyTrucks(sel, (d) => flatByDept.get(d) || []); } catch (e) { console.error("[site-receiving] legacy trucks:", e); }
     return { need, atVenue, fabricGroups, trucks, flatByDept };
-  }, [sel, inventory, blocks, eventOrders, settings, trussInv, liveFloral, atVenueOf]); // eslint-disable-line react-hooks/exhaustive-deps
+   };
+   const all = build(null);
+   return { all, fn: fnSel === "all" ? null : build(fnSel) };
+  }, [sel, inventory, blocks, eventOrders, settings, trussInv, liveFloral, atVenueOf, fnSel]); // eslint-disable-line react-hooks/exhaustive-deps
+  const plan = plans.fn || plans.all;
+  const planAll = plans.all;
   const fabricGroups = plan.fabricGroups;
 
   const manifest = truckManifest(sel ? { ...sel, trucks: plan.trucks } : sel, inventory);
@@ -224,6 +244,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   const activeFilter = deptFilter === "all" || allDepts.includes(deptFilter) ? deptFilter : "all";
   const flatLines = allLines
     .filter((ln) => activeFilter === "all" || ln.dept === activeFilter)
+    .filter((ln) => !plans.fn || plan.need.has(ln.dept + "|" + ln.key) || !planAll.need.has(ln.dept + "|" + ln.key))
     .sort((a, b) => String(a.label || "").localeCompare(String(b.label || "")) || String(a.dept || "").localeCompare(String(b.dept || "")));
   const visibleTransfers = activeFilter === "all" ? transfers : transfers.filter((t) => t.fromDept === activeFilter);
   const visibleMissing = missingItems.filter((m) => activeFilter === "all" || m.dept === activeFilter);
@@ -264,7 +285,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
     const w = window.open("", "_blank");
     if (!w) return;
     const body = rows.map((it) => {
-      const name = plan.need.get(it.dept + "|" + it.key)?.label || it.name;
+      const name = planAll.need.get(it.dept + "|" + it.key)?.label || it.name;
       return `<tr><td>${esc(name)}${it.added ? ' <span style="font-size:11px;color:#92400e">(added, not in Build)</span>' : ""}</td><td>${esc(it.dept)}</td><td style="text-align:center">${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}</td></tr>`;
     }).join("");
     const when = (Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).map((f) => [f?.date, f?.venue].filter(Boolean).join(" · ")).filter(Boolean).join(" + ") || sel?.date || "-";
@@ -310,6 +331,26 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
       {mode === "actual" && !lock.locked && !canSiteEdit && (
         <div className="rounded-xl bg-gray-100 text-gray-500 px-4 py-2.5 text-xs font-semibold flex items-center gap-2">
           👁 View only — your access to Site doesn't include editing
+        </div>
+      )}
+      {/* One function, like Planning's chips: its own items, its own venue's standing stock, its own fabric and platform */}
+      {fnsOfSel.length > 1 && (
+        <div className="space-y-1.5">
+          <div className="flex gap-1.5 flex-wrap">
+            <button type="button" onClick={() => setFnPick({ id: sel.id, fi: "all" })} aria-pressed={fnSel === "all"}
+              className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (fnSel === "all" ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50")}>
+              {"All functions"}
+            </button>
+            {fnsOfSel.map((f, i) => (
+              <button key={i} type="button" onClick={() => setFnPick({ id: sel.id, fi: i })} aria-pressed={fnSel === i}
+                className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (fnSel === i ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50")}>
+                {[f?.type || `Function ${i + 1}`, f?.venue, String(f?.date || "").slice(0, 10)].filter(Boolean).join(" · ")}
+              </button>
+            ))}
+          </div>
+          {fnSel !== "all" && (
+            <div className="text-[11px] text-gray-500">{"Showing this function's items only. Trucks don't say which venue they go to yet, so \"arriving\" counts every truck of the event."}</div>
+          )}
         </div>
       )}
       {allDepts.length > 0 && (
