@@ -59,6 +59,7 @@ import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a si
 import { truckDetailsLocked, truckLoadedOf } from "../../lib/ims/truckLock";
 import { atVenueOfEvent, atVenueByRow } from "../../lib/ims/atVenue";
 import { makeFabricNeedCache } from "../../lib/ims/fabricNeed"; // fabric per colour, as the Fabric block reads it
+import { lateChangesOf } from "../../lib/ims/lateChanges"; // changed in the 48 hours before the event
 import { scopeLineToFn, qtyMapsOfFn } from "../../lib/ims/siteFunctionScope"; // one function's share of a load line (a trip that goes to one function)
 import { truckKeyOf, mappedStockRowsOf, kitPartOfDeptOf, blockedGroupedFor, blockedFlatFor, mergeLegacyTrucks, standingPartsAtVenue } from "../../lib/ims/deptLoadList"; // what a department loads (shared with Site) // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
 import { logWrite } from "../../lib/studio/userActions";
@@ -2159,36 +2160,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // event's first day: listed in its own section under Inventory blocked, not in the list itself. A swapped-in item's rental stays in
   // the Inventory blocked total (the tile and the head of the list); a removed one is for information, no rental. Trucks, challans and the
   // Site page load as before. Read from this department's change log (Studio's Sold-deal edits, amendRequests).
-  const lateChanges = (() => {
-    const out = { swaps: new Map(), removed: [] };
-    const dates = [...(Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).map(f => String(f?.date || "").slice(0, 10)), String(sel?.date || "").slice(0, 10)]
-      .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
-    if (!dates.length) return out;
-    const from = Date.parse(dates[0] + "T00:00:00") - 48 * 3600 * 1000;
-    (amendRequests || [])
-      .filter(r => r.eventOrderId === sel?.id && r.department === dept && r.status === "logged" && Number(r.requestedAt) >= from)
-      .sort((a, b) => (Number(b.requestedAt) || 0) - (Number(a.requestedAt) || 0))
-      .forEach(r => {
-        const items = Array.isArray(r.items) ? r.items : [];
-        const by = r.requestedBy || "", at = Number(r.requestedAt) || 0;
-        items.filter(it => it?.change === "swapped").forEach(it => { if (!out.swaps.has(it.name)) out.swaps.set(it.name, { fromName: it.fromName || "", at, by }); });
-        const added = items.filter(it => it?.change === "added"), removed = items.filter(it => it?.change === "removed");
-        // an older log (before switches were recorded as one): one out and one in is a switch
-        if (added.length === 1 && removed.length === 1) {
-          if (!out.swaps.has(added[0].name)) out.swaps.set(added[0].name, { fromName: removed[0].name || "", at, by });
-          return;
-        }
-        // taken out this late still costs its rental (owner ask 2026-11-27): the item's own rate x what was held
-        removed.forEach(it => {
-          const qty = Number(it.from ?? it.qty) || 0;
-          const nm = String(it.name || "").trim().toLowerCase();
-          const item = (inventory || []).find(x => String(x?.name || "").trim().toLowerCase() === nm);
-          const rate = Number(item?.price ?? item?.rentalCost) || 0;
-          out.removed.push({ name: it.name, qty, at, by, rate, total: Math.round(rate * qty), photo: item ? (item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "") : "" });
-        });
-      });
-    return out;
-  })();
+  const lateChanges = lateChangesOf({ sel, dept, amendRequests, inventory }); // lib/ims/lateChanges
   const isLateSwap = (it) => lateChanges.swaps.has(it?.name);
   const [lateOpen, setLateOpen] = useState(false); // the late-changes section is shut until tapped (owner ask 2026-11-27)
   // the late-removed items' rental, added to the Inventory blocked TILE only (owner ask 2026-11-27: not the list's own head)
