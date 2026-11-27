@@ -2,6 +2,8 @@
 // reserved in the stock ledger like any other hold (owner ask 2026-11-25), under their own source tag so Studio's reconcile
 // leaves them alone (lib/studio/soldBlocksPlan classifyEntry: an unknown tag is "protected").
 import { isLiveBlockStatus, blockEntryQty } from "./liveBlocks";
+import { trussInvForMaterialIms } from "./trussEngine";
+import { virtualPlatformItems } from "./platformEngine";
 
 export const TRUCK_EXTRA_SRC = "ims-truck-extra";
 
@@ -27,12 +29,45 @@ export function truckExtraQtyByItem(trucks, tripsOf) {
   return m;
 }
 
+// A virtual (trussInv-backed) row's own per-piece rate — there is no `inventory` row to read price/
+// rentalCost off, but Admin → Settings → Truss & Batta Config / Platform Config / Fabric Stock &
+// Pricing DOES price these, so "no inventory match" must not mean "no rate" (QA report RC-238,
+// Truck_Extras_Downstream_Gaps.md: "config me rate exist karta hai, UI derivation break hai"). Parses
+// the same synthetic id scheme deptInventoryBySub (DepartmentOpsTab.jsx) builds these ids from.
+// Returns 0 (never throws) for anything it doesn't recognise or can't resolve — the ₹0/"—" display
+// this replaces was already the safe fallback, so an unresolvable id is no worse off than before.
+const virtualTruckExtraRate = (invId, trussInv) => {
+  if (!trussInv) return 0;
+  const id = String(invId || "");
+  const trussM = id.match(/^truss:(pillars|beams):([^:]+):(\d+(?:\.\d+)?)$/);
+  if (trussM) {
+    const [, kind, mat, sizeStr] = trussM;
+    const rates = trussInvForMaterialIms(trussInv, mat)?.rates || {};
+    const perRft = Number(kind === "pillars" ? rates.pillarRftRate : rates.beamRftRate) || 0;
+    return perRft * (Number(sizeStr) || 0);
+  }
+  if (id.startsWith("platform:")) {
+    const p = virtualPlatformItems(trussInv).find((r) => r.id === id);
+    return p ? (Number(p.ratePerSqft) || 0) * p.lengthFt * p.widthFt : 0;
+  }
+  const fabM = id.match(/^fabric:(lizaStock|curtainStock|maskingStock):/);
+  if (fabM) {
+    const rates = trussInv.rates || {};
+    // lizaKg's own qty is already in kg (the rate is ₹/kg, so rate×qty is right as-is); curtain/
+    // masking qty is in pieces (₹/piece) — same unit the rest of this row's `qty` is already in.
+    return Number(fabM[1] === "lizaStock" ? rates.lizaKgRate : fabM[1] === "curtainStock" ? rates.curtainPieceRate : rates.maskingPieceRate) || 0;
+  }
+  return 0;
+};
+
 // Every row added on a truck, for showing and costing (Studio's Deal Check): one per row as added, with its inventory item's
 // photo and rent (price ?? rentalCost, as the rest of the app reads it). Rows with no qty are left out. A virtual
 // (trussInv-backed, no real inventory row) row still shows up here — visible rather than hidden, same reasoning as
-// DepartmentOpsTab.jsx's own truckExtraRows — just priced at ₹0 since there's no inventory rate to read, with its own
-// stored name/photo (`c.name`/`c.img`, stashed at add-time) standing in for the missing inventory lookup.
-export function truckExtraRowsOf(trucks, inventory, tripsOf) {
+// DepartmentOpsTab.jsx's own truckExtraRows — priced off trussInv's own config rate (virtualTruckExtraRate above) when
+// `trussInv` is handed in, else ₹0, with its own stored name/photo (`c.name`/`c.img`, stashed at add-time) standing in
+// for the missing inventory lookup. `trussInv` is optional so an existing caller that has no reason to price these
+// (there is none left, but keeps this additive) still works unchanged.
+export function truckExtraRowsOf(trucks, inventory, tripsOf, trussInv) {
   const out = [];
   (Array.isArray(trucks) ? trucks : []).forEach((t) => {
     if (!t) return;
@@ -41,7 +76,7 @@ export function truckExtraRowsOf(trucks, inventory, tripsOf) {
       const q = Number(c?.qty) || 0;
       if (q <= 0) return;
       const inv = (inventory || []).find((x) => String(x.id) === String(c.invId));
-      const rate = Number(inv?.price ?? inv?.rentalCost) || 0;
+      const rate = inv ? (Number(inv.price ?? inv.rentalCost) || 0) : (c?.virtual || isVirtualId(c?.invId) ? virtualTruckExtraRate(c.invId, trussInv) : 0);
       out.push({
         key: `${t.id}|${tr.id}|${c.id}`, name: inv?.name || c.name, sub: c.sub || inv?.subCat || "", dept: d, qty: q, rate, total: Math.round(rate * q),
         photo: inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || c.img || "",

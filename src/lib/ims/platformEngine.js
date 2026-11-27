@@ -77,6 +77,7 @@ export function virtualPlatformItems(trussInv) {
       return {
         id: `platform:${r.id ?? i}`, name: `${label} · ${PLATFORM_MATERIAL_LABEL[mat] || mat}`, subCat: "Platform",
         qty: Math.max(0, Math.floor(Number(r.stock) || 0)), lengthFt: Number(r.lengthFt) || 0, widthFt: Number(r.widthFt) || 0,
+        ratePerSqft: Number(r.ratePerSqft) || 0,
       };
     });
 }

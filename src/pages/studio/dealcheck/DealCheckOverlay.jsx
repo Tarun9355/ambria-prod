@@ -2139,7 +2139,7 @@ export default function DealCheckOverlay({ ctx }) {
             try {
               const eoTrucks = eventOrderFor(eventOrders, activeClientId)?.trucks;
               const inv = (dealCheckData?.inventory?.length > 0) ? dealCheckData.inventory : (dcInventoryCache || []);
-              return truckExtraRowsOf(eoTrucks, inv, tripsOf).reduce((s, r) => s + r.total, 0);
+              return truckExtraRowsOf(eoTrucks, inv, tripsOf, dealCheckData?.trussInv).reduce((s, r) => s + r.total, 0);
             } catch { return 0; }
           })();
           const base = rental + florals + transport + genset + manpower + truss + buyTotal + produceTotal + truckExtrasCost;
@@ -3246,7 +3246,7 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                   // ── ADDED ON TRUCKS AT DISPATCH ── (owner ask 2026-11-25) items IMS ops put on a truck with "Add an item not in this
                   // deal" (event_orders.trucks[].trips[].custom[dept]) - so sales sees them too: which item, how many, on which
                   // vehicle / trip, by which department, at its rent. Read-only; not part of this deal's price (IMS blocks them in stock).
-                  const truckExtras = truckExtraRowsOf(eventOrderFor(eventOrders, activeClientId)?.trucks, dealCheckInventory, tripsOf);
+                  const truckExtras = truckExtraRowsOf(eventOrderFor(eventOrders, activeClientId)?.trucks, dealCheckInventory, tripsOf, dealCheckData?.trussInv);
                   const truckExtrasTotal = truckExtras.reduce((s, r) => s + r.total, 0);
                   // shown on every function's tab, also one with nothing matched yet - it is the whole event's, not one function's
                   const truckExtrasPanel = truckExtras.length > 0 ? (
