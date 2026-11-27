@@ -499,7 +499,9 @@ Each trip's challan - every department's items on it ¦ हर ट्रिप �
 Print challan ¦ चालान प्रिंट करें
 Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन बदल सकता है
 All functions ¦ सभी फ़ंक्शन
-Showing this function's items only. Trucks don't say which venue they go to yet, so "arriving" counts every truck of the event. ¦ सिर्फ़ इस फ़ंक्शन का सामान दिख रहा है। ट्रक अभी नहीं बताते कि वे किस वेन्यू जाएँगे, इसलिए "arriving" में इवेंट के सारे ट्रक गिने जाते हैं।
+Goes to: ¦ कहाँ जाएगा:
+not set - counts for every function on the Site page ¦ तय नहीं - साइट पेज पर हर फ़ंक्शन में गिना जाएगा
+Showing this function's items and the trips going to it. A trip with no destination set in Planning counts for every function. ¦ इस फ़ंक्शन का सामान और इसके लिए जाने वाली ट्रिप दिख रही हैं। जिस ट्रिप की मंज़िल प्लानिंग में तय नहीं, वह हर फ़ंक्शन में गिनी जाती है।
 BLOCKED · NOT IN DEAL CHECK ¦ ब्लॉक है · डील चेक में नहीं
 Blocked for this event in Inventory - not in Deal Check's list ¦ इन्वेंटरी में इस इवेंट के लिए ब्लॉक है - डील चेक की लिस्ट में नहीं
 Only an Admin can change rates, colours and the conversion factors - you can update the stock quantities ¦ रेट, रंग और कन्वर्ज़न फ़ैक्टर सिर्फ़ एडमिन बदल सकता है - आप स्टॉक की मात्रा बदल सकते हैं

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks, tripsOf } from "../../lib/ims/eventTrucks";
+import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks, tripsOf, trucksForFn, tripFnOf, fnLabelOf } from "../../lib/ims/eventTrucks";
 import { FLAG_REASONS, receivingOf, lineReceipt, setItemReceiptPatch, clearItemReceiptPatch, setTransferReceiptPatch } from "../../lib/ims/receiving";
 import { catToDept as sharedCatToDept, DEPTS } from "../../lib/ims/deptClassify";
 import { thumbUrl } from "../../lib/studio/thumb.js";
@@ -204,7 +204,9 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   const planAll = plans.all;
   const fabricGroups = plan.fabricGroups;
 
-  const manifest = truckManifest(sel ? { ...sel, trucks: plan.trucks } : sel, inventory);
+  // one function picked: only the trips going to it (and trips with no destination set)
+  const trucksShown = trucksForFn(plan.trucks, fnSel);
+  const manifest = truckManifest(sel ? { ...sel, trucks: trucksShown } : sel, inventory);
   const transfers = incomingTransfersFor(eventOrders, sel?.id);
   const receiving = receivingOf(sel);
   // Flattened — every line carries its OWN truck back-reference, so the list is items-first; a
@@ -281,7 +283,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   const truckNum = (() => { const nOf = (id) => { const n = Number(String(id || "").replace(/^trk_/, "")); return Number.isFinite(n) ? n : 0; }; return new Map([...plan.trucks].sort((x, y) => nOf(x.id) - nOf(y.id)).map((t, i) => [t.id, i + 1])); })();
   // A trip's combined challan in a new window, as Planning prints it (item, department, qty), with the design Planning chose.
   const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-  const printChallan = (truck, trip, n, tripN, rows) => {
+  const printChallan = (truck, trip, n, tripN, rows, toLabel = "") => {
     const w = window.open("", "_blank");
     if (!w) return;
     const body = rows.map((it) => {
@@ -293,6 +295,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
       <h2>🚚 Ambria — Combined Challan · Truck ${n} · Trip ${tripN}</h2>
       <p>Event: ${esc(sel?.clientName || "-")} &nbsp;|&nbsp; ${esc(when)}</p>
       <p>Vehicle: ${esc(truck.vehicle || "______")} &nbsp;|&nbsp; Driver: ${esc(truck.driver || "______")} &nbsp;|&nbsp; Phone: ${esc(truck.phone || "______")}</p>
+      ${toLabel ? `<p><b>Goes to: ${esc(toLabel)}</b></p>` : ""}
       <h4>Inventory on this trip — every department</h4>
       <table><tr><th>Item</th><th>Dept</th><th>Qty</th></tr>${body || '<tr><td colspan="3" style="text-align:center;color:#999">No items assigned to this trip</td></tr>'}</table>
       <br><p>Dispatched by: _______________ &nbsp;&nbsp; Received by: _______________</p>
@@ -349,7 +352,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
             ))}
           </div>
           {fnSel !== "all" && (
-            <div className="text-[11px] text-gray-500">{"Showing this function's items only. Trucks don't say which venue they go to yet, so \"arriving\" counts every truck of the event."}</div>
+            <div className="text-[11px] text-gray-500">{"Showing this function's items and the trips going to it. A trip with no destination set in Planning counts for every function."}</div>
           )}
         </div>
       )}
@@ -636,7 +639,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
 
       {/* ── TRUCKS & CHALLANS ── every truck and trip on the event, with its combined challan (every department's items on that
           run) to print - the same rows Planning's challan prints (lib/ims/deptLoadList tripChallanRows), the chosen design's name. */}
-      {plan.trucks.length > 0 && (
+      {trucksShown.length > 0 && (
         <div className="bg-white rounded-2xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden">
           <div className="px-4 py-3 bg-gray-50 flex items-center gap-3">
             <span aria-hidden="true" className="shrink-0 w-9 h-9 rounded-lg bg-white shadow-[0_1px_3px_rgba(15,23,42,0.12),0_4px_10px_-4px_rgba(15,23,42,0.22)] flex items-center justify-center text-base leading-none">🚛</span>
@@ -646,22 +649,28 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
             </div>
           </div>
           <div className="divide-y divide-gray-100">
-            {plan.trucks.map((t, ti) => tripsOf(t).map((tr, ri, all) => {
+            {trucksShown.map((t, ti) => tripsOf(t).map((tr) => {
               const rows = tripChallanRows(tr, (d) => plan.flatByDept.get(d) || []);
               const st = tr.status || "loading";
+              // the trip's own number on its truck (a picked function shows only some trips), and where it goes
+              const allTrips = tripsOf(plan.trucks.find((x) => x.id === t.id) || t);
+              const tripN = allTrips.findIndex((x) => x.id === tr.id) + 1;
+              const fnTo = tripFnOf(tr);
+              const toLabel = fnTo != null && fnsOfSel[fnTo] ? fnLabelOf(fnsOfSel[fnTo], fnTo) : "";
               return (
                 <div key={t.id + "|" + tr.id} className="px-4 py-2.5 flex items-center gap-3 flex-wrap">
                   <div className="min-w-0 flex-1">
                     <div className="text-[13.5px] font-semibold text-gray-900 truncate">
-                      <span>{"Truck"} {truckNum.get(t.id) || ti + 1}</span>{all.length > 1 && <span className="text-gray-500 font-medium"> · <span>{"Trip"}</span> {ri + 1}</span>}
+                      <span>{"Truck"} {truckNum.get(t.id) || ti + 1}</span>{allTrips.length > 1 && <span className="text-gray-500 font-medium"> · <span>{"Trip"}</span> {tripN}</span>}
                       <span className="ml-1.5 text-gray-500 font-medium tabular-nums">{[t.vehicle, t.driver].filter(Boolean).join(" · ") || "—"}</span>
                     </div>
                     <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
                       <span className={"font-bold px-1.5 py-0.5 rounded-full " + (st === "loading" ? "bg-amber-50 text-amber-700" : st === "returned" ? "bg-gray-100 text-gray-500" : "bg-emerald-50 text-emerald-700")}>{TRIP_LABEL[st] || st}</span>
                       <span className="text-gray-500 tabular-nums">{rows.length} <span>{"items"}</span></span>
+                      {toLabel && <span className="text-blue-700 font-semibold truncate">→ {toLabel}</span>}
                     </div>
                   </div>
-                  <button type="button" onClick={() => printChallan(t, tr, truckNum.get(t.id) || ti + 1, ri + 1, rows)} disabled={!rows.length}
+                  <button type="button" onClick={() => printChallan(t, tr, truckNum.get(t.id) || ti + 1, tripN, rows, toLabel)} disabled={!rows.length}
                     className="shrink-0 h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors">
                     {"Print challan"}
                   </button>

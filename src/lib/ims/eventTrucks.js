@@ -31,6 +31,20 @@ export function tripsOf(t) {
   return [{ id: (t?.id || "trip") + "_trip1", status: t?.status || "loading", loads: t?.loads || {}, extra: t?.extra || {}, custom: t?.custom || {} }];
 }
 
+// Where a trip goes: one function of the booking (trip.fnIdx = its index in functionsDetail), or not set (null - every function).
+// Owner ask 2026-11-27 (Amit Gulati, Exotica 27 Nov + Pushpanjali 28 Nov): a truck must say which venue it is for, so each site sees
+// only its own trucks arriving.
+export const tripFnOf = (trip) => (trip && trip.fnIdx != null && Number.isFinite(Number(trip.fnIdx)) ? Number(trip.fnIdx) : null);
+export const fnLabelOf = (fd, i) => [fd?.type || `Function ${i + 1}`, fd?.venue, String(fd?.date || "").slice(0, 10)].filter(Boolean).join(" · ");
+// The event's trucks with only the trips that go to function `fi` (or have no destination set); a truck with none left is dropped.
+export function trucksForFn(trucks, fi) {
+  if (fi == null || fi === "all") return trucks || [];
+  return (trucks || []).map((t) => {
+    const trips = tripsOf(t).filter((tr) => tripFnOf(tr) == null || tripFnOf(tr) === fi);
+    return trips.length ? { ...t, trips } : null;
+  }).filter(Boolean);
+}
+
 // A stored load key ("inv:<id>", "inv:<id>@<kitname>", "nm:<name>", or "nm:<name>|<photo>" for an
 // item with no inventory id but its own reference photo - Carpet New's colour photo, say, which the
 // key carries precisely so two differently-coloured floors of the same material name never share

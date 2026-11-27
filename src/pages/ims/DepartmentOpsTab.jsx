@@ -52,7 +52,7 @@ import { renderDeptBook, loadPdfLibs, loadPdfLogosOnce, isStaleChunk, reloadForU
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
 import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeLogs } from "../../lib/ims/recentChanges";
-import { tripsOf } from "../../lib/ims/eventTrucks";
+import { tripsOf, tripFnOf, fnLabelOf } from "../../lib/ims/eventTrucks";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { isMyEvent, supervisorIdsOfUser, fixedAtVenue, addedSupervisorsOf, withAddedSupervisors } from "../../lib/ims/mySupervisorEvents";
 import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a site" search
@@ -2977,6 +2977,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return !!trips && trips.length > 0 && trips[trips.length - 1].id === tripId;
   };
   const setTripStatus = (id, tripId, status) => { if (!isActiveTrip(id, tripId)) return; setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, status } : tr)); };
+  // where this trip goes - one function of the booking, or not set (lib/ims/eventTrucks tripFnOf)
+  const setTripFn = (id, tripId, fi) => { if (!isActiveTrip(id, tripId)) return; setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, fnIdx: fi } : tr)); };
   const setTripItem = (id, tripId, key, qty) => {
     if (!isActiveTrip(id, tripId)) return;
     const k = keyByListId.get(key);
@@ -3209,6 +3211,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       <h2>🚚 Ambria — Combined Challan · Truck ${n} · Trip ${tripN}</h2>
       <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${dateVenueLineOf(sel) || "-"}</p>
       <p>Vehicle: ${truck.vehicle || "______"} &nbsp;|&nbsp; Driver: ${truck.driver || "______"} &nbsp;|&nbsp; Phone: ${truck.phone || "______"}</p>
+      ${(() => { const tr = tripsOf(truck).find(x => x.id === tripId); const fi = tripFnOf(tr); return fi != null && mpFns[fi] ? `<p><b>Goes to: ${fnLabelOf(mpFns[fi], fi)}</b></p>` : ""; })()}
       <h4>Inventory on this trip — every department</h4>
       <table><tr><th>Item</th><th>Dept</th><th>Qty</th></tr>${rows || '<tr><td colspan="3" style="text-align:center;color:#999">No items assigned to this trip</td></tr>'}</table>
       ${toolRows ? `<h4>Essentials / tools — ${dept}</h4><table><tr><th>Item</th><th>Qty</th></tr>${toolRows}</table>` : ""}
@@ -3252,7 +3255,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       pdf.text(`Ambria - Combined Challan - Truck ${n} - Trip ${tripN}`, M, y); y += 22;
       pdf.setTextColor(17); pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
       pdf.text(`Event: ${sel.clientName || "-"}  |  ${dateVenueLineOf(sel) || "-"}`, M, y); y += 16;
-      pdf.text(`Vehicle: ${truck.vehicle || "______"}  |  Driver: ${truck.driver || "______"}  |  Phone: ${truck.phone || "______"}`, M, y); y += 26;
+      pdf.text(`Vehicle: ${truck.vehicle || "______"}  |  Driver: ${truck.driver || "______"}  |  Phone: ${truck.phone || "______"}`, M, y); y += 16;
+      { const tr = tripsOf(truck).find(x => x.id === tripId); const fi = tripFnOf(tr); if (fi != null && mpFns[fi]) { pdf.setFont("helvetica", "bold"); pdf.text(`Goes to: ${fnLabelOf(mpFns[fi], fi)}`, M, y); pdf.setFont("helvetica", "normal"); y += 16; } }
+      y += 10;
       pdf.setFontSize(9.5);
       pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this trip — every department", M, y); y += 16;
       header();
@@ -7503,6 +7508,24 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                   </div>
                                 )}
                                 {oc.unknown > 0 && <div className="mt-0.5 text-[10px] text-gray-400">{oc.unknown} item{oc.unknown === 1 ? " has" : "s have"} no truck capacity set — not counted. Set it in Planning → 🚚 Truck.</div>}
+                              </div>
+                            )}
+                            {/* Where this trip goes (owner ask 2026-11-27): one function / venue of the booking - the Site page and the challan
+                                read it. Shown only on a booking with more than one function. */}
+                            {mpFns.length > 1 && (
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[11px] font-semibold text-gray-500">{"Goes to:"}</span>
+                                {mpFns.map((f, fi) => {
+                                  const on = tripFnOf(trip) === fi;
+                                  return (
+                                    <button key={fi} type="button" disabled={locked || !canEditPlanning || onsiteOnly} aria-pressed={on}
+                                      onClick={() => setTripFn(t.id, trip.id, on ? null : fi)}
+                                      className={"text-[11px] font-semibold px-2 py-0.5 rounded-full border transition-colors disabled:opacity-60 disabled:cursor-not-allowed " + (on ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50")}>
+                                      {fnLabelOf(f, fi)}
+                                    </button>
+                                  );
+                                })}
+                                {tripFnOf(trip) == null && <span className="text-[10.5px] text-amber-700">{"not set - counts for every function on the Site page"}</span>}
                               </div>
                             )}
                             <div className="flex items-center gap-2 flex-wrap">
