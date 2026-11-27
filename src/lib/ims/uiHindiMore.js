@@ -501,6 +501,7 @@ Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन �
 All functions ¦ सभी फ़ंक्शन
 not on a truck ¦ किसी ट्रक पर नहीं
 Essentials on this truck ¦ इस ट्रक पर ज़रूरी सामान
+Loading photo… ¦ फ़ोटो खुल रही है…
 Carried, not blocked. Only what is added here goes on this truck's challan. ¦ साथ ले जाते हैं, ब्लॉक नहीं। जो यहाँ जोड़ेंगे, वही इस ट्रक के चालान पर आएगा।
 Take off this truck ¦ इस ट्रक से हटाएँ
 Carried, not blocked. Only what is set here goes on this truck's challan. ¦ साथ ले जाते हैं, ब्लॉक नहीं। जो यहाँ भरेंगे, वही इस ट्रक के चालान पर आएगा।

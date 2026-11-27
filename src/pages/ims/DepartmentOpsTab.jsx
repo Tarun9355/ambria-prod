@@ -9153,7 +9153,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       {zoomImg && createPortal(
         <div onClick={() => setZoomImg(null)} onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); setZoomImg(null); } }} tabIndex={-1} ref={el => el?.focus()}
           className="fixed inset-0 z-[10000] bg-black/80 flex items-center justify-center p-6 cursor-zoom-out outline-none">
-          <img src={fitUrl(zoomImg, 900, 80)} loading="lazy" decoding="async" alt="" className="max-w-[90vw] max-h-[90vh] rounded-lg object-contain shadow-2xl" onClick={e => e.stopPropagation()} />
+          {/* the big photo can take a moment over a slow line - say so, instead of a blank dark screen; the photo covers this once in */}
+          <span aria-live="polite" className="absolute text-sm text-white/70">{"Loading photo…"}</span>
+          <img src={fitUrl(zoomImg, 900, 80)} decoding="async" alt="" className="relative max-w-[90vw] max-h-[90vh] rounded-lg object-contain shadow-2xl" onClick={e => e.stopPropagation()} />
           <button type="button" onClick={() => setZoomImg(null)} aria-label="Close photo" className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/90 hover:bg-white text-gray-800 flex items-center justify-center shadow-lg">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
           </button>
