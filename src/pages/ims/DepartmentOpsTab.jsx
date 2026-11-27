@@ -2575,7 +2575,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     for (const t of (Array.isArray(sel?.trucks) ? sel.trucks : [])) {
       const trs = tripsOf(t);
       const i = trs.findIndex(tr => Number(tr?.tools?.[dept]?.[name]) > 0);
-      if (i >= 0) return { truckId: t.id, tripN: i + 1, trips: trs.length };
+      if (i >= 0) return { truckId: t.id, tripN: i + 1, trips: trs.length, vehicle: String(t.vehicle || "").trim() };
     }
     return null;
   };
@@ -7869,7 +7869,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                       return (
                         <div key={i} className="flex items-center gap-3 px-3 py-2">
                           <span className="min-w-0 flex-1 truncate text-[13px] text-gray-800">{t.name}</span>
-                          {w ? <span className="shrink-0 text-[11px] font-semibold text-blue-700 tabular-nums"><span>{"Truck"}</span> {truckNumById.get(w.truckId) || "?"}{w.trips > 1 ? <> · <span>{"Trip"}</span> {w.tripN}</> : null}</span>
+                          {w ? <span className="shrink-0 text-[11px] font-semibold text-blue-700 tabular-nums"><span>{"Truck"}</span> {truckNumById.get(w.truckId) || "?"}{w.vehicle ? <span className="font-normal text-gray-500"> · {w.vehicle}</span> : null}{w.trips > 1 ? <> · <span>{"Trip"}</span> {w.tripN}</> : null}</span>
                             : <span className="shrink-0 text-[11px] text-gray-400">{"not on a truck"}</span>}
                           <input type="number" min="1" value={t.qty || 1} onChange={e => setTool(i, "qty", e.target.value)} aria-label={`${t.name} quantity`} title="Quantity"
                             className="shrink-0 w-12 h-7 rounded-md bg-gray-50 ring-1 ring-gray-200 px-1.5 text-xs text-center font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400" />
