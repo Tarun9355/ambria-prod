@@ -185,3 +185,46 @@ describe("book: a recipe renamed since Deal Check ran prints one card, not two (
     expect(html).not.toMatch(/🌸 Flower Trail</);
   });
 });
+
+// RC-237 (Truck_Extras_Downstream_Gaps.md): items IMS added straight to a truck ("Add an item not
+// in this deal") printed nowhere in the book at all. `sel.trucks` here is shaped exactly as
+// DepartmentOpsTab.jsx:2776 actually stores it — trip.custom keyed by EVERY department — NOT the
+// single-department-flattened shape `ctx.trucks` gets remapped to for the loading table; reading
+// `ctx.trucks` here (an earlier cut of this fix) silently produced zero rows in the real app despite
+// passing synthetic tests shaped like the raw field.
+describe("book: items added straight to a truck print on their own 'Site arrivals' page (RC-237)", () => {
+  const trussInv = { rates: { pillarRftRate: 20 } };
+  const rawTrucks = [{ id: "T1", vehicle: "DL1", driver: "Manik", trips: [{ id: "r1", custom: {
+    Tenting: [{ id: "x1", invId: "truss:pillars:iron:8", name: "Pillar 8ft", sub: "Truss Pillar", qty: 4, virtual: true }],
+    Fabric: [{ id: "x2", invId: "fabric:lizaStock:ivory", name: "Liza - Ivory", sub: "Liza Fabric", qty: 5, virtual: true }],
+  } }] }];
+  const selT = { ...sel, trucks: rawTrucks };
+  const ctxT = (dept) => ({ ...ctx(dept, []), sel: selT, trussInv });
+
+  it("a single-department book shows only its own department's truck extras", () => {
+    const html = buildDeptBookHtml(ctxT("Tenting"), {}, {}, {});
+    expect(html).toContain("Site arrivals");
+    expect(html).toContain("Pillar 8ft");
+    expect(html).not.toContain("Liza - Ivory");
+  });
+
+  it("the shared Fabric & Tenting book shows BOTH departments' truck extras, whichever tab opened it", () => {
+    const html = buildDeptBookHtml(ctxT("Fabric"), {}, {}, { depts: ["Fabric", "Tenting"] });
+    expect(html).toContain("Pillar 8ft");
+    expect(html).toContain("Liza - Ivory");
+  });
+
+  it("the combined (all-departments) book — what Planning's own 'Download PDF' button actually builds — shows every department's truck extras too, each tagged with its own department", () => {
+    const html = buildDeptBookHtml(ctxT("Tenting"), {}, {}, { combined: true });
+    expect(html).toContain("Site arrivals");
+    expect(html).toContain("Pillar 8ft");
+    expect(html).toContain("Liza - Ivory");
+    expect(html).toMatch(/Tenting.*Added on truck/);
+    expect(html).toMatch(/Fabric.*Added on truck/);
+  });
+
+  it("no trucks at all: no Site arrivals page, no crash", () => {
+    const html = buildDeptBookHtml({ ...ctxT("Tenting"), sel: { ...sel, trucks: [] } }, {}, {}, {});
+    expect(html).not.toContain("Site arrivals");
+  });
+});

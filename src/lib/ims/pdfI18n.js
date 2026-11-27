@@ -226,6 +226,10 @@ export const PDF_HI = {
     "ये इस इवेंट के लिए रखे हैं, पर किसी ज़ोन में नहीं लिखे। ज़ोन प्लान आख़िरी बार {date} को Deal Check से सिंक हुआ था — अगर ये किसी ज़ोन के हैं तो दोबारा सिंक करें।",
   "Held for this event, but no zone lists these — re-sync Deal Check if they belong in a zone.":
     "ये इस इवेंट के लिए रखे हैं, पर किसी ज़ोन में नहीं लिखे — अगर ये किसी ज़ोन के हैं तो Deal Check दोबारा सिंक करें।",
+  "Added on truck": "ट्रक में जोड़ा गया",
+  "On a truck": "ट्रक में",
+  "Site arrivals": "साइट पर आने वाला सामान",
+  "Added straight to a truck for this event, not part of any zone": "इस इवेंट के लिए सीधे ट्रक में जोड़ा गया, किसी ज़ोन का हिस्सा नहीं",
   "Artificial flowers": "आर्टिफ़िशियल फूल",
   "Artificial greens": "आर्टिफ़िशियल ग्रीन्स",
   "bunches": "गुच्छे",

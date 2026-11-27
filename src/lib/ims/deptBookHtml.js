@@ -13,7 +13,8 @@
 import { fmt } from "../format";
 import { walkKitUnits, flowerPaletteHexFor } from "./helpers";
 import { DEPTS } from "./deptClassify";
-import { TRUCK_EXTRA_SRC } from "./truckExtraBlocks";
+import { TRUCK_EXTRA_SRC, truckExtraRowsOf } from "./truckExtraBlocks";
+import { tripsOf } from "./eventTrucks";
 import { isTrussFoc, isPlatformFoc } from "../studio/foc.js";
 import { venueWithParent, standingQty, fixedVenueFor } from "./fixedVenues";
 import { ZONE_META, trussBaseArea, CARPET_OFF, carpetPricingFor, carpetTakesStockPick } from "../studio/taxonomy";
@@ -1309,6 +1310,33 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
     // Print jobs are not here: each is a card on its own zone's page (printCardsOf).
     const buyItems = unplaced.filter(it => it.prodOrBuy === "buying");
     const looseItems = unplaced.filter(it => it.prodOrBuy !== "production" && it.prodOrBuy !== "buying");
+    // ── ITEMS ADDED STRAIGHT TO A TRUCK, NEVER IN A ZONE AT ALL ──
+    // "Add an item not in this deal" (IMS Dept Ops → Loading & dispatch) never goes through Deal
+    // Check/the Build at all, so it was never going to be in `blockedItemsGrouped`/`unplaced` above
+    // (both start from the Deal Check-synced zone lists) — this book printed nothing for these pieces
+    // anywhere, truss/platform extras especially risky since they read as near-identical to a zone's
+    // own truss-layout page (QA report RC-237, Truck_Extras_Downstream_Gaps.md: "zone-counts se
+    // visually similar hain - site supervisor confused"). Same source `truckExtraRowsOf` (Deal
+    // Check's own "Added on trucks" panel, RC-238's pricing fix) reads.
+    // `ctx.trucks` is already remapped to ONE department's own flat `custom` array (see its own
+    // declaration comment in DepartmentOpsTab.jsx) — `truckExtraRowsOf` needs the raw, un-remapped
+    // `trip.custom` (a map keyed by EVERY department), which only `sel.trucks` itself still is; the
+    // same raw field Deal Check's own two call sites read (confirmed by regression review, 2026-11-27
+    // — reading `ctx.trucks` here silently produced zero rows in the real app despite passing a
+    // synthetic test fixture shaped like the raw field).
+    const truckExtraRowsAll = truckExtraRowsOf(sel?.trucks, inventory, tripsOf, trussInv);
+    // Combined (all-departments) book: every department's rows, each card saying which (tagDepts,
+    // same flag the zone cards already use) — this section reads the WHOLE event's trucks regardless
+    // of `dept`/`bookDepts`, unlike blockedItemsGrouped (scoped to one department even when combined),
+    // which is why unplaced/prodItems/buyItems/looseItems stay excluded from the combined book but
+    // this doesn't need to be (regression review, 2026-11-27: that exclusion is about a department-
+    // scoped DATA SOURCE being misleading in an all-departments book, not a blanket "no department
+    // detail in combined books" rule - this data source was never department-scoped to begin with).
+    // Single/shared book: only the department(s) actually in this book (inBook, same as every other
+    // department-filtered section in this file).
+    const truckExtraItems = truckExtraRowsAll
+      .filter(r => combined || inBook(r.dept))
+      .map(r => ({ name: r.name, qty: r.qty, photo: r.photo, dims: null, prodOrBuy: null, kit: 0, source: (tagDepts ? `${t(r.dept)} · ` : "") + t("Added on truck") + (r.where ? ` · ${r.where}` : "") }));
     // ── DATE THE ZONE PLAN, DO NOT JUST ASSERT THE ITEM IS LOOSE ──
     // An item lands here for one of two reasons that look identical on the page: it really is an
     // extra nobody put in a zone, or IMS's copy of the zone lists is simply older than the held
@@ -2018,6 +2046,9 @@ export function buildDeptBookHtml(ctx, zoneLabels = {}, logos = {}, opts = {}) {
       ...listPages(buyItems, t("Buying"), t("To buy"), t("Bought in for this event — not from our own stock")),
       ...listPages(looseItems, t("Not in a zone"), t("Also on site"), looseNote),
       ]),
+      // Not gated on `combined` like the three sections above — see truckExtraItems' own comment:
+      // its data source (sel.trucks) is never department-scoped, combined or not.
+      ...listPages(truckExtraItems, t("On a truck"), t("Site arrivals"), t("Added straight to a truck for this event, not part of any zone")),
     ].join("");
 
     // The cover's backdrop: this event's Stage photo when it has one (the setup the book is
