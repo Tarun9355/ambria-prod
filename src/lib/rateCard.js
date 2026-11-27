@@ -65,51 +65,20 @@ export function oosCostPctFor(item, subCatCostPctFn, fnDate, asOfDate) {
   if (raw !== null && raw !== undefined && raw !== "" && isFinite(v) && v >= 0) return v;
   return subCatCostPctFn(item?.subCat || item?.subcategory);
 }
-// Minimum lead time (days) production needs to actually make a fresh unit in time for the event —
-// owner ask: "Can be made" was being honoured right up to the day of the function, which isn't
-// physically true. Fewer than this many days out, a shortfall is NOT fulfillable regardless of the
-// item's own flag, same as item.canBeMade === false.
-const PRODUCTION_LEAD_DAYS = 10;
-
-// Days from `asOfDate` (local midnight) to fnDate (local midnight) — Infinity when there's no
-// fnDate to gate on at all, so a caller with no function context in scope (a generic admin view,
-// etc.) sees the exact same "always enough lead time" behavior this had before the date gate
-// existed. `asOfDate` defaults to the real current date — the live, continuously-shrinking lead
-// time a pre-Sold build (or a brand-new pick made right now) should always be judged against.
-function daysUntilDate(fnDate, asOfDate) {
-  if (!fnDate) return Infinity;
-  const target = new Date(`${fnDate}T00:00:00`);
-  if (isNaN(target.getTime())) return Infinity;
-  let from = asOfDate ? new Date(`${asOfDate}T00:00:00`) : new Date();
-  if (isNaN(from.getTime())) from = new Date();
-  from.setHours(0, 0, 0, 0);
-  return Math.round((target.getTime() - from.getTime()) / 86400000);
-}
-
 // Can this item's shortfall be fulfilled by production/purchase at all? ONLY an item whose IMS Inventory
-// "Can be made in production" box is ticked (item.canBeMade === true) is ever produced — owner rule.
+// "Can be made in production" box is ticked (item.canBeMade === true) is ever produced - owner rule.
 // An unticked item, and one nobody has ticked yet (the field missing), is never made: a shortfall is
 // never priced as production (oosCostPctFor above returns 0%, flooring to the plain rate), callers show
 // "Out of stock" instead of a cost% badge, and the availability picker refuses to let it be picked while
-// it's short. (Before 2026-10-23 a missing field counted as ticked; every item in IMS now has the field
-// set except a handful, so those are the only ones that changed.)
+// it's short.
 //
-// `fnDate` (optional, "YYYY-MM-DD") is the function's own date — even an item flagged "Can be
-// made" can't actually be produced with fewer than PRODUCTION_LEAD_DAYS days left before the
-// event, so that's treated exactly like canBeMade === false from here down. Omitted (no function
-// context available to the caller) means no date gate at all, same as before this existed.
-//
-// `asOfDate` (optional, "YYYY-MM-DD") is WHEN this commitment to make the item was actually made —
-// owner ask: the clock should not keep running against an already-booked deal just because the
-// calendar moved on with nobody touching it. For an element already sitting in a SOLD deal's
-// build, that's the element's own `addedAt` (frozen at the moment it was added — markSold bulk-
-// stamps everything present at sale time to the sold date, so pre-existing items read from that
-// moment; anything added to the deal afterward carries its own later `addedAt` instead). Omitted
-// (a pre-Sold build, or evaluating a brand-new pick that doesn't exist yet) means "right now" —
-// exactly the live, continuously-shrinking countdown a non-final draft should be judged against.
+// The tick alone decides (owner ask 2026-11-27: "hata do 10 days wala logic"). There used to be a
+// 10-day production lead-time gate here - a ticked item counted as not makeable inside 10 days of the
+// function - which blocked a 5 Dec deal's ticked WARM LED on 27 Nov. `fnDate`/`asOfDate` are still
+// accepted so no call site changes, but they no longer affect the answer.
+// eslint-disable-next-line no-unused-vars
 export function canFulfillShortfall(item, fnDate, asOfDate) {
-  if (item?.canBeMade !== true) return false;
-  return daysUntilDate(fnDate, asOfDate) >= PRODUCTION_LEAD_DAYS;
+  return item?.canBeMade === true;
 }
 
 // Is this inventory item's sub-category flagged tag_hidden (rate_card_categories.tag_hidden, set in

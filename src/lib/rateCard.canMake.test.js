@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { canFulfillShortfall, oosCostPctFor } from "./rateCard.js";
 
-// "Can be made in production" (IMS Inventory): only a TICKED item is ever produced, and even then only when the
-// event is at least 10 days away. Dates are given explicitly (asOfDate) so the tests do not depend on today.
+// "Can be made in production" (IMS Inventory): only a TICKED item is ever produced - however close the event is
+// (the old 10-day lead-time gate was removed, owner ask 2026-11-27).
 const AS_OF = "2026-10-23";
 const ticked = { canBeMade: true, oosCostPct: 60, subCat: "led" };
 const unticked = { canBeMade: false, oosCostPct: 60, subCat: "led" };
@@ -13,9 +13,10 @@ describe("canFulfillShortfall — only a ticked item is made", () => {
   it("ticked, event 18 days away: can be made", () => {
     expect(canFulfillShortfall(ticked, "2026-11-10", AS_OF)).toBe(true);
   });
-  it("ticked, exactly 10 days away: can be made; 9 days: cannot (not enough time)", () => {
-    expect(canFulfillShortfall(ticked, "2026-11-02", AS_OF)).toBe(true);
-    expect(canFulfillShortfall(ticked, "2026-11-01", AS_OF)).toBe(false);
+  it("ticked, event close (9 days, 1 day, same day): still can be made - no lead-time gate", () => {
+    expect(canFulfillShortfall(ticked, "2026-11-01", AS_OF)).toBe(true);
+    expect(canFulfillShortfall(ticked, "2026-10-24", AS_OF)).toBe(true);
+    expect(canFulfillShortfall(ticked, "2026-10-23", AS_OF)).toBe(true);
   });
   it("unticked: never made, however far away the event is", () => {
     expect(canFulfillShortfall(unticked, "2027-03-01", AS_OF)).toBe(false);
@@ -31,22 +32,24 @@ describe("canFulfillShortfall — only a ticked item is made", () => {
     expect(canFulfillShortfall(unticked, undefined, AS_OF)).toBe(false);
     expect(canFulfillShortfall(neverSet, undefined, AS_OF)).toBe(false);
   });
-  it("a sold deal is judged from the day the item was added, not from today", () => {
-    expect(canFulfillShortfall(ticked, "2026-11-01", "2026-10-01")).toBe(true);   // added 31 days before the event
-    expect(canFulfillShortfall(ticked, "2026-11-01", "2026-10-25")).toBe(false);  // added 7 days before
+  it("when the item was added no longer matters", () => {
+    expect(canFulfillShortfall(ticked, "2026-11-01", "2026-10-01")).toBe(true);
+    expect(canFulfillShortfall(ticked, "2026-11-01", "2026-10-25")).toBe(true);
   });
 });
 
-describe("oosCostPctFor — a shortfall is priced as production only for a ticked item with time", () => {
+describe("oosCostPctFor — a shortfall is priced as production only for a ticked item", () => {
   it("ticked + time: the item's own Out of Stock Cost %", () => {
     expect(oosCostPctFor(ticked, subCatPct, "2026-11-10", AS_OF)).toBe(60);
   });
   it("ticked, no own %: the sub-category's", () => {
     expect(oosCostPctFor({ canBeMade: true }, subCatPct, "2026-11-10", AS_OF)).toBe(40);
   });
-  it("unticked, never ticked, or too close to the event: 0% (the plain rate is the floor)", () => {
+  it("unticked or never ticked: 0% (the plain rate is the floor)", () => {
     expect(oosCostPctFor(unticked, subCatPct, "2026-11-10", AS_OF)).toBe(0);
     expect(oosCostPctFor(neverSet, subCatPct, "2026-11-10", AS_OF)).toBe(0);
-    expect(oosCostPctFor(ticked, subCatPct, "2026-10-28", AS_OF)).toBe(0);
+  });
+  it("ticked, event close: still priced at its cost %", () => {
+    expect(oosCostPctFor(ticked, subCatPct, "2026-10-28", AS_OF)).toBe(60);
   });
 });
