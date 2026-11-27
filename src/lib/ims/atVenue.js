@@ -14,10 +14,21 @@ export function atVenueOfEvent(sel, fvSettings, inventory) {
   const repeatIds = new Set(), freshIds = new Set();
   // the venues of the functions that use each item - only their standing stock counts for it (two functions at two venues)
   const venuesOfItem = new Map();
+  // How many of each item each venue needs: item -> venue -> the most any one function there uses (the same pieces serve that venue's
+  // functions). Venue audit 2026-11-27: a Fixed Venue's standing stock was taken off the WHOLE event's quantity, so 20 chairs standing at
+  // Pushpanjali (needing 10) cancelled Exotica's 10 too and nothing loaded. Standing stock now covers only its own venue's need.
+  const needAt = new Map();
+  const addNeed = (id, v, fi, q) => {
+    if (!id || !v || !(q > 0)) return;
+    const k = String(id), vk = String(v).trim().toLowerCase();
+    const byV = needAt.get(k) || needAt.set(k, new Map()).get(k);
+    const byF = byV.get(vk) || byV.set(vk, { venue: v, fns: new Map() }).get(vk);
+    byF.fns.set(fi, (byF.fns.get(fi) || 0) + q);
+  };
   // An element repeats by its own ♻ chip (el.repeatOverride) or, with no chip of its own, by its zone's Repeat (the zone toggle or its
   // Elements chip - repeatCatFor), the same rule Deal Check prices and trucks by. Reading only the element's own chip missed a whole
   // zone set to Repeat (owner check 2026-11-26).
-  fnsV.forEach(f => Object.entries(f?.elements || {}).forEach(([zk, list]) => (Array.isArray(list) ? list : []).forEach(el => {
+  fnsV.forEach((f, fi) => Object.entries(f?.elements || {}).forEach(([zk, list]) => (Array.isArray(list) ? list : []).forEach(el => {
     const isRepeat = typeof el?.repeatOverride === "boolean" ? el.repeatOverride : repeatCatFor(f?.zones?.[zk], "elements");
     const id = el?.invId || el?.imsId;
     if (!id) return;
@@ -30,10 +41,17 @@ export function atVenueOfEvent(sel, fvSettings, inventory) {
     (isRepeat ? repeatIds : freshIds).add(String(id));
     const v = f?.venue || sel?.venue;
     if (v) (venuesOfItem.get(String(id)) || venuesOfItem.set(String(id), new Set()).get(String(id))).add(v);
+    const elQty = Number(el?.qty) || 1;
+    addNeed(id, v, fi, elQty);
     // a kit's parts (their own lines in the blocked list) go with the kit: repeated with it, or fresh with it
     const kitItem = (inventory || []).find(i => String(i.id) === String(id));
     const parts = Array.isArray(el?.kitOverrides) ? el.kitOverrides : (Array.isArray(kitItem?.subItems) ? kitItem.subItems : []);
-    parts.forEach(p => { if (p?.itemId) (isRepeat ? repeatIds : freshIds).add(String(p.itemId)); });
+    parts.forEach(p => {
+      if (!p?.itemId) return;
+      (isRepeat ? repeatIds : freshIds).add(String(p.itemId));
+      if (v) (venuesOfItem.get(String(p.itemId)) || venuesOfItem.set(String(p.itemId), new Set()).get(String(p.itemId))).add(v);
+      addNeed(p.itemId, v, fi, elQty * (Number(p.qty) || 1));
+    });
   })));
   const memo = new Map();
   return (it) => {
@@ -43,12 +61,26 @@ export function atVenueOfEvent(sel, fvSettings, inventory) {
     // "leave at venue" badge below can say so rather than claiming it's standing stock or reused.
     if (it.foc) return { fixed: 0, repeat: false, foc: true, load: 0 };
     // keyed by the qty too: the same line can be read at the whole event's qty and at one function's
-    const mk = `${it.id}|${it.invId}|${it.qty}`;
+    const mk = `${it.id}|${it.invId}|${it.qty}|${it.venue || ""}`;
     if (memo.has(mk)) return memo.get(mk);
     const qty = Number(it.qty) || 0;
     // a kit part is not an element of its own: it falls back to every venue of the event
     const vs = it.invId ? [...(venuesOfItem.get(String(it.invId)) || venues)] : [];
-    const fixed = it.invId ? Math.min(qty, Math.max(0, ...vs.map(v => standingQty(fvSettings, v, it.invId)))) : 0;
+    let fixed = 0;
+    if (it.invId && it.venue) {
+      // one function's line (Planning's one-function view passes its venue): that venue's standing stock only
+      fixed = Math.min(qty, standingQty(fvSettings, it.venue, it.invId));
+    } else if (it.invId) {
+      const byV = needAt.get(String(it.invId));
+      if (byV && byV.size > 1) {
+        // used at several venues: each venue's standing stock covers that venue's own need, never another venue's
+        let credit = 0;
+        byV.forEach(({ venue, fns }) => { credit += Math.min(Math.max(0, ...fns.values()), standingQty(fvSettings, venue, it.invId)); });
+        fixed = Math.min(qty, credit);
+      } else {
+        fixed = Math.min(qty, Math.max(0, ...vs.map(v => standingQty(fvSettings, v, it.invId))));
+      }
+    }
     const repeat = !!it.invId && repeatIds.has(String(it.invId)) && !freshIds.has(String(it.invId));
     const r = { fixed, repeat, load: repeat ? 0 : Math.max(0, qty - fixed) };
     memo.set(mk, r);

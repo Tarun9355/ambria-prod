@@ -1763,7 +1763,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const atVenueOfRow = (it) => standingPartsAtVenue(it) || atVenueRow.get(it.id) || atVenueOf(it); // a Repeat floor of a Platform / carpet line is standing
   // the Inventory list's rows (grouped; a kit's shell and plain rows keep the flat row's id): for the whole event the same row-adjusted
   // figure as the truck list, so its FIXED badge and order agree with what is loaded; a one-function view keeps its own figure
-  const invAtVenueRow = (it) => { const b = it?.src || it; return (invFn === "all" && b?.id != null && atVenueRow.get(b.id)) || atVenueOf(b); };
+  // one function's view: that function's own venue's standing stock (venue audit 2026-11-27 - it read the whole event's)
+  const invAtVenueRow = (it) => { const b = it?.src || it; return (invFn === "all" && b?.id != null && atVenueRow.get(b.id)) || atVenueOf(invFn !== "all" && mpFns[invFn]?.venue ? { ...b, venue: mpFns[invFn].venue } : b); };
   const loadItems = useMemo(() => blockedItems.map(it => { const a = atVenueOfRow(it); return a.load === (Number(it.qty) || 0) ? it : { ...it, qty: a.load, fullQty: it.qty }; }).filter(it => (Number(it.qty) || 0) > 0), [blockedItems, atVenueOf, atVenueRow]);
   const atVenueItems = useMemo(() => blockedItems.filter(it => { const a = atVenueOfRow(it); return a.repeat || a.repeatPart > 0 || a.fixed > 0 || a.foc; }), [blockedItems, atVenueOf, atVenueRow]);
   const rentalIncome = blockedItemsGrouped.reduce((s, x) => s + x.total, 0);
