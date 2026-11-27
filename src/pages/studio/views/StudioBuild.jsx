@@ -24,7 +24,7 @@ import { catalogueDeletedLabel, catalogueDeletedTitle } from "../../../lib/studi
 import { paletteNames, addPaletteInline } from "../../../lib/studio/colours";
 import PaletteQuickAdd from "../../../components/studio/PaletteQuickAdd.jsx";
 import { prefsOf, prefsPatch, setPrefsPatch, clearPrefsPatch, assignCarpets, carpetRemainingFor, floorSqftOf, CARPET_PREF_LABELS, CARPET_PREF_MAX } from "../../../lib/studio/carpetPrefs";
-import { trussRowCost, calcZoneFabricCost, calcZoneFabric, guestFabricMultiplier, fabricRepeatDiscount, fabricPartRepeatOn, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction, isFlowerPickChoice, mandiElUnitPrice, flowerPickRateOf } from "../../../lib/studio/pricing";
+import { trussRowCost, calcZoneFabricCost, calcZoneFabric, guestFabricMultiplier, fabricRepeatDiscount, fabricPartRepeatOn, maskingRepeatOn, maskingGuestCost, zoneTrussStandingDiscountDetail, repeatCatFor, parseFlowerPalette, stringifyFlowerPalette, parseFabricPalette, stringifyFabricPalette, isDirectMandiElement, anchorsForPaletteByMaterial, snapRowDimsForProduction, isFlowerPickChoice, mandiElUnitPrice, flowerPickRateOf, fuzzyColourMatch } from "../../../lib/studio/pricing";
 import { paletteSearch, paletteMatches } from "../../../components/studio/filterUI.jsx";
 import { resolveTrussConfig, trussInvForMaterial, nearestCleanSpans, nearestCleanHeights, trussPillarCount } from "../../../lib/studio/pricing";
 import { reservedTrussStockOnDate, skeletonMaterialKey } from "../../../lib/ims/trussEngine";
@@ -183,6 +183,31 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
   // calcStructCost adds into the Truss & Masking total. It had no figure on the card, so the chip
   // above showed truss + fabric while the card showed the truss alone, and the two looked unrelated.
   const fabricInv = trussInv || structRates?.trussInv;
+  // Only a colour IMS actually stocks for masking ever belongs on this truss — the Fabric Palette
+  // can tag a colour ("Brown") with no real Masking fabric stock row at all, which used to still
+  // show up in the "Default" hint with nothing behind it (owner report 2026-11-27). Resolved to the
+  // STOCK's own colour name, exact (case-insensitive) match tried first, fuzzyColourMatch only as a
+  // fallback ("Mocha" against a stock row named "Mocha Brown", the same loose match pricing's own
+  // auto-fill already uses) — fuzzy-only used to pick WHICHEVER stock name matched first
+  // alphabetically when more than one loosely matched (regression review, 2026-11-27: "White" with
+  // stock ["Off White","White"] resolved to "Off White"), silently picking the wrong colour to bill
+  // and reserve stock for. A value from this list is always exactly one maskingColourOptions entry,
+  // safe to write straight into zc.mkColour.
+  const resolveMaskingStockColour = (name) => {
+    const n = String(name || "").trim();
+    if (!n) return null;
+    return maskingColourOptions.find(opt => opt.toLowerCase() === n.toLowerCase()) || maskingColourOptions.find(opt => fuzzyColourMatch(n, opt)) || null;
+  };
+  const validMaskingColours = [...new Set(maskingColours.map(resolveMaskingStockColour).filter(Boolean))];
+  // zc.lizaColour/curtainColour can be a ratio string ("Ivory:60, Gold:40", parseFlowerPalette's own
+  // format — see the Fabric row below) when a truss splits its drape over several colours; the
+  // masking auto-fill (below) wants ONE colour to suggest, so this takes the largest share, not the
+  // whole string verbatim (which used to resolve to whichever colour inside it sorted first
+  // alphabetically against stock, same wrong-pick class of bug as the exact-match fix above).
+  const primaryDrapeColour = (raw) => {
+    const list = parseFlowerPalette(raw);
+    return list.reduce((best, c) => (!best || c.pct > best.pct ? c : best), null)?.name || null;
+  };
   // The truss's smart dim tips (below the W/D/H row), worked out up here so the box each tip is about can turn red too
   // (owner ask 2026-11-17: "jahan dikkat hai usme red") - the salesperson sees which field to change, not only the line.
   // A FOC truss takes nothing from stock - no stock tips.
@@ -635,6 +660,18 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                       <span style={{display:"inline-flex",alignItems:"center",color:textS}}><IconWall size={12}/></span>
                       {toggle(!!zc.mkOn, ()=>{
                         const turningOn=!zc.mkOn;
+                        // Auto-pick a masking colour on THIS click only (owner ask 2026-11-27) — never
+                        // as a passive render-time check, which used to also fire for an ALREADY-saved,
+                        // already-on truss the instant its card rendered, silently rewriting a live
+                        // deal's masking colour (and so its billing/stock allocation - zc.mkColour fully
+                        // overrides the Fabric Palette for masking, pricing.js's fabricAnchorsForRow)
+                        // just by opening Build (regression review, 2026-11-27). Scoping it to the
+                        // actual off→on click makes it exactly as safe as the sibling mkT auto-default
+                        // right below, which has always worked this way. Preference: the SAME drape
+                        // colour already picked for this truss's own Liza/curtain fabric, when it's one
+                        // Masking actually stocks; else the one unambiguous Fabric-Palette-tagged colour.
+                        const fromDrape=turningOn?(resolveMaskingStockColour(primaryDrapeColour(zc.lizaColour))||resolveMaskingStockColour(primaryDrapeColour(zc.curtainColour))):null;
+                        const autoColour=turningOn&&!zc.mkColour?(fromDrape||(validMaskingColours.length===1?validMaskingColours[0]:null)):null;
                         sZ({
                           mkOn:turningOn,
                           mkWalls:zc.mkOn?{}:(zc.mkWalls||{}),
@@ -642,6 +679,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                           // with nothing already chosen — otherwise the toggle reads "on" but prices
                           // ₹0 until the salesperson also picks a material, which read as a bug.
                           ...(turningOn&&!zc.mkT&&!zc.customMaskingItemId?{mkT:maskOpts[0]?.id||"fabric"}:{}),
+                          ...(autoColour?{mkColour:autoColour}:{}),
                         });
                       })}
                       {zc.mkOn&&<button type="button" aria-pressed={maskRepOn} onClick={()=>sZ({mkRep:!maskRepOn})}
@@ -740,7 +778,7 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                         // picker below) narrows the label to the ONE explicitly chosen colour;
                         // unset, it falls back to listing every colour the Fabric Palette tagged
                         // for masking (ambiguous when there's more than one).
-                        const maskingColourLabel = zc.mkColour || (maskingColours.length ? maskingColours.join(", ") : null);
+                        const maskingColourLabel = zc.mkColour || (validMaskingColours.length ? validMaskingColours.join(", ") : null);
                         const showColour = o.id==="fabric" && zc.mkT===o.id && maskingColourLabel;
                         return <button key={o.id} onClick={()=>sZ({mkT:zc.mkT===o.id?"":o.id,customMaskingItemId:null})} style={optPill(zc.mkT===o.id)} title={showColour?`Masking colour from the Fabric Palette: ${maskingColourLabel}`:undefined}>
                           {zc.mkT===o.id&&<IconCheck size={9}/>}{o.l}{showCosts?` ₹${o.r}`:""}{showColour?<span style={{marginLeft:5,fontWeight:600,opacity:0.8}}>· {maskingColourLabel}</span>:null}
@@ -789,9 +827,19 @@ export function TrussCard({ S, customCeilingField, k, zc, zm, st, sZ, sD, fmt, s
                                 this wall — e.g. the back wall in a different colour from the sides —
                                 from IMS's full Masking fabric stock, same as the Default picker. */}
                             {maskingColourOptions.length > 0 && (
-                              <select value={ov?.colour || ""} onChange={e=>setWallMat({colour:e.target.value||undefined})} title={`Pick ${w.label}'s masking colour`}
+                              <select value={ov?.colour || ""} onChange={e=>setWallMat({colour:e.target.value||undefined})} title={`Pick ${w.label}'s masking colour — Default follows the truss-wide colour above (${zc.mkColour || "none set"})`}
                                 style={{fontSize:9.5,padding:"1px 4px",borderRadius:5,border:`1px solid ${ov?.colour?textP:border}`,background:isDark?"#1A1A2E":"#fff",color:ov?.colour?textP:textS,fontWeight:ov?.colour?600:400}}>
-                                <option value="">🎨 Default</option>
+                                {/* It's the other way round from what this picker implies: masking's
+                                    fabric colour is billed and stock-reserved entirely off the TRUSS-
+                                    wide zc.mkColour (pricing.js's fabricAnchorsForRow) - a wall's OWN
+                                    colour pick here (mkWallMat[w].colour) is read nowhere downstream
+                                    (confirmed: only its matKey/customItemId are), so every wall is
+                                    really masked in the one truss-wide colour regardless of what's
+                                    picked per wall. Naming it on "Default" is accurate and was the gap
+                                    (owner report 2026-11-27: read as "blank until you pick one" when it
+                                    was already set); a DIFFERENT per-wall colour picked here currently
+                                    changes nothing - wiring that up for real is unattempted. */}
+                                <option value="">{zc.mkColour ? `🎨 Default (${zc.mkColour})` : "🎨 Default"}</option>
                                 {maskingColourOptions.map(c=><option key={c} value={c}>{c}</option>)}
                               </select>
                             )}
