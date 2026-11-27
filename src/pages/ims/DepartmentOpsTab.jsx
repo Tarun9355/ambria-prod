@@ -7501,7 +7501,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           || Object.values(trip.extra || {}).some(d => Object.values(d || {}).some(q => Number(q) > 0))
                           || Object.values(trip.custom || {}).some(arr => Array.isArray(arr) && arr.length > 0);
                         const needsFn = multiFnTrucks && tripFi == null && !tripHasLoads;
-                        const tripItems = multiFnTrucks && tripFi != null ? (fnLoadItemsByFn[tripFi] || []) : needsFn ? [] : loadItems;
+                        // the function's items, plus anything already on this trip that is not one of them (loaded before the destination
+                        // changed) - never hidden, tagged as another function's
+                        const fnBase = multiFnTrucks && tripFi != null ? (fnLoadItemsByFn[tripFi] || []) : null;
+                        const tripItems = fnBase
+                          ? [...fnBase, ...loadItems.filter(it => (Number(trip.items?.["inv:" + it.id]) || 0) > 0 && !fnBase.some(b => b.id === it.id)).map(it => ({ ...it, otherFn: true }))]
+                          : needsFn ? [] : loadItems;
                         const loadedOf = (k) => (multiFnTrucks && tripFi != null ? truckLoadedQtyFn(k, tripFi) : truckLoadedQty(k));
                         const visibleLoadItems = tripItems.filter(it => {
                           const k = "inv:" + it.id;
@@ -7560,9 +7565,14 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                 {mpFns.map((f, fi) => {
                                   const on = tripFnOf(trip) === fi;
                                   return (
-                                    <button key={fi} type="button" disabled={locked || !canEditPlanning || onsiteOnly || tripHasLoads} aria-pressed={on}
-                                      title={tripHasLoads ? "Items are already loaded on this trip - its destination stays" : undefined}
-                                      onClick={() => setTripFn(t.id, trip.id, on ? null : fi)}
+                                    <button key={fi} type="button" disabled={locked || !canEditPlanning || onsiteOnly} aria-pressed={on}
+                                      onClick={() => {
+                                        // items already on the trip: say what changes before moving it (they stay on the trip and in its list)
+                                        if (tripHasLoads && !window.confirm(on
+                                          ? "This trip already has items loaded. Clear its destination? Its items will count for every function on the Site page."
+                                          : `This trip already has items loaded. Send it to ${fnLabelOf(f, fi)} instead? The items already on it stay on it.`)) return;
+                                        setTripFn(t.id, trip.id, on ? null : fi);
+                                      }}
                                       className={"text-[11px] font-semibold px-2 py-0.5 rounded-full border transition-colors disabled:opacity-60 disabled:cursor-not-allowed " + (on ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50")}>
                                       {fnLabelOf(f, fi)}
                                     </button>
@@ -7631,6 +7641,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                       <div className="text-xs font-medium text-gray-800 leading-snug line-clamp-2" title={choiceViewAll.get(it.id)?.name || it.name}>{choiceViewAll.get(it.id)?.name || it.name}</div>
                                       {/* a kit's part is loaded as its own piece - say which kit it goes with */}
                                       {(it.kitOf || it.fromKit) && <div className="text-[10px] text-blue-600 truncate">part of {it.kitOf || it.fromKit}</div>}
+                                      {it.otherFn && <div className="text-[10px] font-semibold text-amber-700">{"loaded here, but not this function's item"}</div>}
                                       <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty}{it.qtyUnit ? ` ${it.qtyUnit}` : ""} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
                                       {/* This item's share of the trip, and how many more of it the space left takes. */}
                                       {(() => {
