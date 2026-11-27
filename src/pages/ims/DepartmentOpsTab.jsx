@@ -148,8 +148,12 @@ const truckMissingOf = (t) => {
 
 // A row of chips that scrolls sideways on a phone, with "+N ›" / "‹" buttons on its edges for the chips out of view - a row cut
 // at the edge did not say "scroll" (owner 2026-11-21: "isme pta toh chale scroll krna hai"). Same hint as IMS Inventory's category row.
-// From sm up the chips wrap and no button shows.
-const ChipScrollRow = ({ className = "", children }) => {
+// From sm up the chips wrap and no button shows - UNLESS `wrap={false}` (owner report 2026-11-27: the
+// "Add an item not in this deal" picker's own sub-category row has ~25 of them, wrapping to 6 rows on
+// a desktop-width modal and eating most of its fixed height before a single item was visible). With
+// `wrap={false}` it stays one scrolling row at every width, same as the phone behaviour, with the
+// edge buttons always shown (a mouse has no swipe gesture to discover the scroll by itself).
+const ChipScrollRow = ({ className = "", wrap = true, children }) => {
   const ref = useRef(null);
   const [st, setSt] = useState({ left: false, right: 0 });
   const measure = () => {
@@ -161,21 +165,22 @@ const ChipScrollRow = ({ className = "", children }) => {
   };
   useEffect(() => { measure(); window.addEventListener("resize", measure); return () => window.removeEventListener("resize", measure); });
   const go = (dir) => ref.current?.scrollBy({ left: dir * Math.max(140, (ref.current?.clientWidth || 300) * 0.7), behavior: "smooth" });
+  const edgeCls = wrap ? "sm:hidden " : "";
   return (
     <div className={"relative " + className}>
       {st.left && (
         <button type="button" onClick={() => go(-1)} aria-label="Show earlier"
-          className="sm:hidden absolute left-0 top-0 bottom-0 z-10 pr-4 flex items-center bg-gradient-to-r from-white via-white to-transparent">
+          className={edgeCls + "absolute left-0 top-0 bottom-0 z-10 pr-4 flex items-center bg-gradient-to-r from-white via-white to-transparent"}>
           <span className="w-7 h-7 rounded-full bg-white border border-gray-200 shadow-sm flex items-center justify-center text-gray-600 text-base leading-none">‹</span>
         </button>
       )}
       {st.right > 0 && (
         <button type="button" onClick={() => go(1)} aria-label={`${st.right} more`}
-          className="sm:hidden absolute right-0 top-0 bottom-0 z-10 pl-6 flex items-center bg-gradient-to-l from-white via-white to-transparent">
+          className={edgeCls + "absolute right-0 top-0 bottom-0 z-10 pl-6 flex items-center bg-gradient-to-l from-white via-white to-transparent"}>
           <span className="h-7 pl-2.5 pr-2 rounded-full bg-white border border-blue-200 shadow-sm flex items-center gap-1 text-xs font-semibold text-blue-600 whitespace-nowrap">+{st.right} <span className="text-base leading-none">›</span></span>
         </button>
       )}
-      <div ref={ref} onScroll={measure} className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:flex-wrap sm:overflow-visible sm:pb-0">
+      <div ref={ref} onScroll={measure} className={"flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden " + (wrap ? "sm:flex-wrap sm:overflow-visible sm:pb-0" : "")}>
         {children}
       </div>
     </div>
@@ -8966,7 +8971,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   <input autoFocus value={m.q} onChange={e => set({ q: e.target.value, invId: "" })} placeholder="Search items…"
                     className="w-full h-10 rounded-xl bg-gray-50 ring-1 ring-gray-200 pl-9 pr-3 text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-400" />
                 </div>
-                <ChipScrollRow>
+                <ChipScrollRow wrap={false}>
                   {chip("", "All", all.length)}
                   {subs.map(s => chip(s, s, (deptInventoryBySub.get(s) || []).length))}
                 </ChipScrollRow>
