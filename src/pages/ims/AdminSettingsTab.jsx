@@ -2406,18 +2406,32 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
         const setTrussInvAdmin = fabAdmin ? setTrussInv : () => {};
         // The row is found by its colour in whichever copy the change is applied to (the save applies it to the database's row as it is now,
         // where another device may have added or removed a colour) - by position only when the colour is not there.
+        // The fresh row's own place when it is still the same colour (two rows can share a colour - a new "+ Add Colour" row, say - and the
+        // first match would be the wrong one); else the first row of that colour; a blank-colour row only at its own place, and only while it
+        // is still blank there (review 2026-11-27: deleting a blank row removed another device's row with stock).
+        const ck = (c) => String(c || "").trim().toLowerCase();
+        const freshIndexOf = (rows, idx, wasColour) => {
+          const w = ck(wasColour);
+          if (rows[idx] && ck(rows[idx].colour) === w) return idx;
+          if (!w) return -1;
+          return rows.findIndex((r) => ck(r?.colour) === w);
+        };
         const updateStock = (which, idx, key, val) => {
           const wasColour = (Array.isArray(trussInv[which]) ? trussInv[which] : [])[idx]?.colour;
           ((key === "grade" || key === "hex") ? setTrussInvAdmin : setTrussInv)((ti) => {
             const next = [...(ti[which] || [])];
-            const at = wasColour != null ? next.findIndex((r) => String(r?.colour || "").trim().toLowerCase() === String(wasColour).trim().toLowerCase()) : -1;
-            const j = at >= 0 ? at : idx;
-            if (!next[j]) return ti;
+            const j = freshIndexOf(next, idx, wasColour);
+            if (j < 0 || !next[j]) return ti;
             next[j] = { ...next[j], [key]: (key === "colour" || key === "grade" || key === "hex" || key === "photo") ? val : (parseFloat(val) || 0) };
             return { ...ti, [which]: next };
           });
         };
-        const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
+        // a new row takes the first catalogue colour this fabric does not have yet (never a second row of an existing colour); blank when all are in
+        const addStockRow = (which, qtyField) => setTrussInv((ti) => {
+          const rows = Array.isArray(ti[which]) ? ti[which] : [];
+          const free = colourCat.find((c) => !rows.some((r) => ck(r?.colour) === ck(c)));
+          return { ...ti, [which]: [...rows, { colour: free || "", [qtyField]: 0, [`${qtyField}New`]: 0 }] };
+        });
         // One colour into all three fabrics at once: Liza (kg), Wall Masking and Velvet Curtains (pieces) share the same colour list, so a colour picked here
         // gets a row (0 old / 0 new) in each table that does not have it yet, with the reference photo of whichever table already has it.
         const FABRIC_TABLES = [["lizaStock", "stockKg"], ["maskingStock", "stockPieces"], ["curtainStock", "stockPieces"]];
@@ -2456,10 +2470,10 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
         const removeStockRow = async (which, idx) => {
           if (!canEdit) return;
           if (!(await confirm({ title: "Delete this stock row?", body: "Its stock will no longer be counted. This cannot be undone.", confirmLabel: "Yes, delete", cancelLabel: "No" }))) return;
-          const wasColour = String((Array.isArray(trussInv[which]) ? trussInv[which] : [])[idx]?.colour || "").trim().toLowerCase();
+          const wasColour = (Array.isArray(trussInv[which]) ? trussInv[which] : [])[idx]?.colour;
           setTrussInv((ti) => {
             const rows = Array.isArray(ti[which]) ? ti[which] : [];
-            const at = wasColour ? rows.findIndex((r) => String(r?.colour || "").trim().toLowerCase() === wasColour) : idx;
+            const at = freshIndexOf(rows, idx, wasColour);
             if (at < 0 || !rows[at]) return ti;
             return { ...ti, [which]: rows.filter((_, j) => j !== at) };
           });
@@ -2588,7 +2602,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                             </td>
                             <td className="px-2 py-1.5 text-center">
                               {/* Availability, per fabric: off keeps the row (stock, photo) but Build's Fabric Palette stops offering this colour for this fabric. */}
-                              <button type="button" role="switch" disabled={!fabAdmin} aria-checked={!row.hideInBuild} aria-label={`${row.colour || "Colour"} available in Build`} onClick={() => setTrussInvAdmin((ti) => { const next = [...(ti[which] || [])]; next[i] = { ...next[i], hideInBuild: !next[i].hideInBuild }; return { ...ti, [which]: next }; })}
+                              <button type="button" role="switch" disabled={!fabAdmin} aria-checked={!row.hideInBuild} aria-label={`${row.colour || "Colour"} available in Build`} onClick={() => setTrussInvAdmin((ti) => { const next = [...(ti[which] || [])]; const j = freshIndexOf(next, i, row.colour); if (j < 0) return ti; next[j] = { ...next[j], hideInBuild: !next[j].hideInBuild }; return { ...ti, [which]: next }; })}
                                 title={row.hideInBuild ? "Hidden in Build — tap to show" : "Shown in Build — tap to hide"}
                                 className={"relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed " + (row.hideInBuild ? "bg-gray-300" : `bg-${themeColor}-600`)}>
                                 <span className={"inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " + (row.hideInBuild ? "translate-x-0.5" : "translate-x-[18px]")} />

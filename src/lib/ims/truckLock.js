@@ -5,5 +5,6 @@
 export const truckLoadedOf = (t) => (Array.isArray(t?.trips) && t.trips.length ? t.trips : [t || {}]).some((tr) =>
   (tr?.status && tr.status !== "loading")
   || ["loads", "extra"].some((k) => Object.values(tr?.[k] || {}).some((ld) => Object.values(ld || {}).some((q) => Number(q) > 0)))
-  || Object.values(tr?.custom || {}).some((rows) => (Array.isArray(rows) ? rows : []).some((c) => Number(c?.qty) > 0)));
+  || Object.values(tr?.custom || {}).some((rows) => (Array.isArray(rows) ? rows : []).some((c) => Number(c?.qty) > 0))
+  || Object.values(tr?.tools || {}).some((m) => Object.values(m || {}).some((q) => Number(q) > 0))); // essentials on the trip (trip.tools)
 export const truckDetailsLocked = (t) => !!(String(t?.vehicle || "").trim() && String(t?.driver || "").trim()) && truckLoadedOf(t);

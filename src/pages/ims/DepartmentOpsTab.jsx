@@ -10,7 +10,7 @@ import { TRUCK_EXTRA_SRC, truckExtraBlockOps, truckExtraQtyByItem, isVirtualId }
 import { buildDeptCrew, orderWinIds as orderWinIdsShared, flowerTraceForFn as flowerTraceForFnShared, setMpPatch, addMpPatch, removeMpPatch, actualCrewPatch, resetLinePatch, mpDayPatch, resetMpDayPatch, shiftCountPatch, shiftSplitPatch, addDihariPatch, removeDihariPatch, eventLabourInfo, eventLabourTotalDeptOps } from "../../lib/ims/deptCrew";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel, makeSubcatDept } from "../../lib/ims/deptClassify";
-import { TabsMenu, useConfirm, Modal } from "../../components/ui";
+import { TabsMenu, useConfirm, Modal, DraftInput } from "../../components/ui";
 import ProductionRequestsCard from "./ProductionRequestsCard.jsx";
 import ShortfallAllocation from "./ShortfallAllocation.jsx";
 import { allocKeyOf, shortfallBreakdown, shortfallLine } from "../../lib/ims/shortfallAlloc";
@@ -7780,11 +7780,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               : <div className="text-xs text-gray-400">{blockedItems.length ? (tripItems.length ? "Nothing left to load — it's all gone out on another trip." : "Nothing to load - everything is already at the venue.") : "No inventory blocked for this department."}</div>}
                           </div>
                           {/* ── ESSENTIALS ON THIS TRIP ── tap to put one of this department's essentials on this truck; only these print on its challan */}
-                          {deptTools.length > 0 && (
+                          {/* the department's essentials, plus any on this trip that have since left the department's list (so they can be taken off) */}
+                          {(() => { const onTrip = Object.keys(trip.tools?.[dept] || {}).filter(n => Number(trip.tools[dept][n]) > 0 && !deptTools.some(x => x.name === n)).map(n => ({ name: n, qty: 1 })); const toolList = [...deptTools, ...onTrip]; return toolList.length > 0 && (
                             <div className="rounded-lg ring-1 ring-gray-200 bg-white px-3 py-2.5">
                               <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">{"Essentials on this trip"}</div>
                               <div className="mt-1.5 flex flex-wrap gap-1.5">
-                                {deptTools.map(tl => {
+                                {toolList.map(tl => {
                                   const q = Number(trip.tools?.[dept]?.[tl.name]) || 0;
                                   const on = q > 0;
                                   // already on another trip of any truck
@@ -7797,15 +7798,16 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                         className="px-2.5 py-1 rounded-full disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer">
                                         {on ? "✓ " : "+ "}{tl.name}{elsewhere && <span className="ml-1 text-[10px] font-normal text-amber-700">{"(on another trip)"}</span>}
                                       </button>
-                                      {on && <input type="number" min="1" value={q} disabled={locked || !canEditPlanning || onsiteOnly} aria-label={`${tl.name} on this trip`}
-                                        onChange={e => setTripTool(t.id, trip.id, tl.name, Math.max(1, Number(e.target.value) || 1))}
+                                      {/* saved when typing pauses or the box is left (not every keystroke); an emptied box goes back to 1 then */}
+                                      {on && <DraftInput type="number" min="1" inputMode="numeric" value={q} disabled={locked || !canEditPlanning || onsiteOnly} aria-label={`${tl.name} on this trip`}
+                                        onCommit={v => setTripTool(t.id, trip.id, tl.name, Math.max(1, Number(v) || 1))} delay={600}
                                         className="w-10 h-6 mr-1 rounded-full bg-white text-gray-900 text-center text-[11px] tabular-nums focus:outline-none" />}
                                     </span>
                                   );
                                 })}
                               </div>
                             </div>
-                          )}
+                          ); })()}
                         </>);
                       })()}
                       </>)}

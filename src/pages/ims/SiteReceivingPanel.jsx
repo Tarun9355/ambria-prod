@@ -697,7 +697,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
                       {toLabel && <span className="text-blue-700 font-semibold truncate">→ {toLabel}</span>}
                     </div>
                   </div>
-                  <button type="button" onClick={() => printChallan(t, tr, truckNum.get(t.id) || ti + 1, tripN, rows, toLabel)} disabled={!rows.length}
+                  <button type="button" onClick={() => printChallan(t, tr, truckNum.get(t.id) || ti + 1, tripN, rows, toLabel)} disabled={!rows.length && !Object.values(tr?.tools || {}).some((m) => Object.values(m || {}).some((q) => Number(q) > 0))}
                     className="shrink-0 h-8 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[12px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors">
                     {"Print challan"}
                   </button>

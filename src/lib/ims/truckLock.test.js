@@ -22,3 +22,10 @@ describe("a truck's vehicle / driver are fixed once it is loaded", () => {
     expect(truckDetailsLocked(null)).toBe(false);
   });
 });
+
+describe("essentials on a trip", () => {
+  it("a truck carrying only essentials counts as loaded", () => {
+    expect(truckLoadedOf({ trips: [{ status: "loading", tools: { Floral: { Oasis: 2 } } }] })).toBe(true);
+    expect(truckLoadedOf({ trips: [{ status: "loading", tools: { Floral: { Oasis: 0 } } }] })).toBe(false);
+  });
+});
