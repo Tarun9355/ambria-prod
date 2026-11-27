@@ -500,7 +500,7 @@ Print challan ¦ चालान प्रिंट करें
 Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन बदल सकता है
 All functions ¦ सभी फ़ंक्शन
 Changed in the 48 hours before the event ¦ इवेंट से पहले के 48 घंटों में बदला
-in the total above ¦ ऊपर के कुल में शामिल
+in the Inventory blocked tile ¦ इन्वेंटरी ब्लॉक्ड टाइल के कुल में शामिल
 Replaced ¦ बदला गया
 Removed ¦ हटाया गया
 no rental ¦ कोई किराया नहीं

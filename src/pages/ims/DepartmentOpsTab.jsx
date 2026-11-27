@@ -2178,11 +2178,20 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
           if (!out.swaps.has(added[0].name)) out.swaps.set(added[0].name, { fromName: removed[0].name || "", at, by });
           return;
         }
-        removed.forEach(it => out.removed.push({ name: it.name, qty: Number(it.from ?? it.qty) || 0, at, by }));
+        // taken out this late still costs its rental (owner ask 2026-11-27): the item's own rate x what was held
+        removed.forEach(it => {
+          const qty = Number(it.from ?? it.qty) || 0;
+          const nm = String(it.name || "").trim().toLowerCase();
+          const item = (inventory || []).find(x => String(x?.name || "").trim().toLowerCase() === nm);
+          const rate = Number(item?.price ?? item?.rentalCost) || 0;
+          out.removed.push({ name: it.name, qty, at, by, rate, total: Math.round(rate * qty), photo: item ? (item.img || (Array.isArray(item.photoUrls) && item.photoUrls[0]) || "") : "" });
+        });
       });
     return out;
   })();
   const isLateSwap = (it) => lateChanges.swaps.has(it?.name);
+  // the late-removed items' rental, added to the Inventory blocked TILE only (owner ask 2026-11-27: not the list's own head)
+  const lateRemovedTotal = lateChanges.removed.reduce((s, r) => s + (Number(r.total) || 0), 0);
   const lateSwapRows = invShown.filter(isLateSwap);
   const inMpFn = (d) => {
     const fd = mpFnDate(mpFns[mpFn]);
@@ -5904,7 +5913,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   const bad = rows.filter(r => r.status === "short").length;
                   return { k: "fabreq", icon: "🧵", title: "Fabric plan", sub: bad ? <span className="text-red-600 font-semibold">{bad} need{bad === 1 ? "s" : ""} attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
                 })(),
-                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(invBase.length, "item") + " held" + (truckExtraRows.length ? ` · +${n(truckExtraRows.length, "item")} on trucks` : ""), value: fmt(invBlockedTotal + truckExtraTotal), shortList: invShortItems },
+                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(invBase.length, "item") + " held" + (truckExtraRows.length ? ` · +${n(truckExtraRows.length, "item")} on trucks` : ""), value: fmt(invBlockedTotal + truckExtraTotal + lateRemovedTotal), shortList: invShortItems },
                 dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
                   const rows = carpetPlanOf().rows;
                   const decided = rows.filter(r => r.status === "decided").length;
@@ -6640,7 +6649,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 <div className="m-2.5 rounded-xl ring-1 ring-amber-200 bg-amber-50/50 overflow-hidden">
                   <div className="px-3 py-2 flex items-center justify-between gap-2">
                     <span className="text-[12px] font-semibold text-amber-900"><span aria-hidden="true">🔁</span> {"Changed in the 48 hours before the event"}</span>
-                    {lateSwapRows.length > 0 && <span className="shrink-0 text-[11px] font-semibold text-amber-900 tabular-nums">{fmt(lateSwapRows.reduce((s, x) => s + (Number(x.total) || 0), 0))} <span className="font-normal text-amber-700">{"in the total above"}</span></span>}
+                    {(lateSwapRows.length > 0 || lateRemovedTotal > 0) && <span className="shrink-0 text-[11px] font-semibold text-amber-900 tabular-nums">{fmt(lateSwapRows.reduce((s, x) => s + (Number(x.total) || 0), 0) + lateRemovedTotal)} <span className="font-normal text-amber-700">{"in the Inventory blocked tile"}</span></span>}
                   </div>
                   <div className="divide-y divide-amber-100 bg-white">
                     {lateSwapRows.map(it => { const c = lateChanges.swaps.get(it.name) || {}; return (
@@ -6659,7 +6668,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     ); })}
                     {lateChanges.removed.map((r, i) => (
                       <div key={"lateout:" + i} className="px-3 py-2 flex items-center gap-2.5">
-                        <span className="w-8 h-8 rounded-lg bg-gray-50 shrink-0" />
+                        {r.photo ? <img src={thumbUrl(r.photo, 32)} loading="lazy" alt="" className="w-8 h-8 rounded-lg object-cover shrink-0 opacity-60" /> : <span className="w-8 h-8 rounded-lg bg-gray-50 shrink-0" />}
                         <div className="min-w-0 flex-1">
                           <div className="text-xs font-medium text-gray-500 line-through truncate">{r.name}</div>
                           <div className="text-[10.5px] text-gray-500 truncate">
@@ -6668,7 +6677,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           </div>
                         </div>
                         {r.qty > 0 && <span className="shrink-0 text-xs text-gray-400 tabular-nums">×{r.qty}</span>}
-                        <span className="shrink-0 w-20 text-right text-[11px] text-gray-400">{"no rental"}</span>
+                        <span className="shrink-0 w-20 text-right text-xs font-semibold text-gray-900 tabular-nums" title={r.rate > 0 ? `${r.qty} × ${fmt(r.rate)}` : "No rate set for this item"}>{r.rate > 0 ? fmt(r.total) : "—"}</span>
                       </div>
                     ))}
                   </div>
