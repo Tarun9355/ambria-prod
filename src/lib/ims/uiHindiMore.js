@@ -499,6 +499,7 @@ Each trip's challan - every department's items on it ¦ हर ट्रिप �
 Print challan ¦ चालान प्रिंट करें
 Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन बदल सकता है
 All functions ¦ सभी फ़ंक्शन
+not on a truck ¦ किसी ट्रक पर नहीं
 Essentials on this trip ¦ इस ट्रिप पर ज़रूरी सामान
 (on another trip) ¦ (दूसरी ट्रिप पर)
 Already on another trip ¦ पहले से दूसरी ट्रिप पर

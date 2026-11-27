@@ -2568,10 +2568,18 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   };
 
   const loaded = (deptData.loaded && typeof deptData.loaded === "object") ? deptData.loaded : {};
-  const toggleLoaded = (key) => saveDept({ loaded: { ...loaded, [key]: !loaded[key] } });
   const loadKeys = [...loadItems.map(it => "inv:" + it.id), ...deptTools.map(t => "tool:" + t.name)]; // fixed / repeat items are not loaded
   const totalLoadItems = loadKeys.length;
-  const loadedCount = loadKeys.filter(k => loaded[k]).length;
+  // An essential counts as loaded when it is on a trip of any truck (trip.tools) - the old tick box beside it is gone (owner ask 2026-11-27)
+  const toolWhere = (name) => {
+    for (const t of (Array.isArray(sel?.trucks) ? sel.trucks : [])) {
+      const trs = tripsOf(t);
+      const i = trs.findIndex(tr => Number(tr?.tools?.[dept]?.[name]) > 0);
+      if (i >= 0) return { truckId: t.id, tripN: i + 1, trips: trs.length };
+    }
+    return null;
+  };
+  const loadedCount = loadKeys.filter(k => (k.startsWith("tool:") ? !!toolWhere(k.slice(5)) : loaded[k])).length;
   const dispatch = deptData.dispatch || { vehicle: "", driver: "", phone: "" };
   const setDispatch = (key, val) => saveDept({ dispatch: { ...dispatch, [key]: val } });
   // ── Multi-truck dispatch — inventory goes out across several trucks, each with its own challan ──
@@ -3526,7 +3534,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     if (!w) return;
     const rows = [
       ...loadItems.map(it => `<tr><td>${loaded["inv:" + it.id] ? "☑" : "☐"}</td><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}</td></tr>`),
-      ...deptTools.map(t => `<tr><td>${loaded["tool:" + t.name] ? "☑" : "☐"}</td><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`),
+      ...deptTools.map(t => `<tr><td>${toolWhere(t.name) ? "☑" : "☐"}</td><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`),
     ].join("");
     w.document.write(`<html><head><title>Challan — ${dept}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}@media print{button{display:none}}</style></head><body>
       <h2>${DEPT_ICON[dept]} Ambria — ${dept} Loading Challan</h2>
@@ -7856,18 +7864,20 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 {deptTools.length > 0 && (
                   <div className="rounded-lg ring-1 ring-gray-200 divide-y divide-gray-100">
                     {deptTools.map((t, i) => {
-                      const k = "tool:" + t.name; const on = !!loaded[k];
+                      // which truck it rides on (put on a trip above); no tick box - the trip is the record
+                      const w = toolWhere(t.name);
                       return (
-                        <label key={i} className="flex items-center gap-3 px-3 py-2 cursor-pointer">
-                          <input type="checkbox" checked={on} onChange={() => toggleLoaded(k)} className="w-4 h-4 accent-blue-600 shrink-0" />
-                          <span className={"min-w-0 flex-1 truncate text-[13px] " + (on ? "line-through text-gray-400" : "text-gray-800")}>{t.name}</span>
+                        <div key={i} className="flex items-center gap-3 px-3 py-2">
+                          <span className="min-w-0 flex-1 truncate text-[13px] text-gray-800">{t.name}</span>
+                          {w ? <span className="shrink-0 text-[11px] font-semibold text-blue-700 tabular-nums"><span>{"Truck"}</span> {truckNumById.get(w.truckId) || "?"}{w.trips > 1 ? <> · <span>{"Trip"}</span> {w.tripN}</> : null}</span>
+                            : <span className="shrink-0 text-[11px] text-gray-400">{"not on a truck"}</span>}
                           <input type="number" min="1" value={t.qty || 1} onChange={e => setTool(i, "qty", e.target.value)} aria-label={`${t.name} quantity`} title="Quantity"
                             className="shrink-0 w-12 h-7 rounded-md bg-gray-50 ring-1 ring-gray-200 px-1.5 text-xs text-center font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400" />
                           <button type="button" onClick={() => delTool(i)} aria-label={`Remove ${t.name}`} title="Remove"
                             className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
                             <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
                           </button>
-                        </label>
+                        </div>
                       );
                     })}
                   </div>
