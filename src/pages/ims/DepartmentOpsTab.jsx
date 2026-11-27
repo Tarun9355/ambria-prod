@@ -3004,11 +3004,6 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       return { ...tr, tools: { ...(tr.tools || {}), [dept]: mine } };
     }));
   };
-  // where an essential rides, for the department list: [{ truckId, no, vehicle, tripN, trips, qty }]
-  const toolSpots = (name) => (Array.isArray(sel?.trucks) ? sel.trucks : []).flatMap(t => {
-    const trs = tripsOf(t);
-    return trs.map((tr, i) => ({ truckId: t.id, no: truckNumById.get(t.id) || 0, vehicle: String(t.vehicle || "").trim(), tripN: i + 1, trips: trs.length, qty: Number(tr?.tools?.[dept]?.[name]) || 0 })).filter(x => x.qty > 0);
-  }).sort((x, y) => x.no - y.no || x.tripN - y.tripN);
   // every department's essentials on one trip, for its challan: [{ dept, name, qty }]
   const tripToolsOf = (truck, tripId) => {
     const tr = tripsOf(truck).find(x => x.id === tripId);
@@ -7797,21 +7792,40 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           {(() => {
                             const mineT = trip.tools?.[dept] || {};
                             const names = [...deptTools.map(x => x.name), ...Object.keys(mineT).filter(n => Number(mineT[n]) > 0 && !deptTools.some(x => x.name === n))];
-                            if (!names.length) return null;
                             const off = locked || !canEditPlanning || onsiteOnly;
+                            const sugg = (DEFAULT_TOOLS[dept] || []).filter(sn => !deptTools.some(x => (x.name || "").toLowerCase() === sn.toLowerCase()));
+                            const canList = canEditPlanning && !onsiteOnly;
                             return (
                               <div className="rounded-lg ring-1 ring-gray-200 bg-white">
-                                <div className="px-3 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">{"Essentials on this truck"}</div>
-                                <div className="divide-y divide-gray-100">
-                                  {names.map(nm => { const q = Number(mineT[nm]) || 0; return (
+                                <div className="px-3 pt-2.5 pb-1">
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">{"Essentials on this truck"}</div>
+                                  <div className="mt-0.5 text-[10.5px] text-gray-400">{"Carried, not blocked. Only what is set here goes on this truck's challan."}</div>
+                                </div>
+                                {names.length > 0 && <div className="divide-y divide-gray-100">
+                                  {names.map(nm => { const q = Number(mineT[nm]) || 0; const di = deptTools.findIndex(x => x.name === nm); return (
                                     <div key={nm} className="flex items-center gap-3 px-3 py-1.5">
                                       <span className={"min-w-0 flex-1 truncate text-[12.5px] " + (q > 0 ? "font-medium text-gray-900" : "text-gray-500")}>🛠️ {nm}</span>
                                       <DraftInput type="number" min="0" inputMode="numeric" value={q} disabled={off} aria-label={`${nm} on this truck`}
                                         onCommit={v => setTripTool(t.id, trip.id, nm, Math.max(0, Number(v) || 0))} delay={600}
                                         className={"shrink-0 w-12 h-7 rounded-md ring-1 text-center text-xs font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:cursor-default " + (q > 0 ? "bg-blue-50 ring-blue-100 text-blue-800" : "bg-gray-50 ring-gray-200 text-gray-500")} />
+                                      {/* takes it off the department's essentials list (every event); one already on a truck stays there until set to 0 */}
+                                      {canList && di >= 0 ? <button type="button" onClick={() => delTool(di)} aria-label={`Remove ${nm}`} title="Remove from the essentials list"
+                                        className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
+                                        <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
+                                      </button> : <span className="shrink-0 w-7" />}
                                     </div>
                                   ); })}
-                                </div>
+                                </div>}
+                                {canList && <div className="px-3 py-2 border-t border-gray-100 space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <input value={newTool} onChange={e => setNewTool(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addTool(newTool); }} placeholder="Add an essential, e.g. ladder"
+                                      className="min-w-0 flex-1 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                                    <button type="button" onClick={() => addTool(newTool)} className="shrink-0 h-8 text-xs font-semibold bg-gray-900 hover:bg-black text-white px-3.5 rounded-lg transition-colors">{"Add"}</button>
+                                  </div>
+                                  {sugg.length > 0 && <div className="flex flex-wrap gap-1.5">
+                                    {sugg.map(sn => <button key={sn} type="button" onClick={() => addTool(sn)} className="text-xs font-medium px-2.5 py-1 rounded-lg bg-gray-50 ring-1 ring-gray-200 text-gray-600 hover:bg-white hover:text-gray-900 transition-colors">+ {sn}</button>)}
+                                  </div>}
+                                </div>}
                               </div>
                             );
                           })()}
@@ -7847,52 +7861,6 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   </div>
                 </div>
               )}
-              {/* Essentials / tools */}
-              {/* ── ESSENTIALS ──
-                  An eyebrow and a short caption, like every other section marker, on the card's
-                  own white. The amber wash, amber text, amber input and amber button made a
-                  checklist look like a warning. */}
-              <div className="px-3 sm:px-4 py-3 border-t border-gray-100 space-y-2.5">
-                <div>
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-gray-500">Essentials</div>
-                  <div className="mt-0.5 text-[11px] text-gray-400">{"Carried, not blocked. Saved for every"} {dept} {"event."} {"Set how many go on each truck inside that truck above."}</div>
-                </div>
-                {deptTools.length > 0 && (
-                  <div className="rounded-lg ring-1 ring-gray-200 divide-y divide-gray-100">
-                    {deptTools.map((t, i) => {
-                      // where it rides - set on each truck above; read-only here (the list is the department's, not one truck's)
-                      const spots = toolSpots(t.name);
-                      return (
-                        <div key={i}>
-                        <div className="flex items-center gap-3 px-3 py-2">
-                          <span className="min-w-0 flex-1 truncate text-[13px] text-gray-800">{t.name}</span>
-                          {spots.length ? <span className="shrink-0 text-[11px] text-gray-500 tabular-nums text-right">{spots.map((x, k) => (
-                              <span key={k}>{k ? ", " : ""}<span className="font-semibold text-blue-700"><span>{"Truck"}</span> {x.no || "?"}</span>{x.trips > 1 ? <> · <span>{"Trip"}</span> {x.tripN}</> : null} ×{x.qty}</span>
-                            ))}</span>
-                            : <span className="shrink-0 text-[11px] text-gray-400">{"not on a truck"}</span>}
-                          <button type="button" onClick={() => delTool(i)} aria-label={`Remove ${t.name}`} title="Remove"
-                            className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
-                            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
-                          </button>
-                        </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <input value={newTool} onChange={e => setNewTool(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addTool(newTool); }} placeholder="Add an item, e.g. ladder"
-                    className="min-w-0 flex-1 h-9 rounded-lg bg-white ring-1 ring-gray-200 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                  <button onClick={() => addTool(newTool)} className="shrink-0 h-9 text-xs font-semibold bg-gray-900 hover:bg-black text-white px-4 rounded-lg transition-colors">Add</button>
-                </div>
-                {(DEFAULT_TOOLS[dept] || []).filter(s => !deptTools.some(t => (t.name || "").toLowerCase() === s.toLowerCase())).length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {(DEFAULT_TOOLS[dept] || []).filter(s => !deptTools.some(t => (t.name || "").toLowerCase() === s.toLowerCase())).map(s => (
-                      <button key={s} onClick={() => addTool(s)} className="text-xs font-medium px-2.5 py-1 rounded-lg bg-gray-50 ring-1 ring-gray-200 text-gray-600 hover:bg-white hover:text-gray-900 transition-colors">+ {s}</button>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
 
             {/* Dismantle plan — the department head's pre-set; opens under its own tile. On-site's
