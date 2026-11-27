@@ -35,3 +35,12 @@ describe("one function's share of a load line", () => {
     expect(scopeLineToFn({ id: "fabric:liza:Ivory", qty: 18 }, ctx(0, { fabricGroups: [g] })).qty).toBe(6);
   });
 });
+
+describe("artificial flowers / greens per function", () => {
+  it("the function's share of the bunches", () => {
+    const floralDetail = { 0: { art: { flower: { bunches: 100 }, green: { bunches: 0 } } }, 1: { art: { flower: { bunches: 300 }, green: { bunches: 50 } } } };
+    expect(scopeLineToFn({ id: "a", name: "Artificial flowers", qty: 32 }, ctx(0, { floralDetail })).qty).toBe(8);
+    expect(scopeLineToFn({ id: "g", name: "Artificial greens", qty: 10 }, ctx(0, { floralDetail }))).toBe(null);
+    expect(scopeLineToFn({ id: "g", name: "Artificial greens", qty: 10 }, ctx(1, { floralDetail })).qty).toBe(10);
+  });
+});

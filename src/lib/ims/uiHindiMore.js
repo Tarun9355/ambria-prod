@@ -499,6 +499,7 @@ Each trip's challan - every department's items on it ¦ हर ट्रिप �
 Print challan ¦ चालान प्रिंट करें
 Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन बदल सकता है
 All functions ¦ सभी फ़ंक्शन
+not tied to one function - the whole event's ¦ किसी एक फ़ंक्शन का नहीं - पूरे इवेंट का
 loaded here, but not this function's item ¦ यहाँ लदा है, पर इस फ़ंक्शन का सामान नहीं
 Pick where this trip goes (Goes to, above) to see that function's items. ¦ उस फ़ंक्शन का सामान देखने के लिए ऊपर "कहाँ जाएगा" में चुनें कि यह ट्रिप कहाँ जाएगी।
 Repeat with nothing set up here before: ¦ यहाँ पहले कुछ नहीं लगा, फिर भी रिपीट:

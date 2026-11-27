@@ -124,7 +124,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         if (!grouped.length) return;
         const flat = blockedFlatFor(grouped, d, { sel, trussInv, fabricEntriesOf: pl?.fabricEntriesOf, fabricPalettesOf: pl?.fabricPalettesOf });
         flatByDept.set(d, flat);
-        const flatUse = fd ? flat.map((it) => scopeLineToFn(it, { fd, fi, inventory, blocks, eventId: sel.id, fabricGroups: fabricGroupsAll, maps: fnMaps })).filter(Boolean) : flat;
+        const flatUse = fd ? flat.map((it) => scopeLineToFn(it, { fd, fi, inventory, blocks, eventId: sel.id, fabricGroups: fabricGroupsAll, floralDetail: sel?.floralDetail, maps: fnMaps })).filter(Boolean) : flat;
         const { load, atVenue: av } = loadSplitOf(flatUse, atVenueUse);
         // The design Planning chose for an overlay / cushion cover (Fabric) or a carpet floor (Tenting) - what is actually on the
         // truck - with the line's notes ("not decided yet ..."), as Planning's truck list and challan name it (owner's QA audit

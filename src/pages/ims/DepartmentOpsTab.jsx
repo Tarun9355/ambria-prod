@@ -3033,15 +3033,22 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         fabGroups = buildFabricGroups({ entries: fabricEntriesOf(), lines: Array.isArray(sel?.deptInventory?.Fabric) ? sel.deptInventory.Fabric : [], fabricPlan: sel?.fabricPlan, stock: trussInv, fnPalettes: fabricPalettesOf() }).groups;
       } catch { fabGroups = []; }
     }
-    return mpFns.map((fd, fi) => {
-      const ctx = { fd, fi, inventory, blocks, eventId: sel?.id, fabricGroups: fabGroups, maps: qtyMapsOfFn(fd, inventory) };
-      return blockedItems.map((it) => scopeLineToFn(it, ctx)).filter(Boolean).map((it) => {
-        const a = standingPartsAtVenue(it, atVenueOf.repeatBacked) || atVenueOf(fd?.venue ? { ...it, venue: fd.venue } : it);
-        const q = Number(it.qty) || 0;
-        return a.load === q ? it : { ...it, qty: a.load, fullQty: q };
-      }).filter((it) => (Number(it.qty) || 0) > 0);
+    const toLoad = (it, venue) => {
+      const a = standingPartsAtVenue(it, atVenueOf.repeatBacked) || atVenueOf(venue ? { ...it, venue } : it);
+      const q = Number(it.qty) || 0;
+      return a.load === q ? it : { ...it, qty: a.load, fullQty: q };
+    };
+    const claimed = new Set();
+    const lists = mpFns.map((fd, fi) => {
+      const ctx = { fd, fi, inventory, blocks, eventId: sel?.id, fabricGroups: fabGroups, floralDetail: sel?.floralDetail, maps: qtyMapsOfFn(fd, inventory) };
+      return blockedItems.map((it) => scopeLineToFn(it, ctx)).filter(Boolean).map((it) => { claimed.add(it.id); return toLoad(it, fd?.venue); })
+        .filter((it) => (Number(it.qty) || 0) > 0);
     });
-  }, [multiFnTrucks, mpFns, blockedItems, inventory, blocks, sel, atVenueOf, dept, trussInv]); // eslint-disable-line react-hooks/exhaustive-deps
+    // a line no function can be tied to (nothing in any function's records or zones) is offered on every function's trips, for the
+    // whole event - never left loadable nowhere
+    const unclaimed = loadItems.filter((it) => !claimed.has(it.id)).map((it) => ({ ...it, anyFn: true }));
+    return lists.map((l) => [...l, ...unclaimed]);
+  }, [multiFnTrucks, mpFns, blockedItems, loadItems, inventory, blocks, sel, atVenueOf, dept, trussInv]); // eslint-disable-line react-hooks/exhaustive-deps
   const truckLoadedQtyFn = (key, fi) => trucks.reduce((s, t) => s + t.trips.reduce((s2, tr) => s2 + (tripFnOf(tr) === fi ? (Number(tr.items?.[key]) || 0) : 0), 0), 0);
   const truckExtraQty = (key) => trucks.reduce((s, t) => s + t.trips.reduce((s2, tr) => s2 + (Number(tr.extras?.[key]) || 0), 0), 0);
   const TRUCK_STATUS_LABEL = { loading: "Loading", dispatched: "Dispatched", "at-site": "At site", returned: "Returned" };
@@ -7507,11 +7514,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         const tripItems = fnBase
                           ? [...fnBase, ...loadItems.filter(it => (Number(trip.items?.["inv:" + it.id]) || 0) > 0 && !fnBase.some(b => b.id === it.id)).map(it => ({ ...it, otherFn: true }))]
                           : needsFn ? [] : loadItems;
-                        const loadedOf = (k) => (multiFnTrucks && tripFi != null ? truckLoadedQtyFn(k, tripFi) : truckLoadedQty(k));
+                        // a whole-event line (anyFn) or a trip with no destination: every trip counts
+                        const loadedOf = (k, it) => (multiFnTrucks && tripFi != null && !it?.anyFn ? truckLoadedQtyFn(k, tripFi) : truckLoadedQty(k));
                         const visibleLoadItems = tripItems.filter(it => {
                           const k = "inv:" + it.id;
                           const onThis = Number(trip.items?.[k]) || 0;
-                          return onThis > 0 || loadedOf(k) < (Number(it.qty) || 0);
+                          return onThis > 0 || loadedOf(k, it) < (Number(it.qty) || 0);
                         });
                         return (<>
                           {multi && (
@@ -7635,7 +7643,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                  lines of their own at any width under ~500px. Only what is to be loaded:
                                  fixed / repeat items are listed apart below, not filled in (atVenueOf). */
                               <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
-                                {visibleLoadItems.map(it => { const k = "inv:" + it.id; const onThis = Number(trip.items?.[k]) || 0; const totalLoaded = loadedOf(k); const extraHere = Number(trip.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
+                                {visibleLoadItems.map(it => { const k = "inv:" + it.id; const onThis = Number(trip.items?.[k]) || 0; const totalLoaded = loadedOf(k, it); const extraHere = Number(trip.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
                                   <div key={k} className="flex items-center gap-2.5 px-2.5 py-2">
                                     {(() => { const cv = choiceViewAll.get(it.id); const ph = cv?.name ? cv.photo : it.photo; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : it.hex ? <div aria-hidden="true" className="w-8 h-8 rounded-lg ring-1 ring-black/10 shrink-0" style={{ background: it.hex }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
                                     <div className="min-w-0 flex-1">
@@ -7643,6 +7651,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                       {/* a kit's part is loaded as its own piece - say which kit it goes with */}
                                       {(it.kitOf || it.fromKit) && <div className="text-[10px] text-blue-600 truncate">part of {it.kitOf || it.fromKit}</div>}
                                       {it.otherFn && <div className="text-[10px] font-semibold text-amber-700">{"loaded here, but not this function's item"}</div>}
+                                      {it.anyFn && <div className="text-[10px] font-semibold text-gray-500">{"not tied to one function - the whole event's"}</div>}
                                       <div className={"mt-0.5 text-[11px] font-semibold tabular-nums " + matchCls}>{totalLoaded} of {it.qty}{it.qtyUnit ? ` ${it.qtyUnit}` : ""} loaded{totalLoaded > it.qty ? " · too many" : totalLoaded === it.qty ? " ✓" : ""}{extraAll > 0 && <span className="text-amber-600"> · +{extraAll} extra</span>}</div>
                                       {/* This item's share of the trip, and how many more of it the space left takes. */}
                                       {(() => {

@@ -59,6 +59,15 @@ export function scopeLineToFn(it, ctx) {
     const mine = fresh.filter((z) => isFn(z.fi)).reduce((s, z) => s + (Number(z.qty) || 0), 0);
     return all > 0 ? out((qty * mine) / all) : null;
   }
+  // Floral's "Artificial flowers" / "Artificial greens" kg lines: the function's share of the bunches (sel.floralDetail[function].art)
+  const art = /^artificial (flowers|greens)$/i.exec(String(it.name || "").trim());
+  if (art && ctx.floralDetail && typeof ctx.floralDetail === "object") {
+    const kind = art[1].toLowerCase() === "flowers" ? "flower" : "green";
+    const bOf = (f) => Number(f?.art?.[kind]?.bunches) || 0;
+    const all = Object.values(ctx.floralDetail).reduce((t, f) => t + bOf(f), 0);
+    const mine = bOf(ctx.floralDetail[fk] ?? ctx.floralDetail[fi]);
+    if (all > 0) return out((qty * mine) / all);
+  }
   if (Array.isArray(it.parts) && it.parts.some((p) => p?.fnIdx != null)) {
     const ps = it.parts.filter((p) => isFn(p?.fnIdx));
     return out(ps.reduce((s, p) => s + (Number(p.qty) || 0), 0), { parts: ps });
