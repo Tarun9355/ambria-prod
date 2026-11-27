@@ -206,7 +206,7 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
       {section === "receiving" ? (
         <SiteReceivingPanel sel={sel} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} authUser={authUser} mode={mode} settings={settings} trussInv={trussInv} blocks={blocks} rcItems={rcItems} rateCardCategories={rateCardCategories} onlyFns={myFns} startFn={startFn} />
       ) : (
-        <SiteCrewPanel sel={sel} setEventOrders={setEventOrders} settings={settings} inventory={inventory} authUser={authUser} catToDept={catToDept} mode={mode} />
+        <SiteCrewPanel sel={sel} setEventOrders={setEventOrders} settings={settings} inventory={inventory} authUser={authUser} catToDept={catToDept} mode={mode} onlyFns={myFns} startFn={startFn} />
       )}
 
       <Modal open={reopenPrompt} onClose={() => { setReopenPrompt(false); setReopenReason(""); }} title="Reopen actuals for editing">

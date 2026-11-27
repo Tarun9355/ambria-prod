@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scopeLineToFn } from "./siteFunctionScope.js";
+import { scopeLineToFn, crewDayFns } from "./siteFunctionScope.js";
 
 // Owner ask 2026-11-27: the Site page function-wise, like Planning (Amit Gulati: Sagan at Exotica 27 Nov, Wedding at Pushpanjali 28 Nov).
 const fns = [
@@ -42,5 +42,21 @@ describe("artificial flowers / greens per function", () => {
     expect(scopeLineToFn({ id: "a", name: "Artificial flowers", qty: 32 }, ctx(0, { floralDetail })).qty).toBe(8);
     expect(scopeLineToFn({ id: "g", name: "Artificial greens", qty: 10 }, ctx(0, { floralDetail }))).toBe(null);
     expect(scopeLineToFn({ id: "g", name: "Artificial greens", qty: 10 }, ctx(1, { floralDetail })).qty).toBe(10);
+  });
+});
+
+describe("crewDayFns", () => {
+  const fns = [{ date: "2026-11-28" }, { date: "2026-11-27" }];
+  it("an event day goes to the function on that date", () => {
+    expect(crewDayFns({ date: "2026-11-28", phase: "event" }, fns)).toEqual([0]);
+    expect(crewDayFns({ date: "2026-11-27", phase: "event" }, fns)).toEqual([1]);
+  });
+  it("a setup day goes to the next function, a dismantle day to the last one before it", () => {
+    expect(crewDayFns({ date: "2026-11-26", phase: "minusOne" }, fns)).toEqual([1]);
+    expect(crewDayFns({ date: "2026-11-29", phase: "dismantle" }, fns)).toEqual([0]);
+  });
+  it("two functions on one date share its day; no dated function means every function", () => {
+    expect(crewDayFns({ date: "2026-11-27", phase: "event" }, [{ date: "2026-11-27" }, { date: "2026-11-27" }])).toEqual([0, 1]);
+    expect(crewDayFns({ date: "2026-11-27" }, [{}, {}])).toEqual([0, 1]);
   });
 });

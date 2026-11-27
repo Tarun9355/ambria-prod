@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { mpDayWise, mpDayDihari } from "../../lib/ims/helpers";
 import { poolLabourDept, poolLabourDeptLabel } from "../../lib/ims/deptClassify";
 import {
@@ -7,6 +7,7 @@ import {
 } from "../../lib/ims/deptCrew";
 import { actualsLockState, patchTouchesActuals } from "../../lib/ims/actualsLock";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
+import { crewDayFns } from "../../lib/ims/siteFunctionScope";
 
 const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 const phaseLbl = (d) => d.phase === "minusOne" ? "−1 setup" : d.phase === "dismantle" ? "+1 dismantle" : d.phase === "gap" ? "gap" : (d.date || "event");
@@ -40,11 +41,21 @@ const defaultDayIdx = (schedule, today) => {
 // Cards collapse to a one-line summary (one open at a time, like Receiving's trucks) — Structure
 // alone can carry several crew types, and showing every row of every card open at once turned
 // this into a long, hard-to-scan phone scroll.
-export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory, authUser, catToDept, mode }) {
+export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory, authUser, catToDept, mode, onlyFns = null, startFn = null }) {
   const [openDept, setOpenDept] = useState(null); // department name, or null = the first one
   const [openRow, setOpenRow] = useState(null); // `${dept}|${type}` with its day/shift editor open
   const [activeDay, setActiveDay] = useState({}); // `${dept}|${type}` -> schedule index showing
   const today = new Date().toLocaleDateString("en-CA");
+  // ── ONE FUNCTION AT A TIME ── (owner ask 2026-11-27: function-wise like Receiving) a function shows the crew of its own days - its
+  // date, the setup day before it, the dismantle day after it (lib/ims/siteFunctionScope crewDayFns). Held per event; a logged-in
+  // site supervisor (onlyFns) sees only their own functions, no All. Same rules as SiteReceivingPanel's chips.
+  const [fnPick, setFnPick] = useState({ id: null, fi: "all" });
+  useEffect(() => { if (sel?.id && startFn != null) setFnPick({ id: sel.id, fi: startFn }); }, [sel?.id, startFn]);
+  const fnsOfSel = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+  const allowedFns = Array.isArray(onlyFns) ? onlyFns.filter((i) => fnsOfSel[i] || (i === 0 && !fnsOfSel.length)) : null;
+  const picked = fnPick.id === sel?.id && fnPick.fi !== "all" && fnsOfSel[fnPick.fi] ? fnPick.fi : "all";
+  const fnSel = fnsOfSel.length > 1 ? (allowedFns ? (allowedFns.includes(picked) ? picked : (allowedFns[0] ?? "all")) : picked) : "all";
+  const dayInFn = (d) => fnSel === "all" || crewDayFns(d, fnsOfSel).includes(fnSel);
   // Post-event actuals lock (lib/ims/actualsLock.js) — the same lock DepartmentOpsTab shows, since
   // this panel writes the exact same deptOps crew fields that screen does.
   const lock = actualsLockState(sel, settings);
@@ -56,22 +67,25 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
   // Every row's figures computed once up front — the collapsed header needs the same totals the
   // open rows show, not a second pass over the same math.
   const depts = byDept.map(({ dept, crew }) => {
-    const rows = crew.mpRows.map((r) => {
-      const daywise = mpDayWise(r) && Array.isArray(r.schedule);
+    const rows = crew.mpRows.map((r0) => {
+      const daywise = mpDayWise(r0) && Array.isArray(r0.schedule);
+      // shown with this function's days only; every write still goes through the full row (r0)
+      const r = daywise && fnSel !== "all" ? { ...r0, schedule: r0.schedule.filter(dayInFn) } : r0;
+      if (daywise && !r.schedule.length) return null;
       const planDihari = daywise ? Math.round(r.schedule.reduce((s, d) => s + mpDayDihari(r, d, {}, {}, {}), 0)) : Number(r.sysCount) || 0;
       const actDihari = daywise ? Math.round(r.schedule.reduce((s, d) => s + mpDayDihari(r, d, crew.mpDay, crew.mpWin, crew.mpWinCount), 0)) : Number(r.count) || 0;
       // Only the shared Labours crew is ever pooled across departments — note who with, right on
       // its own row, rather than implying the WHOLE department's crew is shared.
       const pooledWith = (r.type === "Labours" && poolLabourDept(dept) === dept && poolLabourDeptLabel(dept) !== dept) ? poolLabourDeptLabel(dept) : null;
-      return { dept, r, crew, daywise, planDihari, actDihari, pooledWith, edited: actDihari !== planDihari };
-    });
+      return { dept, r, r0, crew, daywise, planDihari, actDihari, pooledWith, edited: actDihari !== planDihari };
+    }).filter(Boolean);
     return {
       dept, rows,
       planTotal: rows.reduce((s, x) => s + x.planDihari, 0),
       actTotal: rows.reduce((s, x) => s + x.actDihari, 0),
       anyEdited: rows.some((x) => x.edited),
     };
-  });
+  }).filter((x) => x.rows.length);
 
   // Edit Access/per-user override, Admin → Users & Roles → Site tab — a standing permission,
   // separate from the actuals lock above (that's time-based and locks everyone equally once a
@@ -103,6 +117,26 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
           👁 View only — your access to Site doesn't include editing
         </div>
       )}
+      {fnsOfSel.length > 1 && (
+        <div className="space-y-1.5">
+          <div className="flex gap-1.5 flex-wrap">
+            {!allowedFns && (
+              <button type="button" onClick={() => setFnPick({ id: sel.id, fi: "all" })} aria-pressed={fnSel === "all"}
+                className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (fnSel === "all" ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50")}>
+                {"All functions"}
+              </button>
+            )}
+            {fnsOfSel.map((f, i) => (allowedFns && !allowedFns.includes(i)) ? null : (
+              <button key={i} type="button" onClick={() => { setFnPick({ id: sel.id, fi: i }); setActiveDay({}); }} aria-pressed={fnSel === i}
+                className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (fnSel === i ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50")}>
+                {[f?.type || `Function ${i + 1}`, f?.venue, String(f?.date || "").slice(0, 10)].filter(Boolean).join(" · ")}
+              </button>
+            ))}
+          </div>
+          {fnSel !== "all" && <div className="text-[11px] text-gray-500">{"Showing this function's crew: its own day, the setup day before it and the dismantle day after it."}</div>}
+        </div>
+      )}
+      {depts.length === 0 && <div className="bg-white rounded-xl border border-gray-100 p-6 text-center text-sm text-gray-400">{"No crew planned for this function's days."}</div>}
       {depts.map(({ dept, rows, planTotal, actTotal, anyEdited }, di) => {
         const open = openDept === dept || (openDept == null && di === 0);
         return (
@@ -120,7 +154,7 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
               </div>
               <span className="shrink-0 text-gray-300 text-sm">{open ? "▾" : "▸"}</span>
             </button>
-            {open && rows.map(({ r, crew, daywise, planDihari, actDihari, pooledWith, edited }) => {
+            {open && rows.map(({ r, r0, crew, daywise, planDihari, actDihari, pooledWith, edited }) => {
               const key = `${dept}|${r.type}`;
               const rowOpen = openRow === key;
               return (
@@ -139,7 +173,7 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
                     ) : mode === "actual" && canEdit ? (
                       <label className="shrink-0 h-8 inline-flex items-center gap-2 rounded-lg px-2.5 bg-gray-50 ring-1 ring-gray-200">
                         <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-400">People</span>
-                        <input type="number" min="0" value={Number(r.count) || 0} onChange={(e) => write(dept, actualCrewPatch(crew, r, crew.mpRows.indexOf(r), e.target.value))}
+                        <input type="number" min="0" value={Number(r.count) || 0} onChange={(e) => write(dept, actualCrewPatch(crew, r0, crew.mpRows.indexOf(r0), e.target.value))}
                           className={"w-12 bg-transparent text-sm text-center font-bold tabular-nums focus:outline-none " + (edited ? "text-amber-700" : "text-gray-800")} />
                       </label>
                     ) : mode === "actual" ? (
@@ -159,8 +193,8 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
                           By day / shift
                         </button>
                       )}
-                      {edited && canEdit && (
-                        <button onClick={() => write(dept, resetLinePatch(crew, r))} className="h-8 inline-flex items-center rounded-lg px-2.5 text-[11px] font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-100">
+                      {edited && canEdit && fnSel === "all" && (
+                        <button onClick={() => write(dept, resetLinePatch(crew, r0))} className="h-8 inline-flex items-center rounded-lg px-2.5 text-[11px] font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-100">
                           ↺ Back to plan
                         </button>
                       )}
@@ -170,7 +204,7 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
                     const dayIdx = activeDay[key] ?? defaultDayIdx(r.schedule, today);
                     const d = r.schedule[Math.min(dayIdx, r.schedule.length - 1)];
                     const winDefs = (crew.dihari[r.type] && Array.isArray(crew.dihari[r.type].windows)) ? crew.dihari[r.type].windows : [];
-                    const ids = crew.effWinIds(r, d) || [];
+                    const ids = crew.effWinIds(r0, d) || [];
                     const hasSlots = winDefs.length > 0 || ids.length > 0;
                     return (
                       <div className="mt-2.5 bg-gray-50 ring-1 ring-gray-200 rounded-lg p-2.5">
@@ -197,7 +231,7 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
                                   <span className="text-[11px] text-gray-500">{lbl}</span>
                                   {canEdit ? (
                                     <>
-                                      <input type="number" min="0" value={crew.effShift(r, d, id)} onChange={(e) => write(dept, shiftCountPatch(crew, r.type, d.date, id, e.target.value, ids))}
+                                      <input type="number" min="0" value={crew.effShift(r0, d, id)} onChange={(e) => write(dept, shiftCountPatch(crew, r.type, d.date, id, e.target.value, ids))}
                                         className="w-10 h-7 border border-gray-200 rounded text-[13px] text-center font-semibold" />
                                       {ids.length > 1 && canSiteDel && (
                                         <button onClick={() => { if (!canSiteDel) return; write(dept, removeDihariPatch(crew, r.type, d.date, id, ids)); }} aria-label="Remove this shift"
@@ -205,12 +239,12 @@ export default function SiteCrewPanel({ sel, setEventOrders, settings, inventory
                                       )}
                                     </>
                                   ) : (
-                                    <span className="w-10 text-[13px] text-center font-semibold text-gray-800">{crew.effShift(r, d, id)}</span>
+                                    <span className="w-10 text-[13px] text-center font-semibold text-gray-800">{crew.effShift(r0, d, id)}</span>
                                   )}
                                 </span>
                               );
                             })}
-                            {canEdit && <button onClick={() => write(dept, addDihariPatch(crew, r, d.date, ids))} className="h-7 inline-flex items-center text-[11px] font-semibold text-blue-600 hover:text-blue-800 border border-blue-200 rounded-full px-2.5">+ dihari</button>}
+                            {canEdit && <button onClick={() => write(dept, addDihariPatch(crew, r0, d.date, ids))} className="h-7 inline-flex items-center text-[11px] font-semibold text-blue-600 hover:text-blue-800 border border-blue-200 rounded-full px-2.5">+ dihari</button>}
                           </div>
                         ) : (
                           <span className="text-[11px] text-gray-400">no shifts set</span>

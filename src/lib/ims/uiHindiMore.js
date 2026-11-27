@@ -499,6 +499,8 @@ Each trip's challan - every department's items on it ¦ हर ट्रिप �
 Print challan ¦ चालान प्रिंट करें
 Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन बदल सकता है
 All functions ¦ सभी फ़ंक्शन
+Showing this function's crew: its own day, the setup day before it and the dismantle day after it. ¦ इस फ़ंक्शन का स्टाफ़: उसका अपना दिन, उससे पहले का सेटअप दिन और बाद का डिसमेंटल दिन।
+No crew planned for this function's days. ¦ इस फ़ंक्शन के दिनों के लिए कोई स्टाफ़ प्लान नहीं है।
 not on a truck ¦ किसी ट्रक पर नहीं
 Essentials on this truck ¦ इस ट्रक पर ज़रूरी सामान
 Loading photo… ¦ फ़ोटो खुल रही है…

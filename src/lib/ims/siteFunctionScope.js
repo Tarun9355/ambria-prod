@@ -87,3 +87,22 @@ export function scopeLineToFn(it, ctx) {
   const z = (it.invId && maps.byId.get(String(it.invId))) || maps.byName.get(String(it.name || "").trim().toLowerCase()) || 0;
   return out(z);
 }
+
+// ── WHICH FUNCTION A CREW DAY BELONGS TO ── (owner ask 2026-11-27: the Site page's Crew tab function-wise, like Receiving)
+// A manpower schedule day { date, phase } -> the indexes of the booking's functions it works for:
+//  - a day on a function's own date -> that function (two on the same date -> both);
+//  - a setup day ("minusOne"), or any day before the first function -> the next function after it;
+//  - a dismantle / gap day after a function -> the last function before it.
+// No dated functions -> every function.
+export function crewDayFns(day, fns) {
+  const list = (Array.isArray(fns) ? fns : []).map((f, i) => ({ i, d: String(f?.date || "").slice(0, 10) })).filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x.d));
+  if (!list.length) return (Array.isArray(fns) ? fns : []).map((_, i) => i);
+  const D = String(day?.date || "").slice(0, 10);
+  const same = list.filter((x) => x.d === D).map((x) => x.i);
+  if (same.length && day?.phase !== "minusOne" && day?.phase !== "dismantle") return same;
+  const after = list.filter((x) => x.d > D).sort((a, b) => (a.d < b.d ? -1 : 1));
+  const before = list.filter((x) => x.d < D).sort((a, b) => (a.d < b.d ? 1 : -1));
+  const pick = (arr) => arr.filter((x) => x.d === arr[0].d).map((x) => x.i);
+  if (day?.phase === "minusOne" || !before.length) return after.length ? pick(after) : same;
+  return pick(before);
+}
