@@ -941,6 +941,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const [mandiQuery, setMandiQuery] = useState(""); // autocomplete text for adding a mandi flower
   const [mandiHowOpen, setMandiHowOpen] = useState(null); // the shopping-list flower whose "how" breakdown is open (one at a time)
   const [newTool, setNewTool] = useState(""); // text for adding an essential tool to the template
+  const [toolPick, setToolPick] = useState(null); // { name, qty } - the essential whose truck picker is open in the Essentials list
   // The activity log opens from the bell in the event header. It is a notification, not a
   // section of the page: a permanent panel meant an event with two edits pushed everything
   // below it down to say so, on every visit. Closed by default, and the bell only appears when
@@ -2993,13 +2994,25 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return !!trips && trips.length > 0 && trips[trips.length - 1].id === tripId;
   };
   // Essentials ride on the trip they are put on (owner ask 2026-11-27: they used to print on every truck's challan) - trip.tools[dept][name] = qty
-  const setTripTool = (id, tripId, name, qty) => {
-    if (!isActiveTrip(id, tripId)) return;
-    setTrips(id, trips => trips.map(tr => {
-      if (tr.id !== tripId) return tr;
-      const mine = { ...((tr.tools || {})[dept] || {}) };
-      if (Number(qty) > 0) mine[name] = Number(qty); else delete mine[name];
-      return { ...tr, tools: { ...(tr.tools || {}), [dept]: mine } };
+  // ── ESSENTIAL -> ONE TRUCK ── (owner ask 2026-11-27: pick the truck and set the qty in the Essentials list itself, no chips on
+  // each trip) takes the essential off every trip still being loaded and puts `qty` on the current trip of `truckId` (null = on no
+  // truck). One save, so it can never end up on two trucks. A trip already dispatched keeps what went out on it.
+  const toolTrucks = eventTruckList.filter(t => !truckMissing(t).length);
+  const placeTool = (name, truckId, qty) => {
+    const q = Math.max(1, Number(qty) || 1);
+    saveEventTrucks(list => list.map(t => {
+      if (truckMissing(t).length) return t;
+      const trips = tripsOf(t);
+      if (!trips.length) return t;
+      const lastId = trips[trips.length - 1].id;
+      const next = trips.map(tr => {
+        if (tr.id !== lastId) return tr;
+        const mine = { ...((tr.tools || {})[dept] || {}) };
+        if (t.id === truckId) mine[name] = q; else delete mine[name];
+        return { ...tr, tools: { ...(tr.tools || {}), [dept]: mine } };
+      });
+      const { loads: _l, extra: _e, custom: _c, status: _s, ...rest } = t;
+      return { ...rest, trips: next };
     }));
   };
   // every department's essentials on one trip, for its challan: [{ dept, name, qty }]
@@ -7785,38 +7798,6 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               ? <div className="rounded-lg bg-blue-50 ring-1 ring-blue-100 px-3 py-2.5 text-xs font-semibold text-blue-800">{"Pick where this trip goes (Goes to, above) to see that function's items."}</div>
                               : <div className="text-xs text-gray-400">{blockedItems.length ? (tripItems.length ? "Nothing left to load — it's all gone out on another trip." : "Nothing to load - everything is already at the venue.") : "No inventory blocked for this department."}</div>}
                           </div>
-                          {/* ── ESSENTIALS ON THIS TRIP ── tap to put one of this department's essentials on this truck; only these print on its challan */}
-                          {/* the department's essentials, plus any on this trip that have since left the department's list (so they can be taken off) */}
-                          {(() => { const onTrip = Object.keys(trip.tools?.[dept] || {}).filter(n => Number(trip.tools[dept][n]) > 0 && !deptTools.some(x => x.name === n)).map(n => ({ name: n, qty: 1 }));
-                            // the department's suggested essentials not in its list yet (Nails, Hammer...): tapping one adds it to the list AND puts it on this trip
-                            const suggested = (DEFAULT_TOOLS[dept] || []).filter(sn => !deptTools.some(x => (x.name || "").toLowerCase() === sn.toLowerCase()) && !onTrip.some(x => x.name.toLowerCase() === sn.toLowerCase())).map(sn => ({ name: sn, qty: 1, suggest: true }));
-                            const toolList = [...deptTools, ...onTrip, ...suggested]; return toolList.length > 0 && (
-                            <div className="rounded-lg ring-1 ring-gray-200 bg-white px-3 py-2.5">
-                              <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">{"Essentials on this trip"}</div>
-                              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                                {toolList.map(tl => {
-                                  const q = Number(trip.tools?.[dept]?.[tl.name]) || 0;
-                                  const on = q > 0;
-                                  // already on another trip of any truck
-                                  const elsewhere = !on && trucks.some(tt => tt.trips.some(tr2 => tr2.id !== trip.id && Number(tr2.tools?.[dept]?.[tl.name]) > 0));
-                                  return (
-                                    <span key={tl.name} className={"inline-flex items-center gap-1 rounded-full border text-[11.5px] font-semibold " + (on ? "bg-blue-600 border-transparent text-white" : "bg-white border-gray-200 text-gray-700")}>
-                                      <button type="button" disabled={locked || !canEditPlanning || onsiteOnly} aria-pressed={on}
-                                        onClick={() => { if (tl.suggest) addTool(tl.name); setTripTool(t.id, trip.id, tl.name, on ? 0 : 1); }}
-                                        title={elsewhere ? "Already on another trip" : undefined}
-                                        className="px-2.5 py-1 rounded-full disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer">
-                                        {on ? "✓ " : "+ "}{tl.name}{elsewhere && <span className="ml-1 text-[10px] font-normal text-amber-700">{"(on another trip)"}</span>}
-                                      </button>
-                                      {/* saved when typing pauses or the box is left (not every keystroke); an emptied box goes back to 1 then */}
-                                      {on && <DraftInput type="number" min="1" inputMode="numeric" value={q} disabled={locked || !canEditPlanning || onsiteOnly} aria-label={`${tl.name} on this trip`}
-                                        onCommit={v => setTripTool(t.id, trip.id, tl.name, Math.max(1, Number(v) || 1))} delay={600}
-                                        className="w-10 h-6 mr-1 rounded-full bg-white text-gray-900 text-center text-[11px] tabular-nums focus:outline-none" />}
-                                    </span>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ); })()}
                         </>);
                       })()}
                       </>)}
@@ -7862,21 +7843,55 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 {deptTools.length > 0 && (
                   <div className="rounded-lg ring-1 ring-gray-200 divide-y divide-gray-100">
                     {deptTools.map((t, i) => {
-                      // which truck it rides on (put on a trip above); no tick box - the trip is the record
+                      // which truck it rides on - tap to pick the truck; the qty box sets how many go on it
                       const w = toolWhere(t.name);
+                      const total = toolOnTrucksQty(t.name);
+                      const wTruck = w ? eventTruckList.find(x => x.id === w.truckId) : null;
+                      const wEditable = !!w && isActiveTrip(w.truckId, tripsOf(wTruck)[w.tripN - 1]?.id);
+                      const canTool = canEditPlanning && !onsiteOnly;
+                      const picking = toolPick?.name === t.name;
+                      const setQty = (v) => {
+                        const n = Math.max(0, Math.round(Number(v) || 0));
+                        if (!n) { if (wEditable) placeTool(t.name, null); return; }
+                        if (wEditable) { const tripQ = Number(tripsOf(wTruck)[w.tripN - 1]?.tools?.[dept]?.[t.name]) || 0; placeTool(t.name, w.truckId, Math.max(1, n - (total - tripQ))); return; }
+                        if (!w) { if (toolTrucks.length === 1) placeTool(t.name, toolTrucks[0].id, n); else setToolPick({ name: t.name, qty: n }); }
+                      };
                       return (
-                        <div key={i} className="flex items-center gap-3 px-3 py-2">
+                        <div key={i}>
+                        <div className="flex items-center gap-3 px-3 py-2">
                           <span className="min-w-0 flex-1 truncate text-[13px] text-gray-800">{t.name}</span>
-                          {w ? <span className="shrink-0 text-[11px] font-semibold text-blue-700 tabular-nums"><span>{"Truck"}</span> {truckNumById.get(w.truckId) || "?"}{w.vehicle ? <span className="font-normal text-gray-500"> · {w.vehicle}</span> : null}{w.trips > 1 ? <> · <span>{"Trip"}</span> {w.tripN}</> : null}</span>
-                            : <span className="shrink-0 text-[11px] text-gray-400">{"not on a truck"}</span>}
-                          {/* on trucks, every trip together - set on each trip above; 0 when on none */}
-                          {(() => { const q = toolOnTrucksQty(t.name); return (
-                            <span title="On trucks (set on each trip above)" className={"shrink-0 w-12 h-7 rounded-md ring-1 flex items-center justify-center text-xs font-semibold tabular-nums " + (q > 0 ? "bg-blue-50 ring-blue-100 text-blue-800" : "bg-gray-50 ring-gray-200 text-gray-400")}>{q}</span>
-                          ); })()}
+                          <button type="button" disabled={!canTool || (!!w && !wEditable)} aria-expanded={picking}
+                            onClick={() => setToolPick(picking ? null : { name: t.name, qty: total || 1 })}
+                            title={w && !wEditable ? "This trip has left - it can't be changed" : "Pick the truck"}
+                            className={"shrink-0 text-[11px] tabular-nums rounded-md px-1.5 py-1 hover:bg-gray-50 disabled:hover:bg-transparent disabled:cursor-default cursor-pointer " + (w ? "font-semibold text-blue-700" : "text-gray-400")}>
+                            {w ? <><span>{"Truck"}</span> {truckNumById.get(w.truckId) || "?"}{w.vehicle ? <span className="font-normal text-gray-500"> · {w.vehicle}</span> : null}{w.trips > 1 ? <> · <span>{"Trip"}</span> {w.tripN}</> : null}</> : <span>{"not on a truck"}</span>}
+                            {canTool && (!w || wEditable) && <span aria-hidden="true" className="ml-1 text-gray-400">▾</span>}
+                          </button>
+                          {/* how many go on the truck - saved when typing pauses or the box is left; 0 takes it off the truck */}
+                          <DraftInput type="number" min="0" inputMode="numeric" value={total} disabled={!canTool || (!!w && !wEditable)} aria-label={`${t.name} on trucks`}
+                            onCommit={setQty} delay={600}
+                            className={"shrink-0 w-12 h-7 rounded-md ring-1 text-center text-xs font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:cursor-default " + (total > 0 ? "bg-blue-50 ring-blue-100 text-blue-800" : "bg-gray-50 ring-gray-200 text-gray-500")} />
                           <button type="button" onClick={() => delTool(i)} aria-label={`Remove ${t.name}`} title="Remove"
                             className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
                             <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
                           </button>
+                        </div>
+                        {picking && (
+                          <div className="px-3 pb-2.5 flex flex-wrap gap-1.5">
+                            {toolTrucks.length ? toolTrucks.slice().sort((a, b) => (truckNumById.get(a.id) || 0) - (truckNumById.get(b.id) || 0)).map(tk => {
+                              const on = w?.truckId === tk.id; const nTrips = tripsOf(tk).length;
+                              return (
+                                <button key={tk.id} type="button" aria-pressed={on}
+                                  onClick={() => { placeTool(t.name, tk.id, toolPick?.qty || total || 1); setToolPick(null); }}
+                                  className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (on ? "bg-blue-600 border-transparent text-white" : "bg-white border-gray-200 text-gray-700 hover:border-blue-300")}>
+                                  <span>{"Truck"}</span> {truckNumById.get(tk.id)}{String(tk.vehicle || "").trim() ? ` · ${String(tk.vehicle).trim()}` : ""}{nTrips > 1 ? <> · <span>{"Trip"}</span> {nTrips}</> : null}
+                                </button>
+                              );
+                            }) : <span className="text-[11px] text-gray-500">{"Add a truck (vehicle, driver, phone) in Truck Planning first."}</span>}
+                            {w && <button type="button" onClick={() => { placeTool(t.name, null); setToolPick(null); }}
+                              className="text-[11.5px] font-semibold px-2.5 py-1 rounded-full border border-gray-200 bg-white text-gray-500 hover:text-red-600 hover:border-red-200 transition-colors">{"Not on a truck"}</button>}
+                          </div>
+                        )}
                         </div>
                       );
                     })}
