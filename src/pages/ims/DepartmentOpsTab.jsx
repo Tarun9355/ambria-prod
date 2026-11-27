@@ -7566,11 +7566,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                   const on = tripFnOf(trip) === fi;
                                   return (
                                     <button key={fi} type="button" disabled={locked || !canEditPlanning || onsiteOnly} aria-pressed={on}
-                                      onClick={() => {
-                                        // items already on the trip: say what changes before moving it (they stay on the trip and in its list)
-                                        if (tripHasLoads && !window.confirm(on
-                                          ? "This trip already has items loaded. Clear its destination? Its items will count for every function on the Site page."
-                                          : `This trip already has items loaded. Send it to ${fnLabelOf(f, fi)} instead? The items already on it stay on it.`)) return;
+                                      onClick={async () => {
+                                        // items already on the trip: say what changes before moving it (they stay on the trip and in its list) - the
+                                        // app's own dialog, not the browser's
+                                        if (tripHasLoads && !(await confirm(on
+                                          ? { title: "Clear this trip's destination?", body: "It already has items loaded. They stay on it and will count for every function on the Site page.", confirmLabel: "Clear", danger: false }
+                                          : { title: `Send this trip to ${fnLabelOf(f, fi)}?`, body: "It already has items loaded. The items already on it stay on it, marked if they are not this function's.", confirmLabel: "Change", danger: false }))) return;
                                         setTripFn(t.id, trip.id, on ? null : fi);
                                       }}
                                       className={"text-[11px] font-semibold px-2 py-0.5 rounded-full border transition-colors disabled:opacity-60 disabled:cursor-not-allowed " + (on ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50")}>
