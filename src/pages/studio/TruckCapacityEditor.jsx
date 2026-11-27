@@ -25,6 +25,11 @@ export default function TruckCapacityEditor({ ctx }) {
   const guessUnit = (sub) => {
     const s = String(sub || "").toLowerCase().trim();
     if (s === "liza" || s === "real flowers" || s === "artificial flowers") return "kg";
+    // Piece-counted, unlike the zone's own "Truss" row (a footprint sqft) — a truck-extra pillar/beam
+    // (IMS Dept Ops' "Add an item not in this deal") has no footprint to convert into, so it needs its
+    // own pc-based capacity (src/lib/studio/truckExtraLoads.js). Checked before the generic truss/
+    // platform/… regex below, which would otherwise also match "truss" here and guess sqft.
+    if (s === "truss pillar" || s === "truss beam") return "pc";
     if (/truss|platform|carpet|fabric|batta|ceiling/.test(s)) return "sqft";
     if (s === "print") return "sqft"; // print jobs are trucked by area (exact match: "PRINTED WALLS" are counted in pieces)
     return "pc";
@@ -94,6 +99,11 @@ export default function TruckCapacityEditor({ ctx }) {
     const have = new Set(Object.values(groups).flat().map((s) => String(s).toLowerCase().trim()));
     const structLabel = "Structural (by sqft)";
     ["Truss", "Platform", "Carpet", "Print"].forEach((s) => { if (!have.has(s.toLowerCase())) (groups[structLabel] = groups[structLabel] || []).push(s); });
+    // Truss Pillar / Truss Beam (pc, not sqft — see guessUnit's comment): a truck-extra-only
+    // pseudo-sub, no rate_card_categories row of its own, same reasoning as Truss/Platform/Carpet
+    // above. A separate group label so its own "by pc" unit isn't implied to be sqft like its siblings.
+    const structPcLabel = "Structural extras (by pc)";
+    ["Truss Pillar", "Truss Beam"].forEach((s) => { if (!have.has(s.toLowerCase())) (groups[structPcLabel] = groups[structPcLabel] || []).push(s); });
     // Fabric Allocation (masking/liza/curtains, §23 Phase 2.9f) and floral material (real mandi +
     // artificial) — same reasoning as Truss/Platform/Carpet above: both are computed from zone/
     // recipe config, not real inventory sub-categories, so without a pseudo-sub here they'd have no
@@ -104,9 +114,10 @@ export default function TruckCapacityEditor({ ctx }) {
     ["Masking", "Liza", "Curtains"].forEach((s) => { if (!have.has(s.toLowerCase())) (groups[fabricLabel] = groups[fabricLabel] || []).push(s); });
     const floralMatLabel = "Floral Material (by kg/bunch)";
     ["Real Flowers", "Artificial Flowers"].forEach((s) => { if (!have.has(s.toLowerCase())) (groups[floralMatLabel] = groups[floralMatLabel] || []).push(s); });
-    const labels = Object.keys(groups).filter((l) => l !== "Other" && l !== structLabel && l !== fabricLabel && l !== floralMatLabel).sort();
+    const labels = Object.keys(groups).filter((l) => l !== "Other" && l !== structLabel && l !== structPcLabel && l !== fabricLabel && l !== floralMatLabel).sort();
     const out = labels.map((l) => ({ cat: { id: l, l, icon: CAT_ICON[l] || "📦" }, subs: groups[l] }));
     if (groups[structLabel]?.length) out.push({ cat: { id: structLabel, l: structLabel, icon: "🏗️" }, subs: groups[structLabel] });
+    if (groups[structPcLabel]?.length) out.push({ cat: { id: structPcLabel, l: structPcLabel, icon: "🏗️" }, subs: groups[structPcLabel] });
     if (groups[fabricLabel]?.length) out.push({ cat: { id: fabricLabel, l: fabricLabel, icon: "🧵" }, subs: groups[fabricLabel] });
     if (groups[floralMatLabel]?.length) out.push({ cat: { id: floralMatLabel, l: floralMatLabel, icon: "🌸" }, subs: groups[floralMatLabel] });
     if (groups.Other?.length) out.push({ cat: { id: "Other", l: "Other", icon: "📁" }, subs: groups.Other });

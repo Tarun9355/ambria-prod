@@ -21,10 +21,51 @@ describe("truckExtraRowsOf (Deal Check's 'Added on trucks' rows and its internal
     expect(new Set(rows.map(r => r.key)).size).toBe(rows.length);
   });
   it("no trucks: nothing", () => { expect(truckExtraRowsOf(undefined, inv, tripsOf)).toEqual([]); });
-  it("a virtual (trussInv-backed) row still shows up — visible, just priced at ₹0 — with its own stored name/photo standing in for the missing inventory row", () => {
+  it("a virtual (trussInv-backed) row still shows up — visible, just priced at ₹0 when no trussInv config is handed in — with its own stored name/photo standing in for the missing inventory row", () => {
     const trucks = [{ id: "T1", vehicle: "DL1", trips: [{ id: "r1", custom: { Tenting: [{ id: "v", invId: "truss:pillars:iron:8", name: "Truss Pillar 8ft", img: "pillar.jpg", qty: 2 }] } }] }];
     const rows = truckExtraRowsOf(trucks, inv, tripsOf);
     expect(rows).toEqual([{ key: "T1|r1|v", name: "Truss Pillar 8ft", sub: "", dept: "Tenting", qty: 2, rate: 0, total: 0, photo: "pillar.jpg", where: "DL1", status: "loading" }]);
+  });
+
+  describe("virtual rows priced off trussInv's own config rate (RC-238)", () => {
+    const trussInv = {
+      rates: { pillarRftRate: 20, beamRftRate: 15, battaRftRate: 7, lizaKgRate: 250, maskingPieceRate: 150, curtainPieceRate: 300 },
+      materials: { pole: { pillars: { 8: { stock: 5 } }, rates: { pillarRftRate: 25 } } },
+      platforms: [{ id: "p1", label: "8x4", lengthFt: 8, widthFt: 4, material: "wood", stock: 10, ratePerSqft: 10 }],
+    };
+    it("truss pillar/beam — per-RFT rate × the piece's own size", () => {
+      const trucks = [{ id: "T1", trips: [{ id: "r1", custom: { Tenting: [
+        { id: "a", invId: "truss:pillars:iron:8", name: "Pillar 8ft", qty: 2, virtual: true },
+        { id: "b", invId: "truss:beams:iron:4", name: "Beam 4ft", qty: 3, virtual: true },
+      ] } }] }];
+      const rows = truckExtraRowsOf(trucks, inv, tripsOf, trussInv);
+      expect(rows.map(r => [r.name, r.rate, r.total])).toEqual([["Pillar 8ft", 160, 320], ["Beam 4ft", 60, 180]]);
+    });
+    it("a material with its own override rate (Pole) prices off ITS rate, not iron's", () => {
+      const trucks = [{ id: "T1", trips: [{ id: "r1", custom: { Tenting: [{ id: "a", invId: "truss:pillars:pole:8", name: "Pillar 8ft · Pole", qty: 1, virtual: true }] } }] }];
+      const rows = truckExtraRowsOf(trucks, inv, tripsOf, trussInv);
+      expect(rows[0].rate).toBe(200); // 8 × 25 (Pole's own override), not 8 × 20 (iron's)
+    });
+    it("a platform piece — its OWN ratePerSqft × its own L×W, not the blended average", () => {
+      const trucks = [{ id: "T1", trips: [{ id: "r1", custom: { Tenting: [{ id: "a", invId: "platform:p1", name: "8x4 · Wood", qty: 3, virtual: true }] } }] }];
+      const rows = truckExtraRowsOf(trucks, inv, tripsOf, trussInv);
+      expect(rows[0]).toMatchObject({ rate: 320, total: 960 }); // 10 ₹/sqft × 8 × 4 = 320/piece
+    });
+    it("fabric colours — liza by kg, curtain/masking by piece", () => {
+      const trucks = [{ id: "T1", trips: [{ id: "r1", custom: { Fabric: [
+        { id: "a", invId: "fabric:lizaStock:ivory", name: "Liza - Ivory", qty: 12, virtual: true },
+        { id: "b", invId: "fabric:curtainStock:gold", name: "Curtains - Gold", qty: 4, virtual: true },
+        { id: "c", invId: "fabric:maskingStock:white", name: "Masking - White", qty: 6, virtual: true },
+      ] } }] }];
+      const rows = truckExtraRowsOf(trucks, inv, tripsOf, trussInv);
+      expect(rows.map(r => [r.name, r.rate, r.total])).toEqual([
+        ["Liza - Ivory", 250, 3000], ["Curtains - Gold", 300, 1200], ["Masking - White", 150, 900],
+      ]);
+    });
+    it("an unresolvable platform id (row deleted since) prices at ₹0, never throws", () => {
+      const trucks = [{ id: "T1", trips: [{ id: "r1", custom: { Tenting: [{ id: "a", invId: "platform:gone", name: "Old size", qty: 2, virtual: true }] } }] }];
+      expect(truckExtraRowsOf(trucks, inv, tripsOf, trussInv)[0].rate).toBe(0);
+    });
   });
 });
 

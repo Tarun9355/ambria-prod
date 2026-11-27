@@ -170,6 +170,7 @@ import { prefetchImages, AVAIL_THUMB } from "../../lib/studio/prefetchImages.js"
 import { eventOrderFor, ownEventOrderIds } from "../../lib/studio/eventOrderFor.js";
 import { tripsOf } from "../../lib/ims/eventTrucks";
 import { truckExtraElements, withTruckExtraZone, truckExtraFnIdx } from "../../lib/ims/truckExtraBlocks"; // items IMS added on the trucks: crewed on the first function
+import { truckExtraLoadsByFn } from "../../lib/studio/truckExtraLoads"; // same items: now counted toward the truck-capacity/transport bill too (RC-236)
 import { zoneSwitchState, planPhotoSwitch, zoneAfterSwitch, zoneCfgSig, stripPhotoStash } from "../../lib/studio/photoStash.js";
 
 // ═══════════════════════════════════════════════════════════════
@@ -951,7 +952,7 @@ function isSubcatPaintable(rcSub, imsInventory) {
 // preceding function (findCrossFnReuseSource/computeFnInvQty) — drawn down per element exactly as
 // calcFunctionCost/calcFunctionBreakdown do, so Build's Live Estimate stops trucking reused units
 // that the Total Estimate, Summary and the cost sheet already treat as "already there".
-export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns, trussInv, flowerMaterialQty, fvCfg, venueName, guestDiscountOn, reusePool, printMaterials) {
+export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, flowerPatterns, trussInv, flowerMaterialQty, fvCfg, venueName, guestDiscountOn, reusePool, printMaterials, extraLoads) {
   const standPool = new Map(); // standing stock is pooled across this function's elements (kitBuiltQty)
   const capBySub = {};
   (truckCap || []).forEach(tc => { if ((Number(tc.perTruck) || 0) > 0) capBySub[String(tc.item || "").toLowerCase().trim()] = tc; });
@@ -1060,6 +1061,10 @@ export function computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems,
   // capacity already being a rough estimate, not a promise this is exact.
   if (flowerMaterialQty?.realKg > 0) addSub("Real Flowers", flowerMaterialQty.realKg);
   if (flowerMaterialQty?.artBunches > 0) addSub("Artificial Flowers", flowerMaterialQty.artBunches);
+  // Truck extras (RC-236) — see truckExtraLoads.js's own comment; counted the same as a Build-
+  // assigned item of the same sub-category, no reuse/repeat waiver (this function has none of that
+  // machinery for its own items either — the full-qty-always posture is already right for an extra).
+  (extraLoads || []).forEach(l => addSub(l.sub, l.qty));
   let frac = 0; const breakdown = [];
   Object.values(subAgg).forEach(s => { const f = s.perTruck > 0 ? s.qty / s.perTruck : 0; frac += f; breakdown.push({ label: s.label, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: f }); });
   // Small prints (each under ₹2,000) are not trucked by area: the function pays one flat charge for them instead (lib/studio/truckPrint.js). It is billed in the
@@ -6515,7 +6520,10 @@ export default function StudioApp() {
         if (zc) decorCost += calcStructCost(zk, zc, structRates).total;
         const tL = pd.trussL || 0, tW = pd.trussW || 0;
         const tSqft = tL * tW;
-        if (tSqft > 0) { const tc = truckCap.find(t => t.item.toLowerCase().includes("truss") && t.perTruck > 0); if (tc) itemAgg[tc.id] = (itemAgg[tc.id] || 0) + tSqft; }
+        // Exact match, not a substring: "truss" would also match the new piece-counted "Truss
+        // Pillar"/"Truss Beam" rows (RC-236, TruckCapacityEditor.jsx) non-deterministically (whichever
+        // sorts first in `truckCap`), pricing this sqft footprint off a per-piece capacity by mistake.
+        if (tSqft > 0) { const tc = truckCap.find(t => t.item.toLowerCase().trim() === "truss" && t.perTruck > 0); if (tc) itemAgg[tc.id] = (itemAgg[tc.id] || 0) + tSqft; }
         const fL = pd.floorL || tL, fW = pd.floorW || tW;
         const fSqft = fL * fW;
         if (fSqft > 0) {
@@ -6669,7 +6677,25 @@ export default function StudioApp() {
     const activeFnData = { ...(allFnsNow.find(f => f.fnIdx === activeFnIdx) || {}), fnIdx: activeFnIdx, fnDate: aDate, fnVenue: aVenue, zoneElements, zoneConfig, enabledEls };
     const crossFnPrev = (!isFillerDateFor(aDate) && allFnsNow.length > 1) ? findCrossFnReuseSource(activeFnData, allFnsNow) : null;
     const reusePool = crossFnPrev ? new Map(Object.entries(computeFnInvQty(crossFnPrev, imsInventory))) : null;
-    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, sharedFloralSettings.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, aVenue, !hideDiscountFromClient, reusePool, structRates.printMaterials);
+    // Truck extras (RC-236) — computed fresh right here rather than read from the dealTruckExtraLoads
+    // memo declared further down: a ref read of that memo (the TDZ workaround every OTHER late-
+    // declared dependency above uses) would have made transportCalc show last render's truck-extra
+    // state, one render stale, since writing a ref never itself triggers a recompute — confirmed as
+    // a real bug by regression review, 2026-11-27. The fallback function (which function an
+    // untargeted trip's extras land on) is built from `clientDate`/`extraFunctions` directly — both
+    // already in transportCalc's own deps array below — rather than `allFnsNow` (itself read through
+    // collectAllFunctionDataRef, synced post-commit, so it can lag a render on a date/function-list
+    // edit); this is the one place that lag would have reached a truck-extra attribution, so it's
+    // avoided rather than inherited.
+    const activeFnExtraLoads = (() => {
+      try {
+        const eo = eventOrderFor(eventOrders, activeClientId, clientName);
+        if (!eo || eo.status === "cancelled" || !Array.isArray(eo.trucks) || !eo.trucks.length) return [];
+        const fallbackFns = [{ fnDate: clientDate }, ...(extraFunctions || []).map(e => ({ fnDate: e.date }))];
+        return truckExtraLoadsByFn(eo.trucks, { inventory: imsInventory, trussInv: sharedFloralSettings.trussInv, fns: fallbackFns, fallbackFnIdx: truckExtraFnIdx(fallbackFns) }).get(activeFnIdx) || [];
+      } catch { return []; }
+    })();
+    const { itemTrucks, breakdown: itemBd } = computeTruckItems(zoneElements, zoneConfig, enabledEls, rcItems, truckCap, imsInventory, sharedFloralSettings.flowerPatterns, trussInvHere, flowerMaterialQty, fvCfgForRepeat, aVenue, !hideDiscountFromClient, reusePool, structRates.printMaterials, activeFnExtraLoads);
     itemBd.forEach(b => breakdown.push(b));
     const floralTrucks = 0, totalFloralCost = 0; // florals now counted via their sub-category capacity — no separate flower truck
     const bt = bufferTiers.find(b => decor >= b.minBudget && decor < b.maxBudget);
@@ -6691,7 +6717,7 @@ export default function StudioApp() {
     const gensetCostForGuest = plan.gensetCost * guestPriceMultiplier;
     const total = truckTotal + gensetCostForGuest;
     return { trucks: allTrucks, tripRate, total, isNew, tier: tierId, tierLabel, breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, gensets: plan.genset125, venueGensets: plan.venueGenset125, venueGenset62: plan.venueGenset62, gensetCost: gensetCostForGuest, gensetRate, gensetRate62, genset62: plan.genset62, truckTotal, clientScale };
-  }, [structRates, venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat, venueParents, clientLedger, activeClientId, activeFnMeta, fnBuilds, extraFunctions, hideDiscountFromClient]);
+  }, [structRates, venue, customTripRate, customGensets, gensetRate, gensetRate62, genset62, trVenues, zoneElements, enabledEls, rcItems, truckCap, floralPerTruck, bufferTiers, totalCost, zoneConfig, imsInventory, dealCheckData, studioFloralData, floralOverrides, floralRatio, activeFnIdx, clientDate, fvCfgForRepeat, venueParents, clientLedger, activeClientId, clientName, activeFnMeta, fnBuilds, extraFunctions, hideDiscountFromClient, eventOrders]);
 
   // agencyFeeAmt is split out of grandTotal (not just an inline Math.round(grandTotal*pct/(100+pct)))
   // so Build's own Live Estimate rail can show the fee as its own visible line — same "its own line,
@@ -7165,6 +7191,36 @@ export default function StudioApp() {
       return repeatBackedFns(mine, otherEventFns(eventOrders, { selfId: myEo?.id || null, clientId: activeClientId })).has(activeFnIdx);
     } catch { return true; }
   }, [collectAllFunctionData, activeFnIdx, eventOrders, activeClientId, clientName]);
+  // Items IMS added straight to a truck for THIS deal (trip.custom rows — "Add an item not in this
+  // deal"), rolled up per function into the truck-capacity sub-categories calcFunctionCost/
+  // calcFunctionBreakdown/computeTruckItems already aggregate Build's own zone items into — see
+  // truckExtraLoads.js's own header comment for why this now bills (owner decision, 2026-11-27, RC-236).
+  // Declared here (before every cost engine below reads it) so each can close over it directly, no
+  // ref/TDZ workaround needed — unlike calcFnFloralSourcingCost/collectAllFunctionData, which those
+  // engines only reach through a ref because THEY are declared later in this file.
+  // A narrower trigger than `eventOrders` itself: that array gets a brand-new reference on EVERY
+  // deal's realtime update, which would otherwise flush fnCostCache (a WeakMap keyed on this memo,
+  // below) and hand calcFunctionBreakdown a new identity on every one of ~40 ops staff's unrelated
+  // edits elsewhere, not just this deal's own trucks changing (regression review, 2026-11-27). Only
+  // THIS deal's own `trucks` is what the cost engines below actually read, so it's the only slice of
+  // `eventOrders` worth watching — a JSON string so the useMemo below genuinely skips recomputing
+  // (and keeps returning the SAME Map reference) when this deal's own trucks haven't changed, string
+  // equality being exactly what a dependency-array comparison already does for primitives.
+  const dealTrucksSig = useMemo(() => {
+    try {
+      const eo = eventOrderFor(eventOrders, activeClientId, clientName);
+      return (!eo || eo.status === "cancelled") ? "" : JSON.stringify(eo.trucks || []);
+    } catch { return ""; }
+  }, [eventOrders, activeClientId, clientName]);
+  // A deal with no event_orders row yet, or a cancelled one, counts nothing — no trucks exist to add to.
+  const dealTruckExtraLoads = useMemo(() => {
+    try {
+      if (!dealTrucksSig) return new Map();
+      const eo = eventOrderFor(eventOrders, activeClientId, clientName);
+      const fns = collectAllFunctionData();
+      return truckExtraLoadsByFn(eo.trucks, { inventory: imsInventory, trussInv: sharedFloralSettings.trussInv, fns, fallbackFnIdx: truckExtraFnIdx(fns) });
+    } catch { return new Map(); }
+  }, [dealTrucksSig, activeClientId, clientName, imsInventory, sharedFloralSettings, collectAllFunctionData]); // eslint-disable-line react-hooks/exhaustive-deps -- dealTrucksSig is the deliberately-narrowed proxy for eventOrders here, see its own comment
   // invId → sibling function names (same venue, same/next day) that also use that item — drives the
   // orange rate on Build's element cards. Deliberately NOT gated by hideDiscountFromClient or the Filler
   // date rule: it is a heads-up for the salesperson, not a price change.
@@ -7184,7 +7240,7 @@ export default function StudioApp() {
   // each ask for the same function's grand several times a render. Keyed on the function object (allFunctionData hands
   // out the same one until something changes) and on the floral costing it used (read through a ref, so a change there
   // is checked here); the cache is new whenever any other input changes. Callers only read the result.
-  const fnCostCache = useMemo(() => new WeakMap(), [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, fvCfgForRepeat, venueParents, clientLedger, activeClientId, hideDiscountFromClient, collectAllFunctionData]);
+  const fnCostCache = useMemo(() => new WeakMap(), [calcElsCostForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, fvCfgForRepeat, venueParents, clientLedger, activeClientId, hideDiscountFromClient, collectAllFunctionData, dealTruckExtraLoads]);
   const calcFunctionCost = useCallback((fnData) => {
     if (!fnData) return { decor: 0, transport: 0, grand: 0 };
     const hit = typeof fnData === "object" ? fnCostCache.get(fnData) : null;
@@ -7328,6 +7384,10 @@ export default function StudioApp() {
       const fcArtBunches = (fcFloralSourcing?.artFlowerBunches || 0) + (fcFloralSourcing?.artGreenBunches || 0);
       if (fcRealKg > 0) addSub("Real Flowers", fcRealKg);
       if (fcArtBunches > 0) addSub("Artificial Flowers", fcArtBunches);
+      // Truck extras (RC-236) — real weight on a real truck, so they count the same as a Build-
+      // assigned item of the same sub-category, no reuse/repeat netting (none of that applies to
+      // something physically added straight to the truck). See dealTruckExtraLoads' own comment.
+      (dealTruckExtraLoads.get(fnData.fnIdx) || []).forEach(l => addSub(l.sub, l.qty));
       let truckFrac = 0; Object.values(subAgg).forEach(s => { if (s.perTruck > 0) truckFrac += (s.qty || 0) / s.perTruck; });
       const itemTrucks = Math.ceil(truckFrac);
       const floralTrucks = 0; // florals counted via their sub-category capacity — no separate flower truck
@@ -8131,6 +8191,28 @@ export default function StudioApp() {
       const bdArtBunches = (bdFloralSourcing?.artFlowerBunches || 0) + (bdFloralSourcing?.artGreenBunches || 0);
       if (bdRealKg > 0) addSub("Real Flowers", bdRealKg, bdRealKg, null, "Real flowers");
       if (bdArtBunches > 0) addSub("Artificial Flowers", bdArtBunches, bdArtBunches, null, "Artificial flowers");
+      // Truck extras (RC-236) — kept OUT of the carryover netting below (`prevSubQty`/`carried`):
+      // that netting means "already standing at the venue from an earlier function, no truck
+      // needed", which never applies to something physically added straight to a dispatching
+      // truck. Tracked in its own map instead of going through addSub, so a sub-category with ONLY
+      // truck extras (no zone-sourced qty at all — the bug report's own "0 sqft truss, 12 truck
+      // extras") still gets a row below; addSub alone would never create a subAgg entry for it. A
+      // load whose sub-category has no truck-capacity row yet (e.g. "Truss Pillar" before an admin
+      // sets one up, TruckCapacityEditor.jsx) is left out of the bill — same silent-drop convention
+      // every other un-configured sub-category already gets — and also listed in
+      // `truckExtrasUncounted` so the Transport tab can say so (more likely to go unnoticed here
+      // than for Build's own items, which an admin already had to configure to price the deal at all).
+      const extraBySubKey = {};
+      const truckExtrasUncounted = [];
+      (dealTruckExtraLoads.get(fnData.fnIdx) || []).forEach(l => {
+        const k = String(l.sub || "").toLowerCase().trim();
+        const tc = capBySub[k];
+        if (!(l.qty > 0)) return;
+        if (!tc) { truckExtrasUncounted.push(l); return; }
+        if (!extraBySubKey[k]) extraBySubKey[k] = { label: tc.item, perTruck: Number(tc.perTruck) || 0, unit: tc.unit || "pc", qty: 0, items: [] };
+        extraBySubKey[k].qty += l.qty;
+        if (l.name) extraBySubKey[k].items.push({ zoneKey: "__truckExtras", name: l.name, qty: l.qty });
+      });
       // truckFracClient: this function's own full requirement, exactly as before carryover existed —
       // still what Build/Summary bill the guest for (truckTotalClient below stays keyed off this) —
       // UNLESS the discreet toggle is on, in which case the guest now also sees the same
@@ -8141,12 +8223,20 @@ export default function StudioApp() {
       let truckFrac = 0;
       let truckFracClient = 0;
       const carriedOver = [];
-      Object.values(subAgg).forEach(s => {
-        if (!(s.perTruck > 0)) return;
-        const carried = Math.min(s.qty || 0, prevSubQty[s.subKey] || 0);
-        const netQty = Math.max(0, (s.qty || 0) - carried);
-        truckFrac += netQty / s.perTruck;
-        if (carried > 0) carriedOver.push({ label: s.label, subKey: s.subKey, qty: Math.round(carried) });
+      // Every sub-category with zone-sourced qty (subAgg) OR truck-extra-only qty (extraBySubKey —
+      // see its own comment above) gets a row; a key in only one of the two reads 0 from the other.
+      new Set([...Object.keys(subAgg), ...Object.keys(extraBySubKey)]).forEach(k => {
+        const s = subAgg[k], ex = extraBySubKey[k];
+        const perTruck = s?.perTruck ?? ex?.perTruck ?? 0;
+        if (!(perTruck > 0)) return;
+        const baseQty = s?.qty || 0;
+        const carried = Math.min(baseQty, prevSubQty[k] || 0);
+        const extraQty = ex?.qty || 0;
+        // Truck extras add on top of the netted qty — no carryover waiver applies to them (see the
+        // comment where extraBySubKey is built).
+        const netQty = Math.max(0, baseQty - carried) + extraQty;
+        truckFrac += netQty / perTruck;
+        if (carried > 0) carriedOver.push({ label: s.label, subKey: k, qty: Math.round(carried) });
         // hideDiscountFromClient off (the default) → guest is billed as if nothing were reused,
         // same as before repeat/fixed-venue netting existed on the client side at all: qtyFull.
         // On → guest sees the SAME netted qty Ambria's own cost side (s.qty) already uses, and the
@@ -8156,12 +8246,14 @@ export default function StudioApp() {
         // whole category's worth of trucking because the previous function had SOME of that
         // category on site, which is Ambria's own cost view; the guest is only spared the same items
         // actually reused. This is what calcFunctionCost (the Total Estimate / booking amount) and
-        // Build's Live Estimate count, so the cost sheet now bills the same number of trucks.
-        const clientQty = Math.max(0, s.qtyClient || 0);
-        truckFracClient += clientQty / s.perTruck;
+        // Build's Live Estimate count, so the cost sheet now bills the same number of trucks. Truck
+        // extras bill the guest unconditionally too — they were really trucked, discount toggle or not.
+        const clientQty = Math.max(0, s?.qtyClient || 0) + extraQty;
+        truckFracClient += clientQty / perTruck;
         // trucksClient — this row's client-facing truck fraction (Summary's client-facing accordion
         // reads this); trucks is netted for carryover (Deal Check's own Transport tab reads that).
-        breakdown.push({ label: s.label, subKey: s.subKey, invCat: s.invCat, qty: Math.round(s.qty), perTruck: s.perTruck, unit: s.unit, trucks: netQty / s.perTruck, trucksClient: clientQty / s.perTruck, carriedQty: Math.round(carried), items: s.items });
+        const items = ex ? [...(s?.items || []), ...ex.items] : (s?.items || []);
+        breakdown.push({ label: s?.label ?? ex?.label ?? k, subKey: k, invCat: s?.invCat || "", qty: Math.round(baseQty + extraQty), perTruck, unit: s?.unit ?? ex?.unit ?? "pc", trucks: netQty / perTruck, trucksClient: clientQty / perTruck, carriedQty: Math.round(carried), items, extraQty: extraQty > 0 ? Math.round(extraQty) : 0 });
       });
       const itemTrucks = Math.ceil(truckFrac);
       const itemTrucksClient = Math.ceil(truckFracClient);
@@ -8196,6 +8288,11 @@ export default function StudioApp() {
       transportTotalClient = truckTotalClient + gensetCostForGuest;
       transport = { trucks: allTrucks, tripRate, total: transportTotal, isNew, tier: tierId, tierLabel,
         breakdown, floralTrucks, bufferTrucks: bufTrucks, itemTrucks, totalFloralCost, repeatZonesExcluded,
+        // Truck extras whose sub-category has no truck-capacity row configured yet (RC-236) — left
+        // out of every total above, same as any of Build's own un-configured sub-categories, but
+        // surfaced here so the Transport tab can say so instead of the pieces just silently not
+        // counting with no visible reason.
+        truckExtrasUncounted,
         // trucksClient — the UNNETTED truck count (this function priced on its own, no carryover),
         // pairs with truckTotalClient/tripRateClient below. `trucks` above is netted for cost and no
         // longer safe to read next to a *Client total — Summary/exports must read this one instead.
@@ -8215,7 +8312,7 @@ export default function StudioApp() {
         clientScale, truckTotalClient, totalClient: transportTotalClient, tripRateClient: tripRate * clientScale };
     }
     return { zones, transport, decorTotal, transportTotal, transportTotalClient, grand: decorTotal + transportTotal, grandClient: decorTotal + transportTotalClient };
-  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData, fvCfgForRepeat, calcFnFloralSourcingCost, venueParents, clientLedger, activeClientId, hideDiscountFromClient, paintFor]);
+  }, [getElPriceForFn, rcItems, trVenues, truckCap, floralPerTruck, bufferTiers, gensetRate, gensetRate62, gensetCostRate, gensetCostRate62, zoneLabelsD, zoneKeys, dcCustomItems, structRates, blocksByDate, imsInventory, dealCheckData, studioFloralData, collectAllFunctionData, fvCfgForRepeat, calcFnFloralSourcingCost, venueParents, clientLedger, activeClientId, hideDiscountFromClient, paintFor, dealTruckExtraLoads]);
 
   const cat = getCat(grandTotal);
 

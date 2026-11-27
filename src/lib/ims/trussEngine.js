@@ -827,7 +827,7 @@ export const reservedTrussStockOnDate = (dateEntry, { excludeClientId, trussInv 
 // trussInv.platforms array, distinguished only by its OWN Wood/Iron material field, a completely
 // different axis from truss material — see platformEngine.js's header comment, confirmed bug
 // closed 2026-11-05). `...trussInv` already carries that one array through unchanged.
-const trussInvForMaterialIms = (trussInv, material) => {
+export const trussInvForMaterialIms = (trussInv, material) => {
   if (!trussInv) return trussInv;
   const mat = String(material || "iron").toLowerCase();
   if (mat === "iron") return trussInv;
