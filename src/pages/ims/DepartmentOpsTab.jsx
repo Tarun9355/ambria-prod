@@ -7578,8 +7578,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                         // items already on the trip: say what changes before moving it (they stay on the trip and in its list) - the
                                         // app's own dialog, not the browser's
                                         if (tripHasLoads && !(await confirm(on
-                                          ? { title: "Clear this trip's destination?", body: "It already has items loaded. They stay on it and will count for every function on the Site page.", confirmLabel: "Clear", danger: false }
-                                          : { title: `Send this trip to ${fnLabelOf(f, fi)}?`, body: "It already has items loaded. The items already on it stay on it, marked if they are not this function's.", confirmLabel: "Change", danger: false }))) return;
+                                          // fixed sentences (no function name inside), so the Hindi screen finds them whole (lib/ims/uiHindiMore)
+                                          ? { title: "Remove where this trip goes?", body: "Items are already loaded on this trip. They stay on it and will count for every function on the Site page.", confirmLabel: "Remove", danger: false }
+                                          : { title: "Change where this trip goes?", body: "Items are already loaded on this trip. They stay on it - any that are not the new function's are marked.", confirmLabel: "Change", danger: false }))) return;
                                         setTripFn(t.id, trip.id, on ? null : fi);
                                       }}
                                       className={"text-[11px] font-semibold px-2 py-0.5 rounded-full border transition-colors disabled:opacity-60 disabled:cursor-not-allowed " + (on ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50")}>
