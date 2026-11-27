@@ -500,6 +500,10 @@ Print challan ¦ चालान प्रिंट करें
 Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन बदल सकता है
 All functions ¦ सभी फ़ंक्शन
 not on a truck ¦ किसी ट्रक पर नहीं
+Essentials on this truck ¦ इस ट्रक पर ज़रूरी सामान
+Carried, not blocked. Saved for every ¦ साथ ले जाते हैं, ब्लॉक नहीं। हर
+event. ¦ इवेंट के लिए सेव।
+Set how many go on each truck inside that truck above. ¦ हर ट्रक पर कितने जाएँगे, ऊपर उसी ट्रक के अंदर भरें।
 Not on a truck ¦ किसी ट्रक पर नहीं
 Pick the truck ¦ ट्रक चुनें
 This trip has left - it can't be changed ¦ यह ट्रिप निकल चुकी है - अब बदल नहीं सकते
