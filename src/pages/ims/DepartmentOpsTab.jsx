@@ -7781,7 +7781,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           </div>
                           {/* ── ESSENTIALS ON THIS TRIP ── tap to put one of this department's essentials on this truck; only these print on its challan */}
                           {/* the department's essentials, plus any on this trip that have since left the department's list (so they can be taken off) */}
-                          {(() => { const onTrip = Object.keys(trip.tools?.[dept] || {}).filter(n => Number(trip.tools[dept][n]) > 0 && !deptTools.some(x => x.name === n)).map(n => ({ name: n, qty: 1 })); const toolList = [...deptTools, ...onTrip]; return toolList.length > 0 && (
+                          {(() => { const onTrip = Object.keys(trip.tools?.[dept] || {}).filter(n => Number(trip.tools[dept][n]) > 0 && !deptTools.some(x => x.name === n)).map(n => ({ name: n, qty: 1 }));
+                            // the department's suggested essentials not in its list yet (Nails, Hammer...): tapping one adds it to the list AND puts it on this trip
+                            const suggested = (DEFAULT_TOOLS[dept] || []).filter(sn => !deptTools.some(x => (x.name || "").toLowerCase() === sn.toLowerCase()) && !onTrip.some(x => x.name.toLowerCase() === sn.toLowerCase())).map(sn => ({ name: sn, qty: 1, suggest: true }));
+                            const toolList = [...deptTools, ...onTrip, ...suggested]; return toolList.length > 0 && (
                             <div className="rounded-lg ring-1 ring-gray-200 bg-white px-3 py-2.5">
                               <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">{"Essentials on this trip"}</div>
                               <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -7793,7 +7796,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                   return (
                                     <span key={tl.name} className={"inline-flex items-center gap-1 rounded-full border text-[11.5px] font-semibold " + (on ? "bg-blue-600 border-transparent text-white" : "bg-white border-gray-200 text-gray-700")}>
                                       <button type="button" disabled={locked || !canEditPlanning || onsiteOnly} aria-pressed={on}
-                                        onClick={() => setTripTool(t.id, trip.id, tl.name, on ? 0 : (Number(tl.qty) || 1))}
+                                        onClick={() => { if (tl.suggest) addTool(tl.name); setTripTool(t.id, trip.id, tl.name, on ? 0 : (Number(tl.qty) || 1)); }}
                                         title={elsewhere ? "Already on another trip" : undefined}
                                         className="px-2.5 py-1 rounded-full disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer">
                                         {on ? "✓ " : "+ "}{tl.name}{elsewhere && <span className="ml-1 text-[10px] font-normal text-amber-700">{"(on another trip)"}</span>}
