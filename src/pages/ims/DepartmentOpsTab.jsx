@@ -59,6 +59,7 @@ import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a si
 import { truckDetailsLocked, truckLoadedOf } from "../../lib/ims/truckLock";
 import { atVenueOfEvent, atVenueByRow } from "../../lib/ims/atVenue";
 import { makeFabricNeedCache } from "../../lib/ims/fabricNeed"; // fabric per colour, as the Fabric block reads it
+import { scopeLineToFn, qtyMapsOfFn } from "../../lib/ims/siteFunctionScope"; // one function's share of a load line (a trip that goes to one function)
 import { truckKeyOf, mappedStockRowsOf, kitPartOfDeptOf, blockedGroupedFor, blockedFlatFor, mergeLegacyTrucks, standingPartsAtVenue } from "../../lib/ims/deptLoadList"; // what a department loads (shared with Site) // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
 import { logWrite } from "../../lib/studio/userActions";
 
@@ -3019,6 +3020,29 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // the total already on its way, whichever trip or truck carries it (owner ask, 2026-11-23: a
   // second trip must only ever offer what the first trip didn't already take).
   const truckLoadedQty = (key) => trucks.reduce((s, t) => s + t.trips.reduce((s2, tr) => s2 + (Number(tr.items?.[key]) || 0), 0), 0);
+  // ── A TRIP LOADS ONE FUNCTION'S ITEMS ── (owner ask 2026-11-27, Amit Gulati: Sagan at Valencia on the 27th, Wedding at Pushpanjali on
+  // the 28th). On a booking with several functions a trip shows its items only once "Goes to" names a function, and then only that
+  // function's: its own need (lib/ims/siteFunctionScope - Deal Check's per-function record, its lines, its platform / carpet parts, its
+  // blocks, its zone lists), less what stands at its own venue; "N of M loaded" counts the trips going to that function.
+  const multiFnTrucks = mpFns.length > 1;
+  const fnLoadItemsByFn = useMemo(() => {
+    if (!multiFnTrucks) return [];
+    let fabGroups = [];
+    if (dept === "Fabric") {
+      try {
+        fabGroups = buildFabricGroups({ entries: fabricEntriesOf(), lines: Array.isArray(sel?.deptInventory?.Fabric) ? sel.deptInventory.Fabric : [], fabricPlan: sel?.fabricPlan, stock: trussInv, fnPalettes: fabricPalettesOf() }).groups;
+      } catch { fabGroups = []; }
+    }
+    return mpFns.map((fd, fi) => {
+      const ctx = { fd, fi, inventory, blocks, eventId: sel?.id, fabricGroups: fabGroups, maps: qtyMapsOfFn(fd, inventory) };
+      return blockedItems.map((it) => scopeLineToFn(it, ctx)).filter(Boolean).map((it) => {
+        const a = standingPartsAtVenue(it, atVenueOf.repeatBacked) || atVenueOf(fd?.venue ? { ...it, venue: fd.venue } : it);
+        const q = Number(it.qty) || 0;
+        return a.load === q ? it : { ...it, qty: a.load, fullQty: q };
+      }).filter((it) => (Number(it.qty) || 0) > 0);
+    });
+  }, [multiFnTrucks, mpFns, blockedItems, inventory, blocks, sel, atVenueOf, dept, trussInv]); // eslint-disable-line react-hooks/exhaustive-deps
+  const truckLoadedQtyFn = (key, fi) => trucks.reduce((s, t) => s + t.trips.reduce((s2, tr) => s2 + (tripFnOf(tr) === fi ? (Number(tr.items?.[key]) || 0) : 0), 0), 0);
   const truckExtraQty = (key) => trucks.reduce((s, t) => s + t.trips.reduce((s2, tr) => s2 + (Number(tr.extras?.[key]) || 0), 0), 0);
   const TRUCK_STATUS_LABEL = { loading: "Loading", dispatched: "Dispatched", "at-site": "At site", returned: "Returned" };
   const TRUCK_STATUS_CLS = { loading: "bg-blue-50 text-blue-700 ring-blue-200", dispatched: "bg-amber-50 text-amber-700 ring-amber-200", "at-site": "bg-emerald-50 text-emerald-700 ring-emerald-200", returned: "bg-gray-100 text-gray-600 ring-gray-200" };
@@ -7469,10 +7493,20 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         // Hidden once nothing is left to send out anywhere AND this trip itself has
                         // none of its own loaded - an earlier trip that already took it all shouldn't
                         // clutter a later one, but a row already partly on THIS trip stays editable.
-                        const visibleLoadItems = loadItems.filter(it => {
+                        // several functions: this trip's own function's items, or none until "Goes to" is picked
+                        const tripFi = tripFnOf(trip);
+                        // anything on this trip yet, from any department (the truck is shared): a trip loaded before it had a destination keeps
+                        // the whole event's list (nothing loaded is ever hidden), and a loaded trip's destination is fixed (below)
+                        const tripHasLoads = Object.values(trip.loads || {}).some(d => Object.values(d || {}).some(q => Number(q) > 0))
+                          || Object.values(trip.extra || {}).some(d => Object.values(d || {}).some(q => Number(q) > 0))
+                          || Object.values(trip.custom || {}).some(arr => Array.isArray(arr) && arr.length > 0);
+                        const needsFn = multiFnTrucks && tripFi == null && !tripHasLoads;
+                        const tripItems = multiFnTrucks && tripFi != null ? (fnLoadItemsByFn[tripFi] || []) : needsFn ? [] : loadItems;
+                        const loadedOf = (k) => (multiFnTrucks && tripFi != null ? truckLoadedQtyFn(k, tripFi) : truckLoadedQty(k));
+                        const visibleLoadItems = tripItems.filter(it => {
                           const k = "inv:" + it.id;
                           const onThis = Number(trip.items?.[k]) || 0;
-                          return onThis > 0 || truckLoadedQty(k) < (Number(it.qty) || 0);
+                          return onThis > 0 || loadedOf(k) < (Number(it.qty) || 0);
                         });
                         return (<>
                           {multi && (
@@ -7526,7 +7560,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                 {mpFns.map((f, fi) => {
                                   const on = tripFnOf(trip) === fi;
                                   return (
-                                    <button key={fi} type="button" disabled={locked || !canEditPlanning || onsiteOnly} aria-pressed={on}
+                                    <button key={fi} type="button" disabled={locked || !canEditPlanning || onsiteOnly || tripHasLoads} aria-pressed={on}
+                                      title={tripHasLoads ? "Items are already loaded on this trip - its destination stays" : undefined}
                                       onClick={() => setTripFn(t.id, trip.id, on ? null : fi)}
                                       className={"text-[11px] font-semibold px-2 py-0.5 rounded-full border transition-colors disabled:opacity-60 disabled:cursor-not-allowed " + (on ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50")}>
                                       {fnLabelOf(f, fi)}
@@ -7589,7 +7624,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                  lines of their own at any width under ~500px. Only what is to be loaded:
                                  fixed / repeat items are listed apart below, not filled in (atVenueOf). */
                               <div className="rounded-lg bg-gray-50 divide-y divide-gray-100">
-                                {visibleLoadItems.map(it => { const k = "inv:" + it.id; const onThis = Number(trip.items?.[k]) || 0; const totalLoaded = truckLoadedQty(k); const extraHere = Number(trip.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
+                                {visibleLoadItems.map(it => { const k = "inv:" + it.id; const onThis = Number(trip.items?.[k]) || 0; const totalLoaded = loadedOf(k); const extraHere = Number(trip.extras?.[k]) || 0; const extraAll = truckExtraQty(k); const maxHere = Math.max(onThis, (Number(it.qty) || 0) - (totalLoaded - onThis)); const matchCls = totalLoaded === it.qty ? "text-emerald-600" : totalLoaded > it.qty ? "text-red-600" : totalLoaded > 0 ? "text-amber-600" : "text-gray-400"; return (
                                   <div key={k} className="flex items-center gap-2.5 px-2.5 py-2">
                                     {(() => { const cv = choiceViewAll.get(it.id); const ph = cv?.name ? cv.photo : it.photo; return ph ? <img src={thumbUrl(ph, 32)} loading="lazy" decoding="async" alt="" onClick={() => setZoomImg(ph)} className="w-8 h-8 rounded-lg object-cover cursor-zoom-in shrink-0" onError={e => { e.target.style.display = "none"; }} /> : it.hex ? <div aria-hidden="true" className="w-8 h-8 rounded-lg ring-1 ring-black/10 shrink-0" style={{ background: it.hex }} /> : <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center text-gray-300 text-xs shrink-0">📦</div>; })()}
                                     <div className="min-w-0 flex-1">
@@ -7619,7 +7654,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                   </div>
                                 ); })}
                               </div>
-                            ) : <div className="text-xs text-gray-400">{blockedItems.length ? (loadItems.length ? "Nothing left to load — it's all gone out on another trip." : "Nothing to load - everything is already at the venue.") : "No inventory blocked for this department."}</div>}
+                            ) : needsFn
+                              ? <div className="rounded-lg bg-blue-50 ring-1 ring-blue-100 px-3 py-2.5 text-xs font-semibold text-blue-800">{"Pick where this trip goes (Goes to, above) to see that function's items."}</div>
+                              : <div className="text-xs text-gray-400">{blockedItems.length ? (tripItems.length ? "Nothing left to load — it's all gone out on another trip." : "Nothing to load - everything is already at the venue.") : "No inventory blocked for this department."}</div>}
                           </div>
                         </>);
                       })()}
