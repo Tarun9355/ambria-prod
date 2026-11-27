@@ -2190,6 +2190,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return out;
   })();
   const isLateSwap = (it) => lateChanges.swaps.has(it?.name);
+  const [lateOpen, setLateOpen] = useState(false); // the late-changes section is shut until tapped (owner ask 2026-11-27)
   // the late-removed items' rental, added to the Inventory blocked TILE only (owner ask 2026-11-27: not the list's own head)
   const lateRemovedTotal = lateChanges.removed.reduce((s, r) => s + (Number(r.total) || 0), 0);
   const lateSwapRows = invShown.filter(isLateSwap);
@@ -6647,11 +6648,17 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
               {/* ── CHANGED IN THE 48 HOURS BEFORE THE EVENT ── swapped in (rental counted in the total above) and taken out (no rental) */}
               {(lateSwapRows.length > 0 || lateChanges.removed.length > 0) && (
                 <div className="m-2.5 rounded-xl ring-1 ring-amber-200 bg-amber-50/50 overflow-hidden">
-                  <div className="px-3 py-2 flex items-center justify-between gap-2">
-                    <span className="text-[12px] font-semibold text-amber-900"><span aria-hidden="true">🔁</span> {"Changed in the 48 hours before the event"}</span>
+                  <button type="button" onClick={() => setLateOpen(o => !o)} aria-expanded={lateOpen} className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left cursor-pointer hover:bg-amber-50">
+                    <span className="text-[12px] font-semibold text-amber-900 inline-flex items-center gap-1.5">
+                      <span aria-hidden="true" className={"text-amber-700 transition-transform duration-150 " + (lateOpen ? "rotate-90" : "")}>
+                        <svg width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L8.5 7 L5 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                      </span>
+                      <span aria-hidden="true">🔁</span> {"Changed in the 48 hours before the event"}
+                      <span className="text-[10.5px] font-semibold px-1.5 rounded-full bg-amber-100 text-amber-800 tabular-nums">{lateSwapRows.length + lateChanges.removed.length}</span>
+                    </span>
                     {(lateSwapRows.length > 0 || lateRemovedTotal > 0) && <span className="shrink-0 text-[11px] font-semibold text-amber-900 tabular-nums">{fmt(lateSwapRows.reduce((s, x) => s + (Number(x.total) || 0), 0) + lateRemovedTotal)} <span className="font-normal text-amber-700">{"in the Inventory blocked tile"}</span></span>}
-                  </div>
-                  <div className="divide-y divide-amber-100 bg-white">
+                  </button>
+                  {lateOpen && <div className="divide-y divide-amber-100 bg-white">
                     {lateSwapRows.map(it => { const c = lateChanges.swaps.get(it.name) || {}; return (
                       <div key={"late:" + it.id} className="px-3 py-2 flex items-center gap-2.5">
                         {it.photo ? <img src={thumbUrl(it.photo, 32)} loading="lazy" alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" /> : <span className="w-8 h-8 rounded-lg bg-gray-50 shrink-0" />}
@@ -6680,7 +6687,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         <span className="shrink-0 w-20 text-right text-xs font-semibold text-gray-900 tabular-nums" title={r.rate > 0 ? `${r.qty} × ${fmt(r.rate)}` : "No rate set for this item"}>{r.rate > 0 ? fmt(r.total) : "—"}</span>
                       </div>
                     ))}
-                  </div>
+                  </div>}
                 </div>
               )}
               {/* ── ADDED ON TRUCKS, NOT IN THE DEAL ── (owner ask 2026-11-25) what this department put on its trucks with "Add an
