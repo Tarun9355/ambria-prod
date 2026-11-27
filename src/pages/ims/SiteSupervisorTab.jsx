@@ -8,7 +8,7 @@ import { Modal } from "../../components/ui";
 import SiteReceivingPanel from "./SiteReceivingPanel.jsx";
 import SiteCrewPanel from "./SiteCrewPanel.jsx";
 import SitePdfButton from "./SitePdfButton.jsx";
-import { addedSupervisorsOf, isMyEvent, fixedAtVenue, supervisorIdsOfUser } from "../../lib/ims/mySupervisorEvents";
+import { addedSupervisorsOf, isMyEvent, fixedAtVenue, supervisorIdsOfUser, samePerson } from "../../lib/ims/mySupervisorEvents";
 import { useInhouseVenues } from "./SupervisorVenues.jsx";
 
 const PICK_KEY = "ambria-ims-site-event";
@@ -116,15 +116,17 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
           <div className="min-w-0 flex-1">
             <div className="text-[16px] sm:text-[20px] font-semibold tracking-[-0.01em] text-gray-900 leading-tight sm:leading-snug truncate">{sel.clientName || "Event"}</div>
             <div className="mt-0.5 text-[13px] sm:text-sm font-medium text-gray-700 leading-snug truncate">
-              {datesVenuesOf(sel, (v) => venueWithParent(settings, v) || v) || "no date"}
+              {/* a logged-in supervisor: only their own function(s)' dates and venues (myFns) */}
+              {datesVenuesOf(myFns && Array.isArray(sel.functionsDetail) && sel.functionsDetail.length ? { ...sel, functionsDetail: sel.functionsDetail.filter((_, i) => myFns.includes(i)) } : sel, (v) => venueWithParent(settings, v) || v) || "no date"}
             </div>
             {sel.salesperson && <div className="text-[11.5px] sm:text-xs text-gray-400 leading-snug truncate">Booked by {sel.salesperson}</div>}
-            {supervisorsShown.length > 0 && (
+            {/* a logged-in supervisor sees just their own name here (owner ask 2026-11-27), everyone else every supervisor of the event */}
+            {(() => { const shown = myFns ? supervisorsShown.filter((s) => samePerson(authUser, s)) : supervisorsShown; return shown.length > 0 && (
               <div className="mt-1 flex items-center gap-1.5 text-xs min-w-0">
                 <span className="text-gray-500 shrink-0">👷 Site Supervisor</span>
-                <span className="font-medium text-gray-700 truncate">{supervisorsShown.map((s) => s.name).join(", ")}</span>
+                <span className="font-medium text-gray-700 truncate">{shown.map((s) => s.name).join(", ")}</span>
               </div>
-            )}
+            ); })()}
           </div>
         </div>
 
