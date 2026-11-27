@@ -3250,10 +3250,29 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // Looked up from eventTruckList's raw record (its own trips' `loads`/`extra` still carry every
   // department's map), not the `trucks` array this component otherwise renders with, which is already
   // filtered down to `dept`. Each row keeps its own department (a "Dept" column) so whoever unloads it
-  // still knows whose item is whose. shownName()'s Fabric design-choice override only applies to this
-  // tab's OWN department's rows (it is keyed by blockedItems' ids, which a different department's
-  // flatDeptItems() ids can collide with) - another department's rows print their plain saved name
-  // instead.
+  // still knows whose item is whose.
+  // Fabric's overlay/cushion-cover choice and Tenting's carpet choice (shownName's own choiceViewAll,
+  // just above) only ever read ONE department's blockedItems - the tab currently open. A challan is
+  // every department's rows on one trip (see combinedTruckItems' own comment below), so a row whose
+  // OWNING department isn't the open tab fell back to its plain Build/Deal-Check name instead of the
+  // design Planning actually chose (QA report, 2026-11-27: Tenting's own carpet pick showed correctly
+  // from the Tenting tab, but read as the stale "Carpet Old" from any other tab). Built once per
+  // department actually on this trip (not per row), reusing the open tab's own blockedItems when it IS
+  // that department (cheap, already computed) and flatDeptItems(d) - ALREADY called for every
+  // department right below, not a new cost - otherwise. elementPlanOf()/carpetPlanOf() read the event's
+  // plan data directly, not the open tab, so they're safe to call for any department regardless of
+  // which tab is open.
+  const choiceViewAllFor = (() => {
+    const cache = {};
+    return (d) => {
+      if (d !== "Fabric" && d !== "Tenting") return null;
+      if (cache[d]) return cache[d];
+      const items = d === dept ? blockedItems : flatDeptItems(d);
+      const map = !sel ? new Map() : d === "Fabric" ? choiceNotesForRows(items, elementPlanOf().rows) : carpetNotesForRows(items, carpetPlanOf().rows);
+      cache[d] = map;
+      return map;
+    };
+  })();
   const combinedTruckItems = (truckId, tripId) => {
     const raw = eventTruckList.find(t => t.id === truckId);
     const trip = raw && tripsOf(raw).find(tr => tr.id === tripId);
@@ -3269,7 +3288,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         // own "no truck capacity set" note, since that fill % silently leaving it out is exactly the
         // kind of gap a driver/loader should be told about, not have it just quietly not count (owner
         // ask, 2026-11-23: "ignoring it completely is problematic").
-        out.push({ dept: d, name: d === dept ? shownName(it) : (it.name || ""), sub: it.sub || "", qty: q, fullQty: it.qty, extra: x, src: it, noCap: !truckShares[d]?.get(truckKey(it)) });
+        out.push({ dept: d, name: choiceViewAllFor(d)?.get(it.id)?.name || it.name || "", sub: it.sub || "", qty: q, fullQty: it.qty, extra: x, src: it, noCap: !truckShares[d]?.get(truckKey(it)) });
       });
     });
     // Items added straight from a department's own inventory (trip.custom[dept]) - no Deal Check
