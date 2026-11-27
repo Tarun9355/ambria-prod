@@ -2986,6 +2986,21 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     if (t && truckMissing(t).length) return false; // nothing loads on a truck whose details aren't filled in yet
     return !!trips && trips.length > 0 && trips[trips.length - 1].id === tripId;
   };
+  // Essentials ride on the trip they are put on (owner ask 2026-11-27: they used to print on every truck's challan) - trip.tools[dept][name] = qty
+  const setTripTool = (id, tripId, name, qty) => {
+    if (!isActiveTrip(id, tripId)) return;
+    setTrips(id, trips => trips.map(tr => {
+      if (tr.id !== tripId) return tr;
+      const mine = { ...((tr.tools || {})[dept] || {}) };
+      if (Number(qty) > 0) mine[name] = Number(qty); else delete mine[name];
+      return { ...tr, tools: { ...(tr.tools || {}), [dept]: mine } };
+    }));
+  };
+  // every department's essentials on one trip, for its challan: [{ dept, name, qty }]
+  const tripToolsOf = (truck, tripId) => {
+    const tr = tripsOf(truck).find(x => x.id === tripId);
+    return Object.entries(tr?.tools || {}).flatMap(([d, m]) => Object.entries(m || {}).filter(([, q]) => Number(q) > 0).map(([name, q]) => ({ dept: d, name, qty: Number(q) })));
+  };
   const setTripStatus = (id, tripId, status) => { if (!isActiveTrip(id, tripId)) return; setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, status } : tr)); };
   // where this trip goes - one function of the booking, or not set (lib/ims/eventTrucks tripFnOf)
   const setTripFn = (id, tripId, fi) => { if (!isActiveTrip(id, tripId)) return; setTrips(id, trips => trips.map(tr => tr.id === tripId ? { ...tr, fnIdx: fi } : tr)); };
@@ -3270,7 +3285,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // the Download PDF (combinedTruckItems), so the two agree; each row keeps its own Dept column.
     const rows = combinedTruckItems(truck.id, tripId)
       .map(it => `<tr><td>${it.name}${it.src === null ? ` <span style="font-size:11px;color:#92400e">(added, not in Build)</span>` : challanSrcNote(it.src)}${it.noCap ? `<div style="font-size:11px;color:#b45309">⚠ truck capacity not set for this item - count it manually</div>` : ""}</td><td>${it.dept}</td><td style="text-align:center">${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}</td></tr>`).join("");
-    const toolRows = deptTools.map(t => `<tr><td>🛠️ ${t.name}</td><td style="text-align:center">${t.qty || 1}</td></tr>`).join("");
+    const toolRows = tripToolsOf(truck, tripId).map(t => `<tr><td>🛠️ ${t.name}</td><td>${t.dept}</td><td style="text-align:center">${t.qty}</td></tr>`).join("");
     w.document.write(`<html><head><title>Combined Challan — Truck ${n} · Trip ${tripN}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:8px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}h4{margin:14px 0 0}@media print{button{display:none}}</style></head><body>
       <h2>🚚 Ambria — Combined Challan · Truck ${n} · Trip ${tripN}</h2>
       <p>Event: ${sel?.clientName || "-"} &nbsp;|&nbsp; ${dateVenueLineOf(sel) || "-"}</p>
@@ -3278,7 +3293,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       ${(() => { const tr = tripsOf(truck).find(x => x.id === tripId); const fi = tripFnOf(tr); return fi != null && mpFns[fi] ? `<p><b>Goes to: ${fnLabelOf(mpFns[fi], fi)}</b></p>` : ""; })()}
       <h4>Inventory on this trip — every department</h4>
       <table><tr><th>Item</th><th>Dept</th><th>Qty</th></tr>${rows || '<tr><td colspan="3" style="text-align:center;color:#999">No items assigned to this trip</td></tr>'}</table>
-      ${toolRows ? `<h4>Essentials / tools — ${dept}</h4><table><tr><th>Item</th><th>Qty</th></tr>${toolRows}</table>` : ""}
+      ${toolRows ? `<h4>Essentials / tools on this trip</h4><table><tr><th>Item</th><th>Dept</th><th>Qty</th></tr>${toolRows}</table>` : ""}
       <br><p>Dispatched by: _______________ &nbsp;&nbsp; Received by: _______________</p>
       <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
       <button onclick="window.print()">🖨️ Print</button></body></html>`);
@@ -3333,11 +3348,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       const items = combinedTruckItems(truck.id, tripId);
       if (items.length) items.forEach(it => row([[it.name + (it.src === null ? " (added, not in Build)" : challanSrcText(it.src) ? ` (${challanSrcText(it.src)})` : "") + (it.noCap ? " [truck capacity not set - count manually]" : ""), cx.name], [it.dept, cx.dept], [`${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}`, cx.qty, "right"]]));
       else row([["No items assigned to this trip", cx.name]]);
-      if (deptTools.length) {
+      const tripTools = tripToolsOf(truck, tripId);
+      if (tripTools.length) {
         y += 12; room(36);
-        pdf.setFont("helvetica", "bold"); pdf.text(`Essentials / tools — ${dept}`, M, y); y += 16;
-        row([["Item", cx.name], ["Qty", cx.qty, "right"]], { bold: true, fill: [243, 244, 246] });
-        deptTools.forEach(t => row([[t.name, cx.name], [t.qty || 1, cx.qty, "right"]]));
+        pdf.setFont("helvetica", "bold"); pdf.text("Essentials / tools on this trip", M, y); y += 16;
+        row([["Item", cx.name], ["Dept", cx.dept], ["Qty", cx.qty, "right"]], { bold: true, fill: [243, 244, 246] });
+        tripTools.forEach(t => row([[t.name, cx.name], [t.dept, cx.dept], [t.qty, cx.qty, "right"]]));
       }
       y += 30; room(40);
       pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
@@ -7763,6 +7779,33 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               ? <div className="rounded-lg bg-blue-50 ring-1 ring-blue-100 px-3 py-2.5 text-xs font-semibold text-blue-800">{"Pick where this trip goes (Goes to, above) to see that function's items."}</div>
                               : <div className="text-xs text-gray-400">{blockedItems.length ? (tripItems.length ? "Nothing left to load — it's all gone out on another trip." : "Nothing to load - everything is already at the venue.") : "No inventory blocked for this department."}</div>}
                           </div>
+                          {/* ── ESSENTIALS ON THIS TRIP ── tap to put one of this department's essentials on this truck; only these print on its challan */}
+                          {deptTools.length > 0 && (
+                            <div className="rounded-lg ring-1 ring-gray-200 bg-white px-3 py-2.5">
+                              <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">{"Essentials on this trip"}</div>
+                              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                                {deptTools.map(tl => {
+                                  const q = Number(trip.tools?.[dept]?.[tl.name]) || 0;
+                                  const on = q > 0;
+                                  // already on another trip of any truck
+                                  const elsewhere = !on && trucks.some(tt => tt.trips.some(tr2 => tr2.id !== trip.id && Number(tr2.tools?.[dept]?.[tl.name]) > 0));
+                                  return (
+                                    <span key={tl.name} className={"inline-flex items-center gap-1 rounded-full border text-[11.5px] font-semibold " + (on ? "bg-blue-600 border-transparent text-white" : "bg-white border-gray-200 text-gray-700")}>
+                                      <button type="button" disabled={locked || !canEditPlanning || onsiteOnly} aria-pressed={on}
+                                        onClick={() => setTripTool(t.id, trip.id, tl.name, on ? 0 : (Number(tl.qty) || 1))}
+                                        title={elsewhere ? "Already on another trip" : undefined}
+                                        className="px-2.5 py-1 rounded-full disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer">
+                                        {on ? "✓ " : "+ "}{tl.name}{elsewhere && <span className="ml-1 text-[10px] font-normal text-amber-700">{"(on another trip)"}</span>}
+                                      </button>
+                                      {on && <input type="number" min="1" value={q} disabled={locked || !canEditPlanning || onsiteOnly} aria-label={`${tl.name} on this trip`}
+                                        onChange={e => setTripTool(t.id, trip.id, tl.name, Math.max(1, Number(e.target.value) || 1))}
+                                        className="w-10 h-6 mr-1 rounded-full bg-white text-gray-900 text-center text-[11px] tabular-nums focus:outline-none" />}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
                         </>);
                       })()}
                       </>)}

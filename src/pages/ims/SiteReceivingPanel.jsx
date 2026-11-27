@@ -311,6 +311,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
       ${toLabel ? `<p><b>Goes to: ${esc(toLabel)}</b></p>` : ""}
       <h4>Inventory on this trip — every department</h4>
       <table><tr><th>Item</th><th>Dept</th><th>Qty</th></tr>${body || '<tr><td colspan="3" style="text-align:center;color:#999">No items assigned to this trip</td></tr>'}</table>
+      ${(() => { const tl = Object.entries(trip?.tools || {}).flatMap(([d, m]) => Object.entries(m || {}).filter(([, q]) => Number(q) > 0).map(([nm, q]) => `<tr><td>🛠️ ${esc(nm)}</td><td>${esc(d)}</td><td style="text-align:center">${Number(q)}</td></tr>`)).join(""); return tl ? `<h4>Essentials / tools on this trip</h4><table><tr><th>Item</th><th>Dept</th><th>Qty</th></tr>${tl}</table>` : ""; })()}
       <br><p>Dispatched by: _______________ &nbsp;&nbsp; Received by: _______________</p>
       <p>Date: ____________ &nbsp;&nbsp; Time: ____________</p>
       <button onclick="window.print()">🖨️ Print</button></body></html>`);
