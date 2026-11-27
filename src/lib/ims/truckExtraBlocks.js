@@ -16,7 +16,7 @@ export const TRUCK_EXTRA_SRC = "ims-truck-extra";
 // custom-row writer ever forgets to set it: these three prefixes are reserved for virtual items
 // alone (see deptInventoryBySub, DepartmentOpsTab.jsx) and a real inventory id is never shaped like
 // one (confirmed: real ids are "I" + 10 alphanumerics, no colon).
-const isVirtualId = (id) => /^(truss|platform|fabric):/.test(String(id || ""));
+export const isVirtualId = (id) => /^(truss|platform|fabric):/.test(String(id || ""));
 export function truckExtraQtyByItem(trucks, tripsOf) {
   const m = new Map();
   (trucks || []).forEach((t) => (tripsOf ? tripsOf(t) : t?.trips || []).forEach((tr) => Object.values(tr?.custom || {}).forEach((rows) => (Array.isArray(rows) ? rows : []).forEach((c) => {

@@ -6,7 +6,7 @@ import { mpDayWise, mpBaseDay, mpDayCost, mpDayDihari, aggregateEventManpower, i
 import { isLiveBlockStatus, blockEntryQty } from "../../lib/ims/liveBlocks";
 import { shortfallsOf } from "../../lib/ims/blocksRpc";
 // the stock-ledger tag + ops for items added on a truck that are not in the deal (Studio's reconcile leaves the tag alone)
-import { TRUCK_EXTRA_SRC, truckExtraBlockOps, truckExtraQtyByItem } from "../../lib/ims/truckExtraBlocks";
+import { TRUCK_EXTRA_SRC, truckExtraBlockOps, truckExtraQtyByItem, isVirtualId } from "../../lib/ims/truckExtraBlocks";
 import { buildDeptCrew, orderWinIds as orderWinIdsShared, flowerTraceForFn as flowerTraceForFnShared, setMpPatch, addMpPatch, removeMpPatch, actualCrewPatch, resetLinePatch, mpDayPatch, resetMpDayPatch, shiftCountPatch, shiftSplitPatch, addDihariPatch, removeDihariPatch, eventLabourInfo, eventLabourTotalDeptOps } from "../../lib/ims/deptCrew";
 import { uploadAudioToStorage } from "../../lib/storage";
 import { DEPTS as SHARED_DEPTS, catToDept as sharedCatToDept, userDepartments, poolLabourDept, poolLabourDeptLabel, makeSubcatDept } from "../../lib/ims/deptClassify";
@@ -3092,8 +3092,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     eventTruckList.forEach(t => tripsOf(t).forEach(tr => Object.entries(tr.custom || {}).forEach(([d, rows]) => (Array.isArray(rows) ? rows : []).forEach(c => {
       const q = Number(c.qty) || 0;
       if (q <= 0 || !c.invId) return;
-      const cur = m.get(c.invId) || { invId: c.invId, name: c.name, sub: c.sub || "", img: c.img || "", qty: 0, byDept: {} };
+      const cur = m.get(c.invId) || { invId: c.invId, name: c.name, sub: c.sub || "", img: c.img || "", qty: 0, byDept: {}, virtual: false };
       cur.qty += q; cur.byDept[d] = (cur.byDept[d] || 0) + q;
+      cur.virtual = cur.virtual || !!c.virtual;
       m.set(c.invId, cur);
     }))));
     return m;
@@ -3110,9 +3111,32 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     const qty = x.byDept[dept];
     const rate = Number(inv?.price ?? inv?.rentalCost) || 0;
     const photo = inv?.img || (Array.isArray(inv?.photoUrls) && inv.photoUrls[0]) || x.img || "";
-    return { invId: x.invId, name: inv?.name || x.name, sub: x.sub || inv?.subCat || inv?.subcategory || "", qty, rate, total: Math.round(qty * rate), photo };
+    return { invId: x.invId, name: inv?.name || x.name, sub: x.sub || inv?.subCat || inv?.subcategory || "", qty, rate, total: Math.round(qty * rate), photo, virtual: x.virtual || isVirtualId(x.invId) };
   }), [truckExtrasAll, dept, inventory]);
   const truckExtraTotal = truckExtraRows.reduce((s, r) => s + r.total, 0);
+  // ── DISMANTLE needs to see these too ── (QA report "Truck_Extras_Downstream_Gaps.md", RC-235: the
+  // routing list/matrix was built from `blockedItems` alone, so anything added straight to a truck —
+  // real-inventory or trussInv-backed virtual (truss pillars/beams, platform pieces) — never got a
+  // card to route, confirm or count, and a crew returning only what the list showed left it behind
+  // at site - "ghost inventory loss"). Shaped exactly like a `blockedItems` row (`id`, `invId`, `qty`,
+  // `name`) so every existing dismantle function below (unroutedQty, planFor, buildPlannedMovements,
+  // destGroups, the site matrix…) works on it unmodified. `id` is prefixed "truckx:" (not the bare
+  // invId) so its plan/movement/React keys never collide with a blocks-sourced row that happens to
+  // share the same invId — a blocks-ledger-sourced `blockedItems` row's own `id` IS its bare invId
+  // (deptLoadList.js), so a bare invId here would land on the exact same key. A virtual row's
+  // `invId` is left null: `adjustInventory`/Receiving's itemKeyFor both already treat a null invId
+  // as "nothing real to adjust", so a synthetic id never
+  // reaches real inventory stock or the block ledger - trussInv's own stock bookkeeping for these is
+  // a separate, later concern (not what this list is for: it only has to get the piece ON the crew's
+  // list to come back). Never merged into a same-invId blocked row - that would silently resize a
+  // plan/movement someone may have already saved against the blocked row's own qty.
+  const dismantleItems = useMemo(() => [
+    ...blockedItems,
+    ...truckExtraRows.map((x) => ({
+      id: "truckx:" + x.invId, invId: x.virtual ? null : x.invId, name: x.name, photo: x.photo,
+      qty: x.qty, sub: x.sub, truckExtra: true, virtual: x.virtual,
+    })),
+  ], [blockedItems, truckExtraRows]);
   // Keep the stock ledger in step: each item on its event's dates at the qty on the trucks, under TRUCK_EXTRA_SRC (removed
   // when it comes off every truck). Through the same locked RPC as Inventory's Block (apply_block_ops, 'cap': it reserves what
   // is really free and says what was not). Only someone who can edit Planning writes it; a signature of what was last asked
@@ -3261,7 +3285,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       const [{ jsPDF }] = await loadPdfLibs();
       const pdf = new jsPDF({ unit: "pt", format: "a4" });
       const W = pdf.internal.pageSize.getWidth(), H = pdf.internal.pageSize.getHeight(), M = 40;
-      const cx = { name: M + 6, dept: M + 250, type: M + 330, qty: W - M - 6 };
+      const cx = { name: M + 6, dept: M + 300, qty: W - M - 6 };
       let y = M;
       const room = (h) => { if (y + h > H - M) { pdf.addPage(); y = M; } };
       const row = (cells, { bold = false, fill = null, h = 20 } = {}) => {
@@ -3272,7 +3296,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         cells.forEach(([t, x, align]) => pdf.text(String(t ?? ""), x, y, { align: align || "left", maxWidth: align === "right" ? undefined : 280 }));
         y += h;
       };
-      const header = () => row([["Item", cx.name], ["Dept", cx.dept], ["Type", cx.type], ["Qty", cx.qty, "right"]], { bold: true, fill: [243, 244, 246] });
+      // Item, Dept, Qty — same 3 columns as the printed (window.print) version, which this PDF is
+      // meant to agree with (combinedTruckItems is the one shared source for both). A "Type" column
+      // briefly stood here showing the row's raw internal `sub` tag verbatim ("truss structure" for
+      // every pillar/beam/Batta row alike, a dispatch-engine classification, not a driver-readable
+      // type) — dropped rather than fixed, since the print version never had one to begin with.
+      const header = () => row([["Item", cx.name], ["Dept", cx.dept], ["Qty", cx.qty, "right"]], { bold: true, fill: [243, 244, 246] });
       // The Ambria Design & Decor mark at the head of the challan — the dark version (black wordmark,
       // gold "DESIGN & DECOR"), since the page is white. Sized off the crop's own proportions; a
       // logo that fails to load just leaves the title where it was.
@@ -3293,13 +3322,13 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       pdf.setFont("helvetica", "bold"); pdf.text("Inventory on this trip — every department", M, y); y += 16;
       header();
       const items = combinedTruckItems(truck.id, tripId);
-      if (items.length) items.forEach(it => row([[it.name + (it.src === null ? " (added, not in Build)" : challanSrcText(it.src) ? ` (${challanSrcText(it.src)})` : "") + (it.noCap ? " [truck capacity not set - count manually]" : ""), cx.name], [it.dept, cx.dept], [it.sub || "-", cx.type], [`${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}`, cx.qty, "right"]]));
+      if (items.length) items.forEach(it => row([[it.name + (it.src === null ? " (added, not in Build)" : challanSrcText(it.src) ? ` (${challanSrcText(it.src)})` : "") + (it.noCap ? " [truck capacity not set - count manually]" : ""), cx.name], [it.dept, cx.dept], [`${it.qty}${it.extra ? ` + ${it.extra} extra` : ""}`, cx.qty, "right"]]));
       else row([["No items assigned to this trip", cx.name]]);
       if (deptTools.length) {
         y += 12; room(36);
-        pdf.setFont("helvetica", "bold"); pdf.text("Essentials / tools", M, y); y += 16;
-        header();
-        deptTools.forEach(t => row([[t.name, cx.name], ["essential / tool", cx.type], [t.qty || 1, cx.qty, "right"]]));
+        pdf.setFont("helvetica", "bold"); pdf.text(`Essentials / tools — ${dept}`, M, y); y += 16;
+        row([["Item", cx.name], ["Qty", cx.qty, "right"]], { bold: true, fill: [243, 244, 246] });
+        deptTools.forEach(t => row([[t.name, cx.name], [t.qty || 1, cx.qty, "right"]]));
       }
       y += 30; room(40);
       pdf.setFont("helvetica", "normal"); pdf.setFontSize(10);
@@ -3522,7 +3551,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // what this deal does at teardown (owner's whole stated reason for FOC in the first place).
   const unroutedQty = (it) => { if (it.foc) return 0; const k = "inv:" + it.id; return Math.max(0, it.qty - (movedQty(k, "return") + movedQty(k, "transfer") + movedQty(k, "damage") + movedQty(k, "repair"))); };
   const routeRemaining = (it, type, extra = {}) => { const q = unroutedQty(it); if (q > 0) addMovement(it, type, q, extra); };
-  const routeAllToWarehouse = () => { const rest = blockedItems.filter(it => unroutedQty(it) > 0); if (!rest.length) return; saveDept({ movements: [...movements, ...rest.map(it => ({ id: "mv_" + Date.now() + "_" + Math.floor(Math.random() * 100000), itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, type: "return", qty: unroutedQty(it), at: Date.now(), by: authUser?.name || "—" }))] }); };
+  const routeAllToWarehouse = () => { const rest = dismantleItems.filter(it => unroutedQty(it) > 0); if (!rest.length) return; saveDept({ movements: [...movements, ...rest.map(it => ({ id: "mv_" + Date.now() + "_" + Math.floor(Math.random() * 100000), itemKey: "inv:" + it.id, invId: it.invId || null, name: it.name, type: "return", qty: unroutedQty(it), at: Date.now(), by: authUser?.name || "—" }))] }); };
   // ── DISMANTLE PLAN IN PLANNING ──
   // Back on (owner ask, 2026-10-02) as its own tile: the department head pre-sets where each item
   // goes after the event, and On-site → "Dismantle & routing" confirms or changes it against what is
@@ -3550,7 +3579,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const buildSitePlan = (it, siteMap, sites) => { const rows = []; sites.forEach(st => { const q = Number(siteMap[st.id]) || 0; if (q > 0) rows.push({ type: "transfer", toEventId: st.id, toEventName: st.name, qty: q }); }); const rem = Math.max(0, (Number(it.qty) || 0) - rows.reduce((a, r) => a + r.qty, 0)); if (rem > 0) rows.unshift({ type: "return", qty: rem }); return rows.length ? rows : [{ type: "return", qty: 0 }]; };
   const setSiteQty = (it, eventId, val) => { const key = "inv:" + it.id; const cur = {}; dismantleSites.forEach(st => { cur[st.id] = planSiteQty(it, st.id); }); const other = dismantleSites.reduce((a, st) => a + (st.id === eventId ? 0 : (Number(cur[st.id]) || 0)), 0); const cap = Math.max(0, (Number(it.qty) || 0) - other); cur[eventId] = Math.min(cap, Math.max(0, Number(val) || 0)); setPlanRows(key, buildSitePlan(it, cur, dismantleSites)); };
   const addDismantleSite = (eventId) => { if (!eventId || dismantleSites.some(s => s.id === eventId)) return; const ev = (eventOrders || []).find(e => e.id === eventId); saveDept({ dismantleSites: [...dismantleSites, { id: eventId, name: ev?.clientName || "Event", date: ev ? eventDate(ev) : "" }] }); };
-  const removeDismantleSite = (eventId) => { const next = dismantleSites.filter(s => s.id !== eventId); const nextPlan = { ...dismantlePlan }; blockedItems.forEach(it => { const cur = {}; next.forEach(st => { cur[st.id] = planSiteQty(it, st.id); }); nextPlan["inv:" + it.id] = buildSitePlan(it, cur, next); }); saveDept({ dismantleSites: next, dismantlePlan: nextPlan }); };
+  const removeDismantleSite = (eventId) => { const next = dismantleSites.filter(s => s.id !== eventId); const nextPlan = { ...dismantlePlan }; dismantleItems.forEach(it => { const cur = {}; next.forEach(st => { cur[st.id] = planSiteQty(it, st.id); }); nextPlan["inv:" + it.id] = buildSitePlan(it, cur, next); }); saveDept({ dismantleSites: next, dismantlePlan: nextPlan }); };
   // Build movement objects from the plan splits, each capped to the item's remaining (so re-confirm is safe).
   const buildPlannedMovements = (items) => {
     const now = Date.now(); const out = []; let seq = 0;
@@ -3568,12 +3597,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   };
   const logMovements = (rows) => { if (!rows.length) return; saveDept({ movements: [...movements, ...rows] }); rows.filter(m => m.type === "damage").forEach(m => adjustInventory(m.invId, -m.qty)); };
   const confirmItemPlanned = (it) => logMovements(buildPlannedMovements([it]));
-  const confirmAllPlanned = () => logMovements(buildPlannedMovements(blockedItems));
+  const confirmAllPlanned = () => logMovements(buildPlannedMovements(dismantleItems));
   // Destination-grouped manifest: everything going to each place (warehouse / repair / broken / each
   // transfer site) as its own list with item qtys — so ops loads per destination, not per item.
   const destGroups = useMemo(() => {
     const groups = {};
-    blockedItems.forEach(it => {
+    dismantleItems.forEach(it => {
       let left = unroutedQty(it); if (left <= 0) return;
       planFor(it).forEach(row => {
         let q = Math.min(Number(row.qty) || 0, left); if (q <= 0) return; left -= q;
@@ -3587,7 +3616,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // Warehouse first, then repair/broken, then transfer sites.
     const order = { return: 0, repair: 1, damage: 2 };
     return Object.values(groups).sort((a, b) => (order[a.type] ?? 3) - (order[b.type] ?? 3));
-  }, [blockedItems, dismantlePlan, movements, eventOrders]);
+  }, [dismantleItems, dismantlePlan, movements, eventOrders]);
   // Confirm-time helpers: the ops manager loads the truck, records ONE set of truck details for the
   // whole list, optionally selects a subset (rest goes on another truck), and marks anything broken /
   // needing repair — those deduct from the qty reaching the destination.
@@ -5867,8 +5896,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 // out to the event and back. One tile now, saying where both stand; it opens on "Going" with a "Return" tab beside it.
                 (() => {
                   const goingTxt = trucks.length ? n(trucks.length, "truck") + (fullTrucks ? ` · ${fullTrucks} full` : "") : "no trucks yet";
-                  const hasReturn = SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0;
-                  const left = hasReturn ? blockedItems.filter(it => unroutedQty(it) > 0).length : 0;
+                  const hasReturn = SHOW_DISMANTLE_IN_PLANNING && dismantleItems.length > 0;
+                  const left = hasReturn ? dismantleItems.filter(it => unroutedQty(it) > 0).length : 0;
                   const returnTxt = !hasReturn ? "nothing to route" : left ? n(left, "item") + " left to route" : "all routed";
                   return { k: "truck", also: ["dism"], icon: "🚚", title: "Trucks & dismantle", sub: (
                     // a two-column grid: the label column is as wide as its longest word ("DISMANTLE" ran into its text in a fixed 3rem)
@@ -7229,7 +7258,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 Opens under the Truck planning tile; the dismantle plan has its own tile. */}
             {/* ── TRUCKS & RETURN: GOING | RETURN ── one tile, two blocks (owner ask 2026-11-25): the loading block and the
                 dismantle block each stay exactly as they were; this switch sits above whichever of the two is open */}
-            {(modal === "truck" || modal === "dism") && SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && (
+            {(modal === "truck" || modal === "dism") && SHOW_DISMANTLE_IN_PLANNING && dismantleItems.length > 0 && (
               <div role="tablist" aria-label="Trucks and dismantle" className="inline-flex p-1 rounded-lg bg-gray-100 text-xs font-semibold">
                 {[["truck", "🚚", "Going", "Going · Loading & dispatch"], ["dism", "🔁", "Dismantle", "Dismantle · Routing"]].map(([k, ic, short, label]) => (
                   <button key={k} type="button" role="tab" aria-selected={modal === k} onClick={() => setModal(k)}
@@ -8129,7 +8158,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
               </div>
             )}
 
-            {SHOW_DISMANTLE_IN_PLANNING && blockedItems.length > 0 && (
+            {SHOW_DISMANTLE_IN_PLANNING && dismantleItems.length > 0 && (
               <div className={"bg-white rounded-xl shadow-[0_2px_4px_rgba(15,23,42,0.08),0_14px_32px_-10px_rgba(15,23,42,0.35)] overflow-hidden" + modalCls("dism")}>
                 <div className="px-3 sm:px-4 py-3 bg-gray-50">
                   <div className="flex items-center gap-3">
@@ -8261,7 +8290,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     one number per transfer site. A fully routed item (nothing left for production
                     house) recedes so the ones still needing a number stand out. */}
                 <div className="p-3 sm:p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {blockedItems.map(it => {
+                  {dismantleItems.map(it => {
                     const prod = planProdQty(it);
                     const done = prod === 0;
                     return (
@@ -8316,7 +8345,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
               const n = (v, s) => `${v} ${s}${v === 1 ? "" : "s"}`;
               const tiles = [
                 sourceRows.length > 0 && { k: "rcv", icon: "📥", title: "Receiving", sub: short > 0 ? `⚠️ ${n(short, "item")} short` : "✓ all sourced", tone: short > 0 ? "bg-red-50" : "bg-sky-50", alert: short > 0 },
-                { k: "route", icon: "🔁", title: "Dismantle & routing", sub: blockedItems.length ? n(blockedItems.filter(it => unroutedQty(it) > 0).length, "item") + " left to route" : "nothing to route" },
+                { k: "route", icon: "🔁", title: "Dismantle & routing", sub: dismantleItems.length ? n(dismantleItems.filter(it => unroutedQty(it) > 0).length, "item") + " left to route" : "nothing to route" },
                 // the Site-Supervisor-view-only role gets the Department Head's own Manpower plan tile + panel instead (same crew data, same activity log)
                 !onsiteOnly && mpRows.length > 0 && { k: "oscrew", icon: "👷", title: "On-site crew", sub: mpEdited ? "actual logged" : "as planned", value: fmt(mpCost) },
               ].filter(Boolean);
@@ -8431,7 +8460,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   <div className="min-w-0 flex-1 text-[15px] font-semibold text-gray-900">Dismantle &amp; return routing</div>
                 </div>
                 <div className="text-xs text-gray-500 leading-relaxed">Confirm the dept head&apos;s plan, or send everything left to the warehouse.</div>
-                {blockedItems.some(it => unroutedQty(it) > 0) && (
+                {dismantleItems.some(it => unroutedQty(it) > 0) && (
                   <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                     <button onClick={confirmAllPlanned} className="text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 sm:py-1.5 rounded-lg whitespace-nowrap">✓ Confirm all as planned</button>
                     <button onClick={routeAllToWarehouse} className="text-xs font-bold bg-gray-800 hover:bg-gray-900 text-white px-3 py-2 sm:py-1.5 rounded-lg whitespace-nowrap">🏬 All → warehouse</button>
@@ -8579,10 +8608,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   🔧 <b>Repairs needed</b> (kept in stock — fix before next use): {movements.filter(m => m.type === "repair").map((m, i) => <span key={m.id}>{i > 0 ? ", " : ""}{m.qty}× {m.name}</span>)}
                 </div>
               )}
-              {blockedItems.length === 0 && (
+              {dismantleItems.length === 0 && (
                 <div className="px-4 py-5 text-center text-xs text-gray-400">No inventory to route for this department.</div>
               )}
-              {blockedItems.length > 0 && destGroups.length === 0 && (
+              {dismantleItems.length > 0 && destGroups.length === 0 && (
                 <div className="px-4 py-4 text-center text-xs text-emerald-600 font-semibold">✓ Everything routed — see the movement log below.</div>
               )}
               {/* Movement log for this event */}
