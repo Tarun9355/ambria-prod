@@ -2400,15 +2400,15 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
       {activePanel === "fabricstock" && trussInv && (() => {
         const colourCat = (settings.colourCatalogue || []).map((c) => c.name);
         const rates = trussInv.rates || {};
-        // Owner ask 2026-11-26: a department head updates the stock QUANTITIES only (Old / New kg or pcs); colours (add, remove, name,
-        // photo, In Build), the Liza kg conversion factors and the rates are Admin only.
+        // Owner ask 2026-11-26: a department head updates the stock QUANTITIES (Old / New kg or pcs) and - 2026-11-27 - each colour's
+        // reference PHOTO; colours (add, remove, name, In Build), the Liza kg conversion factors and the rates are Admin only.
         const fabAdmin = canEdit && ratesAdmin;
         const setTrussInvAdmin = fabAdmin ? setTrussInv : () => {};
         // The row is found by its colour in whichever copy the change is applied to (the save applies it to the database's row as it is now,
         // where another device may have added or removed a colour) - by position only when the colour is not there.
         const updateStock = (which, idx, key, val) => {
           const wasColour = (Array.isArray(trussInv[which]) ? trussInv[which] : [])[idx]?.colour;
-          ((key === "colour" || key === "grade" || key === "hex" || key === "photo") ? setTrussInvAdmin : setTrussInv)((ti) => {
+          ((key === "colour" || key === "grade" || key === "hex") ? setTrussInvAdmin : setTrussInv)((ti) => {
             const next = [...(ti[which] || [])];
             const at = wasColour != null ? next.findIndex((r) => String(r?.colour || "").trim().toLowerCase() === String(wasColour).trim().toLowerCase()) : -1;
             const j = at >= 0 ? at : idx;
@@ -2545,7 +2545,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                                 return (
                                   <>
                                     <button type="button"
-                                      onClick={() => { if (!fabAdmin) return; setFabricPhotoMenuOpen((k) => k === photoKey ? null : photoKey); hidePreview(); }}
+                                      onClick={() => { if (!canEdit) return; setFabricPhotoMenuOpen((k) => k === photoKey ? null : photoKey); hidePreview(); }}
                                       onMouseEnter={showPreview} onMouseLeave={hidePreview}
                                       className="block cursor-pointer">
                                       {row.photo ? <img src={thumbUrl(row.photo, 36)} loading="lazy" decoding="async" alt={row.colour} className="w-9 h-9 rounded object-cover border border-gray-300" title="Click to replace" />
@@ -2602,7 +2602,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
         };
         return (
           <div className="space-y-4">
-            {canEdit && !fabAdmin && <AdminOnlyNote text="Only an Admin can change rates, colours and the conversion factors - you can update the stock quantities" />}
+            {canEdit && !fabAdmin && <AdminOnlyNote text="Only an Admin can change rates, colours and the conversion factors - you can update the stock quantities and photos" />}
             <RateHistory refreshKey={rateLogTick} keys={["lizaKgRate", "lizaKgRateNew", "maskingPieceRate", "maskingPieceRateNew", "curtainPieceRate", "curtainPieceRateNew"]} />
             <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4">
               <p className="font-bold text-indigo-900">🧵 Fabric Stock & Pricing</p>

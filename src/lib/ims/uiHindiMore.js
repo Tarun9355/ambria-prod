@@ -523,7 +523,7 @@ not set - counts for every function on the Site page ¦ तय नहीं - �
 Showing this function's items and the trips going to it. A trip with no destination set in Planning counts for every function. ¦ इस फ़ंक्शन का सामान और इसके लिए जाने वाली ट्रिप दिख रही हैं। जिस ट्रिप की मंज़िल प्लानिंग में तय नहीं, वह हर फ़ंक्शन में गिनी जाती है।
 BLOCKED · NOT IN DEAL CHECK ¦ ब्लॉक है · डील चेक में नहीं
 Blocked for this event in Inventory - not in Deal Check's list ¦ इन्वेंटरी में इस इवेंट के लिए ब्लॉक है - डील चेक की लिस्ट में नहीं
-Only an Admin can change rates, colours and the conversion factors - you can update the stock quantities ¦ रेट, रंग और कन्वर्ज़न फ़ैक्टर सिर्फ़ एडमिन बदल सकता है - आप स्टॉक की मात्रा बदल सकते हैं
+Only an Admin can change rates, colours and the conversion factors - you can update the stock quantities and photos ¦ रेट, रंग और कन्वर्ज़न फ़ैक्टर सिर्फ़ एडमिन बदल सकता है - आप स्टॉक की मात्रा और फ़ोटो बदल सकते हैं
 Rate history ¦ रेट का इतिहास
 Who changed which rate, and when ¦ किसने कौन-सा रेट कब बदला
 No rate changes recorded yet. Every change from now on shows here with the name of who made it. ¦ अभी कोई रेट बदलाव दर्ज नहीं है। अब से हर बदलाव यहाँ बदलने वाले के नाम के साथ दिखेगा।
