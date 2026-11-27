@@ -124,7 +124,11 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
         if (!grouped.length) return;
         const flat = blockedFlatFor(grouped, d, { sel, trussInv, fabricEntriesOf: pl?.fabricEntriesOf, fabricPalettesOf: pl?.fabricPalettesOf });
         flatByDept.set(d, flat);
-        const flatUse = fd ? flat.map((it) => scopeLineToFn(it, { fd, fi, inventory, blocks, eventId: sel.id, fabricGroups: fabricGroupsAll, floralDetail: sel?.floralDetail, maps: fnMaps })).filter(Boolean) : flat;
+        // one function: its share of each line; a line no function can be tied to is the whole event's and shows in every function, as
+        // on Planning's trips (never left out of every function's view)
+        const ctxOf = (f2, j) => ({ fd: f2, fi: j, inventory, blocks, eventId: sel.id, fabricGroups: fabricGroupsAll, floralDetail: sel?.floralDetail, maps: j === fi ? fnMaps : qtyMapsOfFn(f2, inventory) });
+        const fnsAll = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
+        const flatUse = fd ? flat.map((it) => scopeLineToFn(it, ctxOf(fd, fi)) || (fnsAll.some((f2, j) => j !== fi && scopeLineToFn(it, ctxOf(f2, j))) ? null : { ...it, anyFn: true })).filter(Boolean) : flat;
         const { load, atVenue: av } = loadSplitOf(flatUse, atVenueUse);
         // The design Planning chose for an overlay / cushion cover (Fabric) or a carpet floor (Tenting) - what is actually on the
         // truck - with the line's notes ("not decided yet ..."), as Planning's truck list and challan name it (owner's QA audit
@@ -162,7 +166,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           const fresh = !need.has(id);
           const c = need.get(id) || { dept: d, key, qty: 0, label: cv?.name || it.name, photo: cv?.name ? (cv.photo || "") : (it.photo || ""), unit: it.qtyUnit || "", invId: it.invId || null,
             perPiece: pcs?.perPiece || null,
-            notes: [...(cv?.notes || []).map((n) => n.text).filter(Boolean), ...(it.blockedOnly ? ["Blocked for this event in Inventory - not in Deal Check's list"] : []), ...(pcs?.text ? [`Pieces: ${pcs.text}`] : [])] };
+            notes: [...(cv?.notes || []).map((n) => n.text).filter(Boolean), ...(it.blockedOnly ? ["Blocked for this event in Inventory - not in Deal Check's list"] : []), ...(pcs?.text ? [`Pieces: ${pcs.text}`] : []), ...(it.anyFn ? ["not tied to one function - the whole event's"] : [])] };
           // the same line from another function: pieces only while every part is the same piece size
           if (!fresh && c.perPiece !== (pcs?.perPiece || null)) c.perPiece = null;
           c.qty += Number(it.qty) || 0;
