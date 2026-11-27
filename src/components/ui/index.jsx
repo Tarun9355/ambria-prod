@@ -155,7 +155,7 @@ export function useConfirm() {
         <div className="flex justify-end gap-2 px-6 pb-5 rounded-b-2xl">
           <button onClick={() => settle(false)}
             className="px-4 py-2 text-sm rounded-lg font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 transition">
-            Cancel
+            {state.cancelLabel || "Cancel"}
           </button>
           <button autoFocus onClick={() => settle(true)}
             className={"px-4 py-2 text-sm rounded-lg font-medium text-white transition "

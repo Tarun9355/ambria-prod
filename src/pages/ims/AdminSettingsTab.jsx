@@ -2451,9 +2451,18 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
             return next;
           });
         };
+        // A department head can delete a stock row too (owner ask 2026-11-27) - always asked first. The row is found by its colour in the
+        // row as it is in the database when the save runs (another device may have added or removed one), by position only for a blank one.
         const removeStockRow = async (which, idx) => {
-          if (!fabAdmin || !(await confirm({ title: "Remove this stock row?", body: "It will no longer count towards the truss / fabric stock." }))) return;
-          setTrussInvAdmin((ti) => ({ ...ti, [which]: (ti[which] || []).filter((_, j) => j !== idx) }));
+          if (!canEdit) return;
+          if (!(await confirm({ title: "Delete this stock row?", body: "Its stock will no longer be counted. This cannot be undone.", confirmLabel: "Yes, delete", cancelLabel: "No" }))) return;
+          const wasColour = String((Array.isArray(trussInv[which]) ? trussInv[which] : [])[idx]?.colour || "").trim().toLowerCase();
+          setTrussInv((ti) => {
+            const rows = Array.isArray(ti[which]) ? ti[which] : [];
+            const at = wasColour ? rows.findIndex((r) => String(r?.colour || "").trim().toLowerCase() === wasColour) : idx;
+            if (at < 0 || !rows[at]) return ti;
+            return { ...ti, [which]: rows.filter((_, j) => j !== at) };
+          });
         };
         // No more fresh-purchase-price / markup-% pair (2026-10-15): the salesperson now picks Old or
         // New fabric explicitly per truss (StudioBuild.jsx's Fabric toggle) and it bills flat at that
@@ -2588,7 +2597,9 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                             <td className="px-2 py-1.5 text-center"><DraftInput type="number" min="0" step="1" inputMode="decimal" delay={700} disabled={!canEdit} aria-label={`${row.colour || "Colour"} old stock`} value={row[qtyField] || 0} onCommit={(v) => updateStock(which, i, qtyField, v)} className={`w-20 border border-gray-300 rounded px-2 py-1 text-xs font-bold text-center`} title="Old fabric in stock" /></td>
                             <td className="px-2 py-1.5 text-center"><DraftInput type="number" min="0" step="1" inputMode="decimal" delay={700} disabled={!canEdit} aria-label={`${row.colour || "Colour"} new stock`} value={row[`${qtyField}New`] || 0} onCommit={(v) => updateStock(which, i, `${qtyField}New`, v)} className={`w-20 border border-${themeColor}-300 rounded px-2 py-1 text-xs font-bold text-center text-${themeColor}-800`} title="New fabric in stock" /></td>
                             <td className="px-2 py-1.5 text-center text-xs font-bold text-gray-700">{oldQ + newQ}</td>
-                            <td className="px-2 py-1.5 text-center">{fabAdmin && <button onClick={() => removeStockRow(which, i)} aria-label={`Remove ${row.colour || "this colour"}`} className="text-red-400 hover:text-red-600 text-xs">✕</button>}</td>
+                            <td className="px-2 py-1.5 text-center">{canEdit && <button type="button" onClick={() => removeStockRow(which, i)} aria-label={`Delete ${row.colour || "this row"}`} title="Delete this row" className="inline-flex items-center justify-center w-7 h-7 rounded-md text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors">
+                              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.6 8.5h4.8l.6-8.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            </button>}</td>
                           </tr>
                         );
                       })}
@@ -2602,7 +2613,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
         };
         return (
           <div className="space-y-4">
-            {canEdit && !fabAdmin && <AdminOnlyNote text="Only an Admin can change rates, colours and the conversion factors - you can update the stock quantities and photos" />}
+            {canEdit && !fabAdmin && <AdminOnlyNote text="Only an Admin can change rates, colours and the conversion factors - you can update the stock quantities and photos, or delete a row" />}
             <RateHistory refreshKey={rateLogTick} keys={["lizaKgRate", "lizaKgRateNew", "maskingPieceRate", "maskingPieceRateNew", "curtainPieceRate", "curtainPieceRateNew"]} />
             <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4">
               <p className="font-bold text-indigo-900">🧵 Fabric Stock & Pricing</p>
