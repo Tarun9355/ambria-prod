@@ -2561,13 +2561,11 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const deptTools = Array.isArray(toolkitAll[dept]) ? toolkitAll[dept] : [];
   const saveTools = (next) => { if (!canEditPlanning) return; setSettings && setSettings(s => ({ ...s, deptToolkits: { ...(s.deptToolkits || {}), [dept]: next } })); };
   const addTool = (name) => { const n = String(name || "").trim(); if (!n || deptTools.some(t => (t.name || "").toLowerCase() === n.toLowerCase())) return; saveTools([...deptTools, { name: n, qty: 1 }]); setNewTool(""); };
-  const delTool = async (i) => {
-    if (!(await askDelete(`Remove "${deptTools[i]?.name || "this tool"}"?`, "It will be taken off this event's tools list."))) return;
-    saveTools(deptTools.filter((_, j) => j !== i));
-  };
 
   const loaded = (deptData.loaded && typeof deptData.loaded === "object") ? deptData.loaded : {};
-  const loadKeys = [...loadItems.map(it => "inv:" + it.id), ...deptTools.map(t => "tool:" + t.name)]; // fixed / repeat items are not loaded
+  // how many of an essential are on trucks, every trip added up - 0 when it is on none (owner ask 2026-11-27: the list showed a default 1)
+  const toolOnTrucksQty = (name) => (Array.isArray(sel?.trucks) ? sel.trucks : []).reduce((s, t) => s + tripsOf(t).reduce((s2, tr) => s2 + (Number(tr?.tools?.[dept]?.[name]) || 0), 0), 0);
+  const loadKeys = [...loadItems.map(it => "inv:" + it.id), ...deptTools.filter(t => toolOnTrucksQty(t.name) > 0).map(t => "tool:" + t.name)]; // an essential counts once it is put on a truck // fixed / repeat items are not loaded
   const totalLoadItems = loadKeys.length;
   // An essential counts as loaded when it is on a trip of any truck (trip.tools) - the old tick box beside it is gone (owner ask 2026-11-27)
   const toolWhere = (name) => {
@@ -2579,8 +2577,6 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return null;
   };
   const loadedCount = loadKeys.filter(k => (k.startsWith("tool:") ? !!toolWhere(k.slice(5)) : loaded[k])).length;
-  // how many of an essential are on trucks, every trip added up - 0 when it is on none (owner ask 2026-11-27: the list showed a default 1)
-  const toolOnTrucksQty = (name) => (Array.isArray(sel?.trucks) ? sel.trucks : []).reduce((s, t) => s + tripsOf(t).reduce((s2, tr) => s2 + (Number(tr?.tools?.[dept]?.[name]) || 0), 0), 0);
   const dispatch = deptData.dispatch || { vehicle: "", driver: "", phone: "" };
   const setDispatch = (key, val) => saveDept({ dispatch: { ...dispatch, [key]: val } });
   // ── Multi-truck dispatch — inventory goes out across several trucks, each with its own challan ──
@@ -3534,7 +3530,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     if (!w) return;
     const rows = [
       ...loadItems.map(it => `<tr><td>${loaded["inv:" + it.id] ? "☑" : "☐"}</td><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}</td></tr>`),
-      ...deptTools.map(t => `<tr><td>${toolWhere(t.name) ? "☑" : "☐"}</td><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${toolOnTrucksQty(t.name)}</td></tr>`),
+      ...deptTools.filter(t => toolOnTrucksQty(t.name) > 0).map(t => `<tr><td>☑</td><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${toolOnTrucksQty(t.name)}</td></tr>`),
     ].join("");
     w.document.write(`<html><head><title>Challan — ${dept}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}@media print{button{display:none}}</style></head><body>
       <h2>${DEPT_ICON[dept]} Ambria — ${dept} Loading Challan</h2>
@@ -7787,44 +7783,52 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                               ? <div className="rounded-lg bg-blue-50 ring-1 ring-blue-100 px-3 py-2.5 text-xs font-semibold text-blue-800">{"Pick where this trip goes (Goes to, above) to see that function's items."}</div>
                               : <div className="text-xs text-gray-400">{blockedItems.length ? (tripItems.length ? "Nothing left to load — it's all gone out on another trip." : "Nothing to load - everything is already at the venue.") : "No inventory blocked for this department."}</div>}
                           </div>
-                          {/* ── ESSENTIALS ON THIS TRUCK ── this trip's own qty of each of the department's essentials (0 = not on it) - prints on this
-                              truck's challan only. Also any still on the trip after leaving the department's list, so it can be set to 0. */}
+                          {/* ── ESSENTIALS ON THIS TRUCK ── (owner ask 2026-11-27: "jis gaadi mai add kra bas ussi mai aayega") only what was added
+                              to THIS truck's trip shows here, with its qty - another truck never lists it. The department's saved essentials (and
+                              the usual ones for it) are offered as "+" chips; typing a new one adds it here and saves the name for next time. */}
                           {(() => {
                             const mineT = trip.tools?.[dept] || {};
-                            const names = [...deptTools.map(x => x.name), ...Object.keys(mineT).filter(n => Number(mineT[n]) > 0 && !deptTools.some(x => x.name === n))];
+                            const names = Object.keys(mineT).filter(n => Number(mineT[n]) > 0);
                             const off = locked || !canEditPlanning || onsiteOnly;
-                            const sugg = (DEFAULT_TOOLS[dept] || []).filter(sn => !deptTools.some(x => (x.name || "").toLowerCase() === sn.toLowerCase()));
-                            const canList = canEditPlanning && !onsiteOnly;
+                            const has = (n) => names.some(x => x.toLowerCase() === String(n).toLowerCase());
+                            const sugg = [...deptTools.map(x => x.name), ...(DEFAULT_TOOLS[dept] || [])]
+                              .filter((n, k, arr) => n && !has(n) && arr.findIndex(y => String(y).toLowerCase() === String(n).toLowerCase()) === k);
+                            const putOn = (raw) => {
+                              const n = String(raw || "").trim(); if (!n || off) return;
+                              const known = deptTools.find(x => (x.name || "").toLowerCase() === n.toLowerCase());
+                              if (!known) addTool(n); else setNewTool("");
+                              setTripTool(t.id, trip.id, known ? known.name : n, 1);
+                            };
+                            if (off && !names.length) return null;
                             return (
                               <div className="rounded-lg ring-1 ring-gray-200 bg-white">
                                 <div className="px-3 pt-2.5 pb-1">
                                   <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-gray-500">{"Essentials on this truck"}</div>
-                                  <div className="mt-0.5 text-[10.5px] text-gray-400">{"Carried, not blocked. Only what is set here goes on this truck's challan."}</div>
+                                  <div className="mt-0.5 text-[10.5px] text-gray-400">{"Carried, not blocked. Only what is added here goes on this truck's challan."}</div>
                                 </div>
                                 {names.length > 0 && <div className="divide-y divide-gray-100">
-                                  {names.map(nm => { const q = Number(mineT[nm]) || 0; const di = deptTools.findIndex(x => x.name === nm); return (
+                                  {names.map(nm => { const q = Number(mineT[nm]) || 0; return (
                                     <div key={nm} className="flex items-center gap-3 px-3 py-1.5">
-                                      <span className={"min-w-0 flex-1 truncate text-[12.5px] " + (q > 0 ? "font-medium text-gray-900" : "text-gray-500")}>🛠️ {nm}</span>
-                                      <DraftInput type="number" min="0" inputMode="numeric" value={q} disabled={off} aria-label={`${nm} on this truck`}
-                                        onCommit={v => setTripTool(t.id, trip.id, nm, Math.max(0, Number(v) || 0))} delay={600}
-                                        className={"shrink-0 w-12 h-7 rounded-md ring-1 text-center text-xs font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:cursor-default " + (q > 0 ? "bg-blue-50 ring-blue-100 text-blue-800" : "bg-gray-50 ring-gray-200 text-gray-500")} />
-                                      {/* takes it off the department's essentials list (every event); one already on a truck stays there until set to 0 */}
-                                      {canList && di >= 0 ? <button type="button" onClick={() => delTool(di)} aria-label={`Remove ${nm}`} title="Remove from the essentials list"
+                                      <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-gray-900">🛠️ {nm}</span>
+                                      <DraftInput type="number" min="1" inputMode="numeric" value={q} disabled={off} aria-label={`${nm} on this truck`}
+                                        onCommit={v => setTripTool(t.id, trip.id, nm, Math.max(1, Number(v) || 1))} delay={600}
+                                        className="shrink-0 w-12 h-7 rounded-md ring-1 ring-blue-100 bg-blue-50 text-blue-800 text-center text-xs font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:cursor-default" />
+                                      {!off ? <button type="button" onClick={() => setTripTool(t.id, trip.id, nm, 0)} aria-label={`Take ${nm} off this truck`} title="Take off this truck"
                                         className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
                                         <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
                                       </button> : <span className="shrink-0 w-7" />}
                                     </div>
                                   ); })}
                                 </div>}
-                                {canList && <div className="px-3 py-2 border-t border-gray-100 space-y-2">
-                                  <div className="flex items-center gap-2">
-                                    <input value={newTool} onChange={e => setNewTool(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addTool(newTool); }} placeholder="Add an essential, e.g. ladder"
-                                      className="min-w-0 flex-1 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-400" />
-                                    <button type="button" onClick={() => addTool(newTool)} className="shrink-0 h-8 text-xs font-semibold bg-gray-900 hover:bg-black text-white px-3.5 rounded-lg transition-colors">{"Add"}</button>
-                                  </div>
+                                {!off && <div className="px-3 py-2 border-t border-gray-100 space-y-2">
                                   {sugg.length > 0 && <div className="flex flex-wrap gap-1.5">
-                                    {sugg.map(sn => <button key={sn} type="button" onClick={() => addTool(sn)} className="text-xs font-medium px-2.5 py-1 rounded-lg bg-gray-50 ring-1 ring-gray-200 text-gray-600 hover:bg-white hover:text-gray-900 transition-colors">+ {sn}</button>)}
+                                    {sugg.map(sn => <button key={sn} type="button" onClick={() => putOn(sn)} className="text-xs font-medium px-2.5 py-1 rounded-lg bg-gray-50 ring-1 ring-gray-200 text-gray-600 hover:bg-white hover:text-gray-900 transition-colors">+ {sn}</button>)}
                                   </div>}
+                                  <div className="flex items-center gap-2">
+                                    <input value={newTool} onChange={e => setNewTool(e.target.value)} onKeyDown={e => { if (e.key === "Enter") putOn(newTool); }} placeholder="Add an essential, e.g. ladder"
+                                      className="min-w-0 flex-1 h-8 rounded-lg bg-white ring-1 ring-gray-200 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                                    <button type="button" onClick={() => putOn(newTool)} className="shrink-0 h-8 text-xs font-semibold bg-gray-900 hover:bg-black text-white px-3.5 rounded-lg transition-colors">{"Add"}</button>
+                                  </div>
                                 </div>}
                               </div>
                             );
