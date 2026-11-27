@@ -16,7 +16,7 @@ import LabourAdminLog from "./LabourAdminLog.jsx";
 import { labourPunchDepts } from "../../lib/ims/labourAttendance";
 import {
   IconHourglass, IconPlay, IconStop, IconClipboard, IconPin,
-  IconCamera, IconList, IconClipboardCheck, IconX, IconArrowRight, IconChevron, IconClock, IconCheck,
+  IconCamera, IconClipboardCheck, IconX, IconArrowRight, IconChevron, IconClock, IconCheck,
 } from "../../components/icons.jsx";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -311,13 +311,16 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
           the Back button returns to the punch screen. */}
       {!adminView && (
         <>
-          {/* ── TODAY ── who, where they stand and the one action; then today's three numbers. */}
+          {/* ── TODAY ──
+              Left: where the day stands - greeting, status, the day drawn to scale and its three times.
+              Right: the one action (Fitts: big, fixed place, full width on a phone) with the current time and
+              what pressing it will ask for, step by step (no surprise on the way in). Only the button is loud. */}
           <section aria-label="Today" className="rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm overflow-hidden">
-            <div className="p-5 sm:p-7 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-              <div className="min-w-0">
+            <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="p-5 sm:p-7 min-w-0">
                 <p className="text-sm text-gray-500">{new Date(now).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
-                <h2 className="mt-1 text-2xl sm:text-3xl font-semibold tracking-tight text-gray-900 truncate">{greeting}{firstName ? `, ${firstName}` : ""}</h2>
-                <div className="mt-3" aria-live="polite">
+                <h2 className="mt-1 text-2xl sm:text-[28px] leading-tight font-semibold tracking-tight text-gray-900 truncate">{greeting}{firstName ? `, ${firstName}` : ""}</h2>
+                <div className="mt-3 min-h-7" aria-live="polite">
                   {loadingStatus ? (
                     <span className="inline-flex items-center gap-2 text-sm text-gray-500">
                       <span className="w-3.5 h-3.5 rounded-full border-2 border-gray-300 border-t-blue-600 animate-spin" aria-hidden="true" />
@@ -345,52 +348,75 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                     </span>
                   )}
                 </div>
+
+                <DayStrip punches={dayPunches} now={now} />
+
+                <dl className="mt-6 grid grid-cols-3 gap-4">
+                  {[
+                    ["First in", firstIn ? fmtTime(firstIn.at) : "—"],
+                    [state === "in" ? "Status" : "Last out", state === "in" ? "Working" : lastOut ? fmtTime(lastOut.at) : "—"],
+                    ["Worked today", dayPunches.length ? fmtDur(workedToday) : "—"],
+                  ].map(([k, v], i) => (
+                    <div key={k} className={"min-w-0 " + (i ? "pl-4 border-l border-gray-100" : "")}>
+                      <dt className="text-xs text-gray-500 truncate">{k}</dt>
+                      <dd className="mt-1 text-lg sm:text-xl font-semibold text-gray-900 tabular-nums truncate">{v}</dd>
+                    </div>
+                  ))}
+                </dl>
               </div>
-              <div className="flex flex-col items-stretch md:items-end gap-2 md:shrink-0">
+
+              <aside aria-label="Punch" className="border-t md:border-t-0 md:border-l border-gray-100 bg-gray-50/70 p-5 sm:p-7 flex flex-col justify-center gap-5">
+                <div>
+                  <div className="text-xs text-gray-500">Time now</div>
+                  <div className="mt-0.5 text-3xl font-semibold tracking-tight text-gray-900 tabular-nums">{new Date(now).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</div>
+                </div>
                 <button
                   disabled={loadingStatus}
                   onClick={() => startPunch(state === "in" ? "out" : "in")}
-                  className={"inline-flex items-center justify-center gap-2.5 min-h-12 px-8 rounded-xl text-base font-semibold text-white shadow-sm transition-[background-color,transform] duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed "
+                  className={"w-full inline-flex items-center justify-center gap-2.5 min-h-14 px-6 rounded-xl text-base font-semibold text-white shadow-[0_1px_2px_rgba(15,23,42,0.12),0_6px_16px_-6px_rgba(15,23,42,0.35)] transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed "
                     + (state === "in" ? "bg-gray-900 hover:bg-gray-800 focus-visible:ring-gray-900" : "bg-green-600 hover:bg-green-700 focus-visible:ring-green-600")}>
                   {state === "in" ? <IconStop size={16} /> : <IconPlay size={16} />}
                   {state === "in" ? "Punch Out" : "Punch In"}
                 </button>
-                {!loadingStatus && !loadError && <p className="text-xs text-gray-500 text-center md:text-right">{nextHint}</p>}
-              </div>
+                {!loadingStatus && !loadError && (
+                  state === "in" ? (
+                    <p className="text-xs text-gray-500">{nextHint}</p>
+                  ) : (
+                    <ol aria-label="What punching in asks for" className="space-y-2">
+                      {inSteps.map((stp, i) => (
+                        <li key={stp} className="flex items-center gap-2.5 text-xs text-gray-600">
+                          <span aria-hidden="true" className="w-5 h-5 shrink-0 rounded-full bg-white ring-1 ring-gray-200 flex items-center justify-center text-[10px] font-semibold text-gray-500 tabular-nums">{i + 1}</span>
+                          <span className="block first-letter:uppercase">{stp}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  )
+                )}
+              </aside>
             </div>
-            <DayStrip punches={dayPunches} now={now} />
-            <dl className="grid grid-cols-3 border-t border-gray-100 bg-gray-50/70 divide-x divide-gray-100">
-              {[
-                ["First in", firstIn ? fmtTime(firstIn.at) : "—"],
-                [state === "in" ? "Status" : "Last out", state === "in" ? "Working" : lastOut ? fmtTime(lastOut.at) : "—"],
-                ["Worked today", dayPunches.length ? fmtDur(workedToday) : "—"],
-              ].map(([k, v]) => (
-                <div key={k} className="px-4 sm:px-7 py-3.5 min-w-0">
-                  <dt className="text-xs text-gray-500 truncate">{k}</dt>
-                  <dd className="mt-0.5 text-base sm:text-lg font-semibold text-gray-900 tabular-nums truncate">{v}</dd>
-                </div>
-              ))}
-            </dl>
           </section>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
             {/* ── TODAY'S PUNCHES ── a timeline, with the time spent between each in and out. */}
-            <section aria-label="Today's punches" className="order-2 lg:order-1 lg:col-span-2 rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
+            <section aria-label="Today's punches" className="order-2 lg:order-1 lg:col-span-3 rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
               <button onClick={() => setTodayOpen((o) => !o)} aria-expanded={todayOpen}
-                className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left lg:cursor-default lg:pointer-events-none">
-                <span className="flex items-center gap-2 text-sm font-semibold text-gray-900">
-                  <IconList size={15} /> Today's punches
-                  {dayPunches.length > 0 && <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-600 tabular-nums">{dayPunches.length}</span>}
+                className="w-full flex items-center justify-between gap-3 px-5 sm:px-6 py-4 text-left lg:cursor-default lg:pointer-events-none">
+                <span className="min-w-0">
+                  <span className="flex items-center gap-2 text-[15px] font-semibold text-gray-900">
+                    Today's punches
+                    {dayPunches.length > 0 && <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-600 tabular-nums">{dayPunches.length}</span>}
+                  </span>
+                  <span className="block mt-0.5 text-xs text-gray-500">Each punch with its place, and the time worked in between</span>
                 </span>
                 <span className={"lg:hidden text-gray-400 transition-transform duration-200 " + (todayOpen ? "rotate-180" : "")} aria-hidden="true"><IconChevron size={16} /></span>
               </button>
-              <div className={(todayOpen ? "block" : "hidden") + " lg:block border-t border-gray-100 px-5 py-4"}>
+              <div className={(todayOpen ? "block" : "hidden") + " lg:block border-t border-gray-100 px-5 sm:px-6 py-5"}>
                 {!dayPunches.length ? (
-                  <div className="flex items-center gap-3 py-1">
+                  <div className="flex items-center gap-3">
                     <div className="w-9 h-9 shrink-0 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center"><IconClock size={16} /></div>
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-700">No punches yet today</p>
-                      <p className="mt-0.5 text-xs text-gray-500">Each punch-in and punch-out lands here, with the time worked in between.</p>
+                      <p className="mt-0.5 text-xs text-gray-500">Punch in and your day starts here.</p>
                     </div>
                   </div>
                 ) : (
@@ -410,7 +436,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                           <div className="min-w-0 flex-1 pt-1">
                             <div className="flex items-baseline justify-between gap-3">
                               <span className={"text-sm font-semibold " + (p.auto_closed ? "text-amber-700" : "text-gray-900")}>{punchLabel(p)}</span>
-                              <time className="shrink-0 text-sm font-medium text-gray-700 tabular-nums" dateTime={p.at}>{fmtTime(p.at)}</time>
+                              <time className="shrink-0 text-sm font-semibold text-gray-900 tabular-nums" dateTime={p.at}>{fmtTime(p.at)}</time>
                             </div>
                             <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500 min-w-0"><IconPin size={11} /><span className="truncate">{punchLocationLabel(p)}</span></div>
                             {span != null && span > 0 && (
@@ -427,7 +453,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
               </div>
             </section>
 
-            <div className="order-1 lg:order-2">
+            <div className="order-1 lg:order-2 lg:col-span-2">
               <MyAttendanceCalendar authUser={authUser} />
             </div>
           </div>
@@ -703,9 +729,9 @@ function DayStrip({ punches, now }) {
   const end = Math.min(24, Math.max(20, Math.ceil(Math.max(...hrs))));
   const pct = (h) => `${((Math.min(end, Math.max(start, h)) - start) / (end - start)) * 100}%`;
   const ticks = []; for (let h = start; h <= end; h += 2) ticks.push(h);
-  const tickLbl = (h) => (h % 12 === 0 ? 12 : h % 12) + (h < 12 || h === 24 ? "a" : "p");
+  const tickLbl = (h) => (h % 12 === 0 ? 12 : h % 12) + (h < 12 || h === 24 ? " am" : " pm");
   return (
-    <div aria-hidden="true" className="px-5 sm:px-7 pb-5">
+    <div aria-hidden="true" className="mt-6">
       <div className="relative h-3 rounded-full bg-gray-100">
         {spans.map((x, i) => (
           <span key={i} className={"absolute inset-y-0 rounded-full " + (x.auto ? "bg-amber-400" : x.open ? "bg-green-500" : "bg-green-600")}
@@ -785,8 +811,11 @@ function MyAttendanceCalendar({ authUser }) {
 
   return (
     <section aria-label="This month" className="rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
-      <div className="flex items-center justify-between gap-2 px-5 pt-4">
-        <h3 className="text-sm font-semibold text-gray-900" aria-live="polite">{monthLabel}</h3>
+      <div className="flex items-center justify-between gap-2 px-5 pt-4 pb-1">
+        <div className="min-w-0">
+          <h3 className="text-[15px] font-semibold text-gray-900" aria-live="polite">{monthLabel}</h3>
+          <p className="mt-0.5 text-xs text-gray-500">Tap a worked day to see its punches</p>
+        </div>
         <div className="flex items-center gap-1">
           {!isThisMonth && (
             <button onClick={() => { setYear(now.getFullYear()); setMonth(now.getMonth() + 1); setOpenDay(null); }}
@@ -797,11 +826,11 @@ function MyAttendanceCalendar({ authUser }) {
         </div>
       </div>
 
-      <dl className="mx-5 mt-3 grid grid-cols-3 rounded-xl bg-gray-50 ring-1 ring-gray-100 divide-x divide-gray-100">
-        {[["Present", presentDays, "days"], ["Incomplete", incompleteDays, "no punch-out"], ["Hours", totalHours.toFixed(1), "worked"]].map(([k, v, sub]) => (
-          <div key={k} className="px-3 py-2.5 min-w-0">
+      <dl className="mx-5 mt-3 grid grid-cols-3 gap-2">
+        {[["Present", presentDays, "days", "text-gray-900"], ["Incomplete", incompleteDays, "no punch-out", incompleteDays ? "text-amber-700" : "text-gray-900"], ["Hours", totalHours.toFixed(1), "worked", "text-gray-900"]].map(([k, v, sub, tone]) => (
+          <div key={k} className="rounded-xl bg-gray-50 ring-1 ring-gray-100 px-3 py-2.5 min-w-0">
             <dt className="text-[11px] text-gray-500 truncate">{k}</dt>
-            <dd className="text-lg font-semibold text-gray-900 tabular-nums leading-tight">{loading ? <span className="inline-block w-6 h-4 rounded bg-gray-200 motion-safe:animate-pulse align-middle" /> : v}</dd>
+            <dd className={"mt-0.5 text-xl font-semibold tabular-nums leading-tight " + tone}>{loading ? <span className="inline-block w-6 h-4 rounded bg-gray-200 motion-safe:animate-pulse align-middle" /> : v}</dd>
             <dd className="text-[11px] text-gray-500 truncate">{sub}</dd>
           </div>
         ))}
