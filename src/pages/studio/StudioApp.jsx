@@ -11604,7 +11604,7 @@ export default function StudioApp() {
   // showing as selected and the grid quietly narrowed for a client nobody had set them on. The other
   // four filters here (cat/fn/space/venue) were always cleared, which is what made it look handled.
   const startNewDeal = useCallback(() => {
-    setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setFilterMood([]);setFilterPalette([]);setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");setClientFlowerPalette("");setClientLayoutUrl("");
+    setStep(0);setEnabledEls({});setElTiers({});setCustomMode({});setItemQty({});setItemGrades({});setSelectedMoods([]);setSelectedPalettes([]);setVenue("");setFn("");setClientName("");setClientDate("");setClientPhone("");setActiveClientId(null);setClientSearch("");setSavedInsps([]);setFilterCat([]);setFilterFn([]);setFilterSpace([]);setFilterVenue("All");setFilterMood([]);setFilterPalette([]);setElSelectedPhoto({});setElInspo({});setSourceEvent(null);setSourceVideo(null);setBrowseVenues([]);setVenueGroup(userVenueScope==="all"?"all":userVenueScope);setOutsideSub("all");setShowMoreOutside(false);setElNotes({});setElGallery(null);setZoneConfig({});setActiveZones([]);setShowCosts(false);setZoneElements({});setCustomTripRate(0);setVenueCustom(false);setCustomGensets(null);setCustomZones([]);setClientBrideGroom("");setClientShift("");setClientPax("");setClientVenueOther("");setExtraFunctions([]);setExpandedFnIdx(0);setActiveFnIdx(0);setFnBuilds({});setDcCustomItems([]);setFloralOverrides({note:"",rows:[]});setClientPalette("Custom");setClientFlowerPalette("");setClientLayoutUrl("");
     loadedClientIdentityRef.current = { name: "", phone: "" };
     // A pending removal remap belongs to whichever client was just open — carrying it into a brand
     // new, functionless deal has nothing to apply to anyway, but leaving it set is still a latent
@@ -12048,6 +12048,9 @@ export default function StudioApp() {
     // Same helper the Event Info "Continue" button uses, so the two cannot answer differently.
     const resumable = findLatestBuild(client.sessions, 0);
     const latestSession = resumable ? resumable.session : null;
+    // No session to restore: the client on screen has no Production/Buying items yet - never the previous client's
+    // (Deal Check's reconcile no longer blanks them, see runDealCheckGenerate).
+    if (!latestSession) setDcCustomItems([]);
     if (latestSession) {
       const merge = loadClientSession(client, latestSession, 2, { landingFnIdx: resumable.fnIdx, lmsFunctions: allLmsFns });
       // Folded into this ONE toast, not a second showMsg call — a second call would just overwrite
@@ -14471,7 +14474,11 @@ export default function StudioApp() {
       setDcArtFlowerAlloc({});
       setDcArtFlowerAllocSrc({});
       setDcFloralColorPrefs({});
-      setDcCustomItems([]);
+      // dcCustomItems (Build's Production/Buying items) is NOT blanked here (owner report 2026-11-27: "buying and production
+      // items gayab ho jare hai apply changes krne pe"). Unlike the Deal Check-only state above, it is part of the BUILD: every
+      // load (loadClientSession, from the session rows) and Start New already set it for the client on screen. This reset runs
+      // whenever Deal Check's reconcile is the first one for this client in this tab - e.g. Apply changes right after a refresh,
+      // with Deal Check never opened - so blanking it here wiped the deal's items, and the next autosave/push saved them gone.
     }
     if (hasCache) {
       setDcResolved(cachedForThisClient.resolved || {});
@@ -14486,8 +14493,11 @@ export default function StudioApp() {
       setDcArtFlowerAlloc(cachedForThisClient.artFlowerAlloc || {});
       setDcArtFlowerAllocSrc(cachedForThisClient.artFlowerAllocSrc || {});
       setDcFloralColorPrefs(cachedForThisClient.floralColorPrefs || {});
-      if ((isClientSwitch || dcCustomItems.length === 0) && Array.isArray(cachedForThisClient.customItems) && cachedForThisClient.customItems.length > 0) {
-        setDcCustomItems(cachedForThisClient.customItems);
+      // Only fills an EMPTY list - the Deal Check draft can be older than the build's own items (one added in Build after
+      // Deal Check was last open), so it never replaces what the build already holds.
+      if (Array.isArray(cachedForThisClient.customItems) && cachedForThisClient.customItems.length > 0) {
+        const fromDraft = cachedForThisClient.customItems;
+        setDcCustomItems((cur) => (Array.isArray(cur) && cur.length ? cur : fromDraft));
       }
     } else {
       setDcResolved({});
