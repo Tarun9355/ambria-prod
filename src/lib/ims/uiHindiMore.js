@@ -499,6 +499,7 @@ Each trip's challan - every department's items on it ¦ हर ट्रिप �
 Print challan ¦ चालान प्रिंट करें
 Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन बदल सकता है
 All functions ¦ सभी फ़ंक्शन
+None of this event's functions are yours to receive. ¦ इस इवेंट का कोई फ़ंक्शन आपके ज़िम्मे नहीं है।
 Change where this trip goes? ¦ यह ट्रिप कहाँ जाएगी, बदलें?
 Items are already loaded on this trip. They stay on it - any that are not the new function's are marked. ¦ इस ट्रिप पर सामान पहले से लदा है। वह इसी पर रहेगा - जो सामान नए फ़ंक्शन का नहीं है, उस पर निशान लग जाएगा।
 Remove where this trip goes? ¦ इस ट्रिप की मंज़िल हटाएँ?

@@ -75,6 +75,17 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
   }, [sel, settings, supervisors, inhouse.properties, inhouse.inhouse]);
   const pick = (id) => { setSelId(id); try { sessionStorage.setItem(PICK_KEY, id); } catch { /* private window — fine, just won't be remembered */ } };
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
+  // A site supervisor who logs in sees only their own function(s) of the event (owner ask 2026-11-27): the functions at a venue they are
+  // fixed at (Admin → Settings → 👷 Supervisors), else - added on the event in Planning - every function of it. Anyone else (an Admin, a
+  // department head, ops) sees every function. null = no limit.
+  const myFns = useMemo(() => {
+    if (!sel || isAdmin || !supervisorIdsOfUser(authUser, supervisors).length) return null;
+    const fns = Array.isArray(sel.functionsDetail) && sel.functionsDetail.length ? sel.functionsDetail : [{ venue: sel.venue }];
+    const places = [...inhouse.properties, ...inhouse.inhouse];
+    const fixed = fns.map((f, i) => (fixedAtVenue(authUser, f?.venue || sel.venue, settings, places, supervisors, inhouse.inhouse) ? i : -1)).filter((i) => i >= 0);
+    if (fixed.length) return fixed;
+    return isMyEvent(sel, authUser, supervisors) ? fns.map((_, i) => i) : [];
+  }, [sel, isAdmin, authUser, supervisors, settings, inhouse.properties, inhouse.inhouse]);
   const [reopenPrompt, setReopenPrompt] = useState(false);
   const [reopenReason, setReopenReason] = useState("");
   const lock = sel ? actualsLockState(sel, settings) : { locked: false, reopened: false };
@@ -158,7 +169,7 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
       </div>
 
       {section === "receiving" ? (
-        <SiteReceivingPanel sel={sel} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} authUser={authUser} mode={mode} settings={settings} trussInv={trussInv} blocks={blocks} rcItems={rcItems} rateCardCategories={rateCardCategories} />
+        <SiteReceivingPanel sel={sel} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} authUser={authUser} mode={mode} settings={settings} trussInv={trussInv} blocks={blocks} rcItems={rcItems} rateCardCategories={rateCardCategories} onlyFns={myFns} />
       ) : (
         <SiteCrewPanel sel={sel} setEventOrders={setEventOrders} settings={settings} inventory={inventory} authUser={authUser} catToDept={catToDept} mode={mode} />
       )}

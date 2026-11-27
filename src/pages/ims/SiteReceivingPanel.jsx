@@ -66,7 +66,7 @@ const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", 
 // old whole-truck "Arrived as planned" button entirely — that one used to mark every department on a
 // truck arrived in a single tap, which a dept head filtering to their own department could trigger by
 // accident for departments they'd never actually looked at.
-export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eventOrders, authUser, mode, settings, trussInv, blocks = {}, rcItems = [], rateCardCategories = [] }) {
+export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eventOrders, authUser, mode, settings, trussInv, blocks = {}, rcItems = [], rateCardCategories = [], onlyFns = null }) {
   const [flaggingKey, setFlaggingKey] = useState(null); // `${truckId}|${dept}|${key}` currently showing its issue panel
   // "all" (default) or one department — a supervisor checking in a truck usually cares about every
   // department on it, but a dept head who only wants to confirm THEIR OWN pieces arrived (owner ask
@@ -76,7 +76,12 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // Pushpanjali on the 28th). Held per event, so opening another event starts at All.
   const [fnPick, setFnPick] = useState({ id: null, fi: "all" });
   const fnsOfSel = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
-  const fnSel = fnPick.id === sel?.id && fnPick.fi !== "all" && fnsOfSel[fnPick.fi] ? fnPick.fi : "all";
+  // onlyFns: a logged-in site supervisor's own functions (SiteSupervisorTab myFns) - no All, no other function; null = every function
+  const allowedFns = Array.isArray(onlyFns) ? onlyFns.filter((i) => fnsOfSel[i] || (i === 0 && !fnsOfSel.length)) : null;
+  const picked = fnPick.id === sel?.id && fnPick.fi !== "all" && fnsOfSel[fnPick.fi] ? fnPick.fi : "all";
+  const fnSel = allowedFns && fnsOfSel.length > 1
+    ? (allowedFns.includes(picked) ? picked : (allowedFns[0] ?? "all"))
+    : picked;
   // ── WHAT SHOULD COME: THE VERY LIST PLANNING LOADS FROM ── (owner's QA audit 2026-11-26)
   // Each department's to-load list is built by lib/ims/deptLoadList - the code Dept Ops itself runs (Deal Check's department
   // snapshot: kits as shell + this department's parts, recipe parts, Floral's mapped artificial items worked out live, Fabric
@@ -310,6 +315,9 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
     w.document.close();
   };
 
+  if (allowedFns && allowedFns.length === 0) {
+    return <div className="bg-white rounded-xl border border-gray-100 p-8 text-center text-sm text-gray-500">{"None of this event's functions are yours to receive."}</div>;
+  }
   if (allLines.length === 0 && transfers.length === 0 && missingItems.length === 0 && atVenueRows.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-100 p-8 text-center text-sm text-gray-400">
@@ -354,11 +362,13 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
       {fnsOfSel.length > 1 && (
         <div className="space-y-1.5">
           <div className="flex gap-1.5 flex-wrap">
-            <button type="button" onClick={() => setFnPick({ id: sel.id, fi: "all" })} aria-pressed={fnSel === "all"}
-              className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (fnSel === "all" ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50")}>
-              {"All functions"}
-            </button>
-            {fnsOfSel.map((f, i) => (
+            {!allowedFns && (
+              <button type="button" onClick={() => setFnPick({ id: sel.id, fi: "all" })} aria-pressed={fnSel === "all"}
+                className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (fnSel === "all" ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50")}>
+                {"All functions"}
+              </button>
+            )}
+            {fnsOfSel.map((f, i) => (allowedFns && !allowedFns.includes(i)) ? null : (
               <button key={i} type="button" onClick={() => setFnPick({ id: sel.id, fi: i })} aria-pressed={fnSel === i}
                 className={"text-[11.5px] font-semibold px-2.5 py-1 rounded-full border transition-colors " + (fnSel === i ? "bg-blue-600 text-white border-transparent" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50")}>
                 {[f?.type || `Function ${i + 1}`, f?.venue, String(f?.date || "").slice(0, 10)].filter(Boolean).join(" · ")}
