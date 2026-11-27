@@ -358,6 +358,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                 {!loadingStatus && !loadError && <p className="text-xs text-gray-500 text-center md:text-right">{nextHint}</p>}
               </div>
             </div>
+            <DayStrip punches={dayPunches} now={now} />
             <dl className="grid grid-cols-3 border-t border-gray-100 bg-gray-50/70 divide-x divide-gray-100">
               {[
                 ["First in", firstIn ? fmtTime(firstIn.at) : "—"],
@@ -385,10 +386,12 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
               </button>
               <div className={(todayOpen ? "block" : "hidden") + " lg:block border-t border-gray-100 px-5 py-4"}>
                 {!dayPunches.length ? (
-                  <div className="py-8 text-center">
-                    <div className="mx-auto w-10 h-10 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center"><IconClock size={18} /></div>
-                    <p className="mt-3 text-sm font-medium text-gray-700">No punches yet today</p>
-                    <p className="mt-1 text-xs text-gray-500">Your punch-in and punch-out times show up here.</p>
+                  <div className="flex items-center gap-3 py-1">
+                    <div className="w-9 h-9 shrink-0 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center"><IconClock size={16} /></div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-700">No punches yet today</p>
+                      <p className="mt-0.5 text-xs text-gray-500">Each punch-in and punch-out lands here, with the time worked in between.</p>
+                    </div>
                   </div>
                 ) : (
                   <ol>
@@ -679,6 +682,50 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
   );
 }
 
+// ─── Today as a line ──────────────────────────────────────────────────────────
+// The working day drawn to scale: each in -> out stretch is a bar (an open one runs to now), with a
+// marker at the current time. Spans 8 AM-8 PM, widened to fit an earlier first punch or a later
+// one / the time now. Purely a picture of the punches listed below - the numbers stay in the row under it.
+function DayStrip({ punches, now }) {
+  const day = new Date(now); day.setHours(0, 0, 0, 0);
+  const hourOf = (t) => (new Date(t).getTime() - day.getTime()) / 3600000;
+  const nowH = hourOf(now);
+  const list = Array.isArray(punches) ? punches : [];
+  const spans = [];
+  list.forEach((p, i) => {
+    if (p.type !== "in") return;
+    const next = list[i + 1];
+    const end = next?.type === "out" ? hourOf(next.at) : (!next ? nowH : null);
+    if (end != null) spans.push({ from: hourOf(p.at), to: end, open: !next, auto: !!next?.auto_closed });
+  });
+  const hrs = [...spans.flatMap((x) => [x.from, x.to]), nowH];
+  const start = Math.max(0, Math.min(8, Math.floor(Math.min(...hrs))));
+  const end = Math.min(24, Math.max(20, Math.ceil(Math.max(...hrs))));
+  const pct = (h) => `${((Math.min(end, Math.max(start, h)) - start) / (end - start)) * 100}%`;
+  const ticks = []; for (let h = start; h <= end; h += 2) ticks.push(h);
+  const tickLbl = (h) => (h % 12 === 0 ? 12 : h % 12) + (h < 12 || h === 24 ? "a" : "p");
+  return (
+    <div aria-hidden="true" className="px-5 sm:px-7 pb-5">
+      <div className="relative h-3 rounded-full bg-gray-100">
+        {spans.map((x, i) => (
+          <span key={i} className={"absolute inset-y-0 rounded-full " + (x.auto ? "bg-amber-400" : x.open ? "bg-green-500" : "bg-green-600")}
+            style={{ left: pct(x.from), width: `max(6px, calc(${pct(x.to)} - ${pct(x.from)}))` }} />
+        ))}
+        {nowH >= start && nowH <= end && (
+          <span className="absolute -top-1 -bottom-1 w-0.5 -ml-px rounded-full bg-gray-900" style={{ left: pct(nowH) }}>
+            <span className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-gray-900 ring-2 ring-white" />
+          </span>
+        )}
+      </div>
+      <div className="relative mt-1.5 h-3 text-[10px] text-gray-400 tabular-nums">
+        {ticks.map((h) => (
+          <span key={h} className={"absolute " + (h === start ? "" : h === end ? "-translate-x-full" : "-translate-x-1/2")} style={{ left: pct(h) }}>{tickLbl(h)}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Everyone: this month's stat cards + calendar ──────────────────────────────
 // 'Absent' here is deliberately narrow — a PAST day with zero punches, nothing more. There's still
 // no "Half Day" (no shift-length anywhere to define it against) and no weekly-off/holiday calendar,
@@ -686,10 +733,10 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
 // in lib/ims/attendance.js. Owns its month's data once and renders both the stat cards row and the
 // calendar grid from it, rather than fetching the same month twice.
 const DAY_STATUS = {
-  closed: { dot: "bg-green-500", label: "Closed" },
-  open: { dot: "bg-amber-500", label: "Never punched out" },
-  "in-progress": { dot: "bg-blue-500", label: "Still in" },
-  absent: { dot: "bg-red-400", label: "Absent" },
+  closed: { dot: "bg-green-500", label: "Closed", cell: "bg-green-50 text-green-900 ring-1 ring-inset ring-green-200 hover:bg-green-100" },
+  open: { dot: "bg-amber-500", label: "Never punched out", cell: "bg-amber-50 text-amber-900 ring-1 ring-inset ring-amber-200 hover:bg-amber-100" },
+  "in-progress": { dot: "bg-blue-500", label: "Still in", cell: "bg-blue-50 text-blue-900 ring-1 ring-inset ring-blue-200 hover:bg-blue-100" },
+  absent: { dot: "bg-red-300", label: "Absent", cell: "text-gray-400" },
 };
 
 function MyAttendanceCalendar({ authUser }) {
@@ -783,12 +830,16 @@ function MyAttendanceCalendar({ authUser }) {
                 return (
                   <button key={d} disabled={!dayRows} onClick={() => setOpenDay(isOpen ? null : dateStr)}
                     aria-label={`${d} ${monthLabel}${st ? ": " + st.label : ""}`} aria-pressed={dayRows ? isOpen : undefined}
-                    className={"aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 text-xs tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 "
+                    className={"relative aspect-square rounded-lg flex flex-col items-center justify-center gap-0.5 text-xs tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 "
                       + (isOpen ? "bg-blue-600 text-white font-semibold "
-                        : isToday ? "ring-1 ring-blue-500 text-blue-700 font-semibold hover:bg-blue-50 "
-                        : dayRows ? "text-gray-800 hover:bg-gray-100 cursor-pointer " : "text-gray-400 cursor-default ")}>
+                        : dayRows ? (st?.cell || "text-gray-800 hover:bg-gray-100") + " font-semibold cursor-pointer "
+                        : "text-gray-400 cursor-default ")
+                      + (isToday && !isOpen ? "outline outline-2 outline-offset-1 outline-blue-500 " : "")}>
                     <span>{d}</span>
-                    {st && <span aria-hidden="true" className={"w-1.5 h-1.5 rounded-full " + (isOpen ? "bg-white" : st.dot)} />}
+                    {/* a worked day shows its hours; an absent one a small dot */}
+                    {dayRows && dayHours(dayRows) > 0
+                      ? <span className={"text-[9px] font-medium leading-none " + (isOpen ? "text-white/85" : "opacity-70")}>{dayHours(dayRows).toFixed(1)}h</span>
+                      : st && <span aria-hidden="true" className={"w-1 h-1 rounded-full " + (isOpen ? "bg-white" : st.dot)} />}
                   </button>
                 );
               })}
