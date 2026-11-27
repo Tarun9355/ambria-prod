@@ -4773,6 +4773,17 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                                   <span><b>{tr.carriedOver.map(c => `${c.qty} ${c.label}`).join(", ")}</b> already at this venue from {tr.carriedOverFromFn || "the previous function"} — not re-trucked.</span>
                                 </div>
                               )}
+                              {/* Items IMS added straight to a truck (not in this deal) whose sub-category has no
+                                  truck-capacity row set up yet (Admin → Settings → Transport & Power → Truck) — left
+                                  out of the truck count/bill above, same as any of Build's own un-configured sub-
+                                  categories, but said here so it reads as "needs a capacity row", not a silent gap
+                                  (RC-236, calcFunctionBreakdown's truckExtrasUncounted). */}
+                              {tr?.truckExtrasUncounted?.length > 0 && (
+                                <div style={{padding:"9px 15px",fontSize:11.5,color:"#B45309",background:"#B453090D",borderBottom:`1px solid ${HAIRLINE}`,display:"flex",alignItems:"center",gap:6}}>
+                                  <span aria-hidden="true">⚠️</span>
+                                  <span><b>{tr.truckExtrasUncounted.map(l => `${Math.round(l.qty * 100) / 100} ${l.name || l.sub}`).join(", ")}</b> added on a truck but not counted — "{tr.truckExtrasUncounted[0].sub}" has no truck capacity set up yet.</span>
+                                </div>
+                              )}
                               {/* ── NOTHING TO TRANSPORT IS NOT NOTHING TO SAY ──
                                   This tab scopes to the function selected in the sidebar, so picking
                                   a ceremony that carries no trucks used to leave a header with a dash
@@ -4877,7 +4888,7 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                                                     {r.items.map((it, ii) => (
                                                       <div key={ii} style={{display:"flex",alignItems:"baseline",gap:10,fontSize:11.5,color:INK_3}}>
                                                         <span style={{flex:"1 1 auto",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                                                          {it.zoneKey ? <span style={{color:INK_3,opacity:0.8}}>{it.zoneKey} · </span> : null}{it.name}
+                                                          {it.zoneKey ? <span style={{color:INK_3,opacity:0.8}}>{it.zoneKey === "__truckExtras" ? "Added on truck" : it.zoneKey} · </span> : null}{it.name}
                                                         </span>
                                                         {/* Item quantities land in the SAME column as
                                                             the sub-category qty above them, so a row and

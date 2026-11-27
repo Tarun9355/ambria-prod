@@ -59,6 +59,28 @@ export const platformsForMaterial = (trussInv, material) => {
 export const platformStockSqft = (trussInv, material) => platformsForMaterial(trussInv, material)
   .reduce((s, r) => s + (Number(r.lengthFt) || 0) * (Number(r.widthFt) || 0) * (Number(r.stock) || 0), 0);
 
+// Every platform SIZE as a synthesized "item" a picker can offer and a load key can address — the
+// same {id, name, subCat, qty} shape DepartmentOpsTab.jsx's "Add an item not in this deal" picker
+// synthesizes for every other trussInv-backed virtual item (truss pillars/beams, fabric colours), so
+// this one lives here instead of duplicated at each of its two call sites (that picker, and
+// src/lib/studio/truckExtraLoads.js's own Transport-tab sqft conversion, which needs `lengthFt`/
+// `widthFt` back out of the same `platform:<rowId>` id it was given). `id` depends on `r.id ?? i`
+// (a row's own id if Admin has one, else its position after the ≤0-dims filter) — the exact reason
+// a second, independently-written copy of this would drift: two call sites computing `i` over two
+// different filtered arrays could assign the same row a different id.
+export function virtualPlatformItems(trussInv) {
+  return platformsForMaterial(trussInv, null)
+    .filter((r) => (Number(r.lengthFt) || 0) > 0 && (Number(r.widthFt) || 0) > 0)
+    .map((r, i) => {
+      const mat = platformMaterialOf(r);
+      const label = (r.label && String(r.label).trim()) || `${r.lengthFt}×${r.widthFt}ft`;
+      return {
+        id: `platform:${r.id ?? i}`, name: `${label} · ${PLATFORM_MATERIAL_LABEL[mat] || mat}`, subCat: "Platform",
+        qty: Math.max(0, Math.floor(Number(r.stock) || 0)), lengthFt: Number(r.lengthFt) || 0, widthFt: Number(r.widthFt) || 0,
+      };
+    });
+}
+
 // The combined pool's total stock — Wood + Iron summed. Named separately from platformStockSqft
 // (which can also do this via a no-argument call) so call sites reading "the one pool total" say so.
 export const platformTotalStockSqft = (trussInv) => platformStockSqft(trussInv);

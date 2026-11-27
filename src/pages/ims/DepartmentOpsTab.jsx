@@ -32,7 +32,7 @@ import { dcFabricMultOf, trussInvForMaterial, parseFlowerPalette, repeatCatFor }
 import { trussBaseArea } from "../../lib/studio/taxonomy";
 import { isTrussFoc } from "../../lib/studio/foc.js";
 import { resolveBeamSegment, resolvePillarHeight } from "../../lib/ims/trussEngine";
-import { platformPullPlan, platformPullPlansByFn, platformFloorsFromParts, platformsForMaterial, platformMaterialOf, PLATFORM_MATERIAL_LABEL } from "../../lib/ims/platformEngine";
+import { platformPullPlan, platformPullPlansByFn, platformFloorsFromParts, PLATFORM_MATERIAL_LABEL, virtualPlatformItems } from "../../lib/ims/platformEngine";
 import { RC_SK_TR } from "../../lib/studio/keys";
 import { LOGO_BOX } from "../../lib/studio/brand.js";
 import { thumbUrl, fitUrl } from "../../lib/studio/thumb.js";
@@ -2743,14 +2743,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
         });
         addVirtual(sub, items);
       });
-      const platformItems = platformsForMaterial(trussInv, null)
-        .filter((r) => (Number(r.lengthFt) || 0) > 0 && (Number(r.widthFt) || 0) > 0)
-        .map((r, i) => {
-          const mat = platformMaterialOf(r);
-          const label = (r.label && String(r.label).trim()) || `${r.lengthFt}×${r.widthFt}ft`;
-          return { id: `platform:${r.id ?? i}`, name: `${label} · ${PLATFORM_MATERIAL_LABEL[mat] || mat}`, subCat: "Platform", qty: Math.max(0, Math.floor(Number(r.stock) || 0)) };
-        });
-      addVirtual("Platform", platformItems);
+      addVirtual("Platform", virtualPlatformItems(trussInv));
     }
     if (dept === "Fabric" && trussInv) {
       // Same colour-stock tables Admin → Settings → Fabric Stock & Pricing edits (lizaStock in kg,
