@@ -2561,7 +2561,6 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const deptTools = Array.isArray(toolkitAll[dept]) ? toolkitAll[dept] : [];
   const saveTools = (next) => { if (!canEditPlanning) return; setSettings && setSettings(s => ({ ...s, deptToolkits: { ...(s.deptToolkits || {}), [dept]: next } })); };
   const addTool = (name) => { const n = String(name || "").trim(); if (!n || deptTools.some(t => (t.name || "").toLowerCase() === n.toLowerCase())) return; saveTools([...deptTools, { name: n, qty: 1 }]); setNewTool(""); };
-  const setTool = (i, key, val) => saveTools(deptTools.map((t, j) => j === i ? { ...t, [key]: val } : t));
   const delTool = async (i) => {
     if (!(await askDelete(`Remove "${deptTools[i]?.name || "this tool"}"?`, "It will be taken off this event's tools list."))) return;
     saveTools(deptTools.filter((_, j) => j !== i));
@@ -2580,6 +2579,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return null;
   };
   const loadedCount = loadKeys.filter(k => (k.startsWith("tool:") ? !!toolWhere(k.slice(5)) : loaded[k])).length;
+  // how many of an essential are on trucks, every trip added up - 0 when it is on none (owner ask 2026-11-27: the list showed a default 1)
+  const toolOnTrucksQty = (name) => (Array.isArray(sel?.trucks) ? sel.trucks : []).reduce((s, t) => s + tripsOf(t).reduce((s2, tr) => s2 + (Number(tr?.tools?.[dept]?.[name]) || 0), 0), 0);
   const dispatch = deptData.dispatch || { vehicle: "", driver: "", phone: "" };
   const setDispatch = (key, val) => saveDept({ dispatch: { ...dispatch, [key]: val } });
   // ── Multi-truck dispatch — inventory goes out across several trucks, each with its own challan ──
@@ -3534,7 +3535,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     if (!w) return;
     const rows = [
       ...loadItems.map(it => `<tr><td>${loaded["inv:" + it.id] ? "☑" : "☐"}</td><td>${shownName(it)}${challanSrcNote(it)}</td><td>${it.sub || "—"}</td><td style="text-align:center">${it.qty}</td></tr>`),
-      ...deptTools.map(t => `<tr><td>${toolWhere(t.name) ? "☑" : "☐"}</td><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${t.qty || 1}</td></tr>`),
+      ...deptTools.map(t => `<tr><td>${toolWhere(t.name) ? "☑" : "☐"}</td><td>🛠️ ${t.name}</td><td>essential / tool</td><td style="text-align:center">${toolOnTrucksQty(t.name)}</td></tr>`),
     ].join("");
     w.document.write(`<html><head><title>Challan — ${dept}</title><style>body{font-family:Arial;padding:24px;color:#111}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #ddd;padding:8px;font-size:13px}th{background:#f3f4f6;text-align:left}h2{color:#4f46e5;margin-bottom:2px}@media print{button{display:none}}</style></head><body>
       <h2>${DEPT_ICON[dept]} Ambria — ${dept} Loading Challan</h2>
@@ -7804,7 +7805,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                                   return (
                                     <span key={tl.name} className={"inline-flex items-center gap-1 rounded-full border text-[11.5px] font-semibold " + (on ? "bg-blue-600 border-transparent text-white" : "bg-white border-gray-200 text-gray-700")}>
                                       <button type="button" disabled={locked || !canEditPlanning || onsiteOnly} aria-pressed={on}
-                                        onClick={() => { if (tl.suggest) addTool(tl.name); setTripTool(t.id, trip.id, tl.name, on ? 0 : (Number(tl.qty) || 1)); }}
+                                        onClick={() => { if (tl.suggest) addTool(tl.name); setTripTool(t.id, trip.id, tl.name, on ? 0 : 1); }}
                                         title={elsewhere ? "Already on another trip" : undefined}
                                         className="px-2.5 py-1 rounded-full disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer">
                                         {on ? "✓ " : "+ "}{tl.name}{elsewhere && <span className="ml-1 text-[10px] font-normal text-amber-700">{"(on another trip)"}</span>}
@@ -7871,8 +7872,10 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           <span className="min-w-0 flex-1 truncate text-[13px] text-gray-800">{t.name}</span>
                           {w ? <span className="shrink-0 text-[11px] font-semibold text-blue-700 tabular-nums"><span>{"Truck"}</span> {truckNumById.get(w.truckId) || "?"}{w.vehicle ? <span className="font-normal text-gray-500"> · {w.vehicle}</span> : null}{w.trips > 1 ? <> · <span>{"Trip"}</span> {w.tripN}</> : null}</span>
                             : <span className="shrink-0 text-[11px] text-gray-400">{"not on a truck"}</span>}
-                          <input type="number" min="1" value={t.qty || 1} onChange={e => setTool(i, "qty", e.target.value)} aria-label={`${t.name} quantity`} title="Quantity"
-                            className="shrink-0 w-12 h-7 rounded-md bg-gray-50 ring-1 ring-gray-200 px-1.5 text-xs text-center font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                          {/* on trucks, every trip together - set on each trip above; 0 when on none */}
+                          {(() => { const q = toolOnTrucksQty(t.name); return (
+                            <span title="On trucks (set on each trip above)" className={"shrink-0 w-12 h-7 rounded-md ring-1 flex items-center justify-center text-xs font-semibold tabular-nums " + (q > 0 ? "bg-blue-50 ring-blue-100 text-blue-800" : "bg-gray-50 ring-gray-200 text-gray-400")}>{q}</span>
+                          ); })()}
                           <button type="button" onClick={() => delTool(i)} aria-label={`Remove ${t.name}`} title="Remove"
                             className="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
                             <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M3.5 3.5 L10.5 10.5 M10.5 3.5 L3.5 10.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" /></svg>
