@@ -2155,6 +2155,35 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     () => buildFinish(invScoped ? [sel?.functionsDetail?.[invFn]] : sel?.functionsDetail, inventory, settings?.printMaterials),
     [sel, invScoped, invFn, inventory, settings?.printMaterials]);
   const invShownTotal = invShown.reduce((s, x) => s + (Number(x.total) || 0), 0);
+  // ── CHANGED IN THE 48 HOURS BEFORE THE EVENT ── (owner ask 2026-11-27) an item swapped in, or taken out, from 48 hours before the
+  // event's first day: listed in its own section under Inventory blocked, not in the list itself. A swapped-in item's rental stays in
+  // the Inventory blocked total (the tile and the head of the list); a removed one is for information, no rental. Trucks, challans and the
+  // Site page load as before. Read from this department's change log (Studio's Sold-deal edits, amendRequests).
+  const lateChanges = (() => {
+    const out = { swaps: new Map(), removed: [] };
+    const dates = [...(Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).map(f => String(f?.date || "").slice(0, 10)), String(sel?.date || "").slice(0, 10)]
+      .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+    if (!dates.length) return out;
+    const from = Date.parse(dates[0] + "T00:00:00") - 48 * 3600 * 1000;
+    (amendRequests || [])
+      .filter(r => r.eventOrderId === sel?.id && r.department === dept && r.status === "logged" && Number(r.requestedAt) >= from)
+      .sort((a, b) => (Number(b.requestedAt) || 0) - (Number(a.requestedAt) || 0))
+      .forEach(r => {
+        const items = Array.isArray(r.items) ? r.items : [];
+        const by = r.requestedBy || "", at = Number(r.requestedAt) || 0;
+        items.filter(it => it?.change === "swapped").forEach(it => { if (!out.swaps.has(it.name)) out.swaps.set(it.name, { fromName: it.fromName || "", at, by }); });
+        const added = items.filter(it => it?.change === "added"), removed = items.filter(it => it?.change === "removed");
+        // an older log (before switches were recorded as one): one out and one in is a switch
+        if (added.length === 1 && removed.length === 1) {
+          if (!out.swaps.has(added[0].name)) out.swaps.set(added[0].name, { fromName: removed[0].name || "", at, by });
+          return;
+        }
+        removed.forEach(it => out.removed.push({ name: it.name, qty: Number(it.from ?? it.qty) || 0, at, by }));
+      });
+    return out;
+  })();
+  const isLateSwap = (it) => lateChanges.swaps.has(it?.name);
+  const lateSwapRows = invShown.filter(isLateSwap);
   const inMpFn = (d) => {
     const fd = mpFnDate(mpFns[mpFn]);
     // afterDate (not a re-derived "day after" via mpNextDay) — a back-to-back booking's dismantle
@@ -6208,7 +6237,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                     </div>
                   </div>}
                   {/* items already at the venue (📌 Fixed / ♻ Repeat, atVenueOf) go last - nothing to load for them; the rest keep their order */}
-                  {invShown.filter(it => !fabricGroupInfo.groupedLineIds.has(it.id) && !isDupArtificial(it))
+                  {invShown.filter(it => !fabricGroupInfo.groupedLineIds.has(it.id) && !isDupArtificial(it) && !isLateSwap(it))
                     .map((it, i) => { const a = invAtVenueRow(it); return { it, i, last: (a.repeat || a.fixed > 0) ? 1 : a.foc ? 2 : 0 }; })
                     .sort((x, y) => x.last - y.last || x.i - y.i).map(x => x.it).map(it => {
                     // ── TWO DIFFERENT QUANTITIES, ON PURPOSE ──
@@ -6605,6 +6634,45 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                 </div>
                   );
                 })()
+              )}
+              {/* ── CHANGED IN THE 48 HOURS BEFORE THE EVENT ── swapped in (rental counted in the total above) and taken out (no rental) */}
+              {(lateSwapRows.length > 0 || lateChanges.removed.length > 0) && (
+                <div className="m-2.5 rounded-xl ring-1 ring-amber-200 bg-amber-50/50 overflow-hidden">
+                  <div className="px-3 py-2 flex items-center justify-between gap-2">
+                    <span className="text-[12px] font-semibold text-amber-900"><span aria-hidden="true">🔁</span> {"Changed in the 48 hours before the event"}</span>
+                    {lateSwapRows.length > 0 && <span className="shrink-0 text-[11px] font-semibold text-amber-900 tabular-nums">{fmt(lateSwapRows.reduce((s, x) => s + (Number(x.total) || 0), 0))} <span className="font-normal text-amber-700">{"in the total above"}</span></span>}
+                  </div>
+                  <div className="divide-y divide-amber-100 bg-white">
+                    {lateSwapRows.map(it => { const c = lateChanges.swaps.get(it.name) || {}; return (
+                      <div key={"late:" + it.id} className="px-3 py-2 flex items-center gap-2.5">
+                        {it.photo ? <img src={thumbUrl(it.photo, 32)} loading="lazy" alt="" className="w-8 h-8 rounded-lg object-cover shrink-0" /> : <span className="w-8 h-8 rounded-lg bg-gray-50 shrink-0" />}
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-medium text-gray-900 truncate">{choiceViewAll.get(it.id)?.name || it.name}</div>
+                          <div className="text-[10.5px] text-gray-500 truncate">
+                            <span className="font-semibold text-sky-700">{"Replaced"}</span>{c.fromName ? <> · <span className="line-through">{c.fromName}</span></> : null}
+                            {c.at ? <> · {new Date(c.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</> : null}{c.by ? <> · {c.by}</> : null}
+                          </div>
+                        </div>
+                        <span className="shrink-0 text-xs text-gray-600 tabular-nums">×{it.qty}</span>
+                        <span className="shrink-0 w-20 text-right text-xs font-semibold text-gray-900 tabular-nums">{fmt(it.total)}</span>
+                      </div>
+                    ); })}
+                    {lateChanges.removed.map((r, i) => (
+                      <div key={"lateout:" + i} className="px-3 py-2 flex items-center gap-2.5">
+                        <span className="w-8 h-8 rounded-lg bg-gray-50 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-medium text-gray-500 line-through truncate">{r.name}</div>
+                          <div className="text-[10.5px] text-gray-500 truncate">
+                            <span className="font-semibold text-red-700">{"Removed"}</span>
+                            {r.at ? <> · {new Date(r.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</> : null}{r.by ? <> · {r.by}</> : null}
+                          </div>
+                        </div>
+                        {r.qty > 0 && <span className="shrink-0 text-xs text-gray-400 tabular-nums">×{r.qty}</span>}
+                        <span className="shrink-0 w-20 text-right text-[11px] text-gray-400">{"no rental"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
               {/* ── ADDED ON TRUCKS, NOT IN THE DEAL ── (owner ask 2026-11-25) what this department put on its trucks with "Add an
                   item not in this deal": blocked in stock for the event's dates, priced at the item's rent - an internal cost,

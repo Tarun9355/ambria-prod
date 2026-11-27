@@ -499,6 +499,11 @@ Each trip's challan - every department's items on it ¦ हर ट्रिप �
 Print challan ¦ चालान प्रिंट करें
 Only an Admin can change rates ¦ रेट सिर्फ़ एडमिन बदल सकता है
 All functions ¦ सभी फ़ंक्शन
+Changed in the 48 hours before the event ¦ इवेंट से पहले के 48 घंटों में बदला
+in the total above ¦ ऊपर के कुल में शामिल
+Replaced ¦ बदला गया
+Removed ¦ हटाया गया
+no rental ¦ कोई किराया नहीं
 This venue is not assigned to you ¦ यह वेन्यू आपको असाइन नहीं है
 Ask Planning to add you as this event's site supervisor if you should receive it. ¦ अगर इसका सामान आपको लेना है, तो प्लानिंग से कहें कि आपको इस इवेंट का साइट सुपरवाइज़र जोड़ें।
 None of this event's functions are yours to receive. ¦ इस इवेंट का कोई फ़ंक्शन आपके ज़िम्मे नहीं है।
