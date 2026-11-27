@@ -31,6 +31,17 @@ export function tripsOf(t) {
   return [{ id: (t?.id || "trip") + "_trip1", status: t?.status || "loading", loads: t?.loads || {}, extra: t?.extra || {}, custom: t?.custom || {} }];
 }
 
+// A truck's creation order from its id, for "Truck N" (oldest = Truck 1). Ids are "trk_" + Date.now() in base 36 (8 characters) + 4 random
+// ones; older ones were "trk_" + the plain decimal time. Reading the base-36 kind as a decimal number gave NaN -> 0 for every truck, so
+// the number followed the list order instead and a truck added later (it goes to the top) took "Truck 1" from the first one (owner report
+// 2026-11-27: essentials put on Truck 1 then showed on "Truck 2").
+export function truckOrderOf(id) {
+  const rest = String(id || "").replace(/^trk_/, "");
+  if (/^\d+$/.test(rest)) return Number(rest);
+  const ts = parseInt(rest.slice(0, 8), 36);
+  return Number.isFinite(ts) ? ts : 0;
+}
+
 // Where a trip goes: one function of the booking (trip.fnIdx = its index in functionsDetail), or not set (null - every function).
 // Owner ask 2026-11-27 (Amit Gulati, Exotica 27 Nov + Pushpanjali 28 Nov): a truck must say which venue it is for, so each site sees
 // only its own trucks arriving.

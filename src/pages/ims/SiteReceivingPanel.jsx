@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks, tripsOf, trucksForFn, tripFnOf, fnLabelOf } from "../../lib/ims/eventTrucks";
+import { truckManifest, incomingTransfersFor, hasUnmigratedLegacyTrucks, tripsOf, trucksForFn, tripFnOf, fnLabelOf, truckOrderOf } from "../../lib/ims/eventTrucks";
 import { FLAG_REASONS, receivingOf, lineReceipt, setItemReceiptPatch, clearItemReceiptPatch, setTransferReceiptPatch } from "../../lib/ims/receiving";
 import { catToDept as sharedCatToDept, DEPTS } from "../../lib/ims/deptClassify";
 import { thumbUrl } from "../../lib/studio/thumb.js";
@@ -293,7 +293,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   const canEdit = mode === "actual" && !lock.locked && canSiteEdit;
 
   // Truck numbers as Planning gives them (sorted by the number in the id, else list order), so "Truck 2" is the same truck on both pages
-  const truckNum = (() => { const nOf = (id) => { const n = Number(String(id || "").replace(/^trk_/, "")); return Number.isFinite(n) ? n : 0; }; return new Map([...plan.trucks].sort((x, y) => nOf(x.id) - nOf(y.id)).map((t, i) => [t.id, i + 1])); })();
+  const truckNum = (() => { const nOf = truckOrderOf; return new Map([...plan.trucks].sort((x, y) => nOf(x.id) - nOf(y.id)).map((t, i) => [t.id, i + 1])); })();
   // A trip's combined challan in a new window, as Planning prints it (item, department, qty), with the design Planning chose.
   const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const printChallan = (truck, trip, n, tripN, rows, toLabel = "") => {

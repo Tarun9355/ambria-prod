@@ -52,7 +52,7 @@ import { renderDeptBook, loadPdfLibs, loadPdfLogosOnce, isStaleChunk, reloadForU
 import useFixedVenueSettings from "../../lib/ims/useFixedVenueSettings";
 import { actualsLockState, patchTouchesActuals, reopenActualsPatch, relockActualsPatch } from "../../lib/ims/actualsLock";
 import { stampDeptChanges, eventChanges, agoText, ONSITE_SECTIONS, dedupeChangeLogs } from "../../lib/ims/recentChanges";
-import { tripsOf, tripFnOf, fnLabelOf } from "../../lib/ims/eventTrucks";
+import { tripsOf, tripFnOf, fnLabelOf, truckOrderOf } from "../../lib/ims/eventTrucks";
 import { hasTabPerm } from "../../lib/ims/tabAccess";
 import { isMyEvent, supervisorIdsOfUser, fixedAtVenue, addedSupervisorsOf, withAddedSupervisors } from "../../lib/ims/mySupervisorEvents";
 import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a site" search
@@ -2819,10 +2819,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   // the newest one reads "Truck 2" above "Truck 1", not the reverse. Shared with the Receiving
   // reconciliation view's own "Truck N" label (sourceRows/whTrucks) so the two screens never disagree
   // on which truck is which number.
-  const truckNumOf = (id) => {
-    const n = Number(String(id || "").replace(/^trk_/, ""));
-    return Number.isFinite(n) ? n : 0;
-  };
+  const truckNumOf = (id) => truckOrderOf(id); // lib/ims/eventTrucks - creation time from the id, decimal or base 36
   const truckNumById = new Map([...eventTruckList].sort((a, b) => truckNumOf(a.id) - truckNumOf(b.id)).map((t, i) => [t.id, i + 1]));
   // One truck open at a time: opening another closes the last, so the next truck's header is on
   // screen at once instead of below a screen of the previous truck's items.
@@ -2938,7 +2935,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     if (patch.vehicle != null && String(patch.vehicle).trim()) {
       const plateKey = String(patch.vehicle).trim().toLowerCase();
       const dupIdx = eventTruckList.findIndex(t => t.id !== id && String(t.vehicle || "").trim().toLowerCase() === plateKey);
-      if (dupIdx >= 0) { alert(`Truck ${dupIdx + 1} already has this vehicle (${patch.vehicle}). Open Truck ${dupIdx + 1} and use "+ Add trip" there instead of a new truck.`); return; }
+      if (dupIdx >= 0) { const no = truckNumById.get(eventTruckList[dupIdx].id); alert(`Truck ${no} already has this vehicle (${patch.vehicle}). Open Truck ${no} and use "+ Add trip" there instead of a new truck.`); return; }
     }
     saveEventTrucks(list => list.map(t => t.id === id ? { ...t, ...patch } : t));
   };
