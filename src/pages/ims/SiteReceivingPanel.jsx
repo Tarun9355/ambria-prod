@@ -10,6 +10,7 @@ import { atVenueOfEvent } from "../../lib/ims/atVenue";
 import { buildFabricGroups, fabricStandingOf } from "../../lib/ims/fabricGroups";
 import { platformPullPlansByFn, PLATFORM_MATERIAL_LABEL } from "../../lib/ims/platformEngine";
 import { scopeLineToFn, qtyMapsOfFn } from "../../lib/ims/siteFunctionScope";
+import { isStandingPart } from "../../lib/repeatGuard.js";
 import { makeEventPlans } from "../../lib/ims/eventPlans";
 import { buildLiveFloralPlan } from "../../lib/ims/liveFloralPlan";
 import { truckKeyOf, mappedStockRowsOf, blockedGroupedFor, blockedFlatFor, loadSplitOf, mergeLegacyTrucks, tripChallanRows, mergeAtVenueRows } from "../../lib/ims/deptLoadList";
@@ -96,7 +97,8 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
    const build = (fi) => {
     const fd = fi == null ? null : (Array.isArray(sel?.functionsDetail) ? sel.functionsDetail[fi] : null);
     const fnMaps = fd ? qtyMapsOfFn(fd, inventory) : null;
-    const atVenueUse = fd?.venue ? (it) => atVenueOf({ ...it, venue: fd.venue }) : atVenueOf;
+    // keeps .repeatBacked, which loadSplitOf reads for Repeat platform / carpet floors (review 2026-11-27)
+    const atVenueUse = fd?.venue ? Object.assign((it) => atVenueOf({ ...it, venue: fd.venue }), { repeatBacked: atVenueOf.repeatBacked }) : atVenueOf;
     const need = new Map(); // `${dept}|${truckKey}` -> { dept, key, qty, label, photo, unit, invId }
     let atVenue = [];
     const flatByDept = new Map();
@@ -138,7 +140,7 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
           if (!trussInv || !/^platform structure/i.test(String(it.sub || "").trim()) || !Array.isArray(it.parts)) return null;
           try {
             const by = new Map();
-            platformPullPlansByFn(it.parts.filter((p) => !p?.repeat), trussInv).forEach(({ plan }) => (plan?.pieces || []).forEach((p) => {
+            platformPullPlansByFn(it.parts.filter((p) => !isStandingPart(p, atVenueOf.repeatBacked)), trussInv).forEach(({ plan }) => (plan?.pieces || []).forEach((p) => {
               const k = `${p.label}|${p.material}|${p.thicknessIn ?? ""}`;
               const cur = by.get(k) || { ...p, qty: 0 }; cur.qty += p.qty; by.set(k, cur);
             }));

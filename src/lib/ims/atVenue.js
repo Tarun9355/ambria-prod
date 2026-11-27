@@ -7,13 +7,12 @@
 import { standingQty } from "./fixedVenues";
 import { repeatCatFor } from "../studio/pricing.js";
 import { repeatBackedOfEvent } from "../repeatGuard.js";
-import { isLiveEventOrder } from "./helpers.js";
 
 // eventOrders (optional): the other events, so a Repeat with nothing standing at its venue is loaded, not trusted (lib/repeatGuard).
 // The returned function carries repeatWithoutSetup: [{ fi, venue, date }] - the functions whose Repeat had nothing behind it.
 export function atVenueOfEvent(sel, fvSettings, inventory, eventOrders = null) {
   const fnsV = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
-  const backed = eventOrders ? repeatBackedOfEvent(sel, eventOrders, isLiveEventOrder) : null;
+  const backed = eventOrders ? repeatBackedOfEvent(sel, eventOrders) : null;
   const unbacked = new Map(); // fi -> { fi, venue, date }
   const venues = [...new Set([sel?.venue, ...fnsV.map(f => f?.venue)].filter(Boolean))];
   // Repeat only when EVERY use of the item is set to Repeat - one function repeating it while another needs it fresh still loads it.

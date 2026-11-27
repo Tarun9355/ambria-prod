@@ -8,12 +8,11 @@ import { calcZoneTrussPreview, calcZoneFabric, repeatCatFor, scaleTrussPreview }
 import { carpetFloorsOf, planCarpets } from "./carpetPlan";
 import { isTrussFoc } from "../studio/foc.js";
 import { repeatBackedOfEvent } from "../repeatGuard.js";
-import { isLiveEventOrder } from "./helpers.js";
 import { planElements } from "./elementPlan";
 
 export function makeEventPlans({ sel, inventory, blocks, eventOrders, settings, trussInv }) {
   // which functions' ♻ Repeat has a setup standing at the venue (lib/repeatGuard) - an unbacked one takes new fabric
-  const repeatBacked = eventOrders ? repeatBackedOfEvent(sel, eventOrders, isLiveEventOrder) : { has: () => true };
+  const repeatBacked = eventOrders ? repeatBackedOfEvent(sel, eventOrders) : { has: () => true };
   // ── TRUSS PLAN ── (the Truss tab of Deal Check, for the people who build it)
   // Every truss row of every function on the event: Customer demand vs Physical footprint, the
   // pillars / beams / batta it takes and its fabric (Liza / curtains / masking) with the colours

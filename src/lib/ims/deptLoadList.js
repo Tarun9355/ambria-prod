@@ -12,6 +12,7 @@ import { fnFromDetail } from "./liveFloralPlan";
 import { reqByDateFrom } from "../studio/soldBlocksPlan";
 import { buildFabricGroups, foldFabricLines } from "./fabricGroups";
 import { atVenueByRow } from "./atVenue";
+import { isStandingPart } from "../repeatGuard.js";
 
 // One id -> item index per inventory list (the list is replaced, never mutated, when it changes), so looking items up row by row
 // is not a scan of 600+ items each time (owner's QA audit 2026-11-26: the Site page did that for every row).
@@ -207,7 +208,7 @@ export function blockedFlatFor(grouped, d, { sel, trussInv, fabricEntriesOf, fab
 // at-venue figure for loadSplitOf / Planning's truck list, or null for a line with no such parts.
 export function standingPartsAtVenue(it, repeatBacked = null) {
   // a floor's Repeat counts only when its function's Repeat has a setup standing at the venue (lib/repeatGuard)
-  const isStanding = (p) => p?.repeat && (!repeatBacked || p.fnIdx == null || repeatBacked.has(Number(p.fnIdx)));
+  const isStanding = (p) => isStandingPart(p, repeatBacked);
   if (!it || !Array.isArray(it.parts) || !it.parts.some(isStanding)) return null;
   const qty = Number(it.qty) || 0;
   const standing = Math.min(qty, Math.round(it.parts.filter(isStanding).reduce((s, p) => s + (Number(p.qty) || 0), 0) * 100) / 100);

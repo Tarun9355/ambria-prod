@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { repeatBackedFns, repeatBackedOfEvent } from "./repeatGuard.js";
+import { repeatBackedFns, repeatBackedOfEvent, otherEventFns, isStandingPart } from "./repeatGuard.js";
 import { atVenueOfEvent } from "./ims/atVenue.js";
 
 // Venue audit 2026-11-27: a Repeat counts only when a setup stood at the same venue just before.
@@ -27,5 +27,27 @@ describe("repeat guard", () => {
     // another live event at Pushpanjali the day before backs it
     const others = [{ id: "e2", status: "confirmed", venue: "Pushpanjali", date: "2026-11-27" }];
     expect(repeatBackedOfEvent(sel, others).has(1)).toBe(true);
+  });
+});
+
+describe("repeat guard - review fixes", () => {
+  const fns = [{ venue: "Pushpanjali", date: "2026-11-28", shift: "Morning" }];
+  it("a pending booking counts; a cancelled one or the same client's other order does not", () => {
+    const eos = [
+      { id: "a", status: "pending", clientId: "X", venue: "Pushpanjali", date: "2026-11-27" },
+      { id: "b", status: "cancelled", clientId: "Y", venue: "Pushpanjali", date: "2026-11-27" },
+      { id: "c", status: "confirmed", clientId: "ME", venue: "Pushpanjali", date: "2026-11-27" },
+    ];
+    expect(otherEventFns(eos, { selfId: "z", clientId: "ME" }).length).toBe(1);
+    expect(repeatBackedFns(fns, otherEventFns([eos[1], eos[2]], { clientId: "ME" })).has(0)).toBe(false);
+  });
+  it("another show later the same day does not back a morning Repeat; an earlier one does", () => {
+    expect(repeatBackedFns(fns, [{ venue: "Pushpanjali", date: "2026-11-28", shift: "Night" }]).has(0)).toBe(false);
+    expect(repeatBackedFns([{ ...fns[0], shift: "Night" }], [{ venue: "Pushpanjali", date: "2026-11-28", shift: "Lunch" }]).has(0)).toBe(true);
+  });
+  it("a floor is standing only when its function's Repeat is backed", () => {
+    expect(isStandingPart({ repeat: true, fnIdx: 1 }, new Set([0]))).toBe(false);
+    expect(isStandingPart({ repeat: true, fnIdx: 0 }, new Set([0]))).toBe(true);
+    expect(isStandingPart({ repeat: true, fnIdx: 1 })).toBe(true);
   });
 });

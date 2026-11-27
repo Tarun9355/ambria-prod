@@ -25,20 +25,40 @@ export function repeatBackedFns(fns, others = []) {
       if (d === gd) { const a = shiftRank(g?.shift), b = shiftRank(f?.shift); return a < b || (a === b && j < i); }
       return false;
     });
-    const fromOther = (others || []).some((g) => venueKey(g?.venue || "") === v && dayOf(g?.date) != null && (d - dayOf(g.date) === 0 || d - dayOf(g.date) === 1));
+    const fromOther = (others || []).some((g) => {
+      if (venueKey(g?.venue || "") !== v) return false;
+      const gd = dayOf(g?.date);
+      if (gd == null) return false;
+      if (d - gd === 1) return true;
+      // the same day: only a show earlier in the day leaves a setup standing for ours (unknown shifts are not second-guessed)
+      if (d === gd) { const a = shiftRank(g?.shift), b = shiftRank(f?.shift); return a === 9 || b === 9 || a < b; }
+      return false;
+    });
     if (fromBooking || fromOther) out.add(i);
   });
   return out;
 }
 
 // IMS shape: an event order's functions and the other live events' functions.
-export function repeatBackedOfEvent(sel, eventOrders, isLive = (eo) => eo?.status !== "cancelled") {
-  const fns = (Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).map((f) => ({ venue: f?.venue || sel?.venue, date: f?.date || sel?.date, shift: f?.shift || sel?.shift }));
+// Another booking counts as a setup unless it is cancelled - a just-booked (pending) order is a real booking (same rule as liveBlocks).
+export const isSetupOrder = (eo) => !!eo && String(eo.status || "").toLowerCase() !== "cancelled";
+
+// Other bookings' functions, for repeatBackedFns: never this order or another order of the same client (a duplicate order of the same
+// deal must not back its own Repeat).
+export function otherEventFns(eventOrders, { selfId = null, clientId = null } = {}) {
   const others = [];
   (eventOrders || []).forEach((eo) => {
-    if (!eo || eo.id === sel?.id || !isLive(eo)) return;
-    const efs = Array.isArray(eo.functionsDetail) && eo.functionsDetail.length ? eo.functionsDetail : [{ venue: eo.venue, date: eo.date }];
-    efs.forEach((f) => others.push({ venue: f?.venue || eo.venue, date: f?.date || eo.date }));
+    if (!eo || (selfId && eo.id === selfId) || (clientId && eo.clientId === clientId) || !isSetupOrder(eo)) return;
+    const efs = Array.isArray(eo.functionsDetail) && eo.functionsDetail.length ? eo.functionsDetail : [{ venue: eo.venue, date: eo.date, shift: eo.shift }];
+    efs.forEach((f) => others.push({ venue: f?.venue || eo.venue, date: f?.date || eo.date, shift: f?.shift || eo.shift }));
   });
-  return repeatBackedFns(fns, others);
+  return others;
 }
+
+export function repeatBackedOfEvent(sel, eventOrders) {
+  const fns = (Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : []).map((f) => ({ venue: f?.venue || sel?.venue, date: f?.date || sel?.date, shift: f?.shift || sel?.shift }));
+  return repeatBackedFns(fns, otherEventFns(eventOrders, { selfId: sel?.id, clientId: sel?.clientId }));
+}
+
+// A floor / part counted as standing at the venue: marked Repeat, and its function's Repeat is backed (no backing info: trusted).
+export const isStandingPart = (p, repeatBacked = null) => !!p?.repeat && (!repeatBacked || p.fnIdx == null || repeatBacked.has(Number(p.fnIdx)));

@@ -10,7 +10,7 @@
 //
 // Persistence: the reference's Redis kvGet/reliableSave port verbatim through
 // the Supabase `settings`-table shim (src/lib/ims/kv).
-import { repeatBackedFns } from "../../lib/repeatGuard.js";
+import { repeatBackedFns, otherEventFns } from "../../lib/repeatGuard.js";
 import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, useTransition, lazy, Suspense } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import { changeOwnPassword } from "../../lib/auth";
@@ -7159,15 +7159,10 @@ export default function StudioApp() {
       const all = collectAllFunctionData();
       const me = all[activeFnIdx];
       if (!me) return true;
-      const mine = all.map((f) => ({ venue: f.fnVenue, date: f.fnDate, shift: f.fnShift }));
+      // an extra function at the main venue carries fnVenue "" (venueKey's fnVenueKey) - read as the main function's, as IMS does
+      const mine = all.map((f) => ({ venue: f.fnVenue || all[0]?.fnVenue, date: f.fnDate || all[0]?.fnDate, shift: f.fnShift || all[0]?.fnShift }));
       const myEo = eventOrderFor(eventOrders, activeClientId, clientName);
-      const others = [];
-      (eventOrders || []).forEach((eo) => {
-        if (!eo || (myEo && eo.id === myEo.id) || eo.clientId === activeClientId || eo.status === "cancelled") return;
-        const efs = Array.isArray(eo.functionsDetail) && eo.functionsDetail.length ? eo.functionsDetail : [{ venue: eo.venue, date: eo.date }];
-        efs.forEach((f) => others.push({ venue: f?.venue || eo.venue, date: f?.date || eo.date }));
-      });
-      return repeatBackedFns(mine, others).has(activeFnIdx);
+      return repeatBackedFns(mine, otherEventFns(eventOrders, { selfId: myEo?.id || null, clientId: activeClientId })).has(activeFnIdx);
     } catch { return true; }
   }, [collectAllFunctionData, activeFnIdx, eventOrders, activeClientId, clientName]);
   // invId → sibling function names (same venue, same/next day) that also use that item — drives the
