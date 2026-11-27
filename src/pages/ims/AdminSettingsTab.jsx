@@ -2400,15 +2400,15 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
       {activePanel === "fabricstock" && trussInv && (() => {
         const colourCat = (settings.colourCatalogue || []).map((c) => c.name);
         const rates = trussInv.rates || {};
-        // Owner ask 2026-11-26: a department head updates the stock QUANTITIES (Old / New kg or pcs) and - 2026-11-27 - each colour's
-        // reference PHOTO; colours (add, remove, name, In Build), the Liza kg conversion factors and the rates are Admin only.
+        // Owner ask 2026-11-26/27: a department head updates the stock QUANTITIES (Old / New kg or pcs), each colour's reference PHOTO,
+        // adds / names / removes colours and deletes rows; the In Build switch, the Liza kg conversion factors and the rates are Admin only.
         const fabAdmin = canEdit && ratesAdmin;
         const setTrussInvAdmin = fabAdmin ? setTrussInv : () => {};
         // The row is found by its colour in whichever copy the change is applied to (the save applies it to the database's row as it is now,
         // where another device may have added or removed a colour) - by position only when the colour is not there.
         const updateStock = (which, idx, key, val) => {
           const wasColour = (Array.isArray(trussInv[which]) ? trussInv[which] : [])[idx]?.colour;
-          ((key === "colour" || key === "grade" || key === "hex") ? setTrussInvAdmin : setTrussInv)((ti) => {
+          ((key === "grade" || key === "hex") ? setTrussInvAdmin : setTrussInv)((ti) => {
             const next = [...(ti[which] || [])];
             const at = wasColour != null ? next.findIndex((r) => String(r?.colour || "").trim().toLowerCase() === String(wasColour).trim().toLowerCase()) : -1;
             const j = at >= 0 ? at : idx;
@@ -2417,7 +2417,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
             return { ...ti, [which]: next };
           });
         };
-        const addStockRow = (which, qtyField) => setTrussInvAdmin((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
+        const addStockRow = (which, qtyField) => setTrussInv((ti) => ({ ...ti, [which]: [...(ti[which] || []), { colour: colourCat[0] || "White", [qtyField]: 0, [`${qtyField}New`]: 0 }] }));
         // One colour into all three fabrics at once: Liza (kg), Wall Masking and Velvet Curtains (pieces) share the same colour list, so a colour picked here
         // gets a row (0 old / 0 new) in each table that does not have it yet, with the reference photo of whichever table already has it.
         const FABRIC_TABLES = [["lizaStock", "stockKg"], ["maskingStock", "stockPieces"], ["curtainStock", "stockPieces"]];
@@ -2430,7 +2430,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
           const name = colourCat.length ? catalogueColour(typed, colourCat) : typed;
           if (!name) { setAddColourErr(`"${typed}" is not in the Colour Catalogue - pick one from the chips above (a colour that is not in the list has to be added to the colour catalogue first).`); return; }
           setAddColourErr("");
-          setTrussInvAdmin((ti) => {
+          setTrussInv((ti) => {
             const photo = FABRIC_TABLES.map(([w]) => (ti[w] || []).find((r) => sameColour(r.colour, name) && r.photo)?.photo).find(Boolean);
             const next = { ...ti };
             FABRIC_TABLES.forEach(([which, qtyField]) => {
@@ -2445,7 +2445,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
         const removeColourFromAll = async (name) => {
           const holding = FABRIC_TABLES.flatMap(([which, qtyField]) => (trussInv[which] || []).filter((r) => sameColour(r.colour, name) && ((Number(r[qtyField]) || 0) + (Number(r[`${qtyField}New`]) || 0)) > 0));
           if (holding.length && !(await confirm({ title: `Remove ${name} from all three fabrics?`, body: `${holding.length === 1 ? "One of its rows still holds" : "Some of its rows still hold"} stock; that stock will be gone from the count.` }))) return;
-          setTrussInvAdmin((ti) => {
+          setTrussInv((ti) => {
             const next = { ...ti };
             FABRIC_TABLES.forEach(([which]) => { next[which] = (ti[which] || []).filter((r) => !sameColour(r.colour, name)); });
             return next;
@@ -2491,7 +2491,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                       <span aria-hidden="true" className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400">🔍</span>
                     </div>
                   )}
-                  {fabAdmin && <button onClick={() => addStockRow(which, qtyField)} className={`text-xs bg-${themeColor}-600 hover:bg-${themeColor}-700 text-white px-2.5 py-1 rounded font-medium`}>+ Add Colour</button>}
+                  {canEdit && <button onClick={() => addStockRow(which, qtyField)} className={`text-xs bg-${themeColor}-600 hover:bg-${themeColor}-700 text-white px-2.5 py-1 rounded font-medium`}>+ Add Colour</button>}
                 </div>
                 {stock.length === 0 ? (
                   <div className="px-3 py-4 text-xs text-gray-400 italic text-center">No colours added yet. Tap + Add Colour to start.</div>
@@ -2582,7 +2582,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                               })()}
                             </td>
                             <td className="px-2 py-1.5">
-                              {fabAdmin
+                              {canEdit
                                 ? <CatalogueColourInput value={row.colour || ""} names={colourCat} listId={`${which}-colours`} onCommit={(v) => updateStock(which, i, "colour", v)} className={`w-full border border-${themeColor}-200 rounded px-2 py-1 text-xs`} />
                                 : <span className="block px-2 py-1 text-xs font-medium text-gray-800">{row.colour || "—"}</span>}
                             </td>
@@ -2613,7 +2613,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
         };
         return (
           <div className="space-y-4">
-            {canEdit && !fabAdmin && <AdminOnlyNote text="Only an Admin can change rates, colours and the conversion factors - you can update the stock quantities and photos, or delete a row" />}
+            {canEdit && !fabAdmin && <AdminOnlyNote text="Only an Admin can change rates, the conversion factors and the In Build switch - you can update stock, photos and colours" />}
             <RateHistory refreshKey={rateLogTick} keys={["lizaKgRate", "lizaKgRateNew", "maskingPieceRate", "maskingPieceRateNew", "curtainPieceRate", "curtainPieceRateNew"]} />
             <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4">
               <p className="font-bold text-indigo-900">🧵 Fabric Stock & Pricing</p>
@@ -2645,7 +2645,7 @@ export default function AdminSettingsTab({ settings, setSettings: setSettingsPro
                 <p className="font-bold text-indigo-900">🎨 Add a colour to all three fabrics</p>
                 <p className="text-xs text-gray-500 mt-0.5">Tap a colour and it gets a row (0 old / 0 new) in Liza Fabric, Wall Masking Panels and Velvet Curtains together. A colour already in a table is left as it is. Tap a ticked colour to take it out of all three again.</p>
               </div>
-              <fieldset disabled={!fabAdmin} className="m-0 p-0 border-0 min-w-0 space-y-2.5 disabled:opacity-60">
+              <fieldset disabled={!canEdit} className="m-0 p-0 border-0 min-w-0 space-y-2.5 disabled:opacity-60">
               {colourCat.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {(settings.colourCatalogue || []).map((c) => {
