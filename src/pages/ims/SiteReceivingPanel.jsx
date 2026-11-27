@@ -66,7 +66,7 @@ const DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", 
 // old whole-truck "Arrived as planned" button entirely — that one used to mark every department on a
 // truck arrived in a single tap, which a dept head filtering to their own department could trigger by
 // accident for departments they'd never actually looked at.
-export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eventOrders, authUser, mode, settings, trussInv, blocks = {}, rcItems = [], rateCardCategories = [], onlyFns = null }) {
+export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eventOrders, authUser, mode, settings, trussInv, blocks = {}, rcItems = [], rateCardCategories = [], onlyFns = null, startFn = null }) {
   const [flaggingKey, setFlaggingKey] = useState(null); // `${truckId}|${dept}|${key}` currently showing its issue panel
   // "all" (default) or one department — a supervisor checking in a truck usually cares about every
   // department on it, but a dept head who only wants to confirm THEIR OWN pieces arrived (owner ask
@@ -75,6 +75,8 @@ export default function SiteReceivingPanel({ sel, setEventOrders, inventory, eve
   // One function of the booking, or all (owner ask 2026-11-27: function-wise like Planning - one client at Exotica on the 27th and
   // Pushpanjali on the 28th). Held per event, so opening another event starts at All.
   const [fnPick, setFnPick] = useState({ id: null, fi: "all" });
+  // the function of the calendar date the event was opened from (SiteSupervisorTab startFn) - opening the 28th shows the 28th's function
+  useEffect(() => { if (sel?.id && startFn != null) setFnPick({ id: sel.id, fi: startFn }); }, [sel?.id, startFn]);
   const fnsOfSel = Array.isArray(sel?.functionsDetail) ? sel.functionsDetail : [];
   // onlyFns: a logged-in site supervisor's own functions (SiteSupervisorTab myFns) - no All, no other function; null = every function
   const allowedFns = Array.isArray(onlyFns) ? onlyFns.filter((i) => fnsOfSel[i] || (i === 0 && !fnsOfSel.length)) : null;

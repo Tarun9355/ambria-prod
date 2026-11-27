@@ -64,7 +64,7 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
   const sel = (eventOrders || []).find((e) => e.id === selId && isLiveEventOrder(e)) || null;
   // the supervisors fixed at the event's venues (Admin → Settings → Supervisors) as well as the ones added on it - as Planning's header
   // lists them (owner's QA audit 2026-11-26: an in-house venue event showed nobody here)
-  const inhouse = useInhouseVenues(!!sel);
+  const inhouse = useInhouseVenues(true);
   const supervisorsShown = useMemo(() => {
     if (!sel) return [];
     const added = addedSupervisorsOf(sel);
@@ -73,19 +73,40 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
     try { venueSups = siteSupervisorsFor(settings, [...(Array.isArray(sel.functionsDetail) ? sel.functionsDetail.map((f) => f?.venue) : []), sel.venue], [...inhouse.properties, ...inhouse.inhouse], supervisors, inhouse.inhouse); } catch { /* none */ }
     return [...venueSups.filter((s) => !ids.has(s.id)), ...added];
   }, [sel, settings, supervisors, inhouse.properties, inhouse.inhouse]);
-  const pick = (id) => { setSelId(id); try { sessionStorage.setItem(PICK_KEY, id); } catch { /* private window — fine, just won't be remembered */ } };
   const isAdmin = authUser?.role === "Admin" || authUser?.id === "u_admin";
+  // the function the calendar date opened (owner ask 2026-11-27: opening the 28th showed the 27th's function)
+  const [startFn, setStartFn] = useState(null);
+  const [notAssigned, setNotAssigned] = useState(null); // { client, venue, date } - the "not assigned to you" message
+  // A logged-in site supervisor's own functions of an event (indexes into functionsDetail): the ones at a venue they are fixed at, else
+  // - added on the event in Planning - every function; [] = none of theirs. null for anyone else (no limit).
+  const myFnsOf = (eo) => {
+    if (!eo || isAdmin || !supervisorIdsOfUser(authUser, supervisors).length) return null;
+    const fns = Array.isArray(eo.functionsDetail) && eo.functionsDetail.length ? eo.functionsDetail : [{ venue: eo.venue }];
+    const places = [...inhouse.properties, ...inhouse.inhouse];
+    const fixed = fns.map((f, i) => (fixedAtVenue(authUser, f?.venue || eo.venue, settings, places, supervisors, inhouse.inhouse) ? i : -1)).filter((i) => i >= 0);
+    if (fixed.length) return fixed;
+    return isMyEvent(eo, authUser, supervisors) ? fns.map((_, i) => i) : [];
+  };
+  const pick = (id, date = null) => {
+    if (id) {
+      const eo = (eventOrders || []).find((e) => e.id === id);
+      const fns = Array.isArray(eo?.functionsDetail) ? eo.functionsDetail : [];
+      const fi = date ? fns.findIndex((f) => String(f?.date || "").slice(0, 10) === date) : -1;
+      const mine = myFnsOf(eo);
+      // a supervisor tapping a date whose function is not theirs: nothing opens, they are told why
+      if (mine && (fi >= 0 ? !mine.includes(fi) : mine.length === 0)) {
+        const f = fi >= 0 ? fns[fi] : fns[0];
+        setNotAssigned({ client: eo?.clientName || "Event", venue: venueWithParent(settings, f?.venue || eo?.venue || "") || f?.venue || eo?.venue || "", date: String(f?.date || eo?.date || "").slice(0, 10) });
+        return;
+      }
+      setStartFn(fi >= 0 ? fi : null);
+    } else setStartFn(null);
+    setSelId(id); try { sessionStorage.setItem(PICK_KEY, id); } catch { /* private window — fine, just won't be remembered */ }
+  };
   // A site supervisor who logs in sees only their own function(s) of the event (owner ask 2026-11-27): the functions at a venue they are
   // fixed at (Admin → Settings → 👷 Supervisors), else - added on the event in Planning - every function of it. Anyone else (an Admin, a
   // department head, ops) sees every function. null = no limit.
-  const myFns = useMemo(() => {
-    if (!sel || isAdmin || !supervisorIdsOfUser(authUser, supervisors).length) return null;
-    const fns = Array.isArray(sel.functionsDetail) && sel.functionsDetail.length ? sel.functionsDetail : [{ venue: sel.venue }];
-    const places = [...inhouse.properties, ...inhouse.inhouse];
-    const fixed = fns.map((f, i) => (fixedAtVenue(authUser, f?.venue || sel.venue, settings, places, supervisors, inhouse.inhouse) ? i : -1)).filter((i) => i >= 0);
-    if (fixed.length) return fixed;
-    return isMyEvent(sel, authUser, supervisors) ? fns.map((_, i) => i) : [];
-  }, [sel, isAdmin, authUser, supervisors, settings, inhouse.properties, inhouse.inhouse]);
+  const myFns = useMemo(() => myFnsOf(sel), [sel, isAdmin, authUser, supervisors, settings, inhouse.properties, inhouse.inhouse]); // eslint-disable-line react-hooks/exhaustive-deps
   const [reopenPrompt, setReopenPrompt] = useState(false);
   const [reopenReason, setReopenReason] = useState("");
   const lock = sel ? actualsLockState(sel, settings) : { locked: false, reopened: false };
@@ -101,7 +122,19 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
     logWrite(authUser, "actuals.relock", { targetType: "event_order", targetId: sel.id, targetName: sel.clientName, ok: true });
   };
 
-  if (!sel) return <EventPicker eventOrders={eventOrders} settings={settings} onPick={pick} authUser={authUser} supervisors={supervisors} />;
+  const notAssignedPopup = notAssigned && (
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50" onClick={() => setNotAssigned(null)}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="text-[15px] font-semibold text-gray-900">{"This venue is not assigned to you"}</div>
+        <div className="mt-1.5 text-sm text-gray-600">{[notAssigned.client, notAssigned.venue, notAssigned.date].filter(Boolean).join(" · ")}</div>
+        <div className="mt-1 text-xs text-gray-500">{"Ask Planning to add you as this event's site supervisor if you should receive it."}</div>
+        <div className="mt-4 flex justify-end">
+          <button type="button" autoFocus onClick={() => setNotAssigned(null)} className="h-9 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold">{"OK"}</button>
+        </div>
+      </div>
+    </div>
+  );
+  if (!sel) return <>{notAssignedPopup}<EventPicker eventOrders={eventOrders} settings={settings} onPick={pick} authUser={authUser} supervisors={supervisors} /></>;
 
   return (
     <div className="space-y-4 w-full min-w-0">
@@ -171,7 +204,7 @@ export default function SiteSupervisorTab({ eventOrders, setEventOrders, invento
       </div>
 
       {section === "receiving" ? (
-        <SiteReceivingPanel sel={sel} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} authUser={authUser} mode={mode} settings={settings} trussInv={trussInv} blocks={blocks} rcItems={rcItems} rateCardCategories={rateCardCategories} onlyFns={myFns} />
+        <SiteReceivingPanel sel={sel} eventOrders={eventOrders} setEventOrders={setEventOrders} inventory={inventory} authUser={authUser} mode={mode} settings={settings} trussInv={trussInv} blocks={blocks} rcItems={rcItems} rateCardCategories={rateCardCategories} onlyFns={myFns} startFn={startFn} />
       ) : (
         <SiteCrewPanel sel={sel} setEventOrders={setEventOrders} settings={settings} inventory={inventory} authUser={authUser} catToDept={catToDept} mode={mode} />
       )}
@@ -383,7 +416,7 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
                 </div>
                 <div className="space-y-2.5">
                   {dayEvs.map((eo) => { const dayFn = fnOn(eo, pickDay); const vc = venueCalendarColor(settings, dayFn?.venue || eo.venue || ""); return (
-                    <button key={eo.id} onClick={() => onPick(eo.id)}
+                    <button key={eo.id} onClick={() => onPick(eo.id, pickDay)}
                       className="w-full text-left rounded-xl bg-gray-50 ring-1 ring-gray-100 hover:bg-blue-50 hover:ring-blue-100 active:bg-blue-100 px-4 py-3.5 flex items-center gap-3.5 cursor-pointer transition-colors">
                       <span aria-hidden="true" className={`shrink-0 w-2 h-2 rounded-full ring-4 ring-opacity-30 ${vc.dot} ${vc.ring}`} />
                       <span className="min-w-0 flex-1">
@@ -430,7 +463,7 @@ function EventPicker({ eventOrders, settings, onPick, authUser, supervisors }) {
                     const vc = venueCalendarColor(settings, dayFn?.venue || eo.venue || "");
                     const shift = dayFn?.shift || eo.shift || "";
                     return (
-                      <button key={eo.id} onClick={() => onPick(eo.id)} title={`Open ${eo.clientName || "Event"}${shift ? ` · ${shift}` : ""}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
+                      <button key={eo.id} onClick={() => onPick(eo.id, ds)} title={`Open ${eo.clientName || "Event"}${shift ? ` · ${shift}` : ""}${eo.salesperson ? ` · booked by ${eo.salesperson}` : ""} — ${vc.label}`}
                         className={`w-full text-left pl-2 pr-1.5 py-1 rounded-md border-l-[3px] ${vc.border} ${vc.bg} ${vc.text} hover:brightness-95 transition-colors`}>
                         <span className="flex items-center gap-1 text-[11px] font-medium leading-tight">
                           <span className="shrink-0 text-[9px] font-bold opacity-70">{vc.code}</span>
