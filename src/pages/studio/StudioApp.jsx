@@ -10658,6 +10658,15 @@ export default function StudioApp() {
         flowerPalette: fnData.fnFlowerPalette || "",
         layoutUrl: fnData.fnLayoutUrl || "",
         fabricPalette: fnData.fnPalette || "",
+        // This whole object is built fresh from Build's CURRENT state every time (markSold, and every
+        // applyBookedChanges push after - see this function's own header comment), so fabricPalette
+        // here is exactly as live as the periodic layout-only refresh's own copy (StudioApp.jsx's other
+        // two `fabricPaletteLive: true` writers) - without this, every edit to an already-sold deal
+        // silently dropped the flag back to falsy until that separate refresh next happened to run,
+        // leaving IMS's Fabric Availability panel reading a stale whole-event snapshot (owner report
+        // 2026-11-28: Wedding's palette was correctly "Teal" but still showed Ivory/Air force from an
+        // old recorded fabricPlan) in between.
+        fabricPaletteLive: true,
         zones: JSON.parse(JSON.stringify(stripPhotoStash(fnData.zoneConfig))),
         elements: JSON.parse(JSON.stringify(fnData.zoneElements || {})),
         enabledEls: { ...(fnData.enabledEls || {}) },
