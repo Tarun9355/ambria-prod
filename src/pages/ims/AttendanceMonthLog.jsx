@@ -20,7 +20,7 @@ const fmtHours = (h) => (h > 0 ? `${h.toFixed(1)}h` : "—");
 const round1 = (h) => Math.round(h * 10) / 10;
 const fmtDay = (dateStr) => new Date(dateStr + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
 
-export default function AttendanceMonthLog({ users, ym, search, dept, deptByUserId, isAdminByUserId }) {
+export default function AttendanceMonthLog({ users, ym, search, dept, deptByUserId, isAdminByUserId, scopeDepts }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -62,7 +62,11 @@ export default function AttendanceMonthLog({ users, ym, search, dept, deptByUser
         byDate,
         daysPresent: days.filter((ps) => ps.some((p) => p.type === "in")).length,
         hours: days.reduce((s, ps) => s + dayHours(ps), 0),
-        openDays: days.filter((ps) => ps[ps.length - 1]?.type === "in" || ps.some((p) => p.auto_closed)).length,
+        // openDays = days the user truly forgot to punch out (last event is still "in"); separate
+        // from autoClosedDays where the cron closed them. Payroll disputes need these apart —
+        // "forgot to punch out" is on the user, "system auto-closed" is on the cut-off window.
+        openDays: days.filter((ps) => ps[ps.length - 1]?.type === "in").length,
+        autoClosedDays: days.filter((ps) => ps.some((p) => p.auto_closed)).length,
       };
     }).sort((a, b) => a.name.localeCompare(b.name));
   }, [users, rows]);
@@ -70,6 +74,10 @@ export default function AttendanceMonthLog({ users, ym, search, dept, deptByUser
   const term = search.trim().toLowerCase();
   const shown = staff.filter((u) => {
     if (term && !u.name.toLowerCase().includes(term)) return false;
+    // Dept-manager scope: narrow to the manager's own departments first, so the dept chip's "all"
+    // means "all of mine", not "all the company's". Admin gets scopeDepts = null (undefined) and
+    // sees everyone.
+    if (scopeDepts && !(deptByUserId[u.id] || []).some((d) => scopeDepts.includes(d))) return false;
     if (dept === "all") return true;
     if (dept === "Admin") return !!isAdminByUserId[u.id];
     return (deptByUserId[u.id] || []).includes(dept);

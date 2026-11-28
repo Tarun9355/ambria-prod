@@ -146,3 +146,54 @@ export function credentialsCsv(results) {
   (results || []).forEach((r) => lines.push([r.name, r.username, r.password || "", r.phone, (r.departments || []).join(" + "), r.result || ""].map(esc).join(",")));
   return "﻿" + lines.join("\r\n") + "\r\n";
 }
+
+/**
+ * The same sheet into the LABOUR roster (Attendance → Labour Punch: `labours`, no login - a supervisor punches them). Owner
+ * decision 2026-11-28: a labour has one department, so a person of two ("tenting , structure") is added to each.
+ * One result per (person, department): { line, name, phone, department, status: "new" | "skip", reason, warning }.
+ *   - skipped: no name; department not recognised (a labour must have one); already on that department's roster (same phone,
+ *     or same name when the sheet has no phone); the same person listed again with no phone of their own.
+ */
+export function planLabourImport(rows, existingLabours = []) {
+  const pick = (r, ...keys) => { for (const k of keys) { const hit = Object.keys(r || {}).find((h) => h.trim().toLowerCase() === k); if (hit && String(r[hit]).trim()) return String(r[hit]).trim(); } return ""; };
+  const onRoster = new Set();
+  (existingLabours || []).forEach((l) => {
+    if (l?.active === false) return;
+    const d = String(l?.department || "");
+    const p = digits(l?.phone);
+    if (p.length >= 10) onRoster.add(d + "|p|" + p);
+    onRoster.add(d + "|n|" + latinName(l?.name).toLowerCase());
+  });
+  const base = (rows || []).map((r, i) => {
+    const name = pick(r, "name").replace(/\s+/g, " ");
+    const category = pick(r, "category");
+    const sub = pick(r, "sub_category", "sub category", "subcategory");
+    return { line: i + 2, name, phone: digits(pick(r, "mobile", "phone")), category: sub || category, departments: deptsForCategory(sub, category) };
+  });
+  const keyOf = (b) => latinName(b.name).toLowerCase() + "|" + [...(b.departments || [])].sort().join(",");
+  const withPhone = new Set(base.filter((b) => b.phone && b.departments).map(keyOf));
+  const phoneCount = new Map();
+  base.forEach((b) => { if (b.phone) phoneCount.set(b.phone, (phoneCount.get(b.phone) || 0) + 1); });
+  const seenNoPhone = new Set();
+  const out = [];
+  base.forEach((b) => {
+    const row = { line: b.line, name: b.name, phone: b.phone, category: b.category, department: "", status: "new", reason: "", warning: "" };
+    if (!b.name) { out.push({ ...row, status: "skip", reason: "No name" }); return; }
+    if (!b.departments) { out.push({ ...row, status: "skip", reason: `Department not recognised for "${b.category || "-"}"` }); return; }
+    if (!b.phone) {
+      const k = keyOf(b);
+      if (withPhone.has(k)) { out.push({ ...row, department: b.departments.join(" + "), status: "skip", reason: "Listed again (the same name has a phone above)" }); return; }
+      if (seenNoPhone.has(k)) { out.push({ ...row, department: b.departments.join(" + "), status: "skip", reason: "Listed twice" }); return; }
+      seenNoPhone.add(k);
+    }
+    const warn = [];
+    if (b.phone && phoneCount.get(b.phone) > 1) warn.push("Same phone as another row");
+    if (!b.phone) warn.push("No phone");
+    b.departments.forEach((d) => {
+      const there = (b.phone && onRoster.has(d + "|p|" + b.phone)) || (!b.phone && onRoster.has(d + "|n|" + latinName(b.name).toLowerCase()));
+      if (there) out.push({ ...row, department: d, status: "skip", reason: `Already on the ${d} list` });
+      else out.push({ ...row, department: d, warning: warn.join(" · ") });
+    });
+  });
+  return out;
+}

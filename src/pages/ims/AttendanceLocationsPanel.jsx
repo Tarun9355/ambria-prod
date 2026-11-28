@@ -33,18 +33,30 @@ export default function AttendanceLocationsPanel({ settings }) {
     );
   }
 
-  function addLocation() {
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState("");
+
+  async function addLocation() {
     const la = parseFloat(lat), ln = parseFloat(lng);
     if (!name.trim()) { setError("Give it a name first."); return; }
     if (!Number.isFinite(la) || !Number.isFinite(ln)) { setError("Capture your current position, or enter both coordinates, first."); return; }
-    supabase.from("attendance_locations").insert({ id: "loc" + Date.now(), name: name.trim(), lat: la, lng: ln }).then(() => {}, () => {});
-    setName(""); setLat(""); setLng(""); setError("");
+    setError(""); setFlash(""); setBusy(true);
+    // Was fire-and-forget: the form would clear on submit whether the insert landed or not, so a
+    // failed write (RLS, unique collision, offline) silently looked like a successful add until the
+    // user reloaded. Wait for the write; keep the form filled if it failed.
+    const { error: insErr } = await supabase.from("attendance_locations").insert({ id: "loc" + Date.now(), name: name.trim(), lat: la, lng: ln });
+    setBusy(false);
+    if (insErr) { setError(insErr.message || "Couldn't save the location — try again."); return; }
+    setFlash(`"${name.trim()}" added.`);
+    setName(""); setLat(""); setLng("");
   }
 
   async function removeLocation(id) {
     const loc = locations.find((l) => l.id === id);
     if (!(await confirm({ title: `Remove ${loc?.name ? `"${loc.name}"` : "this location"}?`, body: "Staff will no longer be able to punch in at this location." }))) return;
-    deleteRow("attendance_locations", id).catch(() => {});
+    try {
+      await deleteRow("attendance_locations", id);
+    } catch (e) { setError(e?.message || "Couldn't remove the location — try again."); }
   }
 
   // Google Maps' own "copy coordinates" gives one string like "28.6139, 77.2090" — pasting that
@@ -136,10 +148,12 @@ export default function AttendanceLocationsPanel({ settings }) {
             )}
           </div>
           {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
+          {flash && !error && <p role="status" className="text-xs text-green-700">{flash}</p>}
           <div className="pt-1">
-            <button onClick={addLocation}
-              className="inline-flex items-center justify-center gap-2 h-10 px-5 w-full sm:w-auto rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
-              Add location
+            <button onClick={addLocation} disabled={busy}
+              className="inline-flex items-center justify-center gap-2 h-10 px-5 w-full sm:w-auto rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-60 disabled:cursor-wait">
+              {busy ? <span aria-hidden="true" className="w-3.5 h-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" /> : null}
+              {busy ? "Saving…" : "Add location"}
             </button>
           </div>
         </div>

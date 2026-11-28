@@ -5,10 +5,12 @@
 import { supabase } from "../supabase";
 import { DEPTS } from "./deptClassify";
 import { ATTENDANCE_QUIZ_DEPT_ICON } from "./attendance";
+import { ATTENDANCE_ONLY_DEPTS } from "./staffImport";
 
-export const LABOUR_DEPTS = DEPTS;
+// The build departments plus the attendance-only ones (ADD - owner ask 2026-11-28).
+export const LABOUR_DEPTS = [...DEPTS, ...ATTENDANCE_ONLY_DEPTS];
 // The quiz departments' icons, plus Transport (which has labours but no briefing).
-export const DEPT_ICON = { ...ATTENDANCE_QUIZ_DEPT_ICON, Transport: "🚚" };
+export const DEPT_ICON = { ...ATTENDANCE_QUIZ_DEPT_ICON, Transport: "🚚", ADD: "🧰" };
 
 const isAdminUser = (u) => (u?.role || "").toLowerCase() === "admin" || u?.id === "u_admin";
 
@@ -16,14 +18,14 @@ const isAdminUser = (u) => (u?.role || "").toLowerCase() === "admin" || u?.id ==
  * Admin only (owner decision) — department heads get access the same way everyone else does, by an
  * Admin granting it. */
 export function labourManageDepts(user) {
-  return isAdminUser(user) ? [...DEPTS] : [];
+  return isAdminUser(user) ? [...LABOUR_DEPTS] : [];
 }
 
 /** Departments whose labours this user may punch: every one for Admin, else only those granted. */
 export function labourPunchDepts(user, myAccessRows) {
   const out = new Set(labourManageDepts(user));
-  (myAccessRows || []).forEach((r) => { if (r.user_id === user?.id && DEPTS.includes(r.department)) out.add(r.department); });
-  return DEPTS.filter((d) => out.has(d));
+  (myAccessRows || []).forEach((r) => { if (r.user_id === user?.id && LABOUR_DEPTS.includes(r.department)) out.add(r.department); });
+  return LABOUR_DEPTS.filter((d) => out.has(d));
 }
 
 const newId = (p) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -39,6 +41,12 @@ export async function fetchLabours(depts) {
 }
 export async function insertLabour(row) {
   const { data, error } = await supabase.from("labours").insert(row).select().single();
+  if (error) throw error;
+  return data;
+}
+/** Change a labour's name / phone / department (Attendance → Manage People). Their past punches keep their own copy. */
+export async function updateLabour(id, patch) {
+  const { data, error } = await supabase.from("labours").update(patch).eq("id", id).select().single();
   if (error) throw error;
   return data;
 }
@@ -68,7 +76,24 @@ export async function fetchAllActiveLabours() {
   if (error) throw error;
   return data || [];
 }
+// Same last-second guard against double-punching that attendance.insertPunch uses — a guard at a
+// busy gate tapping Punch In twice on the same labour inside a second used to insert two `in` rows
+// back-to-back (see attendance.js header for why). Advisory only; proper RLS + a server unique
+// index per (labour_id, date, type, bucket) would close this fully.
 export async function insertLabourPunch(row) {
+  if (row?.labour_id && row?.date && row?.type) {
+    const { data: last } = await supabase
+      .from("labour_attendance")
+      .select("type, at")
+      .eq("labour_id", row.labour_id)
+      .eq("date", row.date)
+      .order("at", { ascending: false })
+      .limit(1);
+    const prior = last?.[0];
+    if (prior && prior.type === row.type && (Date.now() - new Date(prior.at).getTime()) < 30000) {
+      throw new Error("Already punched " + (row.type === "in" ? "in" : "out") + " a moment ago — the previous punch is already saved.");
+    }
+  }
   const { data, error } = await supabase.from("labour_attendance").insert(row).select().single();
   if (error) throw error;
   return data;

@@ -742,7 +742,11 @@ export const buildEventPlatformAllocation = (eventMeta, fnList) => {
     const enabledEls = fn?.enabledEls || {};
     Object.entries(zones).forEach(([zoneKey, zc]) => {
       if (!zc) return;
-      if (enabledEls && Object.keys(enabledEls).length > 0 && !enabledEls[zoneKey]) return;
+      // enabledEls is driven by decor-element picks (toggleEl / zoneElements), not by structural
+      // rows. A platform-only zone (bare stage, dance floor) has plH set but no elements chosen,
+      // so enabledEls[zoneKey] is falsy and the old gate silently dropped its sqft on Planning
+      // whenever another zone in the same function had elements picked. The inner loop below
+      // already requires row.plH, so a zone without a real platform still contributes 0 here.
       const rows = [zc, ...(Array.isArray(zc.extraPlatformRows) ? zc.extraPlatformRows : [])];
       rows.forEach((row) => {
         if (!row?.plH || isPlatformFoc(row)) return; // no platform picked on this row / FOC: already laid at the venue

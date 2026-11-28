@@ -504,6 +504,41 @@ No crew planned for this function's days. ¦ इस फ़ंक्शन के
 not on a truck ¦ किसी ट्रक पर नहीं
 Essentials on this truck ¦ इस ट्रक पर ज़रूरी सामान
 Loading photo… ¦ फ़ोटो खुल रही है…
+Your internet dropped while the page was loading ¦ पेज लोड होते समय इंटरनेट बंद हो गया
+Check the connection, then press Reload. ¦ इंटरनेट देखें, फिर Reload दबाएँ।
+Your login has expired ¦ आपका लॉगिन ख़त्म हो गया है
+Log in again to keep working. ¦ काम जारी रखने के लिए दोबारा लॉगिन करें।
+The server is busy right now ¦ सर्वर अभी व्यस्त है
+Wait a minute, then press Reload. ¦ एक मिनट रुकें, फिर Reload दबाएँ।
+Some data didn't load ¦ कुछ डेटा लोड नहीं हुआ
+Press Reload to try again. ¦ दोबारा कोशिश करने के लिए Reload दबाएँ।
+Not saved: your internet dropped ¦ सेव नहीं हुआ: इंटरनेट बंद हो गया
+Your change is kept here. Press Retry when you are back online. ¦ आपका बदलाव यहीं रखा है। इंटरनेट आने पर Retry दबाएँ।
+Not saved: your login has expired ¦ सेव नहीं हुआ: लॉगिन ख़त्म हो गया
+Log in again, then make the change once more. ¦ दोबारा लॉगिन करें, फिर बदलाव एक बार और करें।
+Not saved: the server is busy ¦ सेव नहीं हुआ: सर्वर व्यस्त है
+Your change is kept here. Press Retry in a minute. ¦ आपका बदलाव यहीं रखा है। एक मिनट बाद Retry दबाएँ।
+A change couldn't be saved ¦ एक बदलाव सेव नहीं हो सका
+Press Retry. If it keeps failing, reload the page. ¦ Retry दबाएँ। फिर भी न हो तो पेज रीलोड करें।
+Log in again ¦ दोबारा लॉगिन करें
+Hide details ¦ विवरण छिपाएँ
+Manage People ¦ लोगों को मैनेज करें
+Manage people ¦ लोगों को मैनेज करें
+Department heads, supervisors and labours. Staff log in and punch themselves; labours are punched by a supervisor. ¦ विभाग प्रमुख, सुपरवाइज़र और लेबर। स्टाफ़ ख़ुद लॉगिन करके पंच करता है; लेबर को सुपरवाइज़र पंच करता है।
+Add labour ¦ लेबर जोड़ें
+Add staff ¦ स्टाफ़ जोड़ें
+Import sheet ¦ शीट से जोड़ें
+Everyone ¦ सभी
+Staff ¦ स्टाफ़
+Labour ¦ लेबर
+New labour ¦ नया लेबर
+New staff login ¦ नया स्टाफ़ लॉगिन
+Make login ¦ लॉगिन बनाएँ
+No department ¦ कोई विभाग नहीं
+Needs a look: ¦ ध्यान दें:
+Nobody matches these filters. ¦ इन फ़िल्टर से कोई नहीं मिला।
+Can log in ¦ लॉगिन कर सकते हैं
+Search name, phone, username or role… ¦ नाम, फ़ोन, यूज़रनेम या रोल खोजें…
 Carried, not blocked. Only what is added here goes on this truck's challan. ¦ साथ ले जाते हैं, ब्लॉक नहीं। जो यहाँ जोड़ेंगे, वही इस ट्रक के चालान पर आएगा।
 Take off this truck ¦ इस ट्रक से हटाएँ
 Carried, not blocked. Only what is set here goes on this truck's challan. ¦ साथ ले जाते हैं, ब्लॉक नहीं। जो यहाँ भरेंगे, वही इस ट्रक के चालान पर आएगा।

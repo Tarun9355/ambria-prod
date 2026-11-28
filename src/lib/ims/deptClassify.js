@@ -102,6 +102,19 @@ export function userDepartments(authUser) {
   return inferred ? [inferred] : null;
 }
 
+// Can this user open the attendance-manager views (Staff Log, Labour Log, Quiz Setup) for their
+// own department? Admin keeps unrestricted access; a Head / Supervisor sees only their own dept(s).
+// Deliberately excludes a role literally called "Labour" / "Labor" — that's a punch-card login,
+// not a manager. Added so dept heads (Sudhir — Floral Head, etc.) don't have to go through Admin
+// to reconcile their own crew's day (owner ask 2026-11-28).
+export function isAttendanceManager(authUser) {
+  if (!authUser) return false;
+  if (authUser.role === "Admin" || authUser.id === "u_admin") return true;
+  const r = String(authUser.role || "").toLowerCase();
+  if (/labou?r/i.test(r)) return false;
+  return /head|supervisor/i.test(r);
+}
+
 // True if this user may see `dept` — Admin always can; anyone unrestricted (userDepartments ===
 // null) always can; otherwise only if `dept` is one of their assigned departments. `dept` itself
 // being falsy (nothing to attribute yet) never hides a row — that's a data gap, not an access

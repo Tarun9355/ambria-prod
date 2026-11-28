@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseCsv, deptsForCategory, latinName, generatePassword, planStaffImport, staffRoleSettings, credentialsCsv, STAFF_ROLE } from "./staffImport.js";
+import { parseCsv, deptsForCategory, latinName, generatePassword, planStaffImport, staffRoleSettings, credentialsCsv, STAFF_ROLE, planLabourImport } from "./staffImport.js";
 
 const SHEET = "﻿Category,Sub_Category,S_No,Name,Mobile,Email\r\n"
   + "Tailor,fabric,1,Kripashankar (कृपाशंकर),9005061885,k@gmail.com\r\n"
@@ -96,5 +96,34 @@ describe("helpers", () => {
     const csv = credentialsCsv([{ name: "Sharma, Manoj (मनोज)", username: "sharma_manoj", password: "Sharm-AB23", phone: "9", departments: ["Furniture"], result: "Created" }]);
     expect(csv.startsWith("﻿Name,Username,Password")).toBe(true);
     expect(csv).toContain('"Sharma, Manoj (मनोज)",sharma_manoj,Sharm-AB23,9,Furniture,Created');
+  });
+});
+
+describe("planLabourImport (the labour roster - no logins)", () => {
+  const existing = [{ name: "Kapil", phone: "9000000004", department: "Lighting", active: true }, { name: "Old Guy", phone: "9000000005", department: "Floral", active: false }];
+  const plan = planLabourImport(parseCsv(SHEET), existing);
+  const rowsOf = (n) => plan.filter((r) => r.name.startsWith(n));
+
+  it("one row per department: a tenting + structure person is on both lists", () => {
+    expect(rowsOf("Akhilesh").map((r) => [r.department, r.status])).toEqual([["Tenting", "new"], ["Structure", "new"]]);
+    expect(rowsOf("Kripashankar")).toEqual([expect.objectContaining({ department: "Fabric", status: "new", phone: "9005061885" })]);
+    expect(rowsOf("Mohit Senior")[0].department).toBe("ADD");
+    expect(rowsOf("Rahul Welder")[0].department).toBe("Structure");
+    expect(rowsOf("Jitendra")[0].department).toBe("Furniture");
+  });
+  it("skips: already on that department's list, listed again without a phone, unknown department", () => {
+    expect(rowsOf("Kapil")[0]).toMatchObject({ status: "skip", reason: "Already on the Lighting list" });
+    expect(plan.find((r) => r.name === "sunil")).toMatchObject({ status: "skip" });
+    expect(rowsOf("Ramu")[0]).toMatchObject({ status: "skip" });
+    expect(rowsOf("Ramu")[0].reason).toMatch(/Department not recognised/);
+  });
+  it("an inactive (removed) labour does not block adding them again", () => {
+    const p = planLabourImport([{ Name: "Old Guy", Sub_Category: "floral", Mobile: "9000000005" }], existing);
+    expect(p[0].status).toBe("new");
+  });
+  it("same name, no phone, already on the list: skipped; on another department's list: added", () => {
+    const ex = [{ name: "Munna", phone: null, department: "Tenting", active: true }];
+    const p = planLabourImport([{ Name: "Munna", Sub_Category: "tenting , structure", Mobile: "" }], ex);
+    expect(p.map((r) => [r.department, r.status])).toEqual([["Tenting", "skip"], ["Structure", "new"]]);
   });
 });
