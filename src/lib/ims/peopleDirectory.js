@@ -6,9 +6,14 @@ import { userDepartments } from "./deptClassify";
 const digits = (p) => String(p || "").replace(/\D/g, "").slice(-10);
 const isAdminUser = (u) => (u?.role || "").toLowerCase() === "admin" || u?.id === "u_admin";
 
+// Who Manage People lists among the logins (owner ask 2026-11-28: "bas dept heads, supervisors and labours"): a role naming a
+// head (Dept Head - Floral, Flower Head, ...), a supervisor (Site Supervisor, ...) or labour. Admin, Sales, Production,
+// inventory editors and the rest stay in IMS → Admin → Users & Roles.
+export const isFieldRole = (role) => /head|supervisor|labou?r/i.test(String(role || ""));
+
 /** One row per person: { key, kind: "staff" | "labour", id, name, phone, depts, role, username, active, isAdmin }. */
 export function buildPeople(users, labours) {
-  const staff = (users || []).filter(Boolean).map((u) => ({
+  const staff = (users || []).filter((u) => u && isFieldRole(u.role) && !isAdminUser(u)).map((u) => ({
     key: "u:" + u.id, kind: "staff", id: u.id, name: u.name || u.username || "—", phone: digits(u.phone), depts: userDepartments(u) || [],
     role: u.role || "", username: u.username || "", active: u.active !== false, isAdmin: isAdminUser(u),
   }));

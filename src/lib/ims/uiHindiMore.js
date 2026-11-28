@@ -524,7 +524,7 @@ Log in again ¦ दोबारा लॉगिन करें
 Hide details ¦ विवरण छिपाएँ
 Manage People ¦ लोगों को मैनेज करें
 Manage people ¦ लोगों को मैनेज करें
-Staff log in and punch themselves; labours are punched by a supervisor. ¦ स्टाफ़ ख़ुद लॉगिन करके पंच करता है; लेबर को सुपरवाइज़र पंच करता है।
+Department heads, supervisors and labours. Staff log in and punch themselves; labours are punched by a supervisor. ¦ विभाग प्रमुख, सुपरवाइज़र और लेबर। स्टाफ़ ख़ुद लॉगिन करके पंच करता है; लेबर को सुपरवाइज़र पंच करता है।
 Add labour ¦ लेबर जोड़ें
 Add staff ¦ स्टाफ़ जोड़ें
 Import sheet ¦ शीट से जोड़ें

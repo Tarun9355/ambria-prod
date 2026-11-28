@@ -5,7 +5,7 @@ import { ROLES } from "../../lib/ims/constants";
 import { callUserAdmin } from "../../lib/userAdmin";
 import { deriveUsername } from "../../lib/auth";
 import { LABOUR_DEPTS, DEPT_ICON, fetchAllActiveLabours, insertLabour, updateLabour, deactivateLabour, newLabourId } from "../../lib/ims/labourAttendance";
-import { buildPeople, filterPeople, peopleStats } from "../../lib/ims/peopleDirectory";
+import { buildPeople, filterPeople, peopleStats, isFieldRole } from "../../lib/ims/peopleDirectory";
 import { generatePassword, latinName } from "../../lib/ims/staffImport";
 import LabourImportModal from "./LabourImportModal.jsx";
 import { IconSearch, IconPlusCircle, IconTrash, IconX, IconCheck, IconUsers } from "../../components/icons.jsx";
@@ -86,7 +86,8 @@ export default function AttendanceManagePanel({ authUser, users, setUsers, setti
   const kindPeople = useMemo(() => filterPeople(people, { kind }), [people, kind]);
   const kindStats = useMemo(() => peopleStats(kindPeople), [kindPeople]);
   const shown = useMemo(() => filterPeople(people, { kind, dept, flag, q }), [people, kind, dept, flag, q]);
-  const roles = (Array.isArray(settings?.rolesList) ? settings.rolesList : ROLES).filter((r) => r !== "Admin");
+  // heads, supervisors and labour only - the same roles this list shows (isFieldRole)
+  const roles = (Array.isArray(settings?.rolesList) ? settings.rolesList : ROLES).filter((r) => r !== "Admin" && isFieldRole(r));
 
   const startEdit = (p) => {
     setError(""); setAdding(null); setEditKey(p.key);
@@ -166,7 +167,7 @@ export default function AttendanceManagePanel({ authUser, users, setUsers, setti
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900"><IconUsers size={17} /> Manage people</h2>
-            <p className="mt-1 text-sm text-gray-500">Staff log in and punch themselves; labours are punched by a supervisor.</p>
+            <p className="mt-1 text-sm text-gray-500">Department heads, supervisors and labours. Staff log in and punch themselves; labours are punched by a supervisor.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button onClick={() => openAdd("labour")} className={BTN_PRIMARY}><IconPlusCircle size={15} /> Add labour</button>
