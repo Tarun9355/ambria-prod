@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual, findLatestBuild, sessionToRows, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions, sessionHasFnBeyond } from "./sessionData";
+import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual, findLatestBuild, sessionToRows, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions, sessionHasFnBeyond, canCollapseAutosave } from "./sessionData";
 
 const withVideo = { sourceVideo: { id: "vid_1", title: "Poolside Haldi" } };
 const withZones = { zoneElements: { stage: ["truss"] } };
@@ -546,5 +546,46 @@ describe("a removed function's row left behind by an in-place autosave", () => {
     const rowsOfB = Object.values(table).filter((r) => r.session_id === "SES_B");
     expect(rowsOfB.map((r) => r.fn_idx)).toEqual([0]);
     expect(rowsOfB[0].build.zoneElements).toEqual(copiedWithWork.zoneElements);
+  });
+});
+
+// The save-path rules (saveSession), replayed save by save: the existing collapse rules are unchanged, a save right after a
+// function is removed starts ONE new session, and the saves after it collapse again (no new session every 15 s).
+describe("canCollapseAutosave", () => {
+  const me = "Ashi";
+  const draft = (snaps, extra = {}) => ({ id: "SES_A", auto: true, savedBy: me, fnSnapshots: snaps, ...extra });
+  const two = { 0: withZones, 1: withZones };
+  const one = { 0: withZones };
+
+  it("keeps the existing rules: same author's background draft collapses", () => {
+    expect(canCollapseAutosave(draft(two), { auto: true, boundary: false, me, totalFns: 2 })).toBe(true);
+  });
+  it("keeps the existing rules: a manual save, a manual draft, a Load boundary, another author, no draft - never collapse", () => {
+    expect(canCollapseAutosave(draft(two), { auto: false, boundary: false, me, totalFns: 2 })).toBe(false);
+    expect(canCollapseAutosave(draft(two, { auto: false }), { auto: true, boundary: false, me, totalFns: 2 })).toBe(false);
+    expect(canCollapseAutosave(draft(two), { auto: true, boundary: true, me, totalFns: 2 })).toBe(false);
+    expect(canCollapseAutosave(draft(two), { auto: true, boundary: false, me: "Jitanshu", totalFns: 2 })).toBe(false);
+    expect(canCollapseAutosave(draft(two, { savedBy: undefined }), { auto: true, boundary: false, me, totalFns: 2 })).toBe(false);
+    expect(canCollapseAutosave(null, { auto: true, boundary: false, me, totalFns: 2 })).toBe(false);
+  });
+  it("after a function is removed: the next save starts a new session, the one after collapses again", () => {
+    // save 1 after deleting Function 1: the newest draft still has 2 functions, the deal has 1
+    expect(canCollapseAutosave(draft(two), { auto: true, boundary: false, me, totalFns: 1 })).toBe(false);
+    // that save becomes the newest session, holding only the 1 function (what saveSession puts in client.sessions[0])
+    const fresh = { id: "SES_B", auto: true, savedBy: me, fnSnapshots: one };
+    expect(canCollapseAutosave(fresh, { auto: true, boundary: false, me, totalFns: 1 })).toBe(true);
+    // ...and the same session read back from its table rows (realtime / reload)
+    const freshFromRows = { id: "SES_B", auto: true, savedBy: me, fnSnapshots: one, _fnRows: [{ fn_idx: 0, has_data: true }] };
+    expect(canCollapseAutosave(freshFromRows, { auto: true, boundary: false, me, totalFns: 1 })).toBe(true);
+  });
+  it("adding a function never blocks a collapse (the new one is simply not in the old draft yet)", () => {
+    expect(canCollapseAutosave(draft(one), { auto: true, boundary: false, me, totalFns: 2 })).toBe(true);
+  });
+  it("a function held back by the duplicate guard (missing from the save, still on the deal) still collapses, as before", () => {
+    expect(canCollapseAutosave(draft({ 0: withZones, 2: withZones }), { auto: true, boundary: false, me, totalFns: 3 })).toBe(true);
+  });
+  it("a session already carrying a left-behind row (old bad data) gets one new session, then normal again", () => {
+    const bad = draft(one, { _fnRows: [{ fn_idx: 0, has_data: true }, { fn_idx: 1, has_data: true }] });
+    expect(canCollapseAutosave(bad, { auto: true, boundary: false, me, totalFns: 1 })).toBe(false);
   });
 });

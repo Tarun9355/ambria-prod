@@ -302,6 +302,20 @@ export function sessionHasFnBeyond(prev, totalFns) {
   return Object.keys(snaps).some((k) => /^\d+$/.test(k) && snaps[k] && Number(k) >= n);
 }
 
+/**
+ * May this autosave collapse INTO the deal's newest session (reuse its id, overwrite it in place) instead of starting a new one?
+ * Only a background autosave, onto a background draft by the same person, with no Load boundary pending, and no function
+ * removed since that draft (sessionHasFnBeyond). StudioApp's saveSession uses this; kept pure so the rules are testable.
+ *
+ * @param {object|null} prev  the deal's newest session (client.sessions[0])
+ * @param {{auto: boolean, boundary: boolean, me: string, totalFns: number}} o
+ */
+export function canCollapseAutosave(prev, { auto, boundary, me, totalFns } = {}) {
+  if (!auto || !prev || !prev.auto || boundary) return false;
+  if ((prev.savedBy || null) !== (me || "—")) return false;
+  return !sessionHasFnBeyond(prev, totalFns);
+}
+
 export function sessionToRows(clientId, s) {
   if (!s || !s.id || !clientId) return [];
   const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : {};
