@@ -1531,7 +1531,7 @@ export default function IMS() {
         } else {
           // The fetch itself failed — trussInv is still sitting at the INIT_TRUSS_INV placeholder,
           // not real data. Visible, not swallowed: see trussInvLoadedRef's own comment.
-          setError("Truss/fabric inventory failed to load — Fabric Stock and Truss & Batta Config are read-only until you reload the page (editing now would save an empty placeholder over the real data).");
+          // (no separate red toast: the load banner already says this in plain words - SaveHealthBanner, 2026-11-28)
           reportTrussInvLoadFailed(loadErr(trussFetch, "Fabric Stock and Truss & Batta Config are read-only until this is retried or the page is reloaded."));
         }
         setCats(catRows.map((c) => c.name).filter(Boolean));
@@ -1578,7 +1578,7 @@ export default function IMS() {
         // own `!settingsLoaded` guard below.
         if (setRows.ok) { applySettingsRows(setRows.rows); clearSaveProblem("load:settings"); }
         else {
-          setError("Settings failed to load — admin config (roles, department tools, date pricing, …) is read-only until you reload the page.");
+          // (no separate red toast: the load banner already says this in plain words - SaveHealthBanner, 2026-11-28)
           reportSettingsLoadFailed(loadErr(setRows, "admin config (roles, department tools, date pricing, …) is read-only until this is retried or the page is reloaded."));
         }
         // Rate card: read from the shared `rate_card` TABLE (migrated off the RC_SK blob).
