@@ -1,3 +1,4 @@
+import AttendanceManagePanel from "./AttendanceManagePanel.jsx";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { uploadToStorage, compressPunchPhoto, STORAGE_FOLDERS } from "../../lib/storage";
@@ -51,7 +52,7 @@ const fmtDur = (h) => {
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
 };
 
-export default function AttendanceTab({ authUser, settings, setSettings, users, view, setView, myLabourAccess = [], reloadLabourAccess }) {
+export default function AttendanceTab({ authUser, settings, setSettings, users, setUsers, view, setView, myLabourAccess = [], reloadLabourAccess }) {
   const isAdmin = (authUser?.role || "").toLowerCase() === "admin" || authUser?.id === "u_admin";
   // null when this user has no single matching build department — same as no video configured
   // (see attendanceQuizDept's own comment for exactly who that covers).
@@ -461,11 +462,12 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
       )}
 
       {adminView && (isAdmin || (adminView === "labour" && canLabourPunch)) && (
-        <div className={adminView === "labour" ? (isAdmin ? "max-w-6xl" : "max-w-3xl") : adminView === "log" ? "max-w-3xl" : adminView === "quiz" || adminView === "labourlog" ? "max-w-4xl" : "max-w-2xl"}>
+        <div className={adminView === "labour" ? (isAdmin ? "max-w-6xl" : "max-w-3xl") : adminView === "log" ? "max-w-3xl" : adminView === "quiz" || adminView === "labourlog" || adminView === "manage" ? "max-w-4xl" : "max-w-2xl"}>
           <button onClick={() => setAdminView(null)}
             className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-600 bg-white ring-1 ring-gray-200 shadow-sm rounded-xl pl-2 pr-3 py-1.5 mb-3 hover:bg-gray-50 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">
             <span className="rotate-90" aria-hidden="true"><IconChevron size={15} /></span> Back to Attendance
           </button>
+          {adminView === "manage" && <AttendanceManagePanel authUser={authUser} users={users} setUsers={setUsers} settings={settings} />}
           {adminView === "quiz" && <QuizSetupPanel settings={settings} />}
           {adminView === "log" && <AttendanceAdminLog users={users} />}
           {adminView === "labourlog" && <LabourAdminLog />}

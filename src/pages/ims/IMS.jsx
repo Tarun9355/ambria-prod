@@ -2965,6 +2965,7 @@ export default function IMS() {
   // rest are Admin-only.
   const attSubs = [
     labourPunchDepts(user, myLabourAccess).length > 0 && { id: "labour", label: "Labour Punch" },
+    isAdmin && { id: "manage", label: "Manage People" },
     isAdmin && { id: "quiz", label: "Quiz Setup" },
     isAdmin && { id: "log", label: "Staff Log" },
     isAdmin && { id: "labourlog", label: "Labour Log" },
@@ -3116,7 +3117,7 @@ export default function IMS() {
         ) : activeTab === "dashboard" ? (
           <DashboardTab projects={projects} functions={functions} inventory={items} />
         ) : activeTab === "attendance" ? (
-          <AttendanceTab authUser={user} settings={settings} setSettings={setSettings} users={users}
+          <AttendanceTab authUser={user} settings={settings} setSettings={setSettings} users={users} setUsers={setUsers}
             view={attView} setView={setAttView} myLabourAccess={myLabourAccess} reloadLabourAccess={reloadLabourAccess} />
         ) : activeTab === "inventory" ? (
           <InventoryTab

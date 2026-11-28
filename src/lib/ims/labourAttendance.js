@@ -44,6 +44,12 @@ export async function insertLabour(row) {
   if (error) throw error;
   return data;
 }
+/** Change a labour's name / phone / department (Attendance → Manage People). Their past punches keep their own copy. */
+export async function updateLabour(id, patch) {
+  const { data, error } = await supabase.from("labours").update(patch).eq("id", id).select().single();
+  if (error) throw error;
+  return data;
+}
 /** Soft delete — punches keep pointing at the row, so history stays readable. */
 export async function deactivateLabour(id) {
   const { error } = await supabase.from("labours").update({ active: false }).eq("id", id);
