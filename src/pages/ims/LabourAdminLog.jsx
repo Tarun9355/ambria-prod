@@ -3,6 +3,7 @@ import { Modal } from "../../components/ui";
 import { todayStr, dayHours, daySummary, punchLocationLabel } from "../../lib/ims/attendance";
 import { loadExcelJS, downloadWorkbook, styleHeader } from "../../lib/excel";
 import { LABOUR_DEPTS, DEPT_ICON, fetchLabourPunchesRange, fetchAllActiveLabours } from "../../lib/ims/labourAttendance";
+import { userDepartments } from "../../lib/ims/deptClassify";
 import { DatePickerPopover, SelectPopover } from "./AttendanceAdminLog.jsx";
 import { IconPin, IconCalendar, IconUsers, IconExcelMark, IconChevron, IconSearch } from "../../components/icons.jsx";
 
@@ -36,7 +37,12 @@ function EmptyState({ icon, title, hint }) {
   );
 }
 
-export default function LabourAdminLog() {
+export default function LabourAdminLog({ authUser }) {
+  // Dept-manager scope: non-Admin heads/supervisors see only their own dept labours. Admin passes
+  // null and sees every labour and every punch. Used both in the `keep` filter below and to narrow
+  // the dept dropdown on screen so "All departments" means "all of mine".
+  const isAdminUser = authUser?.role === "Admin" || authUser?.id === "u_admin";
+  const myDepts = isAdminUser ? null : userDepartments(authUser);
   const today = todayStr();
   const [view, setView] = useState("day");   // "day" | "month"
   const [date, setDate] = useState(today);
@@ -68,7 +74,8 @@ export default function LabourAdminLog() {
   }, [range[0], range[1], reload]);
 
   const term = search.trim().toLowerCase();
-  const keep = (name, d) => (dept === "all" || d === dept) && (!term || (name || "").toLowerCase().includes(term));
+  const inMyScope = (d) => !myDepts || myDepts.includes(d);
+  const keep = (name, d) => inMyScope(d) && (dept === "all" || d === dept) && (!term || (name || "").toLowerCase().includes(term));
   const filtered = !!term || dept !== "all";
 
   // labour_id → { name, department, punches[] } for the loaded range, oldest-first punches.
@@ -121,7 +128,10 @@ export default function LabourAdminLog() {
       byDate,
       daysPresent: days.filter((ps) => ps.some((p) => p.type === "in")).length,
       hours: days.reduce((s, ps) => s + dayHours(ps), 0),
-      openDays: days.filter((ps) => ps[ps.length - 1]?.type === "in" || ps.some((p) => p.auto_closed)).length,
+      // openDays = labour truly has no closing punch (last event is "in"); autoClosedDays = cron
+       // closed them. Kept apart so payroll can tell "forgot to punch out" from "auto-closed".
+       openDays: days.filter((ps) => ps[ps.length - 1]?.type === "in").length,
+       autoClosedDays: days.filter((ps) => ps.some((p) => p.auto_closed)).length,
     };
   });
 
@@ -233,7 +243,10 @@ export default function LabourAdminLog() {
     );
   };
 
-  const deptOptions = [{ value: "all", label: "All departments" }, ...LABOUR_DEPTS.map((d) => ({ value: d, label: `${DEPT_ICON[d] || ""} ${d}` }))];
+  const deptOptions = [
+    { value: "all", label: myDepts ? (myDepts.length === 1 ? myDepts[0] : "My departments") : "All departments" },
+    ...(myDepts ? LABOUR_DEPTS.filter((d) => myDepts.includes(d)) : LABOUR_DEPTS).map((d) => ({ value: d, label: `${DEPT_ICON[d] || ""} ${d}` })),
+  ];
   const monthLabel = new Date(ym.y, ym.m - 1, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
   const prevLabel = view === "day" ? "Previous day" : "Previous month";
   const nextLabel = view === "day" ? "Next day" : "Next month";
@@ -357,20 +370,9 @@ export default function LabourAdminLog() {
             )}
           </div>
 
-          {/* ── NOT PUNCHED ── roster labours (of the filtered set) with no punch this day. */}
-          {notPunched.length > 0 && (
-            <div className="border-t border-gray-100 px-5 py-4">
-              <h4 className="flex items-center gap-2 text-sm font-semibold text-gray-900 mb-3">
-                Not punched
-                <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-600 tabular-nums">{notPunched.length}</span>
-              </h4>
-              <ul className="flex flex-wrap gap-1.5">
-                {notPunched.map((l) => (
-                  <li key={l.id} className="text-xs text-gray-700 bg-gray-50 ring-1 ring-gray-200 rounded-full px-2.5 py-1">{l.name} <span className="text-gray-500">· {l.department}</span></li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {/* The per-name "Not punched" chip wall was removed on owner ask 2026-11-28 — the count is
+              still shown in the stat tile row at the top of the screen, which is enough signal; the
+              full wall of names made Day view read as a leaderboard of people who missed a day. */}
         </>
       ) : monthRows.length === 0 ? (
         <div className="border-t border-gray-100">

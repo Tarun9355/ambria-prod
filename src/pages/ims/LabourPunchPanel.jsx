@@ -7,6 +7,7 @@ import {
   fetchDayLabourPunches, insertLabourPunch, newLabourPunchId, lastPunchByLabour,
   fetchLabourAccessForDepts, grantLabourAccess, revokeLabourAccess, DEPT_ICON,
 } from "../../lib/ims/labourAttendance";
+import { useConfirm } from "../../components/ui";
 import LabourPunchCamera from "./LabourPunchCamera.jsx";
 import LabourImportModal from "./LabourImportModal.jsx";
 import { SelectPopover } from "./AttendanceAdminLog.jsx";
@@ -53,9 +54,12 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
   const [reload, setReload] = useState(0);
   const [importing, setImporting] = useState(false); // the "Import sheet" screen (Admin)
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 20;
   const [camera, setCamera] = useState(null);   // { labour, type } | null
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState("");        // last saved punch, shown briefly
+  const [confirm, confirmDialog] = useConfirm();
   const today = todayStr();
   const deptKey = punchDepts.join("|");
 
@@ -110,6 +114,11 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
   const shown = q.trim()
     ? deptLabours.filter((l) => `${l.name} ${l.phone || ""}`.toLowerCase().includes(q.trim().toLowerCase()))
     : deptLabours;
+  const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  const curPage = Math.min(page, pageCount);
+  const pageSlice = shown.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
+  // dept change / search change → back to page 1 so the user lands on results, not an empty tail
+  useEffect(() => { setPage(1); }, [dept, q]);
   const counts = deptLabours.reduce((acc, l) => {
     const p = last[l.id];
     if (p?.type === "in") acc.in++; else if (p) acc.out++;
@@ -167,7 +176,13 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
     } catch (e) { setError(e.message || "Couldn't add the labour"); }
   }
   async function removeLabour(l) {
-    if (!window.confirm(`Remove ${l.name} from ${l.department}? Their past punches stay in the log.`)) return;
+    const ok = await confirm({
+      title: `Remove ${l.name}?`,
+      body: `From ${l.department}. Their past punches stay in the log.`,
+      confirmLabel: "Remove",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await deactivateLabour(l.id);
       setLabours((prev) => prev.filter((x) => x.id !== l.id));
@@ -191,7 +206,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
     // Side by side from lg up when the access card is shown (Admin), two equal columns; one
     // column (stacked) on phones and for a guard, who only sees the list.
     <div className={manageDepts.length > 0 ? "grid grid-cols-1 lg:grid-cols-2 gap-5 items-start" : "space-y-5"}>
-      <section aria-label="Labour punch" className={CARD}>
+      <section aria-label="Labour punch" className={CARD + " flex flex-col max-h-[calc(100vh-7rem)]"}>
         <div className="flex items-center justify-between gap-3 flex-wrap px-5 py-4">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
             <IconUsers size={15} /> Labour Punch
@@ -273,7 +288,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
           )}
         </div>
 
-        <div className="border-t border-gray-100">
+        <div className="border-t border-gray-100 flex-1 min-h-0 overflow-y-auto">
           {loading ? (
             <ul aria-busy="true" aria-label="Loading labours" className="divide-y divide-gray-100">
               {[0, 1, 2].map((i) => (
@@ -312,7 +327,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
             </div>
           ) : (
             <ul className="divide-y divide-gray-100">
-              {shown.map((l) => {
+              {pageSlice.map((l) => {
                 const p = last[l.id];
                 const isIn = p?.type === "in";
                 return (
@@ -360,6 +375,16 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
             </ul>
           )}
         </div>
+        {shown.length > PAGE_SIZE && (
+          <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-gray-100 bg-gray-50/60">
+            <span className="text-xs text-gray-500 tabular-nums">Showing {(curPage - 1) * PAGE_SIZE + 1}–{Math.min(curPage * PAGE_SIZE, shown.length)} of {shown.length}</span>
+            <div className="flex items-center gap-1">
+              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={curPage === 1} className={"h-8 px-3 rounded-lg text-xs font-semibold bg-white ring-1 ring-gray-200 text-gray-700 hover:bg-gray-50 " + BTN_FOCUS}>Prev</button>
+              <span className="px-2 text-xs text-gray-600 tabular-nums">Page {curPage} / {pageCount}</span>
+              <button onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={curPage === pageCount} className={"h-8 px-3 rounded-lg text-xs font-semibold bg-white ring-1 ring-gray-200 text-gray-700 hover:bg-gray-50 " + BTN_FOCUS}>Next</button>
+            </div>
+          </div>
+        )}
       </section>
 
       {manageDepts.length > 0 && (
@@ -370,6 +395,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
         <LabourPunchCamera labour={camera.labour} type={camera.type} busy={saving}
           onCaptured={savePunch} onCancel={() => { if (!saving) setCamera(null); }} />
       )}
+      {confirmDialog}
     </div>
   );
 }

@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Tabs, useConfirm } from "../../components/ui";
 import { ATTENDANCE_QUIZ_DEPTS, ATTENDANCE_QUIZ_DEPT_ICON } from "../../lib/ims/attendance";
+import { userDepartments } from "../../lib/ims/deptClassify";
 import { supabase } from "../../lib/supabase";
 import { translateToHindi } from "../../lib/ims/translateHindi";
 import {
@@ -46,13 +47,35 @@ const iconBtnSmall = "shrink-0 w-10 h-10 sm:w-8 sm:h-8 rounded-lg flex items-cen
 const selectCls = "h-10 rounded-xl border border-gray-200 bg-white pl-3 pr-8 text-base sm:text-sm text-gray-800 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500";
 const inputCls = "w-full h-10 rounded-xl border border-gray-200 pl-11 pr-3 text-base sm:text-sm text-gray-900 placeholder:text-gray-400 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500";
 
-export default function QuizSetupPanel({ settings }) {
-  const [dept, setDept] = useState(ATTENDANCE_QUIZ_DEPTS[0]);
+export default function QuizSetupPanel({ settings, authUser }) {
+  // Dept Heads / Site Supervisors see only their own department tab(s); Admin keeps all.
+  // userDepartments returns null for unrestricted (Admin) — hand the full catalogue back then.
+  const visibleDepts = useMemo(() => {
+    const mine = userDepartments(authUser);
+    if (!mine) return ATTENDANCE_QUIZ_DEPTS;
+    const allowed = ATTENDANCE_QUIZ_DEPTS.filter((d) => mine.includes(d));
+    // A dept head whose role names a dept outside the 8 quiz depts (e.g. "Dept Head - Painter")
+    // falls through to zero — they'd see an empty panel, which is honest about them having no
+    // briefing to edit; the panel below renders a soft empty state instead of a broken tab strip.
+    return allowed;
+  }, [authUser]);
+
+  const [dept, setDept] = useState(visibleDepts[0] || ATTENDANCE_QUIZ_DEPTS[0]);
+  useEffect(() => { if (visibleDepts.length && !visibleDepts.includes(dept)) setDept(visibleDepts[0]); }, [visibleDepts, dept]);
+
+  if (!visibleDepts.length) {
+    return (
+      <div className="rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm px-6 py-10 text-center">
+        <p className="text-sm font-medium text-gray-700">No quiz department assigned to your role.</p>
+        <p className="mt-1 text-xs text-gray-500">Ask Admin to grant your dept in Users &amp; Roles.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
       <Tabs
-        tabs={ATTENDANCE_QUIZ_DEPTS.map((d) => ({ id: d, label: `${ATTENDANCE_QUIZ_DEPT_ICON[d]} ${d}` }))}
+        tabs={visibleDepts.map((d) => ({ id: d, label: `${ATTENDANCE_QUIZ_DEPT_ICON[d]} ${d}` }))}
         active={dept}
         onChange={setDept}
       />
@@ -94,8 +117,23 @@ function DeptQuizEditor({ dept, settings }) {
     }, 700);
   }
 
+  // null = modal closed · id of a question currently being edited in the focused modal
+  const [editingQid, setEditingQid] = useState(null);
   function addQuestion() {
-    setDraft((d) => ({ ...d, questions: [...d.questions, { id: "q" + Date.now(), type: "single", text: "", textHi: "", options: ["", ""], optionsHi: ["", ""], correctIndex: 0 }] }));
+    const id = "q" + Date.now();
+    setDraft((d) => ({ ...d, questions: [...d.questions, { id, type: "single", text: "", textHi: "", options: ["", ""], optionsHi: ["", ""], correctIndex: 0 }] }));
+    setEditingQid(id);
+  }
+  // Closing a fully-blank question (e.g. admin clicked Add then Cancel) drops it from the draft so
+  // the list doesn't fill up with scratch rows. A touched-but-partial question stays — the admin
+  // can come back to finish it later.
+  function closeEditor() {
+    setDraft((d) => {
+      const q = d.questions.find((x) => x.id === editingQid);
+      const blank = q && !q.text.trim() && !(q.options || []).some((o) => o.trim()) && !(q.acceptedAnswers || []).some((a) => a.trim());
+      return blank ? { ...d, questions: d.questions.filter((x) => x.id !== editingQid) } : d;
+    });
+    setEditingQid(null);
   }
   function updateQuestion(id, patch) {
     setDraft((d) => ({ ...d, questions: d.questions.map((q) => (q.id === id ? { ...q, ...patch } : q)) }));
@@ -232,17 +270,12 @@ function DeptQuizEditor({ dept, settings }) {
 
       {/* ── QUIZ QUESTIONS ── */}
       <section aria-label="Quiz questions" className="rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
-        <div className="px-5 py-4 flex items-start justify-between gap-3 flex-wrap">
-          <div className="min-w-0">
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
-              <IconClipboardCheck size={15} /> Questions after the video
-              <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-600 tabular-nums">{draft.questions.length}</span>
-            </h3>
-            <p className="mt-0.5 text-xs text-gray-500">Type in English or Hinglish — the Hindi version fills in by itself.</p>
-          </div>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 ring-1 ring-blue-200 px-2.5 py-0.5 text-xs font-medium text-blue-700">
-            English/Hinglish → हिंदी
-          </span>
+        <div className="px-5 py-4">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+            <IconClipboardCheck size={15} /> Questions after the video
+            <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-xs font-semibold text-gray-600 tabular-nums">{draft.questions.length}</span>
+          </h3>
+          <p className="mt-0.5 text-xs text-gray-500">Type in English or Hinglish — the Hindi version (हिं) fills in by itself a moment after you stop typing.</p>
         </div>
 
         <div className="border-t border-gray-100 p-4 sm:p-5">
@@ -256,30 +289,45 @@ function DeptQuizEditor({ dept, settings }) {
               </button>
             </div>
           ) : (
-          <ol className="space-y-4">
-            {draft.questions.map((q, qi) => {
-              const type = q.type || "single";
-              return (
-              <li key={q.id} className="rounded-xl ring-1 ring-gray-200 bg-white">
-                <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-100 bg-gray-50/70 rounded-t-xl">
+          <ol className="space-y-2">
+            {draft.questions.map((q, qi) => (
+              <QuestionSummaryRow key={q.id} q={q} qi={qi}
+                onEdit={() => setEditingQid(q.id)}
+                onDelete={() => removeQuestion(q.id)}
+              />
+            ))}
+          </ol>
+          )}
+        </div>
+      </section>
+
+      {editingQid && (() => {
+        const q = draft.questions.find((x) => x.id === editingQid);
+        if (!q) return null;
+        const qi = draft.questions.findIndex((x) => x.id === editingQid);
+        const type = q.type || "single";
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" role="dialog" aria-modal="true" aria-label={`Edit question ${qi + 1}`}
+            onClick={(e) => { if (e.target === e.currentTarget) closeEditor(); }}>
+            <div className="w-full max-w-2xl max-h-[calc(100vh-2rem)] flex flex-col rounded-2xl bg-white shadow-xl ring-1 ring-gray-200/70">
+              <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-100">
+                <div className="flex items-center gap-2.5 min-w-0">
                   <span className="shrink-0 w-8 h-8 rounded-xl bg-blue-100 text-blue-600 text-sm font-bold flex items-center justify-center" aria-hidden="true">{qi + 1}</span>
-                  <select value={type} onChange={(e) => setQuestionType(q.id, e.target.value)} aria-label={`Question ${qi + 1} type`}
+                  <h3 className="text-sm font-semibold text-gray-900 truncate">Question {qi + 1}</h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <select value={type} onChange={(e) => setQuestionType(q.id, e.target.value)} aria-label="Question type"
                     className={selectCls + " font-medium min-w-0"}>
                     <option value="single">Single choice</option>
                     <option value="multi">Multiple choice</option>
                     <option value="fill_blank">Fill in the blank</option>
                     <option value="short_answer">Short answer</option>
                   </select>
-                  <span className="flex-1" />
-                  <button onClick={() => removeQuestion(q.id)} aria-label={`Delete question ${qi + 1}`} title="Delete question"
-                    className={iconBtnDanger}><IconTrash size={16} /></button>
+                  <button onClick={closeEditor} aria-label="Close" className={"shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-gray-100 " + "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"}><IconX size={15} /></button>
                 </div>
+              </div>
 
-                {/* Side by side from lg: up — the question and its answers used to stack full-width
-                    the whole way to a desktop monitor, leaving most of a wide screen empty. Still
-                    stacks on phone/tablet, where there isn't room for two columns to breathe. */}
-                <div className="p-4 lg:grid lg:grid-cols-2 lg:gap-x-8">
-                <div>
+              <div className="px-5 py-4 space-y-5 overflow-y-auto">
                 <BilingualField
                   id={`${uid}-${q.id}-text`}
                   label="Question" placeholder="Type here…" hiPlaceholder="अपने आप बनेगा…"
@@ -287,23 +335,23 @@ function DeptQuizEditor({ dept, settings }) {
                   onChange={(v) => { updateQuestion(q.id, { text: v }); scheduleTranslate(`${q.id}_text`, v, (hi) => updateQuestion(q.id, { textHi: hi })); }}
                   onChangeHi={(v) => updateQuestion(q.id, { textHi: v })}
                 />
-                </div>
 
-                <div className="mt-5 lg:mt-0">
                 {type === "single" && (
                   <div>
-                    <h4 className="text-sm font-semibold text-gray-900 mb-2">Options</h4>
-                    {/* 2 columns read fine at the card's full mobile/tablet width, but once the card
-                        itself splits in half at lg: (see the wrapper above) that same 2-up grid inside
-                        an already-halved column got cramped — drop back to 1 column exactly when the
-                        card does, so an option never has less room than the mobile view had. */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
-                      {q.options.map((opt, oi) => (
+                    <h4 className="text-sm font-semibold text-gray-900">Options</h4>
+                    <p className="mt-0.5 mb-2 text-xs text-gray-500">Pick the one correct option — staff must choose this to pass.</p>
+                    <div className="space-y-3">
+                      {q.options.map((opt, oi) => {
+                        const isCorrect = q.correctIndex === oi;
+                        return (
                         <div key={oi}>
                           <div className="flex items-center justify-between gap-2 min-h-8 mb-1">
-                            <span className="flex items-center gap-2 text-xs font-semibold text-gray-700">
-                              Option {letterFor(oi)}{q.correctIndex === oi && <CorrectPill />}
-                            </span>
+                            <label className="flex items-center gap-2 min-h-10 sm:min-h-8 text-xs font-semibold text-gray-700 cursor-pointer">
+                              <input type="radio" name={`${uid}-${q.id}-correct`} checked={isCorrect} onChange={() => updateQuestion(q.id, { correctIndex: oi })}
+                                aria-label={`Option ${letterFor(oi)} is correct`}
+                                className="w-4 h-4 border-gray-300 accent-blue-600 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1" />
+                              Option {letterFor(oi)}{isCorrect && <CorrectPill />}
+                            </label>
                             {q.options.length > 2 && (
                               <button onClick={() => removeOption(q.id, oi)} aria-label={`Remove option ${letterFor(oi)}`} title="Remove option" className={iconBtnSmall}><IconX size={13} /></button>
                             )}
@@ -314,19 +362,12 @@ function DeptQuizEditor({ dept, settings }) {
                             onChangeHi={(v) => updateOptionHi(q.id, oi, v)}
                           />
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                     <button onClick={() => addOption(q.id)} className={btnGhost + " mt-2"}>
                       <IconPlusCircle size={15} /> Add option
                     </button>
-
-                    <div className="mt-3 pt-3 border-t border-gray-100">
-                      <label htmlFor={`${uid}-${q.id}-correct`} className="block text-xs font-medium text-gray-700 mb-1.5">Correct answer</label>
-                      <select id={`${uid}-${q.id}-correct`} value={q.correctIndex} onChange={(e) => updateQuestion(q.id, { correctIndex: Number(e.target.value) })}
-                        className={selectCls}>
-                        {q.options.map((_, oi) => <option key={oi} value={oi}>Option {letterFor(oi)}</option>)}
-                      </select>
-                    </div>
                   </div>
                 )}
 
@@ -334,7 +375,7 @@ function DeptQuizEditor({ dept, settings }) {
                   <div>
                     <h4 className="text-sm font-semibold text-gray-900">Options</h4>
                     <p className="mt-0.5 mb-2 text-xs text-gray-500">Tick every correct option — staff must pick exactly these to pass.</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
+                    <div className="space-y-3">
                       {q.options.map((opt, oi) => {
                         const isCorrect = (q.correctIndexes || []).includes(oi);
                         return (
@@ -400,15 +441,15 @@ function DeptQuizEditor({ dept, settings }) {
                     <p>Staff write a free response — there's no right or wrong text to set here, they just need to answer.</p>
                   </div>
                 )}
-                </div>
-                </div>
-              </li>
-              );
-            })}
-          </ol>
-          )}
-        </div>
-      </section>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-100 bg-gray-50/60 rounded-b-2xl">
+                <button onClick={closeEditor} className={btnSecondary}>Done</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Sticky, not just a footer row: with several questions the button used to scroll away
           the moment you started editing one lower down, so saving meant scrolling all the way
@@ -433,6 +474,44 @@ function DeptQuizEditor({ dept, settings }) {
         </div>
       </div>
     </div>
+  );
+}
+
+const typeLabel = { single: "Single choice", multi: "Multiple choice", fill_blank: "Fill in the blank", short_answer: "Short answer" };
+
+// Compact one-line summary — the list on the main page is these, not full inline editors. Keeps
+// the page scannable with 10+ questions; the full editor opens in a modal on Edit.
+function QuestionSummaryRow({ q, qi, onEdit, onDelete }) {
+  const type = q.type || "single";
+  const preview = (q.text || "").trim() || "Untitled question — tap Edit to fill in";
+  const metaBits = [];
+  if (type === "single" || type === "multi") {
+    const n = q.options?.length || 0;
+    const correctCount = type === "multi" ? (q.correctIndexes?.length || 0) : (n > 0 ? 1 : 0);
+    metaBits.push(`${n} option${n === 1 ? "" : "s"}`);
+    metaBits.push(`${correctCount} correct`);
+  } else if (type === "fill_blank") {
+    const n = q.acceptedAnswers?.length || 0;
+    metaBits.push(`${n} accepted answer${n === 1 ? "" : "s"}`);
+  } else {
+    metaBits.push("Open response");
+  }
+  return (
+    <li className="rounded-xl ring-1 ring-gray-200 bg-white hover:ring-gray-300 transition-colors">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <span className="shrink-0 w-8 h-8 rounded-xl bg-blue-100 text-blue-600 text-sm font-bold flex items-center justify-center" aria-hidden="true">{qi + 1}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600">{typeLabel[type]}</span>
+            <span className="text-xs text-gray-500 tabular-nums">{metaBits.join(" · ")}</span>
+          </div>
+          <p className={"mt-0.5 text-sm truncate " + ((q.text || "").trim() ? "text-gray-900" : "text-gray-400 italic")}>{preview}</p>
+        </div>
+        <button onClick={onEdit} className="shrink-0 h-9 px-3 rounded-lg text-sm font-medium text-blue-600 hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">Edit</button>
+        <button onClick={onDelete} aria-label={`Delete question ${qi + 1}`} title="Delete question"
+          className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"><IconTrash size={15} /></button>
+      </div>
+    </li>
   );
 }
 
@@ -461,11 +540,6 @@ function BilingualField({ id, label, ariaLabel, value, valueHi, onChange, onChan
           value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
           className={inputCls + " bg-white"} />
       </div>
-      {!compact && (
-        <p className="text-xs text-gray-500 mt-1">
-          Type in English or Hinglish (e.g. 'theek hai') — Hindi appears below.
-        </p>
-      )}
       {label && <label htmlFor={`${id}-hi`} className="block text-xs font-medium text-gray-700 mb-1.5 mt-3">{label} (Hindi)</label>}
       <div className={"relative " + (label ? "" : "mt-1.5")}>
         <span className={tag} aria-hidden="true">हिं</span>

@@ -5,11 +5,12 @@
 import { supabase } from "../supabase";
 import { userDepartments } from "./deptClassify";
 
-// The build departments a punch-in briefing can be scoped to — the 6 of deptClassify's 7 that
-// actually run crews needing a safety/training briefing (Transport excluded by request: drivers
-// don't get the same on-site punch-in quiz as a build crew).
-export const ATTENDANCE_QUIZ_DEPTS = ["Furniture", "Floral", "Structure", "Tenting", "Lighting", "Fabric"];
-export const ATTENDANCE_QUIZ_DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Lighting: "💡", Fabric: "🧵" };
+// The build/support departments a punch-in briefing can be scoped to — kept in sync with the
+// LABOUR_DEPTS list so every crew a supervisor can punch has its own briefing slot. Transport and
+// ADD were added back (owner ask 2026-11-28) — drivers and ADD staff also get their own on-site
+// quiz now, scoped to their own department.
+export const ATTENDANCE_QUIZ_DEPTS = ["Furniture", "Floral", "Structure", "Tenting", "Transport", "Lighting", "Fabric", "ADD"];
+export const ATTENDANCE_QUIZ_DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵", ADD: "🧰" };
 
 /**
  * Which of the 6 quiz departments this punch belongs to — the one department a user has, when
@@ -93,7 +94,29 @@ export async function fetchDayPunches(userId, dateStr) {
   return data || [];
 }
 
+// Last-second guard against a double-punch landing twice: before we write the row, re-read the
+// user's most recent punch of the same day and bail out if its `type` already matches. A fast
+// double-tap on Punch In (two tabs, the client-side `savingRef` not catching a re-render, or a
+// retry after a realtime hiccup) used to produce two `in` events back-to-back, which then made
+// `currentState` wrong until the end of the day. The guard is advisory — a race between the read
+// and the write is still possible until proper RLS / a server-side unique index per (user_id,
+// date, type, bucket) lands — but it closes the window from "always" to "once in a while".
 export async function insertPunch(row) {
+  if (row?.user_id && row?.date && row?.type) {
+    const { data: last } = await supabase
+      .from("attendance")
+      .select("type, at")
+      .eq("user_id", row.user_id)
+      .eq("date", row.date)
+      .order("at", { ascending: false })
+      .limit(1);
+    const prior = last?.[0];
+    // Treat anything in the last 30 seconds of the SAME type as the one we're about to write as a
+    // duplicate — a real toggle (in → out or out → in) is always a different type.
+    if (prior && prior.type === row.type && (Date.now() - new Date(prior.at).getTime()) < 30000) {
+      throw new Error("Already punched " + (row.type === "in" ? "in" : "out") + " a moment ago — the previous punch is already saved.");
+    }
+  }
   const { data, error } = await supabase.from("attendance").insert(row).select().single();
   if (error) throw error;
   return data;
@@ -153,11 +176,25 @@ export function getCurrentCoords() {
  * Prefers a short "street, area" form over Nominatim's full display_name, which reads more like a
  * postal address than a place label.
  */
+// Small in-memory cache keyed by rounded lat/lng (3 decimals ≈ 110m) so a busy morning with 40
+// staff punching from the same gate makes at most one Nominatim call per gate per session, well
+// inside OSM's 1-req/s/IP TOS limit (usage policy: https://operations.osmfoundation.org/policies/nominatim/).
+// NOTE for prod: Nominatim's TOS also requires a real User-Agent identifying the application —
+// browsers can't set that header (it's a forbidden header), so a proper fix is to proxy this
+// through a Supabase Edge Function with a `User-Agent: Ambria-IMS/<ver> (ops@ambria.in)` header.
+// Until then we rely on the browser-sent Referer and the cache below to stay under the rate limit;
+// Accept-Language hint keeps result wording consistent.
+const _geocodeCache = new Map();
 export async function reverseGeocode(lat, lng) {
+  const key = `${Number(lat).toFixed(3)},${Number(lng).toFixed(3)}`;
+  if (_geocodeCache.has(key)) return _geocodeCache.get(key);
   try {
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 5000);
-    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=16`, { signal: ctrl.signal });
+    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=16`, {
+      signal: ctrl.signal,
+      headers: { "Accept-Language": "en-IN, en" },
+    });
     clearTimeout(timeout);
     if (!res.ok) return null;
     const data = await res.json();
@@ -166,7 +203,9 @@ export async function reverseGeocode(lat, lng) {
       a.road || a.neighbourhood || a.suburb || a.hamlet,
       a.city || a.town || a.village || a.county,
     ].filter(Boolean);
-    return parts.length ? parts.join(", ") : (data?.display_name || null);
+    const out = parts.length ? parts.join(", ") : (data?.display_name || null);
+    _geocodeCache.set(key, out);
+    return out;
   } catch {
     return null;
   }

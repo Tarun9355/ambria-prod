@@ -5,6 +5,7 @@ import { ROLES } from "../../lib/ims/constants";
 import { callUserAdmin } from "../../lib/userAdmin";
 import { deriveUsername } from "../../lib/auth";
 import { LABOUR_DEPTS, DEPT_ICON, fetchAllActiveLabours, insertLabour, updateLabour, deactivateLabour, newLabourId } from "../../lib/ims/labourAttendance";
+import { ATTENDANCE_QUIZ_DEPTS } from "../../lib/ims/attendance";
 import { buildPeople, filterPeople, peopleStats, isFieldRole } from "../../lib/ims/peopleDirectory";
 import { generatePassword, latinName } from "../../lib/ims/staffImport";
 import LabourImportModal from "./LabourImportModal.jsx";
@@ -58,7 +59,9 @@ export default function AttendanceManagePanel({ authUser, users, setUsers, setti
   const [error, setError] = useState("");
   const [creds, setCreds] = useState(null);     // a just-made staff login, shown once
   const [importing, setImporting] = useState(false);
+  const [page, setPage] = useState(1);
   const [confirm, confirmDialog] = useConfirm();
+  const PAGE_SIZE = 20;
 
   useEffect(() => {
     let live = true;
@@ -86,6 +89,11 @@ export default function AttendanceManagePanel({ authUser, users, setUsers, setti
   const kindPeople = useMemo(() => filterPeople(people, { kind }), [people, kind]);
   const kindStats = useMemo(() => peopleStats(kindPeople), [kindPeople]);
   const shown = useMemo(() => filterPeople(people, { kind, dept, flag, q }), [people, kind, dept, flag, q]);
+  const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  const curPage = Math.min(page, pageCount);
+  const pageSlice = useMemo(() => shown.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE), [shown, curPage]);
+  // any filter/search change resets to page 1 so the user lands on results, not an empty tail
+  useEffect(() => { setPage(1); }, [kind, dept, flag, q]);
   // heads, supervisors and labour only - the same roles this list shows (isFieldRole)
   const roles = (Array.isArray(settings?.rolesList) ? settings.rolesList : ROLES).filter((r) => r !== "Admin" && isFieldRole(r));
 
@@ -244,13 +252,6 @@ export default function AttendanceManagePanel({ authUser, users, setUsers, setti
           <div className="flex flex-wrap gap-1.5">
             {deptChips.map(([k, l, n]) => <button key={k} aria-pressed={dept === k} onClick={() => setDept(k)} className={CHIP(dept === k)}>{l}<span className={dept === k ? "text-white/70" : "text-gray-400"}>{n}</span></button>)}
           </div>
-          {(stats.noPhone > 0 || stats.dupPhone > 0) && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs font-medium text-gray-500">Needs a look:</span>
-              {stats.noPhone > 0 && <button aria-pressed={flag === "noPhone"} onClick={() => setFlag(flag === "noPhone" ? "" : "noPhone")} className={"h-7 px-2.5 rounded-full text-xs font-semibold " + FOCUS + " " + (flag === "noPhone" ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100")}>No phone · {stats.noPhone}</button>}
-              {stats.dupPhone > 0 && <button aria-pressed={flag === "dupPhone"} onClick={() => setFlag(flag === "dupPhone" ? "" : "dupPhone")} className={"h-7 px-2.5 rounded-full text-xs font-semibold " + FOCUS + " " + (flag === "dupPhone" ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100")}>Same phone twice · {stats.dupPhone}</button>}
-            </div>
-          )}
         </div>
 
         {error && !adding && <p role="alert" className="px-5 pt-3 text-sm text-red-600">{error}</p>}
@@ -264,64 +265,96 @@ export default function AttendanceManagePanel({ authUser, users, setUsers, setti
           <p className="px-5 py-10 text-center text-sm text-gray-500">{q || flag || dept !== "all" ? "Nobody matches these filters." : "Nobody here yet - add someone or import a sheet."}</p>
         ) : (
           <ul className="divide-y divide-gray-100">
-            {shown.map((p) => {
-              const editing = editKey === p.key;
-              return (
-                <li key={p.key} className={editing ? "bg-blue-50/40" : "hover:bg-gray-50 transition-colors"}>
-                  <div className="flex items-center gap-3 px-5 py-3">
-                    <span aria-hidden="true" className={"w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-xs font-semibold " + (p.kind === "staff" ? "bg-indigo-50 text-indigo-700" : "bg-amber-50 text-amber-800")}>{initials(p.name)}</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <span className={"font-medium truncate " + (p.active ? "text-gray-900" : "text-gray-400 line-through")}>{p.name}</span>
-                        <span className={"rounded-md px-1.5 py-0.5 text-[11px] font-semibold " + (p.kind === "staff" ? "bg-indigo-50 text-indigo-700" : "bg-amber-50 text-amber-800")}>{p.kind === "staff" ? (p.role || "Staff") : "Labour"}</span>
-                        {!p.active && <span className="text-[11px] font-medium text-gray-400">Inactive</span>}
-                      </div>
-                      <div className="mt-0.5 text-xs text-gray-500 truncate">
-                        {p.depts.length ? p.depts.map((d) => `${DEPT_ICON[d] || ""} ${d}`).join(" · ") : "No department"}
-                        {" · "}{p.phone ? <span className="tabular-nums">{p.phone}</span> : <span className="text-amber-700">no phone</span>}
-                        {p.username ? <span className="font-mono"> · {p.username}</span> : null}
-                      </div>
+            {pageSlice.map((p) => (
+              <li key={p.key} className="hover:bg-gray-50 transition-colors">
+                <div className="flex items-center gap-3 px-5 py-3">
+                  <span aria-hidden="true" className={"w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-xs font-semibold " + (p.kind === "staff" ? "bg-indigo-50 text-indigo-700" : "bg-amber-50 text-amber-800")}>{initials(p.name)}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <span className={"font-medium truncate " + (p.active ? "text-gray-900" : "text-gray-400 line-through")}>{p.name}</span>
+                      <span className={"rounded-md px-1.5 py-0.5 text-[11px] font-semibold " + (p.kind === "staff" ? "bg-indigo-50 text-indigo-700" : "bg-amber-50 text-amber-800")}>{p.kind === "staff" ? (p.role || "Staff") : "Labour"}</span>
+                      {!p.active && <span className="text-[11px] font-medium text-gray-400">Inactive</span>}
+                      {/* Punch-in briefing is scoped to ONE quiz-dept per user (attendance.js:
+                          attendanceQuizDept). A staff member with no dept, >1 dept, or a dept
+                          outside the quiz list is silently exempt from every briefing — admin needs
+                          to see who's being skipped, so their row carries a small amber chip. */}
+                      {p.kind === "staff" && !p.isAdmin && p.active && (() => {
+                        const qDepts = (p.depts || []).filter((d) => ATTENDANCE_QUIZ_DEPTS.includes(d));
+                        if (qDepts.length === 1) return null;
+                        const why = !p.depts?.length ? "no department set"
+                          : qDepts.length === 0 ? `dept${p.depts.length > 1 ? "s" : ""} outside the quiz list`
+                          : `${p.depts.length} depts — needs exactly one quiz dept`;
+                        return (
+                          <span title={`No punch-in briefing runs for this user — ${why}.`}
+                            className="rounded-md px-1.5 py-0.5 text-[11px] font-semibold bg-amber-50 text-amber-800 ring-1 ring-amber-200">⚠ No briefing</span>
+                        );
+                      })()}
                     </div>
-                    {!editing && (
-                      <div className="flex shrink-0 gap-1">
-                        <button onClick={() => startEdit(p)} className={"h-9 px-3 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 " + FOCUS}>Edit</button>
-                        {!p.isAdmin && p.id !== authUser?.id && (
-                          <button onClick={() => remove(p)} disabled={busy} aria-label={`Remove ${p.name}`} title={p.kind === "labour" ? "Remove from the labour list" : "Delete this login"} className={"h-9 w-9 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 " + FOCUS}><IconTrash size={15} /></button>
-                        )}
-                      </div>
+                    <div className="mt-0.5 text-xs text-gray-500 truncate">
+                      {p.depts.length ? p.depts.map((d) => `${DEPT_ICON[d] || ""} ${d}`).join(" · ") : "No department"}
+                      {" · "}{p.phone ? <span className="tabular-nums">{p.phone}</span> : <span className="text-amber-700">no phone</span>}
+                      {p.username ? <span className="font-mono"> · {p.username}</span> : null}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    <button onClick={() => startEdit(p)} className={"h-9 px-3 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 " + FOCUS}>Edit</button>
+                    {!p.isAdmin && p.id !== authUser?.id && (
+                      <button onClick={() => remove(p)} disabled={busy} aria-label={`Remove ${p.name}`} title={p.kind === "labour" ? "Remove from the labour list" : "Delete this login"} className={"h-9 w-9 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 " + FOCUS}><IconTrash size={15} /></button>
                     )}
                   </div>
-                  {editing && draft && (
-                    <div className="px-5 pb-4 pl-[4.25rem] space-y-3">
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <input autoFocus value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} aria-label="Name" className={INPUT} />
-                        <input value={draft.phone} inputMode="numeric" onChange={(e) => setDraft({ ...draft, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="Phone (10 digits)" aria-label="Phone" className={INPUT} />
-                      </div>
-                      {p.kind === "labour"
-                        ? <DeptPicker value={draft.dept} onChange={(d) => setDraft({ ...draft, dept: d })} />
-                        : <DeptPicker multi value={draft.depts} onChange={(d) => setDraft({ ...draft, depts: d })} />}
-                      {p.kind === "staff" && !p.isAdmin && (
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          {roles.map((r) => <button key={r} type="button" aria-pressed={draft.role === r} onClick={() => setDraft({ ...draft, role: r })} className={CHIP(draft.role === r)}>{r}</button>)}
-                          <label className="ml-2 inline-flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={draft.active} onChange={(e) => setDraft({ ...draft, active: e.target.checked })} className="w-4 h-4 accent-blue-600" /> Can log in</label>
-                        </div>
-                      )}
-                      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
-                      <div className="flex gap-2">
-                        <button onClick={() => saveEdit(p)} disabled={busy} className={BTN_PRIMARY}><IconCheck size={15} /> {busy ? "Saving…" : "Save"}</button>
-                        <button onClick={cancelEdit} disabled={busy} className={BTN_SECONDARY}>Cancel</button>
-                      </div>
-                    </div>
-                  )}
-                </li>
-              );
-            })}
+                </div>
+              </li>
+            ))}
             {loading && kind !== "staff" && <li className="px-5 py-3 text-sm text-gray-500" aria-live="polite">Loading labours…</li>}
           </ul>
+        )}
+        {shown.length > PAGE_SIZE && (
+          <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-gray-100 bg-gray-50/60">
+            <span className="text-xs text-gray-500 tabular-nums">Showing {(curPage - 1) * PAGE_SIZE + 1}–{Math.min(curPage * PAGE_SIZE, shown.length)} of {shown.length}</span>
+            <div className="flex items-center gap-1">
+              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={curPage === 1} className={"h-8 px-3 rounded-lg text-xs font-semibold bg-white ring-1 ring-gray-200 text-gray-700 hover:bg-gray-50 " + FOCUS}>Prev</button>
+              <span className="px-2 text-xs text-gray-600 tabular-nums">Page {curPage} / {pageCount}</span>
+              <button onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={curPage === pageCount} className={"h-8 px-3 rounded-lg text-xs font-semibold bg-white ring-1 ring-gray-200 text-gray-700 hover:bg-gray-50 " + FOCUS}>Next</button>
+            </div>
+          </div>
         )}
       </section>
 
       {importing && <LabourImportModal open authUser={authUser} onClose={() => setImporting(false)} onDone={() => setReload((r) => r + 1)} />}
+      {editKey && draft && (() => {
+        const p = people.find((x) => x.key === editKey);
+        if (!p) return null;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" role="dialog" aria-modal="true" aria-label={`Edit ${p.name}`} onClick={(e) => { if (e.target === e.currentTarget && !busy) cancelEdit(); }}>
+            <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl ring-1 ring-gray-200/70">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                <h3 className="text-sm font-semibold text-gray-900">Edit {p.kind === "staff" ? (p.role || "staff") : "labour"} · {p.name}</h3>
+                <button onClick={cancelEdit} disabled={busy} aria-label="Close" className={"h-8 w-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 " + FOCUS}><IconX size={15} /></button>
+              </div>
+              <div className="px-5 py-4 space-y-3">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <input autoFocus value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} aria-label="Name" className={INPUT} />
+                  <input value={draft.phone} inputMode="numeric" onChange={(e) => setDraft({ ...draft, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="Phone (10 digits)" aria-label="Phone" className={INPUT} />
+                </div>
+                {p.kind === "labour"
+                  ? <DeptPicker value={draft.dept} onChange={(d) => setDraft({ ...draft, dept: d })} />
+                  : <DeptPicker multi value={draft.depts} onChange={(d) => setDraft({ ...draft, depts: d })} />}
+                {p.kind === "staff" && !p.isAdmin && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {roles.map((r) => <button key={r} type="button" aria-pressed={draft.role === r} onClick={() => setDraft({ ...draft, role: r })} className={CHIP(draft.role === r)}>{r}</button>)}
+                    <label className="ml-2 inline-flex items-center gap-2 text-sm text-gray-700"><input type="checkbox" checked={draft.active} onChange={(e) => setDraft({ ...draft, active: e.target.checked })} className="w-4 h-4 accent-blue-600" /> Can log in</label>
+                  </div>
+                )}
+                {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+              </div>
+              <div className="flex gap-2 px-5 py-3 border-t border-gray-100 bg-gray-50/60 rounded-b-2xl">
+                <button onClick={() => saveEdit(p)} disabled={busy} className={BTN_PRIMARY}><IconCheck size={15} /> {busy ? "Saving…" : "Save"}</button>
+                <button onClick={cancelEdit} disabled={busy} className={BTN_SECONDARY}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {confirmDialog}
     </div>
   );

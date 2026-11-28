@@ -15,6 +15,7 @@ import AttendanceLocationsPanel from "./AttendanceLocationsPanel.jsx";
 import LabourPunchPanel from "./LabourPunchPanel.jsx";
 import LabourAdminLog from "./LabourAdminLog.jsx";
 import { labourPunchDepts } from "../../lib/ims/labourAttendance";
+import { isAttendanceManager, userDepartments } from "../../lib/ims/deptClassify";
 import {
   IconHourglass, IconPlay, IconStop, IconClipboard, IconPin,
   IconCamera, IconClipboardCheck, IconX, IconArrowRight, IconChevron, IconClock, IconCheck,
@@ -67,7 +68,14 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
   // sub-items) rather than a link row on this page. "labour" needs labour-punch access; the rest
   // are Admin-only — anything this user may not open falls back to the punch screen.
   const canLabourPunch = labourPunchDepts(authUser, myLabourAccess).length > 0;
-  const adminView = !view ? null : view === "labour" ? (canLabourPunch ? view : null) : (isAdmin ? view : null);
+  // Non-Admin dept heads / supervisors see Quiz Setup / Staff Log / Labour Log scoped to their
+  // own dept (owner ask 2026-11-28). Manage People + Manage Locations stay Admin-only here.
+  const canManageAtt = isAttendanceManager(authUser);
+  const adminOnlyView = (v) => v === "manage" || v === "location";
+  const adminView = !view ? null
+    : view === "labour" ? (canLabourPunch ? view : null)
+    : adminOnlyView(view) ? (isAdmin ? view : null)
+    : (canManageAtt ? view : null);
   const setAdminView = (v) => setView?.(v);
   // Mobile only — collapsed by default so the phone view opens on the stat cards + calendar, not
   // a long scrolling list of today's punches; desktop always shows it expanded regardless (see the
@@ -77,6 +85,11 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
   // The clock the page reads (greeting, "worked today", the open session's length) - a minute is its finest step.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
+  // Prewarm the browser's geolocation once when My Attendance opens, so a fast punch-out doesn't
+  // have to wait on a cold GPS wake-up inside the saving step (LabourPunchPanel already does this
+  // for its own flow, line 110 there). Fail-open: a denial/error is swallowed — the punch still
+  // runs, it just saves with lat/lng null, exactly as before.
+  useEffect(() => { getCurrentCoords().catch(() => {}); }, []);
 
   // ── Live camera (photo step) ──
   // `<input capture>` only launches a camera on mobile — desktop Chrome/Edge on Windows just
@@ -243,11 +256,13 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
     (async () => {
       try {
         // A fast punch-out (no video/quiz to sit through) can reach "saving" before the browser's
-        // geolocation call resolves — give it up to 3s of grace rather than saving with no
-        // position just because this particular punch happened to be quick. Still never blocks
-        // indefinitely: past 3s it saves with whatever's there, same fail-open rule as everywhere
-        // else in this flow.
-        for (let waited = 0; flowRef.current?.lat == null && waited < 3000; waited += 150) {
+        // geolocation call resolves — give it up to 10s of grace rather than saving with no
+        // position just because this particular punch happened to be quick. 3s used to be the
+        // cap here but cold-GPS wake-ups on phones routinely resolve in 5-8s; the lower cap made
+        // roughly every fast punch-out save with "Location unavailable" (owner ask 2026-11-28).
+        // Still never blocks indefinitely: past 10s it saves with whatever's there, same fail-open
+        // rule as everywhere else in this flow, matched to the browser's own 10s timeout upstream.
+        for (let waited = 0; flowRef.current?.lat == null && waited < 10000; waited += 150) {
           await new Promise((r) => setTimeout(r, 150));
         }
         const liveFlow = flowRef.current || flow;
@@ -397,9 +412,9 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
             </div>
           </section>
 
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-stretch">
             {/* ── TODAY'S PUNCHES ── a timeline, with the time spent between each in and out. */}
-            <section aria-label="Today's punches" className="order-2 lg:order-1 lg:col-span-3 rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
+            <section aria-label="Today's punches" className="order-2 lg:order-1 lg:col-span-3 h-full flex flex-col rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
               <button onClick={() => setTodayOpen((o) => !o)} aria-expanded={todayOpen}
                 className="w-full flex items-center justify-between gap-3 px-5 sm:px-6 py-4 text-left lg:cursor-default lg:pointer-events-none">
                 <span className="min-w-0">
@@ -411,13 +426,13 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                 </span>
                 <span className={"lg:hidden text-gray-400 transition-transform duration-200 " + (todayOpen ? "rotate-180" : "")} aria-hidden="true"><IconChevron size={16} /></span>
               </button>
-              <div className={(todayOpen ? "block" : "hidden") + " lg:block border-t border-gray-100 px-5 sm:px-6 py-5"}>
+              <div className={(todayOpen ? "flex" : "hidden") + " lg:flex flex-1 min-h-0 flex-col border-t border-gray-100 px-5 sm:px-6 py-5"}>
                 {!dayPunches.length ? (
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 shrink-0 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center"><IconClock size={16} /></div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-gray-700">No punches yet today</p>
-                      <p className="mt-0.5 text-xs text-gray-500">Punch in and your day starts here.</p>
+                  <div className="flex-1 min-h-[12rem] flex flex-col items-center justify-center text-center gap-4">
+                    <div className="w-16 h-16 shrink-0 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center"><IconClock size={28} /></div>
+                    <div>
+                      <p className="text-2xl font-semibold text-gray-800">No punches yet today</p>
+                      <p className="mt-1 text-base text-gray-500">Punch in and your day starts here.</p>
                     </div>
                   </div>
                 ) : (
@@ -454,23 +469,23 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
               </div>
             </section>
 
-            <div className="order-1 lg:order-2 lg:col-span-2">
+            <div className="order-1 lg:order-2 lg:col-span-2 h-full">
               <MyAttendanceCalendar authUser={authUser} />
             </div>
           </div>
         </>
       )}
 
-      {adminView && (isAdmin || (adminView === "labour" && canLabourPunch)) && (
-        <div className={adminView === "labour" ? (isAdmin ? "max-w-6xl" : "max-w-3xl") : adminView === "log" ? "max-w-3xl" : adminView === "quiz" || adminView === "labourlog" || adminView === "manage" ? "max-w-4xl" : "max-w-2xl"}>
+      {adminView && (
+        <div className={adminView === "labour" ? (isAdmin ? "max-w-6xl" : "max-w-3xl") : adminView === "manage" || adminView === "quiz" || adminView === "labourlog" || adminView === "location" ? "max-w-6xl" : adminView === "log" ? "max-w-3xl" : "max-w-2xl"}>
           <button onClick={() => setAdminView(null)}
             className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-600 bg-white ring-1 ring-gray-200 shadow-sm rounded-xl pl-2 pr-3 py-1.5 mb-3 hover:bg-gray-50 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">
             <span className="rotate-90" aria-hidden="true"><IconChevron size={15} /></span> Back to Attendance
           </button>
           {adminView === "manage" && <AttendanceManagePanel authUser={authUser} users={users} setUsers={setUsers} settings={settings} />}
-          {adminView === "quiz" && <QuizSetupPanel settings={settings} />}
-          {adminView === "log" && <AttendanceAdminLog users={users} />}
-          {adminView === "labourlog" && <LabourAdminLog />}
+          {adminView === "quiz" && <QuizSetupPanel settings={settings} authUser={authUser} />}
+          {adminView === "log" && <AttendanceAdminLog users={users} authUser={authUser} />}
+          {adminView === "labourlog" && <LabourAdminLog authUser={authUser} />}
           {adminView === "location" && <AttendanceLocationsPanel settings={settings} />}
           {adminView === "labour" && (
             <LabourPunchPanel authUser={authUser} users={users} settings={settings} myAccess={myLabourAccess} onAccessChanged={reloadLabourAccess} />
@@ -811,8 +826,26 @@ function MyAttendanceCalendar({ authUser }) {
   const cells = [...Array(firstWeekday).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
   const navBtn = "w-8 h-8 rounded-lg flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors";
 
+  // "This week" (Mon–Sun in local TZ) summary — a strip of the seven days with their worked
+  // hours, plus days-worked and total-hours totals. Payroll runs weekly so this is the number the
+  // user actually checks on Monday morning. Only shown when the viewed month contains today's week.
+  const weekInfo = (() => {
+    const t = new Date(now);
+    const dow = t.getDay(); // 0=Sun..6=Sat
+    const mondayOffset = (dow + 6) % 7;
+    const mon = new Date(t); mon.setHours(0, 0, 0, 0); mon.setDate(mon.getDate() - mondayOffset);
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(mon); d.setDate(mon.getDate() + i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const dayRows = byDate[key];
+      return { key, dow: d.getDay(), hours: dayRows ? dayHours(dayRows) : 0, present: !!dayRows };
+    });
+    const monthHit = days.some((d) => d.key.startsWith(`${year}-${String(month).padStart(2, "0")}`));
+    return { days, monthHit, totalHours: days.reduce((s, d) => s + d.hours, 0), presentDays: days.filter((d) => d.present).length };
+  })();
+
   return (
-    <section aria-label="This month" className="rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
+    <section aria-label="This month" className="h-full rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
       <div className="flex items-center justify-between gap-2 px-5 pt-4 pb-1">
         <div className="min-w-0">
           <h3 className="text-[15px] font-semibold text-gray-900" aria-live="polite">{monthLabel}</h3>
@@ -837,6 +870,26 @@ function MyAttendanceCalendar({ authUser }) {
           </div>
         ))}
       </dl>
+
+      {weekInfo.monthHit && (
+        <div className="mx-5 mt-3 rounded-xl bg-blue-50/60 ring-1 ring-blue-100 px-3 py-2.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-xs font-semibold text-gray-800">This week</span>
+            <span className="text-[11px] text-gray-600 tabular-nums">{weekInfo.presentDays} days · <span className="font-semibold text-gray-900">{weekInfo.totalHours.toFixed(1)}h</span></span>
+          </div>
+          <div className="mt-2 grid grid-cols-7 gap-1" aria-hidden="true">
+            {weekInfo.days.map((d) => (
+              <div key={d.key} className={"h-7 rounded-md flex items-center justify-center text-[10px] tabular-nums "
+                + (d.present ? "bg-blue-600 text-white font-semibold" : "bg-white/70 ring-1 ring-gray-200 text-gray-400")}>
+                {d.present ? `${d.hours.toFixed(1)}` : "—"}
+              </div>
+            ))}
+          </div>
+          <div className="mt-1 grid grid-cols-7 gap-1 text-center text-[9px] font-medium text-gray-500">
+            {["M", "T", "W", "T", "F", "S", "S"].map((l, i) => <div key={i}>{l}</div>)}
+          </div>
+        </div>
+      )}
 
       <div className="px-5 pb-5 pt-4">
         {error ? (

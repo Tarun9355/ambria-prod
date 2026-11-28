@@ -18,6 +18,7 @@ import { createSettingsWriter } from "../../lib/ims/settingsWriter";
 import { SETTINGS_DEFAULTS, INIT_TRUSS_INV, DEFAULT_ROLE_TABS, CALENDAR_TAB_USER_ID, assembleHeavyElementRangesFromRows, assembleTrussLabourRangesFromRows, assembleFabricBangaliRangesFromRows } from "../../lib/ims/constants";
 import SiteSupervisorTab from "./SiteSupervisorTab.jsx";
 import { assembleAttendanceLocationsFromRows, assembleAttendanceTrainingByDeptFromRows } from "../../lib/ims/attendance";
+import { isAttendanceManager } from "../../lib/ims/deptClassify";
 import { filterLiveBlocks } from "../../lib/ims/liveBlocks";
 import { applyBlockOps, mergeBlockRows } from "../../lib/ims/blocksRpc";
 import { assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher";
@@ -2963,12 +2964,17 @@ export default function IMS() {
   // Attendance's sub-items in the rail — only the ones this user can open. Same gates AttendanceTab
   // applies when it renders them: Labour Punch needs labour access (Admin always has it), the
   // rest are Admin-only.
+  // Dept Heads / Site Supervisors (isAttendanceManager) now see Quiz Setup / Staff Log / Labour Log
+  // scoped to their own department(s) — same screens, filtered. Admin keeps unrestricted access.
+  // Manage People + Manage Locations stay Admin-only (those write user rows / geofences used by
+  // every dept, not a per-dept reconciliation screen).
+  const canManageAtt = isAttendanceManager(user);
   const attSubs = [
     labourPunchDepts(user, myLabourAccess).length > 0 && { id: "labour", label: "Labour Punch" },
     isAdmin && { id: "manage", label: "Manage People" },
-    isAdmin && { id: "quiz", label: "Quiz Setup" },
-    isAdmin && { id: "log", label: "Staff Log" },
-    isAdmin && { id: "labourlog", label: "Labour Log" },
+    canManageAtt && { id: "quiz", label: "Quiz Setup" },
+    canManageAtt && { id: "log", label: "Staff Log" },
+    canManageAtt && { id: "labourlog", label: "Labour Log" },
     isAdmin && { id: "location", label: "Manage Locations" },
   ].filter(Boolean);
   allowedTabs = allowedTabs.map((t) => (t.id === "attendance" && attSubs.length ? { ...t, children: attSubs } : t));

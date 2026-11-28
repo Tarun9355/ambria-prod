@@ -167,7 +167,11 @@ export function SelectPopover({ value, options, onChange, align = "right", size 
 // Monthly), a toolbar (date or month stepper, name search, department), then
 // the day's totals strip and the punches grouped by department.
 // ═══════════════════════════════════════════════════════════════════════════
-export default function AttendanceAdminLog({ users }) {
+export default function AttendanceAdminLog({ users, authUser }) {
+  // Non-Admin manager (dept head / supervisor) is scoped to their own departments: only those
+  // users' rows, only those depts in the filter. Admin keeps the full "all departments" view.
+  const isAdminUser = authUser?.role === "Admin" || authUser?.id === "u_admin";
+  const myDepts = isAdminUser ? null : userDepartments(authUser);
   const today = todayStr();
   const [date, setDate] = useState(today);
   const [rows, setRows] = useState([]);
@@ -231,7 +235,9 @@ export default function AttendanceAdminLog({ users }) {
 
   const term = search.trim().toLowerCase();
   const isFiltered = !!term || dept !== "all";
-  const searched = term ? rows.filter((r) => (r.user_name || "").toLowerCase().includes(term)) : rows;
+  // Dept-manager scope first, so search / dept chip only ever narrow from an already-filtered set.
+  const scoped = !myDepts ? rows : rows.filter((r) => (deptByUserId[r.user_id] || []).some((d) => myDepts.includes(d)));
+  const searched = term ? scoped.filter((r) => (r.user_name || "").toLowerCase().includes(term)) : scoped;
   const filtered = dept === "all" ? searched
     : dept === "Admin" ? searched.filter((r) => isAdminByUserId[r.user_id])
     : searched.filter((r) => (deptByUserId[r.user_id] || []).includes(dept));
@@ -369,14 +375,18 @@ export default function AttendanceAdminLog({ users }) {
               className="w-full h-10 rounded-xl border border-gray-200 bg-white pl-9 pr-3 text-sm placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500" />
           </div>
           <SelectPopover value={dept} onChange={setDept}
-            options={[{ value: "all", label: "All departments" }, ...DEPTS.map((d) => ({ value: d, label: d })), { value: "Admin", label: "Admin" }]} />
+            options={[
+              { value: "all", label: myDepts ? (myDepts.length === 1 ? myDepts[0] : "My departments") : "All departments" },
+              ...(myDepts ? DEPTS.filter((d) => myDepts.includes(d)) : DEPTS).map((d) => ({ value: d, label: d })),
+              ...(myDepts ? [] : [{ value: "Admin", label: "Admin" }]),
+            ]} />
         </div>
       </div>
 
       {/* ── BODY ── */}
       <div className="border-t border-gray-100">
         {view === "month" ? (
-          <AttendanceMonthLog users={users} ym={ym} search={search} dept={dept} deptByUserId={deptByUserId} isAdminByUserId={isAdminByUserId} />
+          <AttendanceMonthLog users={users} ym={ym} search={search} dept={dept} deptByUserId={deptByUserId} isAdminByUserId={isAdminByUserId} scopeDepts={myDepts} />
         ) : loading ? (
           <div aria-busy="true" aria-label="Loading punches">
             <div className="px-5 pt-4">

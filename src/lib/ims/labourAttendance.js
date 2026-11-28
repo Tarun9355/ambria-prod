@@ -76,7 +76,24 @@ export async function fetchAllActiveLabours() {
   if (error) throw error;
   return data || [];
 }
+// Same last-second guard against double-punching that attendance.insertPunch uses — a guard at a
+// busy gate tapping Punch In twice on the same labour inside a second used to insert two `in` rows
+// back-to-back (see attendance.js header for why). Advisory only; proper RLS + a server unique
+// index per (labour_id, date, type, bucket) would close this fully.
 export async function insertLabourPunch(row) {
+  if (row?.labour_id && row?.date && row?.type) {
+    const { data: last } = await supabase
+      .from("labour_attendance")
+      .select("type, at")
+      .eq("labour_id", row.labour_id)
+      .eq("date", row.date)
+      .order("at", { ascending: false })
+      .limit(1);
+    const prior = last?.[0];
+    if (prior && prior.type === row.type && (Date.now() - new Date(prior.at).getTime()) < 30000) {
+      throw new Error("Already punched " + (row.type === "in" ? "in" : "out") + " a moment ago — the previous punch is already saved.");
+    }
+  }
   const { data, error } = await supabase.from("labour_attendance").insert(row).select().single();
   if (error) throw error;
   return data;
