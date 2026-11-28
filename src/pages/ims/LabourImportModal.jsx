@@ -77,13 +77,11 @@ export default function LabourImportModal({ open, onClose, authUser, onDone }) {
       {!plan && !results && (
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
-            A CSV with the headings <span className="font-medium text-gray-900">Category, Sub_Category, Name, Mobile</span>. Each person goes on
-            the labour list of their sub-category's department (a "tenting , structure" person on both). Nobody logs in: whoever has punch
-            access for the department punches them.
+            CSV with columns <span className="font-medium text-gray-900">Category, Sub_Category, Name, Mobile</span>.
           </p>
           <label className={"flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors " + (reading ? "border-gray-200 bg-gray-50 cursor-progress" : "border-blue-200 bg-blue-50/40 cursor-pointer hover:border-blue-400")}>
             <span className="text-sm font-semibold text-blue-700">{reading ? "Reading the sheet…" : "Choose the CSV file"}</span>
-            <span className="text-xs text-gray-500">Nothing is added until you review it and press Add</span>
+            <span className="text-xs text-gray-500">Review before adding</span>
             <input type="file" accept=".csv,text/csv" className="sr-only" disabled={reading} onChange={(e) => readFile(e.target.files?.[0])} />
           </label>
           {readError && <p role="alert" className="text-sm text-red-600">{readError}</p>}

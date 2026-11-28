@@ -68,14 +68,22 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
   // sub-items) rather than a link row on this page. "labour" needs labour-punch access; the rest
   // are Admin-only — anything this user may not open falls back to the punch screen.
   const canLabourPunch = labourPunchDepts(authUser, myLabourAccess).length > 0;
-  // Non-Admin dept heads / supervisors see Quiz Setup / Staff Log / Labour Log scoped to their
-  // own dept (owner ask 2026-11-28). Manage People + Manage Locations stay Admin-only here.
+  // Non-Admin dept heads / supervisors see Quiz Setup / Attendance Log scoped to their own dept
+  // (owner ask 2026-11-28). Manage People + Manage Locations stay Admin-only here. "labourlog" is
+  // a legacy id from when Staff Log and Labour Log were two sidebar items — normalise it onto "log"
+  // (the merged shell) and preselect its Labour tab via sessionStorage so an old deep link lands on
+  // the right pane instead of a blank page.
   const canManageAtt = isAttendanceManager(authUser);
   const adminOnlyView = (v) => v === "manage" || v === "location";
-  const adminView = !view ? null
-    : view === "labour" ? (canLabourPunch ? view : null)
-    : adminOnlyView(view) ? (isAdmin ? view : null)
-    : (canManageAtt ? view : null);
+  let normalisedView = view;
+  if (view === "labourlog") {
+    try { sessionStorage.setItem("attendanceLogKind", "labour"); } catch { /* ignore */ }
+    normalisedView = "log";
+  }
+  const adminView = !normalisedView ? null
+    : normalisedView === "labour" ? (canLabourPunch ? normalisedView : null)
+    : adminOnlyView(normalisedView) ? (isAdmin ? normalisedView : null)
+    : (canManageAtt ? normalisedView : null);
   const setAdminView = (v) => setView?.(v);
   // Mobile only — collapsed by default so the phone view opens on the stat cards + calendar, not
   // a long scrolling list of today's punches; desktop always shows it expanded regardless (see the
@@ -321,7 +329,12 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
     : `You'll ${inSteps.length > 1 ? inSteps.slice(0, -1).join(", ") + " and " + inSteps[inSteps.length - 1] : inSteps[0]}.`;
 
   return (
-    <div className="max-w-6xl mx-auto space-y-5">
+    // On an admin sub-view the outer wrapper drops its mx-auto so the view can hug the left of
+    // the viewport instead of centring inside a 6xl shell — Labour Punch (Admin) wants two
+    // columns at max-w-7xl and the centred cap used to clip the roster on the left half of a
+    // wide screen (owner ask 2026-11-28: "left mai shift kro thoda"). The My Attendance screen
+    // keeps its centred shell.
+    <div className={"space-y-5 " + (adminView ? "" : "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8")}>
       {/* The sub-views (Labour Punch, Quiz Setup, Staff Log, Labour Log, Manage Locations) are picked
           from the sidebar — Attendance's sub-items (IMS.jsx). Each is a full takeover of this page;
           the Back button returns to the punch screen. */}
@@ -477,15 +490,18 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
       )}
 
       {adminView && (
-        <div className={adminView === "labour" ? (isAdmin ? "max-w-6xl" : "max-w-3xl") : adminView === "manage" || adminView === "quiz" || adminView === "labourlog" || adminView === "location" ? "max-w-6xl" : adminView === "log" ? "max-w-3xl" : "max-w-2xl"}>
+        <div className={adminView === "labour" ? (isAdmin ? "max-w-7xl" : "max-w-3xl") : adminView === "manage" || adminView === "quiz" || adminView === "location" ? "max-w-6xl" : adminView === "log" ? "max-w-6xl" : "max-w-2xl"}>
           <button onClick={() => setAdminView(null)}
-            className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-600 bg-white ring-1 ring-gray-200 shadow-sm rounded-xl pl-2 pr-3 py-1.5 mb-3 hover:bg-gray-50 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">
-            <span className="rotate-90" aria-hidden="true"><IconChevron size={15} /></span> Back to Attendance
+            className="group inline-flex items-center gap-1.5 text-sm font-semibold text-gray-700 bg-white ring-1 ring-gray-200 shadow-sm rounded-xl pl-2 pr-3 py-1.5 mb-3
+              transition-[background-color,color,box-shadow,transform] duration-200 ease-out
+              hover:bg-gray-900 hover:text-white hover:ring-gray-900 hover:shadow-[0_8px_18px_-6px_rgba(17,24,39,0.35)]
+              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 active:translate-y-[1px]">
+            <span aria-hidden="true" className="rotate-90 transition-transform duration-200 ease-out group-hover:-translate-x-0.5"><IconChevron size={15} /></span>
+            <span>Back to Attendance</span>
           </button>
           {adminView === "manage" && <AttendanceManagePanel authUser={authUser} users={users} setUsers={setUsers} settings={settings} />}
           {adminView === "quiz" && <QuizSetupPanel settings={settings} authUser={authUser} />}
-          {adminView === "log" && <AttendanceAdminLog users={users} authUser={authUser} />}
-          {adminView === "labourlog" && <LabourAdminLog authUser={authUser} />}
+          {adminView === "log" && <AttendanceLogView users={users} authUser={authUser} />}
           {adminView === "location" && <AttendanceLocationsPanel settings={settings} />}
           {adminView === "labour" && (
             <LabourPunchPanel authUser={authUser} users={users} settings={settings} myAccess={myLabourAccess} onAccessChanged={reloadLabourAccess} />
@@ -721,6 +737,33 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
         </div>,
         document.body
       )}
+    </div>
+  );
+}
+
+// ─── Attendance Log — one shell for Staff and Labour ──────────────────────────
+// Sidebar had two items ("Staff Log" / "Labour Log"); one is enough with a Staff/Labour pill in
+// the header and the chosen panel under it (owner ask 2026-11-28). The choice lives in local state
+// — sessionStorage keeps the pick across a back-to-attendance round trip within the same tab.
+function AttendanceLogView({ users, authUser }) {
+  const [kind, setKind] = useState(() => {
+    try { return sessionStorage.getItem("attendanceLogKind") || "staff"; } catch { return "staff"; }
+  });
+  useEffect(() => { try { sessionStorage.setItem("attendanceLogKind", kind); } catch { /* private-mode / disabled storage */ } }, [kind]);
+  // Matches the Daily / Monthly segmented control inside each log: one bg-gray-100 track with the
+  // picked tab lifted on bg-white + shadow. Keeps the two "which view" switches on this screen
+  // visually consistent, instead of one pill-outline and one lifted-tile reading as two systems.
+  const pill = (on) => "h-9 px-4 rounded-lg text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 "
+    + (on ? "bg-white text-gray-900 shadow-sm ring-1 ring-gray-200/70" : "text-gray-600 hover:text-gray-900");
+  return (
+    <div className="space-y-4">
+      <div className="inline-flex rounded-xl bg-gray-100 p-1" role="tablist" aria-label="Attendance log kind">
+        <button role="tab" aria-selected={kind === "staff"} onClick={() => setKind("staff")} className={pill(kind === "staff")}>Staff</button>
+        <button role="tab" aria-selected={kind === "labour"} onClick={() => setKind("labour")} className={pill(kind === "labour")}>Labour</button>
+      </div>
+      {kind === "staff"
+        ? <AttendanceAdminLog users={users} authUser={authUser} />
+        : <LabourAdminLog authUser={authUser} />}
     </div>
   );
 }

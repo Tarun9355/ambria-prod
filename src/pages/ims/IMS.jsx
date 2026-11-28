@@ -1917,13 +1917,20 @@ export default function IMS() {
   }, []);
 
   // Manual "🔄 Sync LMS": Edge Function paginates LMS server-side → DB, then re-read cache.
+  // The LMS server itself is the slow link — a 504 just means it took longer than the Edge
+  // Function's 60s budget. Translate to human terms (the DB pull continues server-side; refresh
+  // in a minute). Any other failure (offline, auth) shows the real underlying reason.
   const syncLms = useCallback(async () => {
     setLmsSyncing(true);
     try {
       await triggerLmsSync();
       await loadLmsFromCache();
     } catch (e) {
-      setError(`LMS sync failed: ${e.message}`);
+      const msg = String(e?.message || e || "");
+      const human = /504|timeout|timed out/i.test(msg) ? "LMS server took too long. Try again in a minute — the sync keeps running in the background."
+        : /network|fetch|offline/i.test(msg) ? "Couldn't reach the LMS server. Check your internet and try again."
+        : msg || "Couldn't sync — try again.";
+      setError(`LMS sync: ${human}`);
     } finally {
       setLmsSyncing(false);
     }
@@ -2973,8 +2980,7 @@ export default function IMS() {
     labourPunchDepts(user, myLabourAccess).length > 0 && { id: "labour", label: "Labour Punch" },
     isAdmin && { id: "manage", label: "Manage People" },
     canManageAtt && { id: "quiz", label: "Quiz Setup" },
-    canManageAtt && { id: "log", label: "Staff Log" },
-    canManageAtt && { id: "labourlog", label: "Labour Log" },
+    canManageAtt && { id: "log", label: "Attendance Log" },
     isAdmin && { id: "location", label: "Manage Locations" },
   ].filter(Boolean);
   allowedTabs = allowedTabs.map((t) => (t.id === "attendance" && attSubs.length ? { ...t, children: attSubs } : t));

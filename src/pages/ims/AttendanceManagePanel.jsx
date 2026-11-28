@@ -99,7 +99,12 @@ export default function AttendanceManagePanel({ authUser, users, setUsers, setti
 
   const startEdit = (p) => {
     setError(""); setAdding(null); setEditKey(p.key);
-    setDraft(p.kind === "labour" ? { name: p.name, phone: p.phone, dept: p.depts[0] || "" } : { name: p.name, phone: p.phone, depts: [...p.depts], role: p.role, active: p.active });
+    // Labour edit is now multi-dept too (a tenting + structure labour is ONE person spread across
+    // several labour rows — buildPeople merges them into one display row with labourIds[]). Keep
+    // staff's existing multi-dept shape; the two drafts differ only in role / active.
+    setDraft(p.kind === "labour"
+      ? { name: p.name, phone: p.phone, depts: [...p.depts] }
+      : { name: p.name, phone: p.phone, depts: [...p.depts], role: p.role, active: p.active });
   };
   const cancelEdit = () => { setEditKey(null); setDraft(null); setError(""); };
 
@@ -110,9 +115,24 @@ export default function AttendanceManagePanel({ authUser, users, setUsers, setti
     setBusy(true); setError("");
     try {
       if (p.kind === "labour") {
-        if (!draft.dept) { setError("Pick a department"); setBusy(false); return; }
-        const row = await updateLabour(p.id, { name, phone: draft.phone || null, department: draft.dept });
-        setLabours((prev) => prev.map((l) => (l.id === row.id ? row : l)));
+        if (!draft.depts?.length) { setError("Pick at least one department"); setBusy(false); return; }
+        // Reconcile the labour's underlying rows (one per dept) against the picked dept set: update
+        // kept rows (name/phone changes carry across), deactivate dropped ones, insert fresh rows
+        // for any added depts. The DB sees several writes; the user just sees "Saved".
+        const existing = (labours || []).filter((l) => (p.labourIds || [p.id]).includes(l.id));
+        const byDept = {}; existing.forEach((l) => { byDept[l.department] = l; });
+        const addDepts = draft.depts.filter((d) => !byDept[d]);
+        const dropRows = existing.filter((l) => !draft.depts.includes(l.department));
+        const keepRows = existing.filter((l) => draft.depts.includes(l.department));
+        const updated = await Promise.all(keepRows.map((l) => updateLabour(l.id, { name, phone: draft.phone || null, department: l.department })));
+        const added = await Promise.all(addDepts.map((d) => insertLabour({ id: newLabourId(), name, phone: draft.phone || null, department: d, active: true, created_by: authUser.id })));
+        await Promise.all(dropRows.map((l) => deactivateLabour(l.id)));
+        const droppedIds = new Set(dropRows.map((l) => l.id));
+        const updatedById = Object.fromEntries(updated.map((r) => [r.id, r]));
+        setLabours((prev) => {
+          const kept = prev.filter((l) => !droppedIds.has(l.id)).map((l) => updatedById[l.id] || l);
+          return [...kept, ...added];
+        });
       } else {
         setUsers((prev) => prev.map((u) => (u.id === p.id ? { ...u, name, phone: draft.phone || "", departments: draft.depts.length ? draft.depts : null, ...(p.isAdmin ? {} : { role: draft.role, active: draft.active }) } : u)));
       }
@@ -123,12 +143,19 @@ export default function AttendanceManagePanel({ authUser, users, setUsers, setti
 
   const remove = async (p) => {
     const ok = await confirm(p.kind === "labour"
-      ? { title: `Remove ${p.name}?`, body: `${p.name} comes off the ${p.depts[0] || ""} labour list. Their past punches stay in Labour Log.`, confirmLabel: "Remove" }
+      ? { title: `Remove ${p.name}?`, body: `${p.name} comes off the ${p.depts.join(", ") || ""} labour list${p.depts.length > 1 ? "s" : ""}. Their past punches stay in Labour Log.`, confirmLabel: "Remove" }
       : { title: `Delete ${p.name}'s login?`, body: "They can no longer log in or punch. Their past attendance stays in Staff Log. This can't be undone.", confirmLabel: "Delete login" });
     if (!ok) return;
     setBusy(true); setError("");
     try {
-      if (p.kind === "labour") { await deactivateLabour(p.id); setLabours((prev) => prev.filter((l) => l.id !== p.id)); }
+      if (p.kind === "labour") {
+        // A merged labour (same person on 2+ dept lists) comes off ALL their lists — one Remove
+        // click shouldn't leave a ghost row on a dept the user forgot about.
+        const ids = p.labourIds?.length ? p.labourIds : [p.id];
+        await Promise.all(ids.map((id) => deactivateLabour(id)));
+        const idSet = new Set(ids);
+        setLabours((prev) => prev.filter((l) => !idSet.has(l.id)));
+      }
       else await callUserAdmin("deleteUser", { userId: p.id });
       if (editKey === p.key) cancelEdit();
     } catch (e) { setError(e?.message || "Couldn't remove"); }
@@ -336,9 +363,7 @@ export default function AttendanceManagePanel({ authUser, users, setUsers, setti
                   <input autoFocus value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} aria-label="Name" className={INPUT} />
                   <input value={draft.phone} inputMode="numeric" onChange={(e) => setDraft({ ...draft, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} placeholder="Phone (10 digits)" aria-label="Phone" className={INPUT} />
                 </div>
-                {p.kind === "labour"
-                  ? <DeptPicker value={draft.dept} onChange={(d) => setDraft({ ...draft, dept: d })} />
-                  : <DeptPicker multi value={draft.depts} onChange={(d) => setDraft({ ...draft, depts: d })} />}
+                <DeptPicker multi value={draft.depts || []} onChange={(d) => setDraft({ ...draft, depts: d })} />
                 {p.kind === "staff" && !p.isAdmin && (
                   <div className="flex flex-wrap items-center gap-1.5">
                     {roles.map((r) => <button key={r} type="button" aria-pressed={draft.role === r} onClick={() => setDraft({ ...draft, role: r })} className={CHIP(draft.role === r)}>{r}</button>)}

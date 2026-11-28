@@ -2,6 +2,7 @@
 // punches) in one list ═══ Owner ask 2026-11-28: "saare staffs labour sabki details ... add, delete, edit - kuch smart sa".
 // Pure: the screen (AttendanceManagePanel.jsx) does the reads and writes.
 import { userDepartments } from "./deptClassify";
+import { displayName } from "./labourAttendance";
 
 const digits = (p) => String(p || "").replace(/\D/g, "").slice(-10);
 const isAdminUser = (u) => (u?.role || "").toLowerCase() === "admin" || u?.id === "u_admin";
@@ -11,16 +12,35 @@ const isAdminUser = (u) => (u?.role || "").toLowerCase() === "admin" || u?.id ==
 // inventory editors and the rest stay in IMS → Admin → Users & Roles.
 export const isFieldRole = (role) => /head|supervisor|labou?r/i.test(String(role || ""));
 
-/** One row per person: { key, kind: "staff" | "labour", id, name, phone, depts, role, username, active, isAdmin }. */
+/** One row per person: { key, kind: "staff" | "labour", id, name, phone, depts, role, username, active, isAdmin }.
+ *  Labour rows are stored one per (person, dept) since a tenting + structure person is on both
+ *  dept lists — but Manage People should still read as one row per PERSON. Dedupe here on
+ *  (name + phone), merge depts and track every underlying labour id in `labourIds` so edit /
+ *  remove can touch all of them in one go. */
 export function buildPeople(users, labours) {
   const staff = (users || []).filter((u) => u && isFieldRole(u.role) && !isAdminUser(u)).map((u) => ({
     key: "u:" + u.id, kind: "staff", id: u.id, name: u.name || u.username || "—", phone: digits(u.phone), depts: userDepartments(u) || [],
     role: u.role || "", username: u.username || "", active: u.active !== false, isAdmin: isAdminUser(u),
   }));
-  const lab = (labours || []).filter((l) => l && l.active !== false).map((l) => ({
-    key: "l:" + l.id, kind: "labour", id: l.id, name: l.name || "—", phone: digits(l.phone), depts: l.department ? [l.department] : [],
-    role: "", username: "", active: true, isAdmin: false,
-  }));
+
+  const labByKey = new Map();
+  (labours || []).filter((l) => l && l.active !== false).forEach((l) => {
+    const name = displayName(l.name || "—") || "—";
+    const phone = digits(l.phone);
+    const k = name.toLowerCase() + "|" + phone;
+    const existing = labByKey.get(k);
+    if (existing) {
+      if (l.department && !existing.depts.includes(l.department)) existing.depts.push(l.department);
+      existing.labourIds.push(l.id);
+      return;
+    }
+    labByKey.set(k, {
+      key: "l:" + l.id, kind: "labour", id: l.id, labourIds: [l.id],
+      name, phone, depts: l.department ? [l.department] : [],
+      role: "", username: "", active: true, isAdmin: false,
+    });
+  });
+  const lab = [...labByKey.values()];
   return [...staff, ...lab].sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base" }));
 }
 

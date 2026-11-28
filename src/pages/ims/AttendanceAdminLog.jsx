@@ -11,6 +11,23 @@ import AttendanceMonthLog from "./AttendanceMonthLog.jsx";
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }); } catch { return "—"; } };
 const pad2 = (n) => String(n).padStart(2, "0");
 
+// One ring + fill pair per department — a small coloured dot in the section header does the work
+// an emoji used to, without smuggling in another type system. Kept subtle (100-level fills, 700-
+// level text) so section headers sit as rhythm, not as competing content.
+const DEPT_SWATCH = {
+  Furniture:  { dot: "bg-blue-400",     chip: "bg-blue-50 text-blue-700" },
+  Floral:     { dot: "bg-rose-400",     chip: "bg-rose-50 text-rose-700" },
+  Structure:  { dot: "bg-stone-500",    chip: "bg-stone-100 text-stone-700" },
+  Tenting:    { dot: "bg-emerald-500",  chip: "bg-emerald-50 text-emerald-700" },
+  Transport:  { dot: "bg-violet-500",   chip: "bg-violet-50 text-violet-700" },
+  Lighting:   { dot: "bg-amber-500",    chip: "bg-amber-50 text-amber-800" },
+  Fabric:     { dot: "bg-indigo-500",   chip: "bg-indigo-50 text-indigo-700" },
+  ADD:        { dot: "bg-teal-500",     chip: "bg-teal-50 text-teal-700" },
+  Admin:      { dot: "bg-gray-900",     chip: "bg-gray-900 text-white" },
+  Unassigned: { dot: "bg-gray-300",     chip: "bg-gray-100 text-gray-600" },
+};
+const deptSwatch = (d) => DEPT_SWATCH[d] || DEPT_SWATCH.Unassigned;
+
 // Shared look for the small square prev / next buttons in this log's date and month steppers —
 // 40px on phones (a comfortable tap), 32px from sm up where a mouse is the norm.
 const NAV_BTN = "w-10 h-10 sm:w-8 sm:h-8 shrink-0 flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-900 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-500";
@@ -262,58 +279,74 @@ export default function AttendanceAdminLog({ users, authUser }) {
     return Object.entries(byDept).filter(([, list]) => list.length);
   })();
 
-  // The day at a glance, over whatever the search / department filter currently shows.
+  // The day at a glance, over whatever the search / department filter currently shows. Each tile
+  // carries a semantic dot (gray = roster, green = in, amber = out) so the trio scans at the pace
+  // of colour, not numeral comparison.
   const dayStats = [
-    ["Staff", new Set(filtered.map((r) => r.user_id)).size],
-    ["Punch-ins", filtered.filter((r) => r.type === "in").length],
-    ["Punch-outs", filtered.filter((r) => r.type !== "in").length],
+    { label: "Staff",       value: new Set(filtered.map((r) => r.user_id)).size, dot: "bg-gray-400",    hint: "unique people" },
+    { label: "Punch-ins",   value: filtered.filter((r) => r.type === "in").length, dot: "bg-emerald-500", hint: "in today" },
+    { label: "Punch-outs",  value: filtered.filter((r) => r.type !== "in").length, dot: "bg-amber-500",   hint: "out today" },
   ];
 
   const dateLabel = new Date(date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   const monthLabel = new Date(ym.y, ym.m - 1, 1).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 
-  const renderRow = (p) => (
-    <li key={p.id} className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors">
-      {p.photo ? (
-        <button type="button" onClick={() => setViewing(p)} aria-label={`View punch photo: ${p.user_name || "unnamed"}`} title="View photo"
-          className="w-11 h-11 shrink-0 rounded-xl overflow-hidden bg-gray-100 ring-1 ring-gray-200 hover:ring-2 hover:ring-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-shadow">
-          <img src={p.photo} alt="" className="w-full h-full object-cover" />
-        </button>
-      ) : (
-        <div title="No photo" className="w-11 h-11 shrink-0 rounded-xl bg-gray-100 text-gray-400 flex items-center justify-center">
-          <IconCamera size={16} /><span className="sr-only">No photo</span>
-        </div>
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm font-semibold text-gray-900 truncate">{p.user_name || "—"}</span>
-          {p.type === "in" ? (
-            <span className="inline-flex items-center gap-1.5 shrink-0 rounded-full ring-1 px-2 py-0.5 text-xs font-medium bg-green-50 ring-green-200 text-green-800">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500" aria-hidden="true" />In
-            </span>
-          ) : p.auto_closed ? (
-            <span className="inline-flex items-center gap-1.5 shrink-0 rounded-full ring-1 px-2 py-0.5 text-xs font-medium bg-amber-50 ring-amber-200 text-amber-800">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" aria-hidden="true" />Auto out
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 shrink-0 rounded-full ring-1 px-2 py-0.5 text-xs font-medium bg-gray-50 ring-gray-200 text-gray-700">
-              <span className="w-1.5 h-1.5 rounded-full bg-gray-400" aria-hidden="true" />Out
-            </span>
-          )}
-          {p.type === "in" && p.quiz_passed === false && (
-            <span className="hidden sm:inline-flex shrink-0 items-center rounded-full ring-1 px-2 py-0.5 text-xs font-medium bg-red-50 ring-red-200 text-red-700">Quiz failed</span>
-          )}
-        </div>
-        <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500 min-w-0">
-          <IconPin size={11} /><span className="truncate">{punchLocationLabel(p)}</span>
-        </div>
-        {p.type === "in" && p.quiz_passed === false && (
-          <span className="sm:hidden mt-1 inline-flex items-center rounded-full ring-1 px-2 py-0.5 text-xs font-medium bg-red-50 ring-red-200 text-red-700">Quiz failed</span>
+  // Row microinteraction: the whole row runs in a `group`, so the avatar's ring strengthens and the
+  // time scrubs forward a touch on hover. Keeps the hover signal precise — not a full card lift,
+  // not a swap, just enough to signal "this row is pickable" where a photo exists.
+  const renderRow = (p) => {
+    const statusTone = p.type === "in"
+      ? "bg-emerald-50 ring-emerald-200 text-emerald-800"
+      : p.auto_closed
+        ? "bg-amber-50 ring-amber-200 text-amber-800"
+        : "bg-gray-50 ring-gray-200 text-gray-700";
+    const statusDot = p.type === "in" ? "bg-emerald-500" : p.auto_closed ? "bg-amber-500" : "bg-gray-400";
+    const statusLabel = p.type === "in" ? "In" : p.auto_closed ? "Auto out" : "Out";
+    return (
+      <li key={p.id} className="group relative flex items-center gap-3 px-5 py-3 hover:bg-gray-50/70 transition-colors">
+        {/* A thin left-edge accent appears on hover — subtle, 2px, in the status hue. Status in the
+            row is already told by the pill; the accent just gives the eye a seam to follow when
+            scanning a long list. 0 at rest so it never adds visual weight to the untouched state. */}
+        <span aria-hidden="true" className={"absolute left-0 top-2 bottom-2 w-0.5 rounded-r transition-opacity duration-150 opacity-0 group-hover:opacity-100 "
+          + (p.type === "in" ? "bg-emerald-500" : p.auto_closed ? "bg-amber-500" : "bg-gray-400")} />
+        {p.photo ? (
+          <button type="button" onClick={() => setViewing(p)} aria-label={`View punch photo: ${p.user_name || "unnamed"}`} title="View photo"
+            className="relative w-11 h-11 shrink-0 rounded-xl overflow-hidden bg-gray-100 ring-1 ring-gray-200 group-hover:ring-2 group-hover:ring-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-shadow">
+            <img src={p.photo} alt="" className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105" />
+            {/* Tiny status dot sits on the avatar's bottom-right corner — doubles the pill's cue
+                into the one element the eye lands on first, with a white ring so it reads on any
+                photo background. Keeps "who's currently in" readable even in a dense list. */}
+            <span aria-hidden="true" className={"absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-white " + statusDot} />
+          </button>
+        ) : (
+          <div title="No photo" className="relative w-11 h-11 shrink-0 rounded-xl bg-gray-100 text-gray-400 flex items-center justify-center">
+            <IconCamera size={16} /><span className="sr-only">No photo</span>
+            <span aria-hidden="true" className={"absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-white " + statusDot} />
+          </div>
         )}
-      </div>
-      <time dateTime={p.at} className="shrink-0 text-sm font-medium text-gray-700 tabular-nums">{fmtTime(p.at)}</time>
-    </li>
-  );
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-semibold text-gray-900 truncate">{p.user_name || "—"}</span>
+            <span className={"inline-flex items-center gap-1.5 shrink-0 rounded-full ring-1 px-2 py-0.5 text-[11px] font-semibold " + statusTone}>
+              <span className={"w-1.5 h-1.5 rounded-full " + statusDot} aria-hidden="true" />{statusLabel}
+            </span>
+            {p.type === "in" && p.quiz_passed === false && (
+              <span className="hidden sm:inline-flex shrink-0 items-center gap-1 rounded-full ring-1 px-2 py-0.5 text-[11px] font-semibold bg-red-50 ring-red-200 text-red-700">
+                <IconX size={10} /> Quiz failed
+              </span>
+            )}
+          </div>
+          <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500 min-w-0">
+            <IconPin size={11} /><span className="truncate">{punchLocationLabel(p)}</span>
+          </div>
+          {p.type === "in" && p.quiz_passed === false && (
+            <span className="sm:hidden mt-1 inline-flex items-center rounded-full ring-1 px-2 py-0.5 text-[11px] font-semibold bg-red-50 ring-red-200 text-red-700">Quiz failed</span>
+          )}
+        </div>
+        <time dateTime={p.at} className="shrink-0 text-sm font-semibold text-gray-800 tabular-nums tracking-tight">{fmtTime(p.at)}</time>
+      </li>
+    );
+  };
 
   return (
     <section aria-label="Staff attendance log" className="rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
@@ -427,25 +460,36 @@ export default function AttendanceAdminLog({ users, authUser }) {
           </div>
         ) : (
           <>
-            <dl className="mx-5 mt-4 grid grid-cols-3 rounded-xl bg-gray-50 ring-1 ring-gray-100 divide-x divide-gray-100">
-              {dayStats.map(([k, v]) => (
-                <div key={k} className="px-3 py-2.5 min-w-0">
-                  <dt className="text-xs text-gray-500 truncate">{k}</dt>
-                  <dd className="text-lg font-semibold text-gray-900 tabular-nums leading-tight">{v}</dd>
+            <dl className="mx-5 mt-4 grid grid-cols-3 rounded-xl bg-gray-50/80 ring-1 ring-gray-100 divide-x divide-gray-100 overflow-hidden">
+              {dayStats.map((s) => (
+                <div key={s.label} className="px-4 py-3 min-w-0">
+                  <dt className="flex items-center gap-1.5 text-[11px] font-medium text-gray-500 uppercase tracking-wider truncate">
+                    <span className={"w-1.5 h-1.5 rounded-full " + s.dot} aria-hidden="true" />{s.label}
+                  </dt>
+                  <dd className="mt-1 text-2xl font-semibold text-gray-900 tabular-nums leading-none tracking-tight">{s.value}</dd>
+                  <dd className="mt-1 text-[11px] text-gray-500 truncate">{s.hint}</dd>
                 </div>
               ))}
             </dl>
             {groups ? (
               <div className="mt-4 pb-2">
-                {groups.map(([d, list]) => (
+                {groups.map(([d, list]) => {
+                  const sw = deptSwatch(d);
+                  const inCount = list.filter((r) => r.type === "in").length;
+                  return (
                   <section key={d} aria-label={d}>
-                    <h4 className="flex items-center gap-2 px-5 py-2 bg-gray-50 border-y border-gray-100 text-xs font-semibold text-gray-700">
-                      {d}
-                      <span className="rounded-md bg-gray-200/70 px-1.5 py-0.5 text-xs font-semibold text-gray-600 tabular-nums">{list.length}</span>
+                    <h4 className="flex items-center gap-2.5 px-5 py-2.5 bg-gray-50/70 border-y border-gray-100 text-xs font-semibold text-gray-700">
+                      <span aria-hidden="true" className={"w-2 h-2 rounded-full " + sw.dot} />
+                      <span className="tracking-tight">{d}</span>
+                      <span className={"rounded-md px-1.5 py-0.5 text-[11px] font-semibold tabular-nums " + sw.chip}>{list.length}</span>
+                      {inCount > 0 && inCount < list.length && (
+                        <span className="text-[11px] font-medium text-gray-500 tabular-nums">· {inCount} in</span>
+                      )}
                     </h4>
                     <ul className="divide-y divide-gray-100">{list.map(renderRow)}</ul>
                   </section>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <ul className="mt-4 mb-2 border-t border-gray-100 divide-y divide-gray-100">

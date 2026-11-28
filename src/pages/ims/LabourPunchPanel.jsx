@@ -5,7 +5,7 @@ import { todayStr, getCurrentCoords, resolvePunchLocation, reverseGeocode, punch
 import {
   labourPunchDepts, labourManageDepts, fetchLabours, insertLabour, deactivateLabour, newLabourId,
   fetchDayLabourPunches, insertLabourPunch, newLabourPunchId, lastPunchByLabour,
-  fetchLabourAccessForDepts, grantLabourAccess, revokeLabourAccess, DEPT_ICON,
+  fetchLabourAccessForDepts, grantLabourAccess, revokeLabourAccess, DEPT_ICON, displayName,
 } from "../../lib/ims/labourAttendance";
 import { useConfirm } from "../../components/ui";
 import LabourPunchCamera from "./LabourPunchCamera.jsx";
@@ -25,7 +25,16 @@ const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString("en-IN"
 const COORDS_MAX_AGE_MS = 2 * 60 * 1000;
 
 // The Attendance tab's shared look (see AttendanceTab.jsx) — cards, buttons and inputs.
-const CARD = "rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm";
+// A two-stop shadow: a soft, farther-reaching base and a short, darker contact under the card.
+// Gives the card a sitting-on-surface 3D feel without reading as a floating balloon — depth from
+// offset + blur, not a zero-offset halo (owner ask 2026-11-28: "3D look"). Hover lifts the card
+// 2px and swells both stops so it reads as the interactive foreground on a pointer device —
+// matches the depth idiom used in native tap-to-raise widgets (ease-out so it feels instant to
+// start and settles, instead of a lazy linear slide).
+const CARD = "rounded-2xl bg-white ring-1 ring-gray-200/70 "
+  + "shadow-[0_8px_24px_-8px_rgba(17,24,39,0.18),0_2px_6px_-2px_rgba(17,24,39,0.08)] "
+  + "transition-[transform,box-shadow] duration-200 ease-out "
+  + "hover:-translate-y-0.5 hover:shadow-[0_18px_36px_-10px_rgba(17,24,39,0.22),0_6px_12px_-4px_rgba(17,24,39,0.12)]";
 const BTN_FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed";
 const BTN_PRIMARY = "inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors " + BTN_FOCUS;
 const BTN_SECONDARY = "inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-white ring-1 ring-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors " + BTN_FOCUS;
@@ -177,7 +186,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
   }
   async function removeLabour(l) {
     const ok = await confirm({
-      title: `Remove ${l.name}?`,
+      title: `Remove ${displayName(l.name)}?`,
       body: `From ${l.department}. Their past punches stay in the log.`,
       confirmLabel: "Remove",
       danger: true,
@@ -203,10 +212,12 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
   const searching = q.trim().length > 0;
 
   return (
-    // Side by side from lg up when the access card is shown (Admin), two equal columns; one
-    // column (stacked) on phones and for a guard, who only sees the list.
-    <div className={manageDepts.length > 0 ? "grid grid-cols-1 lg:grid-cols-2 gap-5 items-start" : "space-y-5"}>
-      <section aria-label="Labour punch" className={CARD + " flex flex-col max-h-[calc(100vh-7rem)]"}>
+    // Side by side from lg up when the access card is shown (Admin): a 3:2 split so the roster
+    // (long rows with avatar + name + dept + a wide Punch In button) gets the room it needs
+    // instead of being squeezed into half the width by an access card that only ever lists a
+    // handful of users. One column (stacked) on phones and for a guard, who only sees the list.
+    <div className={manageDepts.length > 0 ? "grid grid-cols-1 lg:grid-cols-5 gap-5 lg:gap-10 items-start" : "space-y-5"}>
+      <section aria-label="Labour punch" className={CARD + " lg:col-span-3 flex flex-col max-h-[calc(100vh-7rem)]"}>
         <div className="flex items-center justify-between gap-3 flex-wrap px-5 py-4">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-900">
             <IconUsers size={15} /> Labour Punch
@@ -336,13 +347,13 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
                     <span className="relative shrink-0">
                       {p?.photo
                         ? <img src={p.photo} alt="" className="w-10 h-10 rounded-full object-cover ring-1 ring-gray-200" />
-                        : <span className="w-10 h-10 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center text-sm font-semibold">{l.name.slice(0, 1).toUpperCase()}</span>}
+                        : <span className="w-10 h-10 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center text-sm font-semibold">{displayName(l.name).slice(0, 1).toUpperCase()}</span>}
                       {isIn && <span aria-hidden="true" className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-green-500 ring-2 ring-white" />}
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="text-sm font-semibold text-gray-900 truncate">
-                          {l.name}{l.phone ? <span className="font-normal text-gray-500 tabular-nums"> · {l.phone}</span> : null}
+                          {displayName(l.name)}{l.phone ? <span className="font-normal text-gray-500 tabular-nums"> · {l.phone}</span> : null}
                         </span>
                         {isAllDepts && <span className="shrink-0 rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">{DEPT_ICON[l.department] || ""} {l.department}</span>}
                       </div>
@@ -357,14 +368,14 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
                           : <span className="truncate">{p.auto_closed ? "Auto punched out" : "Out"} at <time dateTime={p.at} className="tabular-nums">{fmtTime(p.at)}</time></span>}
                       </div>
                     </div>
-                    <button onClick={() => setCamera({ labour: l, type: isIn ? "out" : "in" })} aria-label={`${isIn ? "Punch out" : "Punch in"} ${l.name}`}
+                    <button onClick={() => setCamera({ labour: l, type: isIn ? "out" : "in" })} aria-label={`${isIn ? "Punch out" : "Punch in"} ${displayName(l.name)}`}
                       className={"shrink-0 inline-flex items-center justify-center gap-1.5 h-10 px-3 sm:px-4 rounded-xl text-sm font-semibold text-white whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 "
                         + (isIn ? "bg-gray-900 hover:bg-gray-800 focus-visible:ring-gray-900" : "bg-green-600 hover:bg-green-700 focus-visible:ring-green-600")}>
                       <span className="hidden sm:inline-flex">{isIn ? <IconStop size={14} /> : <IconPlay size={14} />}</span>
                       {isIn ? "Punch Out" : "Punch In"}
                     </button>
                     {manageDepts.includes(l.department) && (
-                      <button onClick={() => removeLabour(l)} title={`Remove ${l.name}`} aria-label={`Remove ${l.name}`}
+                      <button onClick={() => removeLabour(l)} title={`Remove ${displayName(l.name)}`} aria-label={`Remove ${displayName(l.name)}`}
                         className="shrink-0 -mr-2 w-10 h-10 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500">
                         <IconTrash size={15} />
                       </button>
@@ -388,7 +399,9 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
       </section>
 
       {manageDepts.length > 0 && (
-        <LabourAccessCard authUser={authUser} users={users} manageDepts={manageDepts} onChanged={onAccessChanged} />
+        <div className="lg:col-span-2">
+          <LabourAccessCard authUser={authUser} users={users} manageDepts={manageDepts} onChanged={onAccessChanged} />
+        </div>
       )}
 
       {camera && (

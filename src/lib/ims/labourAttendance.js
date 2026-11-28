@@ -5,6 +5,11 @@
 import { supabase } from "../supabase";
 import { DEPTS } from "./deptClassify";
 import { ATTENDANCE_QUIZ_DEPT_ICON } from "./attendance";
+
+// Labour names arrive from the vendor sheet with a Hindi transliteration in parens
+// (e.g. "Amit (अमित)"). Owner ask 2026-11-28: show English only across the app; the Hindi stays
+// on the DB row so a Hindi-only search still finds a labour.
+export const displayName = (name) => String(name || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
 import { ATTENDANCE_ONLY_DEPTS } from "./staffImport";
 
 // The build departments plus the attendance-only ones (ADD - owner ask 2026-11-28).

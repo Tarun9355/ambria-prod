@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { Modal } from "../../components/ui";
 import { todayStr, dayHours, daySummary, punchLocationLabel } from "../../lib/ims/attendance";
 import { loadExcelJS, downloadWorkbook, styleHeader } from "../../lib/excel";
-import { LABOUR_DEPTS, DEPT_ICON, fetchLabourPunchesRange, fetchAllActiveLabours } from "../../lib/ims/labourAttendance";
+import { LABOUR_DEPTS, DEPT_ICON, fetchLabourPunchesRange, fetchAllActiveLabours, displayName } from "../../lib/ims/labourAttendance";
 import { userDepartments } from "../../lib/ims/deptClassify";
 import { DatePickerPopover, SelectPopover } from "./AttendanceAdminLog.jsx";
 import { IconPin, IconCalendar, IconUsers, IconExcelMark, IconChevron, IconSearch } from "../../components/icons.jsx";
@@ -340,7 +340,7 @@ export default function LabourAdminLog({ authUser }) {
                     <li key={l.id} className="px-5 py-4 hover:bg-gray-50 transition-colors">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <div className="text-sm font-semibold text-gray-900 truncate">{l.name}</div>
+                          <div className="text-sm font-semibold text-gray-900 truncate">{displayName(l.name)}</div>
                           <div className="mt-0.5 text-xs text-gray-500 truncate">{DEPT_ICON[l.department] || ""} {l.department}{by.length ? ` · punched by ${by.join(", ")}` : ""}</div>
                         </div>
                         <div className="shrink-0 flex flex-col items-end gap-1">
@@ -473,7 +473,7 @@ export default function LabourAdminLog({ authUser }) {
         </>
       )}
 
-      <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing?.labour_name || "Punch photo"}>
+      <Modal open={!!viewing} onClose={() => setViewing(null)} title={displayName(viewing?.labour_name) || "Punch photo"}>
         {viewing && (
           <div className="text-center">
             <img src={viewing.photo} alt={`${viewing.labour_name || "Labour"} — ${viewing.type === "in" ? "punch-in" : "punch-out"} photo`} className="w-full rounded-xl mb-3" />
