@@ -403,7 +403,7 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                   disabled={loadingStatus}
                   onClick={() => startPunch(state === "in" ? "out" : "in")}
                   className={"w-full inline-flex items-center justify-center gap-2.5 min-h-14 px-6 rounded-xl text-base font-semibold text-white shadow-[0_1px_2px_rgba(15,23,42,0.12),0_6px_16px_-6px_rgba(15,23,42,0.35)] transition-[background-color,transform] duration-150 ease-out active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed "
-                    + (state === "in" ? "bg-gray-900 hover:bg-gray-800 focus-visible:ring-gray-900" : "bg-green-600 hover:bg-green-700 focus-visible:ring-green-600")}>
+                    + (state === "in" ? "bg-red-600 hover:bg-red-700 focus-visible:ring-red-600" : "bg-green-600 hover:bg-green-700 focus-visible:ring-green-600")}>
                   {state === "in" ? <IconStop size={16} /> : <IconPlay size={16} />}
                   {state === "in" ? "Punch Out" : "Punch In"}
                 </button>
@@ -482,9 +482,15 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
               </div>
             </section>
 
-            <div className="order-1 lg:order-2 lg:col-span-2 h-full">
-              <MyAttendanceCalendar authUser={authUser} />
-            </div>
+            {/* Calendar stays hidden until the day's first punch lands — owner ask 2026-11-28:
+                "jab tak punch in na ho tab tk calendar mat dikhao". The calendar is a review of a
+                day in motion; rendering it in zeros before the day has even started reads as a
+                blank dashboard. Reappears the moment dayPunches goes from 0 → 1. */}
+            {dayPunches.length > 0 && (
+              <div className="order-1 lg:order-2 lg:col-span-2 h-full">
+                <MyAttendanceCalendar authUser={authUser} />
+              </div>
+            )}
           </div>
         </>
       )}

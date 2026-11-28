@@ -154,13 +154,40 @@ export async function fetchRangePunches(fromDate, toDate) {
 /** Wraps navigator.geolocation in a promise that always resolves — never rejects, never blocks a
  * punch. No API, no permission, a timeout, an off GPS: all of it resolves null, same fail-open
  * principle as the camera and the video briefing elsewhere in this flow. */
+// In-memory cache so a repeated call within the same minute reuses the last known position
+// instead of re-waking the GPS — Labour Punch's own coords ref already does this, this covers
+// the staff flow (prewarm → saving step → quick retake) with the same idea.
+let _coordsCache = { at: 0, value: null };
 export function getCurrentCoords() {
   return new Promise((resolve) => {
     if (!navigator.geolocation) { resolve(null); return; }
+    // A fresh fix from the last 60s is good enough: it is the SAME place for any practical
+    // attendance punch. Beats paying the cold-GPS wake cost (which is what the old 3s wait kept
+    // losing to).
+    if (_coordsCache.value && (Date.now() - _coordsCache.at) < 60_000) {
+      resolve(_coordsCache.value); return;
+    }
+    // Two-stage attempt: try the hardware GPS first (accurate but slow, often fails indoors)
+    // for 6s, then fall back to network-based geolocation (WiFi / cell towers, less accurate but
+    // responds in a second or two anywhere with data). Owner ask 2026-11-28: "Location
+    // unavailable aayi" — the single high-accuracy attempt was failing indoors and the flow then
+    // saved with no position at all; this fallback catches that case so the punch still carries
+    // a coarse position instead of "Location unavailable".
+    const settle = (pos) => {
+      const value = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      _coordsCache = { at: Date.now(), value };
+      resolve(value);
+    };
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => resolve(null),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      settle,
+      () => {
+        navigator.geolocation.getCurrentPosition(
+          settle,
+          () => resolve(null),
+          { enableHighAccuracy: false, timeout: 6000, maximumAge: 60_000 },
+        );
+      },
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 60_000 }
     );
   });
 }

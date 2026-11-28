@@ -309,7 +309,11 @@ export function Tabs({ tabs, active, onChange }) {
         screen before any content starts — and a wrapped strip stops reading as one control.
         Both forms render from the same `tabs` and `active`, so they cannot drift. */}
     <div className="sm:hidden"><TabsMenu tabs={tabs} active={active} onChange={onChange} /></div>
-    <div className="hidden sm:flex gap-1 bg-gray-100 rounded-xl p-1 flex-wrap">
+    {/* flex-nowrap + overflow-x-auto so the strip stays on ONE row even when the whole catalogue
+        is 8 chips wide (owner ask 2026-11-28: "sab dikhane hai") — a wrapped last tab (ADD on
+        Quiz Setup) used to fall below the fold and read as missing. Hidden scrollbar keeps the
+        strip visually clean; the overflow still scrolls on touch and with a trackpad swipe. */}
+    <div className="hidden sm:flex gap-1 bg-gray-100 rounded-xl p-1 flex-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {tabs.map((t) => (
         /* Same hover as the nav rail: the tab lifts and takes on the active pill's white
            ground, so hovering previews what clicking does. The rail nudges right because it
@@ -318,7 +322,7 @@ export function Tabs({ tabs, active, onChange }) {
            transition-all, not transition, or the shadow and the lift arrive on different
            curves and the movement looks loose. */
         <button key={t.id} onClick={() => onChange(t.id)}
-          className={"px-4 py-2 rounded-lg text-sm transition-all duration-150 " +
+          className={"shrink-0 whitespace-nowrap px-4 py-2 rounded-lg text-sm transition-all duration-150 " +
             (active === t.id
               ? "bg-white text-gray-900 font-semibold shadow-[0_1px_2px_rgba(16,24,40,0.1),0_4px_10px_-4px_rgba(16,24,40,0.22)]"
               : "text-gray-500 font-medium hover:text-gray-900 hover:bg-white/70 hover:-translate-y-0.5 hover:shadow-[0_1px_2px_rgba(16,24,40,0.06),0_4px_10px_-6px_rgba(16,24,40,0.2)]")}>
