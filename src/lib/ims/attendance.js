@@ -158,9 +158,28 @@ export async function fetchRangePunches(fromDate, toDate) {
 // instead of re-waking the GPS — Labour Punch's own coords ref already does this, this covers
 // the staff flow (prewarm → saving step → quick retake) with the same idea.
 let _coordsCache = { at: 0, value: null };
+// Last error code from the last attempt (1 = PERMISSION_DENIED, 2 = POSITION_UNAVAILABLE,
+// 3 = TIMEOUT). The caller reads this to tell the user *why* location is missing — "Location
+// unavailable" alone sent phones looking for a GPS problem that was often a permissions one.
+let _coordsError = null;
+export const getCoordsError = () => _coordsError;
+
+// Known falsy for an offline / unsupported device, "denied" if permission has been refused, or
+// null if we can't tell yet. Used to avoid even trying the GPS call when we already know it
+// will fail with PERMISSION_DENIED — some mobile browsers (iOS Safari especially) still prompt
+// on every call, which flashes a prompt the user already said no to.
+export async function geolocationPermissionState() {
+  if (!navigator.geolocation) return "unsupported";
+  try {
+    const p = await navigator.permissions.query({ name: "geolocation" });
+    return p.state; // "granted" | "prompt" | "denied"
+  } catch { return null; } // Safari pre-16 doesn't expose permissions.query for geolocation
+}
+
 export function getCurrentCoords() {
   return new Promise((resolve) => {
-    if (!navigator.geolocation) { resolve(null); return; }
+    _coordsError = null;
+    if (!navigator.geolocation) { _coordsError = "unsupported"; resolve(null); return; }
     // A fresh fix from the last 60s is good enough: it is the SAME place for any practical
     // attendance punch. Beats paying the cold-GPS wake cost (which is what the old 3s wait kept
     // losing to).
@@ -168,26 +187,35 @@ export function getCurrentCoords() {
       resolve(_coordsCache.value); return;
     }
     // Two-stage attempt: try the hardware GPS first (accurate but slow, often fails indoors)
-    // for 6s, then fall back to network-based geolocation (WiFi / cell towers, less accurate but
-    // responds in a second or two anywhere with data). Owner ask 2026-11-28: "Location
-    // unavailable aayi" — the single high-accuracy attempt was failing indoors and the flow then
-    // saved with no position at all; this fallback catches that case so the punch still carries
-    // a coarse position instead of "Location unavailable".
+    // for 8s, then fall back to network-based geolocation (WiFi / cell towers, less accurate but
+    // responds in a second or two anywhere with data). Owner ask 2026-11-28: "Location unavailable
+    // aayi" — the single high-accuracy attempt was failing indoors AND permission-denied was
+    // reading the same as a GPS error. This path differentiates them so the UI can tell.
     const settle = (pos) => {
       const value = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       _coordsCache = { at: Date.now(), value };
       resolve(value);
     };
-    navigator.geolocation.getCurrentPosition(
-      settle,
-      () => {
+    // Permission denied is terminal — no point falling back to network geolocation, it needs the
+    // same permission. Report it so the UI can say "enable location in the browser" instead of
+    // the generic "unavailable".
+    const onErr = (err, stage) => {
+      if (err && err.code === 1 /* PERMISSION_DENIED */) { _coordsError = "denied"; resolve(null); return; }
+      if (stage === "first") {
         navigator.geolocation.getCurrentPosition(
           settle,
-          () => resolve(null),
-          { enableHighAccuracy: false, timeout: 6000, maximumAge: 60_000 },
+          (err2) => { _coordsError = err2?.code === 1 ? "denied" : err2?.code === 3 ? "timeout" : "unavailable"; resolve(null); },
+          { enableHighAccuracy: false, timeout: 8000, maximumAge: 60_000 },
         );
-      },
-      { enableHighAccuracy: true, timeout: 6000, maximumAge: 60_000 }
+      } else {
+        _coordsError = err?.code === 3 ? "timeout" : "unavailable";
+        resolve(null);
+      }
+    };
+    navigator.geolocation.getCurrentPosition(
+      settle,
+      (err) => onErr(err, "first"),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60_000 }
     );
   });
 }

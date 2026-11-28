@@ -6,7 +6,7 @@ import { checkFaceInPhoto, watchFaceInVideo } from "../../lib/faceCheck";
 import {
   todayStr, newPunchId, fetchDayPunches, insertPunch, currentState, gradeQuiz, attendanceQuizDept,
   fetchMonthPunches, groupPunchesByDate, dayHours, dayStatus, punchLabel, punchLocationLabel,
-  getCurrentCoords, resolvePunchLocation, reverseGeocode,
+  getCurrentCoords, resolvePunchLocation, reverseGeocode, geolocationPermissionState, getCoordsError,
 } from "../../lib/ims/attendance";
 import AttendanceVideoPlayer, { extractYouTubeId } from "./AttendanceVideoPlayer.jsx";
 import AttendanceAdminLog from "./AttendanceAdminLog.jsx";
@@ -95,9 +95,31 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t); }, []);
   // Prewarm the browser's geolocation once when My Attendance opens, so a fast punch-out doesn't
   // have to wait on a cold GPS wake-up inside the saving step (LabourPunchPanel already does this
-  // for its own flow, line 110 there). Fail-open: a denial/error is swallowed — the punch still
-  // runs, it just saves with lat/lng null, exactly as before.
-  useEffect(() => { getCurrentCoords().catch(() => {}); }, []);
+  // for its own flow, line 110 there). Also tracks WHY the position failed when it does — a phone
+  // user reporting "Location unavailable aayi" was almost always a denied permission, not a GPS
+  // outage, and the UI should tell them exactly that instead of a generic "unavailable".
+  const [geoBlocked, setGeoBlocked] = useState(false);   // permission is denied (confirmed, not a prompt)
+  const [geoReason, setGeoReason] = useState("");        // "denied" | "unavailable" | "timeout" | "unsupported"
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const state = await geolocationPermissionState();
+      if (!active) return;
+      if (state === "denied" || state === "unsupported") {
+        setGeoBlocked(true);
+        setGeoReason(state);
+        return;
+      }
+      // "granted" and "prompt" both can be pre-warmed. On "prompt" the first call surfaces the
+      // browser's own permission dialog, which is fine on a page the user just opened.
+      await getCurrentCoords();
+      if (!active) return;
+      const err = getCoordsError();
+      if (err === "denied" || err === "unsupported") { setGeoBlocked(true); setGeoReason(err); }
+      else if (err) setGeoReason(err); // timeout / unavailable — not blocking, just a weak signal
+    })();
+    return () => { active = false; };
+  }, []);
 
   // ── Live camera (photo step) ──
   // `<input capture>` only launches a camera on mobile — desktop Chrome/Edge on Windows just
@@ -407,6 +429,19 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                   {state === "in" ? <IconStop size={16} /> : <IconPlay size={16} />}
                   {state === "in" ? "Punch Out" : "Punch In"}
                 </button>
+                {/* Location permission state is checked on mount: if the browser refused — most
+                    often a phone where the user tapped "Block" the first time — surface a short
+                    actionable note here instead of letting the punch quietly save with no place
+                    attached ("Location unavailable" was the only signal before, which read as a
+                    GPS problem). Phrased in whose-hands-is-this terms: it's the browser setting
+                    the user has to fix, not something the admin can turn on from the dashboard. */}
+                {geoBlocked && (
+                  <div role="alert" className="text-xs text-amber-800 bg-amber-50 ring-1 ring-amber-200 rounded-lg px-3 py-2 leading-snug">
+                    {geoReason === "unsupported"
+                      ? "This browser can't use location. Punches still save but without a place."
+                      : "Location is blocked for this site. In Chrome: tap the padlock → Permissions → Location → Allow, then reload."}
+                  </div>
+                )}
                 {!loadingStatus && !loadError && (
                   state === "in" ? (
                     <p className="text-xs text-gray-500">{nextHint}</p>
@@ -426,8 +461,12 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
           </section>
 
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-stretch">
-            {/* ── TODAY'S PUNCHES ── a timeline, with the time spent between each in and out. */}
-            <section aria-label="Today's punches" className="order-2 lg:order-1 lg:col-span-3 h-full flex flex-col rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
+            {/* ── TODAY'S PUNCHES ── a timeline, with the time spent between each in and out.
+                Takes 3/5 of the row when the calendar is also visible; stretches to the full 5/5
+                before the first punch (the calendar sits hidden until then — owner ask 2026-11-28
+                "jab tak punch in na ho tab tk calendar mat dikhao") so the card does not read as
+                squeezed into one corner of a half-empty grid. */}
+            <section aria-label="Today's punches" className={"order-2 lg:order-1 h-full flex flex-col rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm " + (dayPunches.length > 0 ? "lg:col-span-3" : "lg:col-span-5")}>
               <button onClick={() => setTodayOpen((o) => !o)} aria-expanded={todayOpen}
                 className="w-full flex items-center justify-between gap-3 px-5 sm:px-6 py-4 text-left lg:cursor-default lg:pointer-events-none">
                 <span className="min-w-0">
