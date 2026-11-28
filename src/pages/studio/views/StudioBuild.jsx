@@ -4176,7 +4176,10 @@ undefined
       // way to tell. Every option listed now is guaranteed to be a real, matchable fabric colour.
       // Also carries each colour's own reference photo (if the admin uploaded one) and which of the
       // 3 stocks it actually has stock in, so toggling a material icon for a colour that was never
-      // even in Curtain stock can't silently claim it is. Only colours with something in stock are listed (lib/studio/fabricColourOptions.js).
+      // even in Curtain stock can't silently claim it is. Every colour with a stock row (not switched
+      // off for Build) is listed even at zero stock (owner ask, 2026-11-28) — a salesperson can still
+      // pick it; IMS's own fabric-shortfall auto-PO notices and buys it once the deal sells. `stocked`
+      // (narrower than `in`) is just what to show dim vs solid below (lib/studio/fabricColourOptions.js).
       const fabricColourInfo = fabricColourOptions(structRates?.trussInv, curColors.map(c => c.name));
       const opts = azSort([...fabricColourInfo.keys()]);
       const matched = fabricPaletteQ.trim() ? paletteSearch(opts, fabricPaletteQ) : opts;
@@ -4211,9 +4214,22 @@ undefined
             <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{v}</span>
             {/* picked on this deal but gone from IMS Fabric Stock - listed only so it can be un-ticked */}
             {info?.removed && <span title="No longer in IMS Fabric Stock - untick to remove it from this deal" style={{fontSize:9,fontWeight:700,color:"#c0392b",textTransform:"uppercase",letterSpacing:0.3,flexShrink:0}}>Removed</span>}
-            {/* which of the three fabrics this colour is available for: a struck, faded icon = not available */}
+            {/* offered (has a row, not switched off) but nothing on the shelf right now - still pickable, just flagged so it isn't mistaken for genuinely in stock */}
+            {!info?.removed && info && info.in.size>0 && info.stocked.size===0 && <span title="No stock right now in IMS Fabric Stock - still pickable; ops will be asked to buy it once this deal sells" style={{fontSize:9,fontWeight:700,color:"#b7791f",textTransform:"uppercase",letterSpacing:0.3,flexShrink:0}}>No stock</span>}
+            {/* which of the three fabrics this colour is offered for: solid = stocked now, dim with an amber dot = offered but nothing on the shelf (still pickable), struck through = no row at all for this fabric */}
             <span style={{display:"inline-flex",gap:2,flexShrink:0}}>
-              {FABRIC_MATERIAL_ICONS.map(([m, icon]) => { const has = !!info?.in.has(m); return <span key={m} title={`${m[0].toUpperCase()}${m.slice(1)} — ${has?"available":"not available"}`} style={{fontSize:10,lineHeight:1,opacity:has?1:0.22,filter:has?undefined:"grayscale(1)",textDecoration:has?undefined:"line-through"}}>{icon}</span>; })}
+              {FABRIC_MATERIAL_ICONS.map(([m, icon]) => {
+                const offered = !!info?.in.has(m);
+                const stocked = !!info?.stocked.has(m);
+                const label = `${m[0].toUpperCase()}${m.slice(1)}`;
+                const title = !offered ? `${label} — not available` : stocked ? `${label} — available` : `${label} — no stock right now; ops will be asked to buy it once this deal sells`;
+                return (
+                  <span key={m} title={title} style={{fontSize:10,lineHeight:1,position:"relative",display:"inline-block",opacity:!offered?0.22:stocked?1:0.5,filter:!offered?"grayscale(1)":undefined,textDecoration:!offered?"line-through":undefined}}>
+                    {icon}
+                    {offered&&!stocked&&<span aria-hidden="true" style={{position:"absolute",top:-2,right:-3,width:5,height:5,borderRadius:"50%",background:"#f59e0b"}}/>}
+                  </span>
+                );
+              })}
             </span>
           </div>
         );
@@ -4253,10 +4269,13 @@ undefined
                   <div key={c.name} style={{display:"flex",alignItems:"center",gap:4,marginBottom:4}}>
                     <span style={{fontSize:10.5,color:textP,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
                     {FABRIC_MATERIAL_ICONS.map(([m, icon]) => {
-                      const off = fabricColourInfo.has(c.name) && !fabricColourInfo.get(c.name).in.has(m); // switched off in IMS for this fabric
+                      const off = fabricColourInfo.has(c.name) && !fabricColourInfo.get(c.name).in.has(m); // switched off in IMS for this fabric (no row, or hideInBuild)
                       const on = mats.includes(m) && !off;
-                      return <span key={m} onClick={(e)=>{e.stopPropagation(); if (!off) toggleMaterial(c.name,m);}} title={off ? `${m[0].toUpperCase()}${m.slice(1)} — not available for ${c.name} (switched off, or no stock row, in IMS → Fabric Stock)` : `${m[0].toUpperCase()}${m.slice(1)} — ${on?"used":"not used"} for ${c.name}`}
-                        style={{fontSize:11,width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,cursor:off?"not-allowed":"pointer",opacity:on?1:off?0.4:0.25,background:on?`${accent}18`:"transparent",position:"relative",filter:off?"grayscale(1)":undefined}}>{icon}{off&&<span aria-hidden="true" style={{position:"absolute",left:2,right:2,top:"50%",height:1.5,background:"#d33",transform:"rotate(-35deg)",borderRadius:1}}/>}</span>;
+                      const stockedNow = !!fabricColourInfo.get(c.name)?.stocked.has(m); // has a row but zero stock right now - still toggleable, just flagged
+                      const title = off ? `${m[0].toUpperCase()}${m.slice(1)} — not available for ${c.name} (switched off, or no stock row, in IMS → Fabric Stock)`
+                        : `${m[0].toUpperCase()}${m.slice(1)} — ${on?"used":"not used"} for ${c.name}${on && !stockedNow ? " (no stock right now — will be flagged for buying once sold)" : ""}`;
+                      return <span key={m} onClick={(e)=>{e.stopPropagation(); if (!off) toggleMaterial(c.name,m);}} title={title}
+                        style={{fontSize:11,width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:4,cursor:off?"not-allowed":"pointer",opacity:on?1:off?0.4:0.25,background:on?`${accent}18`:"transparent",position:"relative",filter:off?"grayscale(1)":undefined}}>{icon}{off&&<span aria-hidden="true" style={{position:"absolute",left:2,right:2,top:"50%",height:1.5,background:"#d33",transform:"rotate(-35deg)",borderRadius:1}}/>}{on&&!stockedNow&&<span aria-hidden="true" style={{position:"absolute",top:-1,right:-1,width:5,height:5,borderRadius:"50%",background:"#f59e0b"}}/>}</span>;
                     })}
                   </div>
                 );

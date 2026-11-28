@@ -59,6 +59,7 @@ import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a si
 import { truckDetailsLocked, truckLoadedOf } from "../../lib/ims/truckLock";
 import { atVenueOfEvent, atVenueByRow } from "../../lib/ims/atVenue";
 import { makeFabricNeedCache } from "../../lib/ims/fabricNeed"; // fabric per colour, as the Fabric block reads it
+import { FABRIC_TYPES, eoDate, colourKey, fabricStockIndex, eventFabricRows, upcomingEventShortfalls } from "../../lib/ims/fabricShortfall"; // shared with the fabric auto-purchase engine
 import { lateChangesOf } from "../../lib/ims/lateChanges"; // changed in the 48 hours before the event
 import { scopeLineToFn, qtyMapsOfFn } from "../../lib/ims/siteFunctionScope"; // one function's share of a load line (a trip that goes to one function)
 import { truckKeyOf, mappedStockRowsOf, kitPartOfDeptOf, blockedGroupedFor, blockedFlatFor, mergeLegacyTrucks, standingPartsAtVenue } from "../../lib/ims/deptLoadList"; // what a department loads (shared with Site) // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
@@ -1197,7 +1198,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   const [colourPickRow, setColourPickRow] = useState(null); // index of the mandi row whose colour picker is open
   const [reusePicker, setReusePicker] = useState({ fromEventId: "", fromFnIdx: "", amount: "" }); // 🔄 reuse-transfer picker — source deal, then its function
 
-  const eventDate = (eo) => eo?.functionsDetail?.[0]?.date || eo?.date || eo?.eventDate || "";
+  const eventDate = eoDate; // single definition now lives in lib/ims/fabricShortfall.js, shared with the fabric auto-purchase engine
   // The event's venue with its property — "Valencia › Poolside", not a bare "Poolside".
   const venueOf = (eo) => venueWithParent(settings, eo?.functionsDetail?.[0]?.venue || eo?.venue || "");
   // This event's OWN function that falls on `date` — for anywhere a specific calendar day is already
@@ -3761,28 +3762,17 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
   }, [blockedItems, incomingByItem, incomingTransfers, trucks]);
 
   // ── Fabric (dept = Fabric): total available (Old + New) vs required, with date-wise shortfall ──
-  const FABRIC_TYPES = [
-    { key: "liza", label: "Liza Fabric", stockKey: "lizaStock", qtyField: "stockKg", unit: "kg", emoji: "🧣" },
-    { key: "masking", label: "Wall Masking", stockKey: "maskingStock", qtyField: "stockPieces", unit: "pcs", emoji: "🧱" },
-    { key: "curtain", label: "Velvet Curtains", stockKey: "curtainStock", qtyField: "stockPieces", unit: "pcs", emoji: "🎀" },
-  ];
-  const fabricAvail = useMemo(() => {
-    const out = {};
-    FABRIC_TYPES.forEach(ft => {
-      const m = {};
-      (Array.isArray(trussInv?.[ft.stockKey]) ? trussInv[ft.stockKey] : []).forEach(r => {
-        const c = r.colour || "(unassigned)";
-        if (!m[c]) m[c] = { old: 0, new: 0 };
-        m[c].old += Number(r[ft.qtyField]) || 0;
-        m[c].new += Number(r[`${ft.qtyField}New`]) || 0;
-      });
-      out[ft.key] = m;
-    });
-    return out;
-  }, [trussInv]);
+  // The actual maths (stock index, same-day contention, per-event requirement rows, the upcoming-events
+  // shortfall scan) now lives in lib/ims/fabricShortfall.js, shared with the fabric auto-purchase engine
+  // (lib/ims/fabricAutoPurchase.js) so Dept Ops and Supply's "needs buying" list can never quietly
+  // disagree about what's short. These are thin wrappers: same names, same call sites, same output shape
+  // as before the refactor (regression-tested against the pre-refactor inline logic).
+  const fabricAvail = useMemo(() => fabricStockIndex(trussInv), [trussInv]);
   // The colour a fabric's name stands for — the same lookup Planning → Fabric Stock draws its
   // swatches with: the stock row's own hex if set, else the colour catalogue, else a known name.
-  const fabricHex = (stockKey, colour) => swatchHexFor(colour, settings?.colourCatalogue, (Array.isArray(trussInv?.[stockKey]) ? trussInv[stockKey] : []).find(r => r.colour === colour)?.hex);
+  // Matched by colourKey, not exact string, so "Navy blue"/"Navy Blue" share a swatch the same way the rest
+  // of the fabric-shortfall maths already treats them as one colour (lib/ims/fabricShortfall.js).
+  const fabricHex = (stockKey, colour) => swatchHexFor(colour, settings?.colourCatalogue, (Array.isArray(trussInv?.[stockKey]) ? trussInv[stockKey] : []).find(r => colourKey(r.colour) === colourKey(colour))?.hex);
   // A small colour square that opens the colour large. Its fill is the fabric's own colour, which
   // only exists at runtime, so it is an inline style rather than a class. "(unassigned)" has none.
   const Swatch = ({ name, hex }) => (!name || name === "(unassigned)") ? null : (
@@ -3790,41 +3780,17 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
       className="shrink-0 inline-block w-3.5 h-3.5 rounded ring-1 ring-black/15 align-middle cursor-pointer hover:scale-125 transition-transform"
       style={{ background: hex }} />
   );
-  // Same-day contention: fabric the SAME stock is committed to on OTHER events on the same date —
-  // so each event is checked against the remainder after the others (the same Liza can't be in two
-  // places on the same day).
   // Each event's fabric per colour as the Fabric block works it out (lib/ims/fabricNeed) - not Deal Check's stored fabricPlan, which
   // goes stale when the plan changes after a sync (owner report 2026-11-26). One cache per render's inputs.
   const fabricNeedFor = useMemo(() => makeFabricNeedCache({ inventory, eventOrders, settings, trussInv }), [inventory, eventOrders, settings, trussInv]);
-  const sameDayReserved = (date, exclId, ftKey, colour) => {
-    if (!date) return 0;
-    let s = 0;
-    (eventOrders || []).forEach(eo => {
-      if (eo.id === exclId || eventDate(eo) !== date || (eo.status && !isLiveEventOrder(eo)) || (!eo.fabricPlan && !eo.functionsDetail)) return;
-      (fabricNeedFor(eo)[ftKey] || []).forEach(r => { if ((r.colour || "") === colour) s += Number(r.qty) || 0; });
-    });
-    return s;
-  };
   // Requirement vs available for the SELECTED event (net of same-day commitments elsewhere).
   // Owner ask (2026-10-15): required is now tier-tagged too (r.qtyOld/r.qtyNew, from the salesperson's
   // own Build Old/New toggle) — compared tier-for-tier, not just combined. Plenty of New stock sitting
   // idle doesn't help an Old-stock requirement, and vice versa; same-day contention is split by tier
   // for the same reason (an Old reservation elsewhere can't eat into what THIS event needs in New).
   // fabricReqRowsOf(): any tab can build it (the shared Fabric & Tenting book prints it from the Tenting tab too).
-  const fabricReqRowsOf = () => sel ? FABRIC_TYPES.map(ft => {
-    const req = fabricNeedFor(sel)[ft.key] || [];
-    const rows = req.map(r => {
-      const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 };
-      const stock = av.old + av.new;
-      const otherDay = sameDayReserved(selDateStr, sel.id, ft.key, r.colour);
-      const reqOld = Number(r.qtyOld) || 0, reqNew = Number(r.qtyNew) || 0;
-      const avail = Math.max(0, stock - otherDay);
-      const shortOld = Math.max(0, reqOld - av.old);
-      const shortNew = Math.max(0, reqNew - av.new);
-      return { colour: r.colour, hex: fabricHex(ft.stockKey, r.colour), required: r.qty, qtyOld: reqOld, qtyNew: reqNew, old: av.old, new: av.new, stock, otherDay, avail, short: Math.max(0, r.qty - avail), shortOld, shortNew };
-    });
-    return { ...ft, rows };
-  }).filter(f => f.rows.length) : [];
+  const fabricReqRowsOf = () => eventFabricRows({ eo: sel, eventOrders, needOf: fabricNeedFor, stockIdx: fabricAvail })
+    .map(f => ({ ...f, rows: f.rows.map(r => ({ ...r, hex: fabricHex(f.stockKey, r.colour) })) }));
   const fabricReqRows = dept === "Fabric" ? fabricReqRowsOf() : [];
   // ── THE FABRIC LINES, FOLDED TO THREE FABRICS ──
   // The blocked-inventory list carried one photo-less row per (zone × fabric × tier). For the Fabric department
@@ -3841,31 +3807,12 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dept, sel, trussInv, blockedItemsGrouped, invScoped, invFn]);
   // All upcoming events scanned for fabric shortfalls (same-day contention included) → order-ahead heads-up.
+  // Same list the fabric auto-purchase engine raises purchase orders from (lib/ims/fabricAutoPurchase.js) -
+  // this is purely the read-only heads-up Dept Ops has always shown; it does not itself write anything.
   const upcomingFabricShort = useMemo(() => {
     if (dept !== "Fabric") return [];
-    const out = [];
-    (eventOrders || []).forEach(eo => {
-      const d = eventDate(eo); if (!d || d < today || (eo.status && !isLiveEventOrder(eo)) || (!eo.fabricPlan && !eo.functionsDetail)) return;
-      const need = fabricNeedFor(eo);
-      FABRIC_TYPES.forEach(ft => {
-        (need[ft.key] || []).forEach(r => {
-          const av = fabricAvail[ft.key]?.[r.colour] || { old: 0, new: 0 };
-          const otherDay = sameDayReserved(d, eo.id, ft.key, r.colour);
-          const short = (Number(r.qty) || 0) - Math.max(0, (av.old + av.new) - otherDay);
-          if (short > 0) out.push({ event: eo.clientName || "Event", date: d, fabric: ft.label, colour: r.colour, hex: fabricHex(ft.stockKey, r.colour), short, unit: ft.unit, contended: otherDay > 0 });
-          // Tier-specific: combined supply covers it, but the New-tier portion this event actually
-          // needs (picked explicitly in Build) can't be met from New stock alone — Old stock sitting
-          // idle doesn't help a New requirement, so this would otherwise look fine and quietly surprise
-          // whoever's pulling stock on the day.
-          else if (short <= 0) {
-            const reqNew = Number(r.qtyNew) || 0;
-            const shortNew = reqNew - Math.max(0, av.new - otherDay);
-            if (reqNew > 0 && shortNew > 0) out.push({ event: eo.clientName || "Event", date: d, fabric: ft.label, colour: r.colour, hex: fabricHex(ft.stockKey, r.colour), short: shortNew, unit: ft.unit, contended: otherDay > 0, newTierOnly: true });
-          }
-        });
-      });
-    });
-    return out.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    return upcomingEventShortfalls({ eventOrders, needOf: fabricNeedFor, stockIdx: fabricAvail, today })
+      .map(r => ({ ...r, hex: fabricHex(FABRIC_TYPES.find(f => f.key === r.kind)?.stockKey, r.colour) }));
   }, [dept, eventOrders, fabricAvail, today, settings, trussInv, fabricNeedFor]);
 
   // A plain name→value breakdown table — Truss Labour's pillar count and Fabric Bangali's sqft are
