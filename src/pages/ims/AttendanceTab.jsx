@@ -603,24 +603,26 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
       )}
 
       {detailsOpen && createPortal(
-        // My Attendance details drawer: the full month calendar + weekly / monthly tiles the home
-        // layout already uses, shown in a focused overlay so the user can review their own log
-        // without the day's punch controls competing for attention. Closed by the backdrop, the X,
-        // or Esc (the key handler lives inside the drawer below via a dedicated effect).
-        <div role="dialog" aria-modal="true" aria-label="My attendance details" className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm p-3 sm:p-6 flex items-start sm:items-center justify-center overflow-y-auto"
+        // My Attendance details drawer: the full month calendar in a focused overlay so the user
+        // can review their own log without the day's punch controls competing. Sized against dvh
+        // (dynamic viewport height) so the mobile browser's URL bar collapse/expand does not keep
+        // resizing the drawer under the user. Internal scroll on the body only — the backdrop
+        // itself never scrolls (that used to let the whole dialog drift past the top on a tablet,
+        // owner report 2026-11-28 "ratio theek kro").
+        <div role="dialog" aria-modal="true" aria-label="My attendance details" className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm p-3 sm:p-6 flex items-center justify-center"
           onClick={(e) => { if (e.target === e.currentTarget) setDetailsOpen(false); }}>
-          <div className="w-full max-w-xl bg-white rounded-2xl shadow-[0_24px_60px_-12px_rgba(17,24,39,0.35)] ring-1 ring-gray-200/70">
-            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
-              <div>
+          <div className="w-full max-w-2xl max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-3rem)] flex flex-col bg-white rounded-2xl shadow-[0_24px_60px_-12px_rgba(17,24,39,0.35)] ring-1 ring-gray-200/70 overflow-hidden">
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-gray-100 shrink-0">
+              <div className="min-w-0">
                 <h3 className="text-base font-semibold text-gray-900">My attendance</h3>
-                <p className="mt-0.5 text-xs text-gray-500">Your month at a glance — tap a worked day to see its punches.</p>
+                <p className="mt-0.5 text-xs text-gray-500 truncate">Your month at a glance — tap a worked day to see its punches.</p>
               </div>
               <button type="button" onClick={() => setDetailsOpen(false)} aria-label="Close"
                 className="shrink-0 w-10 h-10 rounded-xl text-gray-500 hover:text-gray-900 hover:bg-gray-100 flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">
                 <IconX size={16} />
               </button>
             </div>
-            <div className="p-3 sm:p-4">
+            <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4">
               <MyAttendanceCalendar authUser={authUser} />
             </div>
           </div>
