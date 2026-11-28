@@ -111,9 +111,17 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
       const looseQ = looseRows.reduce((t, lf) => t + num(lf.qty), 0);
       const looseCols = looseRows.map((lf) => ({ colour: String(lf.colour || "").trim() || "(unassigned)", qty: num(lf.qty) }));
       if (!(q > 0) && !(looseQ > 0)) return;
-      anyEntry = true;
+      // The event-wide colour summary (liveGroup below) must obey the SAME onlyFi scoping `zones` is
+      // filtered by further down — otherwise a one-function view's card still folds in every OTHER
+      // function's colours too (owner report 2026-11-28: Wedding's card read "Teal 125 kg · Ivory 78
+      // kg" while every one of Wedding's own zones was Teal; Reception, a different function on the
+      // same event, was the source of the Ivory). zones/byZone still walk every entry regardless
+      // (unchanged) - they need the WHOLE event to split a zone-name's money across functions that
+      // share it (qtyByZoneKey below) - only this accumulator needs narrowing.
+      const inScope = onlyFi === null || onlyFi === undefined || e.fi === onlyFi;
+      if (inScope) anyEntry = true;
       const isLive = !!fnPalettes && typeof fnPalettes[e.fi] === "string";
-      if (!isLive) allLive = false;
+      if (inScope && !isLive) allLive = false;
       const k = `${e.fi}|${e.zk}`;
       const z = byZone.get(k) || { fi: e.fi, zoneKey: e.zk, name: e.zLabel, fnLabel: e.fnLabel || "", photo: e.photo || "", qty: 0, notes: [], tier: new Set(), dims: [], colours: new Map(), standing: true };
       z.qty += q + looseQ;
@@ -126,7 +134,7 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
         rowCols = [...(q > 0 ? resolveFabricAllocation(e.row?.[kind.allocField], Math.ceil(q), fabricAnchorsForRow(e.row, kind.key, anchorsForPaletteByMaterial([], fnPalettes[e.fi], kind.key)), liveStock, kind.qtyField)
           .map((a) => ({ colour: a.colour || "(unassigned)", qty: num(a.qty) })) : []), ...looseCols];
         // only new fabric counts towards what is pulled from stock; a repeat zone's is already standing
-        if (!e.repeat) rowCols.forEach((c) => {
+        if (!e.repeat && inScope) rowCols.forEach((c) => {
           const ck = colourKey(c.colour);
           const g = liveGroup.get(ck) || { colour: c.colour, old: 0, new: 0 };
           g[e.row?.useNewFabric ? "new" : "old"] += c.qty;
@@ -208,7 +216,9 @@ export function buildFabricGroups({ entries = [], lines = [], fabricPlan = null,
     // What is pulled from stock - always the NEW fabric only (a ♻ Repeat zone's fabric is already standing at the venue):
     //  - colours picked (whole event): the colours added up, each rounded UP to a whole kg / piece, so a little more than the zones'
     //    exact figure (owner report 2026-11-26, Rajiv Tangri: Maroon 10 + Ivory 8 = 18 kg while the card said 16 kg);
-    //  - otherwise (no colour yet, or one function's view - the colours are the whole event's): the non-Repeat zones' total.
+    //  - otherwise (no colour yet, or a function with no live palette of its own, whose colours fall back to the whole
+    //    event's fabricPlan - onlyFi alone no longer forces this fallback, see liveGroup's own onlyFi scoping above):
+    //    the non-Repeat zones' total.
     // qty stays every zone's total (the zone list and its share bar); standingQty is the Repeat zones' part of it.
     const freshQty = r2(zones.filter((z) => !z.standing).reduce((s, z) => s + (Number(z.qty) || 0), 0));
     const standingQty = r2(Math.max(0, qty - freshQty));

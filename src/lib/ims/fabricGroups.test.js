@@ -267,6 +267,34 @@ describe("buildFabricGroups — colours worked out live from the function's Fabr
   });
 });
 
+describe("buildFabricGroups — one function's card never shows another function's colour (owner report 2026-11-28, Kanishk QA)", () => {
+  // Wedding's own Fabric Palette is Teal, every one of its 4 zones correctly resolves to Teal - but Reception
+  // (a different function on the SAME event) is set to Ivory. Filtering the panel to just Wedding used to still
+  // fold Reception's Ivory into the card's top-line colour summary (liveGroup had no onlyFi scoping, unlike zones).
+  const stock = { lizaStock: [{ colour: "Teal", stockKg: 200 }, { colour: "Ivory", stockKg: 200 }] };
+  const mk = (fi, fnLabel, zk) => ({ fi, ri: 0, zk, zLabel: zk, fnLabel, photo: "", fab: { lizaKg: 20, lizaWrapKg: 20, lizaCeilingKg: 0 }, row: {} });
+  const entries2 = [
+    mk(0, "Wedding", "btr"), mk(0, "Wedding", "entry"), mk(0, "Wedding", "stage"), mk(0, "Wedding", "photobooth"),
+    mk(1, "Reception", "btr"), mk(1, "Reception", "entry"), mk(1, "Reception", "stage"), mk(1, "Reception", "photobooth"),
+  ];
+  const fnPalettes = { 0: "Teal", 1: "Ivory" };
+  it("Wedding's own view (onlyFi 0) shows only Teal - Reception's Ivory never leaks in", () => {
+    const g = buildFabricGroups({ entries: entries2, lines: [], stock, fnPalettes, multiFn: true, onlyFi: 0 }).groups.find((x) => x.key === "liza");
+    expect(g.colours.map((c) => c.colour)).toEqual(["Teal"]);
+    expect(g.colourText).toBe("Teal 80 kg");
+    expect(g.zones.every((z) => z.fi === 0)).toBe(true);
+  });
+  it("Reception's own view (onlyFi 1) shows only Ivory", () => {
+    const g = buildFabricGroups({ entries: entries2, lines: [], stock, fnPalettes, multiFn: true, onlyFi: 1 }).groups.find((x) => x.key === "liza");
+    expect(g.colours.map((c) => c.colour)).toEqual(["Ivory"]);
+    expect(g.colourText).toBe("Ivory 80 kg");
+  });
+  it("the whole-event view (no onlyFi) still shows both, same as before this fix", () => {
+    const g = buildFabricGroups({ entries: entries2, lines: [], stock, fnPalettes, multiFn: true }).groups.find((x) => x.key === "liza");
+    expect(g.colours.map((c) => c.colour).sort()).toEqual(["Ivory", "Teal"]);
+  });
+});
+
 describe("buildFabricGroups — Wall Masking in the colour picked on the truss (owner report 2026-11-13)", () => {
   const stock = { maskingStock: [{ colour: "Black", stockPieces: 8 }, { colour: "Maroon", stockPieces: 75 }, { colour: "Ivory", stockPieces: 78 }] };
   const mk = (row = {}) => ({ fi: 0, ri: 0, zk: "entry", zLabel: "Entry", fnLabel: "Cocktail", photo: "", fab: { maskingPieces: 4 }, row });
