@@ -8,6 +8,7 @@ import {
   fetchLabourAccessForDepts, grantLabourAccess, revokeLabourAccess, DEPT_ICON,
 } from "../../lib/ims/labourAttendance";
 import LabourPunchCamera from "./LabourPunchCamera.jsx";
+import LabourImportModal from "./LabourImportModal.jsx";
 import { SelectPopover } from "./AttendanceAdminLog.jsx";
 import { phone10 } from "../../lib/ims/helpers";
 import { IconUsers, IconSearch, IconPlusCircle, IconTrash, IconPin, IconLock, IconX, IconCheck, IconPlay, IconStop } from "../../components/icons.jsx";
@@ -50,6 +51,7 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
   const [error, setError] = useState("");        // a failed add / remove / save, dismissable
   const [loadError, setLoadError] = useState(""); // the roster itself didn't load — shown in the list, with a retry
   const [reload, setReload] = useState(0);
+  const [importing, setImporting] = useState(false); // the "Import sheet" screen (Admin)
   const [q, setQ] = useState("");
   const [camera, setCamera] = useState(null);   // { labour, type } | null
   const [saving, setSaving] = useState(false);
@@ -229,7 +231,14 @@ export default function LabourPunchPanel({ authUser, users, settings, myAccess, 
             <button onClick={() => setAdding((a) => !a)} aria-expanded={adding} className={BTN_SECONDARY + " shrink-0"}>
               {adding ? <><IconX size={15} /> Cancel</> : <><IconPlusCircle size={15} /> Add</>}
             </button>
+            {/* Admin: a whole contact sheet onto the department lists at once (LabourImportModal). */}
+            {manageDepts.length > 0 && (
+              <button onClick={() => setImporting(true)} title="Add a whole sheet of labours (CSV) to their departments" className={BTN_SECONDARY + " shrink-0"}>
+                Import sheet
+              </button>
+            )}
           </div>
+          {importing && <LabourImportModal open authUser={authUser} onClose={() => setImporting(false)} onDone={() => setReload((r) => r + 1)} />}
 
           {adding && (
             <div className="rounded-xl bg-gray-50 ring-1 ring-gray-100 p-3.5">

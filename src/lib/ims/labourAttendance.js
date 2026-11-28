@@ -5,10 +5,12 @@
 import { supabase } from "../supabase";
 import { DEPTS } from "./deptClassify";
 import { ATTENDANCE_QUIZ_DEPT_ICON } from "./attendance";
+import { ATTENDANCE_ONLY_DEPTS } from "./staffImport";
 
-export const LABOUR_DEPTS = DEPTS;
+// The build departments plus the attendance-only ones (ADD - owner ask 2026-11-28).
+export const LABOUR_DEPTS = [...DEPTS, ...ATTENDANCE_ONLY_DEPTS];
 // The quiz departments' icons, plus Transport (which has labours but no briefing).
-export const DEPT_ICON = { ...ATTENDANCE_QUIZ_DEPT_ICON, Transport: "🚚" };
+export const DEPT_ICON = { ...ATTENDANCE_QUIZ_DEPT_ICON, Transport: "🚚", ADD: "🧰" };
 
 const isAdminUser = (u) => (u?.role || "").toLowerCase() === "admin" || u?.id === "u_admin";
 
@@ -16,14 +18,14 @@ const isAdminUser = (u) => (u?.role || "").toLowerCase() === "admin" || u?.id ==
  * Admin only (owner decision) — department heads get access the same way everyone else does, by an
  * Admin granting it. */
 export function labourManageDepts(user) {
-  return isAdminUser(user) ? [...DEPTS] : [];
+  return isAdminUser(user) ? [...LABOUR_DEPTS] : [];
 }
 
 /** Departments whose labours this user may punch: every one for Admin, else only those granted. */
 export function labourPunchDepts(user, myAccessRows) {
   const out = new Set(labourManageDepts(user));
-  (myAccessRows || []).forEach((r) => { if (r.user_id === user?.id && DEPTS.includes(r.department)) out.add(r.department); });
-  return DEPTS.filter((d) => out.has(d));
+  (myAccessRows || []).forEach((r) => { if (r.user_id === user?.id && LABOUR_DEPTS.includes(r.department)) out.add(r.department); });
+  return LABOUR_DEPTS.filter((d) => out.has(d));
 }
 
 const newId = (p) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
