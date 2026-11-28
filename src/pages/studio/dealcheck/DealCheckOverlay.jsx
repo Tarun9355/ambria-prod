@@ -33,6 +33,9 @@ import { eventOrderFor, ownEventOrderIds } from "../../../lib/studio/eventOrderF
 import { tripsOf } from "../../../lib/ims/eventTrucks"; // a truck's trips (or its one legacy trip) - for the items IMS added on trucks
 import { truckExtraRowsOf, truckExtraElements, withTruckExtraZone, truckExtraFnIdx } from "../../../lib/ims/truckExtraBlocks"; // those items as rows: shown on the Inventory tab, costed in the internal cost; and counted in the crew
 import { reindexFnIdxPrefixedSet } from "../../../lib/studio/dealCheckReindex.js";
+import { lateChargesByDept } from "../../../lib/ims/lateChanges"; // the 48 hours before the event: removed, cut or swapped-out items still cost their rental
+import { buildDealFabricPlan } from "../../../lib/studio/dealFabricPlan.js"; // same fabric-demand aggregation IMS's fabricNeed/fabricGroups read, now shared instead of a second copy
+import { fabricStockIndex, fabricBuyLinesFromNeed, colourKey as fabricColourKey } from "../../../lib/ims/fabricShortfall"; // the Buying tab's own live "beyond stock" preview - same maths the auto-purchase engine buys against
 
 // ══ THE PAGE'S GROUND ══
 // A glob, not an import, for the same reason every other background in this app uses one: if the file
@@ -109,7 +112,7 @@ import { heavyExtraLabour, eventTimingMultFor, SIT_MULT_DEFAULTS } from "../../.
 import { deptMpReconciled, itemImsSubcat, lookupBySubcat, itemDimsText, walkKitUnits } from "../../../lib/ims/helpers";
 import { rentalSplit, availableAtVenue, isStandingAt, fixedVenueFor, standingReductionBySubcat, fixedVenueDealDiscount, reservedByVenueToday, venueSlackFor, combineAvailability, fixedVenueOverlap, fixedVenueOverlapOnDate } from "../../../lib/ims/fixedVenues";
 import { getSharingAwareAvailable, collapsedDealShiftFor } from "../../../lib/ims/fixedVenueSharing";
-import { calcZoneFabric, resolveFabricAllocation, fabricAnchorsForRow, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial, platformStandingDiscount, scaleTrussPreview } from "../../../lib/studio/pricing";
+import { calcZoneFabric, resolveFabricAllocation, fabricAnchorsForRow, anchorsForPalette, anchorsForPaletteByMaterial, resolveTrussConfig, zoneTrussStandingDiscountDetail, trussDiscountedCosts, repeatCatFor, freshFnForManpower , dcFabricMultOf, trussInvForMaterial, platformStandingDiscount, scaleTrussPreview, fabricRentalRate } from "../../../lib/studio/pricing";
 import { resolveBeamSegment, resolvePillarHeight } from "../../../lib/ims/trussEngine";
 import { platformAvgRatePerSqft } from "../../../lib/ims/platformEngine";
 import { carpetPricingFor, CARPET_OFF, carpetTakesStockPick, trussBaseArea } from "../../../lib/studio/taxonomy";
@@ -274,7 +277,7 @@ export default function DealCheckOverlay({ ctx }) {
     // Settings → Zones' own drag-ordered priority (Object.keys(zoneMeta), same list Build sorts by)
     zoneKeys, zoneLabelsD,
     // misc
-    showMsg, saveClientLedger, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals,
+    showMsg, saveClientLedger, manpowerPlanForBooking, persistDeptSnapshot, dcEoActuals, refreshDcEoActuals, amendRequests,
     // Pre-Sold/pre-reserve hard gate (StudioApp.jsx) — same scan markSold/applyBookedChanges run,
     // reused here so the explicit "📤 push to IMS" button can't push a department breakdown for a
     // build that's actually out of stock either (defense in depth; see syncToOps below).
@@ -2108,6 +2111,18 @@ export default function DealCheckOverlay({ ctx }) {
           // above, just kept broken out by department instead of collapsed into one deal-wide
           // delta, so the P&L tab can show each department's own planned → actual, not just one
           // deal-wide number.
+          // Taken out of a department's plan in the 48 hours before the event (removed, cut, or swapped
+          // out for something else) still costs its rental — the stock was already held regardless
+          // (owner ask 2026-11-27/28; lib/ims/lateChanges). This is the EXACT same figure IMS Planning's
+          // own Inventory blocked tile/section add, computed by the same shared function, so the two
+          // can never disagree. Only the P&L tab reads deptActual, and it only shows once a function's
+          // day has arrived (anyFnPassedForPL) — nothing to work out before that.
+          const lateByDept = anyFnPassedForPL ? (() => {
+            try {
+              const inv = (dealCheckData?.inventory?.length > 0) ? dealCheckData.inventory : (dcInventoryCache || []);
+              return lateChargesByDept({ sel: eoForAvail, depts: DEPTS, amendRequests, inventory: inv });
+            } catch { return {}; }
+          })() : {};
           const deptActual = {};
           DEPTS.forEach(d => {
             const dd = aDeptOps?.[d] || null;
@@ -2118,12 +2133,15 @@ export default function DealCheckOverlay({ ctx }) {
             const mpCost = mpEdited ? deptMpReconciled(manpowerDetail[d], dd) : planned.manpower;
             const expenses = Array.isArray(dd?.expenses) ? dd.expenses : [];
             const expenseTotal = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
-            const total = planned.rental + florals + planned.truss + planned.fabric + planned.transport + planned.power + mpCost + planned.production + planned.buying + expenseTotal;
+            const late = lateByDept[d];
+            const lateChargesTotal = Number(late?.total) || 0;
+            const rentalActual = planned.rental + lateChargesTotal;
+            const total = rentalActual + florals + planned.truss + planned.fabric + planned.transport + planned.power + mpCost + planned.production + planned.buying + expenseTotal;
             deptActual[d] = {
-              rental: planned.rental, florals, truss: planned.truss, fabric: planned.fabric, transport: planned.transport,
+              rental: rentalActual, florals, truss: planned.truss, fabric: planned.fabric, transport: planned.transport,
               power: planned.power, manpower: mpCost, production: planned.production, buying: planned.buying,
-              expenses, expenseTotal, total,
-              hasActuals: realMandi > 0 || expenseTotal > 0 || mpEdited,
+              expenses, expenseTotal, lateCharges: late?.rows || [], lateChargesTotal, total,
+              hasActuals: realMandi > 0 || expenseTotal > 0 || mpEdited || lateChargesTotal > 0,
             };
           });
           const effManpower = manpower + mpDelta;
@@ -2277,6 +2295,26 @@ export default function DealCheckOverlay({ ctx }) {
           ...(dcCostRollup.byFn || []).map(b => b.rental + b.truss + b.florals + b.transport + b.genset + b.production + b.buying)]
           .map(n => Math.round(Number(n) || 0)).join("|");
 
+        // Deal Check's own live "fabric beyond stock" preview (Buying tab) — built off the SAME
+        // aggregation (buildDealFabricPlan) that gets pushed to IMS as event_orders.fabricPlan below,
+        // so the Buying tab can never show a different shortfall than what Deal Check itself prices on
+        // the Truss tab (DCTrussTab's own per-zone warning) or what the auto-purchase engine buys
+        // against once sold. No same-day contention with other deals here (Studio has no visibility
+        // into other events' demand) — that's IMS Dept Ops' own job (eventFabricBuyLines).
+        // Deliberately NOT folded into dcPriceSigRef above: this never changes a billed number (D10 —
+        // the shortfall ₹ shown is informational only, "already in Truss cost"), so it must never be
+        // part of what triggers the settle effect / Apply-changes diffing.
+        const dcFabricBuy = (() => {
+          const emptyPlan = { liza: [], masking: [], curtain: [] };
+          const tInv = dealCheckData?.trussInv;
+          if (!tInv) return { plan: emptyPlan, lines: [], unassigned: [] };
+          let plan = emptyPlan;
+          try { plan = buildDealFabricPlan({ fns: dcCostRollup.fns || [], trussInv: tInv, libItems, paletteCatalogue: imsPaletteCatalogue }); }
+          catch { return { plan: emptyPlan, lines: [], unassigned: [] }; }
+          try { return { plan, ...fabricBuyLinesFromNeed(plan, fabricStockIndex(tInv)) }; }
+          catch { return { plan, lines: [], unassigned: [] }; }
+        })();
+
         // ── Build + auto-push the department snapshot to IMS whenever Deal Check is open (any tab),
         // so Dept Ops mirrors Studio without anyone navigating to the Dept Income tab. ──
         const dcSeasonMap = dealCheckData?.seasonMap || {};
@@ -2413,68 +2451,9 @@ export default function DealCheckOverlay({ ctx }) {
           const manpowerDetail = dcCostRollup.manpowerDetail || {};
           const incomeRounded = {}; Object.entries(dcCostRollup.dept || {}).forEach(([d, v]) => { incomeRounded[d] = {}; Object.entries(v || {}).forEach(([k, n]) => { incomeRounded[d][k] = typeof n === "number" ? Math.round(n) : n; }); });
           // Fabric demand per type + colour (for the Fabric head's stock-vs-requirement / reorder panel).
-          let fabricPlan = { liza: [], masking: [], curtain: [] };
-          try {
-            const tInv = dealCheckData?.trussInv;
-            if (tInv) {
-              const agg = { liza: {}, masking: {}, curtain: {} };
-              const byRow = []; // per truss row: which colour its fabric went to ({ fi, zk, ri, kind, colour, qty, tier }) - IMS Fabric block shows it per zone
-              (dcCostRollup.fns || []).forEach((fn, fnI) => {
-                const zc = fn.zoneConfig || {}, en = fn.enabledEls || {};
-                const fnPaletteForAnchors = fn.fnPalette || "Custom";
-                Object.keys(zc).forEach(zk => {
-                  // ♻️ Repeat zones reuse standing fabric — nothing new to stock/reorder for them.
-                  // Truss & Masking's own category flag — same one dcCostRollup's fabric ×0.75 above
-                  // reads — not the zone-wide toggle, so this Fabric-head projection can't disagree
-                  // with what the zone is actually billed for.
-                  if (!en[zk] || !zc[zk] || repeatCatFor(zc[zk], "truss")) return;
-                  let density = "moderate";
-                  const photoUrl = (fn.elSelectedPhoto || {})[zk];
-                  if (photoUrl) { const li = (libItems || []).find(l => l.url === photoUrl); if (li?.dims?.drapeDensity) density = li.dims.drapeDensity; }
-                  // A zone can carry more than one truss row — each row's own allocation (or auto-fill).
-                  [zc[zk], ...(zc[zk].extraTrussRows || [])].forEach((row, ri) => {
-                    if (isTrussFoc(row)) return; // FOC - its fabric is already up at the venue; nothing for the Fabric dept to send
-                    const fab = calcZoneFabric(row, tInv, row.drapeDensity || density);
-                    // Owner ask (2026-10-15): the Fabric dept needs to know WHICH tier a requirement is
-                    // for, not just a colour+qty total — row.useNewFabric (the salesperson's own Build
-                    // toggle) says so directly, so every row/colour here is tagged old vs new instead of
-                    // being summed together blind to it.
-                    const tier = row.useNewFabric ? "new" : "old";
-                    const add = (key, totalQty, stockArr, qtyField, allocField) => {
-                      if (!totalQty || totalQty <= 0) return;
-                      const existing = row[allocField];
-                      // key is "liza"/"masking"/"curtain" — the exact material-keys a Fabric Palette
-                      // colour can now be tagged with (StudioBuild.jsx), so each material only ever
-                      // auto-fills from colours actually meant for it, not every colour the
-                      // salesperson picked regardless of which fabric they meant it for.
-                      const allocs = resolveFabricAllocation(existing, Math.ceil(totalQty), fabricAnchorsForRow(row, key, anchorsForPaletteByMaterial(imsPaletteCatalogue, fnPaletteForAnchors, key)), stockArr, qtyField);
-                      const bump = (c, qty) => { if (!agg[key][c]) agg[key][c] = { old: 0, new: 0 }; agg[key][c][tier] += qty; };
-                      if (allocs.length) allocs.forEach(a => { bump(a.colour || "(unassigned)", Number(a.qty) || 0); byRow.push({ fi: fnI, zk, ri, kind: key, colour: a.colour || "(unassigned)", qty: Number(a.qty) || 0, tier }); });
-                      else { bump("(unassigned)", Math.ceil(totalQty)); byRow.push({ fi: fnI, zk, ri, kind: key, colour: "(unassigned)", qty: Math.ceil(totalQty), tier }); }
-                    };
-                    add("masking", fab.maskingPieces, tInv.maskingStock, "stockPieces", "maskingAllocation");
-                    add("liza", fab.lizaKg, tInv.lizaStock, "stockKg", "lizaAllocation");
-                    add("curtain", fab.curtainPieces, tInv.curtainStock, "stockPieces", "curtainAllocation");
-                    // Loose Liza/Masking/Curtain (Build's own "Loose fabric" rows, 2026-11-02) — the
-                    // salesperson already picked the colour by hand, so this bumps it straight into
-                    // the aggregate under THAT colour instead of going through add()'s auto-match
-                    // (resolveFabricAllocation), which exists only to GUESS a colour for the
-                    // formula-derived demand above.
-                    (Array.isArray(row.looseFabric) ? row.looseFabric : []).forEach((lf) => {
-                      const kind = lf?.kind, qty = Number(lf?.qty) || 0;
-                      if (!kind || qty <= 0 || !agg[kind]) return;
-                      const colour = String(lf.colour || "").trim() || "(unassigned)";
-                      if (!agg[kind][colour]) agg[kind][colour] = { old: 0, new: 0 };
-                      agg[kind][colour][tier] += qty;
-                      byRow.push({ fi: fnI, zk, ri, kind, colour, qty, tier });
-                    });
-                  });
-                });
-              });
-              const toRows = (o) => Object.entries(o).map(([colour, t]) => ({ colour, qty: Math.ceil((t.old||0)+(t.new||0)), qtyOld: Math.ceil(t.old||0), qtyNew: Math.ceil(t.new||0) })).filter(r => r.qty > 0);
-              fabricPlan = { liza: toRows(agg.liza), masking: toRows(agg.masking), curtain: toRows(agg.curtain), rows: byRow };
-            }
-          } catch {}
+          // Same aggregation the Buying tab's own live preview already computed this render
+          // (dcFabricBuy, above) — reused here rather than recomputed, so the two can never disagree.
+          const fabricPlan = dcFabricBuy.plan;
           // Deal value: the negotiated amount stays frozen once booked (owner decision — no silent
           // auto-update); this only surfaces the delta so a salesperson can see and choose to apply
           // it. bookedSystemTotal is the live-build baseline captured at booking (or the last Apply);
@@ -2905,6 +2884,7 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                         <span style={{display:"inline-flex",alignItems:"center",gap:6}}>
                           <span style={{fontSize:14,lineHeight:1}}>{t.icon}</span>{t.label}
                           {!t.live && <span style={{marginLeft:6,fontSize:10,padding:"2px 5px",borderRadius:4,background:"rgba(245,158,11,0.18)",color:"#F59E0B",fontWeight:700,letterSpacing:0.4}}>{t.ship}</span>}
+                          {t.id === "buying" && dcFabricBuy.lines.length > 0 && <span title="Fabric beyond stock — will be bought (see Buying)" style={{marginLeft:4,fontSize:9.5,padding:"2px 5px",borderRadius:4,background:"#FCEFD2",color:"#946417",fontWeight:800}}>🧵{dcFabricBuy.lines.length}</span>}
                         </span>
                         <span className="dc-money" style={{fontSize:10.5,fontWeight:700,opacity:amount?(on?0.85:0.55):0,marginTop:1}}>{!dcPriceSettled && amount ? <span aria-label="Loading price" className="dc-sk" style={{display:"inline-block",width:46,height:9,borderRadius:4,verticalAlign:"-1px"}}/> : amount || " "}</span>
                       </button>
@@ -5231,6 +5211,67 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                               ))}
                             </div>
                           )}
+                          {/* Buying-only: Teal/Rose Gold/whatever colour Build's Truss tab says is
+                              beyond physical stock — read-only, computed live off the SAME aggregation
+                              (buildDealFabricPlan) pushed to IMS, so this can never disagree with the
+                              Truss tab's own per-zone shortfall warning or what the auto-purchase
+                              engine actually buys once the deal sells. The ₹ shown here is purely
+                              informational (D10) — it is ALREADY inside the Truss cost above, never
+                              added to this tab's own `total`/`buyTotal`, so showing it can't double-bill
+                              the client. No ✕: fixed by changing the fabric colour/stock in Truss or
+                              Build, not by dismissing the card. */}
+                          {!isP && dcFabricBuy.lines.length > 0 && (
+                            <div style={{padding:"12px 15px 14px",borderTop:`1px solid ${HAIRLINE}`}}>
+                              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap"}}>
+                                <div style={{fontSize:10.5,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",color:INK_2}}>🧵 Fabric beyond stock</div>
+                                <span style={{fontSize:9,fontWeight:800,letterSpacing:0.4,color:"#946417",background:"#FCEFD2",padding:"2px 7px",borderRadius:6}}>AUTO-DETECTED</span>
+                                {(collectAllFunctionData ? collectAllFunctionData() : []).length > 1 && <span style={{fontSize:10.5,color:INK_3}}>· Whole booking · all functions</span>}
+                              </div>
+                              <div style={{fontSize:11,color:INK_3,marginBottom:10,lineHeight:1.4}}>
+                                From the Truss tab's own fabric: more than Ambria's shelf holds. {isSold ? "IMS raises the purchase order for this automatically." : "Will be bought automatically once this deal is SOLD."} Compared against physical stock only — IMS works out the final amount (another booking on the same day can raise it, an earlier purchase can lower it).
+                              </div>
+                              <div className="dc2-grid4">
+                                {dcFabricBuy.lines.map((line) => {
+                                  const zoneRows = (dcFabricBuy.plan.rows || []).filter(r => r.kind === line.kind && fabricColourKey(r.colour) === line.colourKey);
+                                  const byZone = new Map();
+                                  zoneRows.forEach(r => { const k = `${r.fi}|${r.zk}`; const cur = byZone.get(k) || { fi: r.fi, zk: r.zk, qty: 0 }; cur.qty += r.qty; byZone.set(k, cur); });
+                                  const zoneText = [...byZone.values()].map(z => {
+                                    const fnLabel = (collectAllFunctionData ? collectAllFunctionData() : [])[z.fi]?.fnType;
+                                    return `${z.zk}${fnLabel ? ` · ${fnLabel}` : ""} ${z.qty}`;
+                                  }).join(" · ");
+                                  const useNew = line.needNew > line.needOld;
+                                  return (
+                                    <div key={`${line.kind}|${line.colourKey}`} className="dc2-row" style={{borderRadius:12,background:TILE_BG,border:`1px solid ${TILE_BORDER}`,overflow:"hidden",display:"flex",flexDirection:"column"}}>
+                                      <div style={{display:"flex",gap:10,padding:"11px 12px"}}>
+                                        {line.photo
+                                          ? <HoverZoom src={thumbUrl(line.photo, 320)}><img loading="lazy" decoding="async" src={thumbUrl(line.photo, 96)} alt="" style={{width:46,height:46,borderRadius:9,objectFit:"cover",flexShrink:0,border:`1px solid ${CARD_BORDER}`}} /></HoverZoom>
+                                          : <div style={{width:46,height:46,borderRadius:9,background:line.hex || "#F7F1E0",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>{line.emoji}</div>}
+                                        <div style={{flex:"1 1 auto",minWidth:0}}>
+                                          <div style={{fontSize:9.5,fontWeight:700,letterSpacing:0.7,textTransform:"uppercase",color:INK_3,marginBottom:2}}>{line.label}</div>
+                                          <div title={line.colour} style={{fontSize:12.5,fontWeight:650,color:INK,letterSpacing:-0.1,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{line.colour}</div>
+                                          <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:4}}>
+                                            {line.needOld > 0 && <span style={{fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:6,background:CHIP_BG,color:INK_2}}>Old {line.needOld}</span>}
+                                            {line.needNew > 0 && <span style={{fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:6,background:"#EDE7FB",color:"#7C3AED"}}>New {line.needNew}</span>}
+                                            {!line.inStock && <span style={{fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:6,background:BAD_SOFT,color:BAD}}>Not in Fabric Stock</span>}
+                                            {line.hiddenInBuild && <span style={{fontSize:9,fontWeight:700,padding:"2px 6px",borderRadius:6,background:CHIP_BG,color:INK_3}}>Hidden in Build</span>}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      {zoneText && <div style={{padding:"0 12px",fontSize:10,color:INK_3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",...NUM}} title={zoneText}>{zoneText}</div>}
+                                      <div style={{marginTop:"auto",padding:"10px 12px 11px"}}>
+                                        <div style={{fontSize:17,fontWeight:750,color:INK,letterSpacing:-0.45,lineHeight:1.1,...NUM}}>{line.buy} {line.unit} <span style={{fontSize:11,fontWeight:600,color:INK_3}}>to buy</span></div>
+                                        <div style={{fontSize:10,color:INK_3,marginTop:3,...NUM}}>needs {line.qty} {line.unit} · in stock {line.stockOld} old + {line.stockNew} new</div>
+                                        <div style={{fontSize:9.5,color:INK_3,marginTop:4,fontStyle:"italic"}}>≈ ₹{Math.round(line.buy * fabricRentalRate(dealCheckData?.trussInv?.rates, line.kind, useNew ? "new" : "old")).toLocaleString("en-IN")} rental at the {useNew ? "New" : "Old"} rate · already in Truss cost</div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              {dcFabricBuy.unassigned.map((u, i) => (
+                                <div key={i} style={{fontSize:11,color:INK_3,marginTop:8}}>{u.qty} {u.unit} of {u.label} has no colour picked — it can't be bought until one is picked (Deal Check → Truss).</div>
+                              ))}
+                            </div>
+                          )}
                           {/* Buying-only: a print job is priced from material + area, not picked
                               from stock, so it gets its own small form here rather than reusing the
                               zone-header "+ item" flow items.map above came from (which needs a
@@ -5907,8 +5948,10 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                   // not a separate quoted price). Actual cost = dcCostRollup.deptActual, built
                   // the exact same way the GYV tab's own deal-wide actuals overlay is (real mandi
                   // bill replaces projected florals, a dept head's edited crew replaces planned
-                  // manpower, on-site expenses add on top) — just kept per department instead of
-                  // collapsed into one number.
+                  // manpower, on-site expenses add on top, and inventory removed/cut/swapped out
+                  // in the 48 hours before the event still bills its rental — lib/ims/lateChanges,
+                  // owner ask 2026-11-28) — just kept per department instead of collapsed into one
+                  // number.
                   const plDept = dcCostRollup.dept || {};
                   const plActual = dcCostRollup.deptActual || {};
                   const plDepts = dcCostRollup.DEPTS || [];
@@ -5982,7 +6025,7 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                         {rows.map(({ d, planned, income }) => {
                           const acc = deptAccent(d);
-                          const a = plActual[d] || { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, power: 0, manpower: 0, production: 0, buying: 0, expenses: [], expenseTotal: 0, total: planned, hasActuals: false };
+                          const a = plActual[d] || { rental: 0, florals: 0, truss: 0, fabric: 0, transport: 0, power: 0, manpower: 0, production: 0, buying: 0, expenses: [], expenseTotal: 0, lateCharges: [], lateChargesTotal: 0, total: planned, hasActuals: false };
                           const delta = a.total - planned;
                           const projPct = income > 0 ? ((income - planned) / income) * 100 : 0;
                           const finPct = income > 0 ? ((income - a.total) / income) * 100 : 0;
@@ -5997,6 +6040,12 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                           // as a logged "Expense ₹0" line here; expenseTotal already only counts
                           // the ones with a real amount.
                           const loggedExpenses = a.expenses.filter((e) => (Number(e.amount) || 0) > 0);
+                          // ₹0 late-charge rows (a stock re-count, a kit part's cross-department copy, an item with no
+                          // rate) never reach here at all — lateChanges.js already excludes/zero-prices them — but kept
+                          // as a filter anyway so this list can never show a billed ₹0 row.
+                          const billedLateCharges = a.lateCharges.filter((r) => (Number(r.total) || 0) > 0);
+                          const lateKindLabel = { removed: { text: "Removed", ink: BAD, soft: BAD_SOFT }, swapped: { text: "Swapped out", ink: GOLD, soft: GOLD_SOFT }, cut: { text: "Qty cut", ink: INK_2, soft: CHIP_BG } };
+                          const lateWhen = (at) => at ? new Date(at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "";
 
                           return (
                             <div key={d} className="dc2-card" style={{ background: CARD_BG, border: `1px solid ${CARD_BORDER}`, borderRadius: 14, boxShadow: CARD_SHADOW, overflow: "hidden", display: "flex" }}>
@@ -6042,6 +6091,27 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                                         </div>
                                       );
                                     })}
+                                    {billedLateCharges.length > 0 && (
+                                      <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${TILE_BORDER}` }}>
+                                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: INK_3, marginBottom: 6 }}>Changed in the 48 hours before the event · still billed</div>
+                                        {billedLateCharges.map((r, ri) => {
+                                          const lk = lateKindLabel[r.kind] || lateKindLabel.removed;
+                                          const sub = [r.fn, lateWhen(r.at), r.by].filter(Boolean).join(" · ");
+                                          return (
+                                            <div key={ri} style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 9px", borderRadius: 8, background: TILE_BG, fontSize: 12, marginTop: ri ? 4 : 0 }}>
+                                              <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                                                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", padding: "2px 6px", borderRadius: 999, background: lk.soft, color: lk.ink, flexShrink: 0 }}>{lk.text}</span>
+                                                  <span style={{ color: INK_2, fontWeight: 600 }}>{r.kind === "swapped" ? `${r.name} → ${r.swappedFor}` : r.kind === "cut" ? `${r.name} · ${r.from} → ${r.to}` : `${r.name} · ×${r.qty}`}</span>
+                                                </span>
+                                                {sub && <span style={{ fontSize: 10.5, color: INK_3 }}>{sub}</span>}
+                                              </span>
+                                              <span style={{ fontWeight: 650, flexShrink: 0, ...NUM }} title={`${r.qty} × ${fmt(r.rate)}`}>{fmt(r.total)}</span>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
                                     {loggedExpenses.length > 0 && (
                                       <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${TILE_BORDER}` }}>
                                         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase", color: INK_3, marginBottom: 6 }}>On-site expenses logged</div>
@@ -6066,7 +6136,10 @@ ${/* only while Deal Check is OPEN: its unseen background run (dcHeadless) mount
                         share of planned cost (GYV fixed, buffer and commission are company-level and left out of the split,
                         same as the <b style={{ color: INK_2 }}>GYV &amp; Buffer</b> tab). Actual cost is whatever Ops has logged
                         so far in IMS Dept Ops and the Site tab — real mandi bills, on-site expenses, any crew a dept head
-                        changed. A department shows only its projected margin until it has logged something real.
+                        changed, and the rental of inventory removed, cut or swapped out in the 48 hours before the event
+                        (the stock was already held, so it is still billed; a swap bills the item taken out on top of the
+                        one brought in). Late changes to truss, fabric, carpets and prints aren't logged, so they don't
+                        show here. A department shows only its projected margin until it has logged something real.
                       </div>
                     </div>
                   );

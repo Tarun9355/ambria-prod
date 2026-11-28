@@ -68,15 +68,21 @@ export function fabricStockIndex(trussInv) {
   return out;
 }
 
+// Every other LIVE event order on the same date (the event itself excluded by id) - the one predicate
+// sameDayReservedOf and eventFabricBuyLines/eventFabricBuyLines's same-day pooling both need, kept in one
+// place instead of two copies of the same five-way check drifting apart.
+export function sameDayOrders({ eventOrders, date, exclId }) {
+  if (!date) return [];
+  return (eventOrders || []).filter((eo) => eo && eo.id !== exclId && eoDate(eo) === date && !(eo.status && !isLiveEventOrder(eo)) && (eo.fabricPlan || eo.functionsDetail));
+}
+
 // Same-day contention: how much of this fabric/colour the event's date is ALREADY committed to by other
 // live events (so the same stock can't be double-counted as free for two weddings on the same day). Matches
 // colours by colourKey (see fabricStockIndex's own note on why) rather than the old exact-string compare.
 export function sameDayReservedOf({ eventOrders, needOf, date, exclId, kind, colour }) {
-  if (!date) return 0;
   let s = 0;
   const ck = colourKey(colour);
-  (eventOrders || []).forEach((eo) => {
-    if (eo.id === exclId || eoDate(eo) !== date || (eo.status && !isLiveEventOrder(eo)) || (!eo.fabricPlan && !eo.functionsDetail)) return;
+  sameDayOrders({ eventOrders, date, exclId }).forEach((eo) => {
     (needOf(eo)[kind] || []).forEach((r) => { if (colourKey(r.colour) === ck) s += Number(r.qty) || 0; });
   });
   return s;
@@ -213,4 +219,83 @@ export function receiveFabricIntoStock(trussInv, { stockKey, qtyField, colour, t
   }
   const row = { colour, [qtyField]: 0, [`${qtyField}New`]: 0, [field]: amt };
   return { ...trussInv, [stockKey]: [...rows, row] };
+}
+
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const KIND_ORDER = FABRIC_TYPES.map((f) => f.key);
+
+// Turns any `need` of fabricPlan/needOf's shape ({ liza: [{colour,qty,qtyOld,qtyNew}], masking: [...],
+// curtain: [...] }) into "buy this" lines against current stock, via the SAME tierDeficits every other
+// shortfall figure in the app (the auto-purchase engine included) is built on - so a figure shown here is
+// always what would actually get bought, never a second, slightly different opinion.
+// `alsoOnDate`: other live events sharing the same date ([{ eoId, client, need }]) - their demand pools
+// into the SAME (kind, colour)'s deficit (two weddings on one day draw on one shelf), but never changes
+// `qty`/`qtyOld`/`qtyNew` below, which stay THIS call's own need alone; the pooled total is `pooledQty`,
+// and which other events it's shared with is `sharedWith`. Call with no `alsoOnDate` (Deal Check's own
+// Buying-tab preview, which has no visibility into other deals) and `qty === pooledQty` always.
+// `"(unassigned)"` (no colour picked yet) can never be bought against - it goes to `unassigned` instead of
+// a line, same as fabricDemandByDate already treats it.
+export function fabricBuyLinesFromNeed(need, stockIdx, { alsoOnDate = [] } = {}) {
+  const unassigned = [];
+  const byKey = new Map(); // "kind|colourKey" -> { kind, label, unit, emoji, stockKey, colour, colourKey, Q, QO, QN, ownQ, ownQO, ownQN, sharedWith: Map<eoId, {client, qty}> }
+  const fold = (ft, r, own, tag) => {
+    const qty = Number(r?.qty) || 0;
+    if (!(qty > 0)) return;
+    const rawColour = String(r?.colour || "").trim();
+    const qtyNew = Math.max(0, Number(r?.qtyNew) || 0);
+    const qtyOldRecorded = Math.max(0, Number(r?.qtyOld) || 0);
+    const untiered = Math.max(0, qty - qtyOldRecorded - qtyNew);
+    const qtyOld = qtyOldRecorded + untiered; // untiered folds into Old, same assumption fabricDemandByDate uses
+    if (!rawColour || colourKey(rawColour) === colourKey("(unassigned)")) {
+      if (own) unassigned.push({ kind: ft.key, label: ft.label, unit: ft.unit, emoji: ft.emoji, qty: r2(qty) });
+      return;
+    }
+    const ck = colourKey(rawColour);
+    const mapKey = `${ft.key}|${ck}`;
+    let entry = byKey.get(mapKey);
+    if (!entry) {
+      entry = { kind: ft.key, label: ft.label, unit: ft.unit, emoji: ft.emoji, stockKey: ft.stockKey, colour: rawColour, colourKey: ck, Q: 0, QO: 0, QN: 0, ownQ: 0, ownQO: 0, ownQN: 0, sharedWith: new Map() };
+      byKey.set(mapKey, entry);
+    }
+    entry.Q += qty; entry.QO += qtyOld; entry.QN += qtyNew;
+    if (own) { entry.ownQ += qty; entry.ownQO += qtyOld; entry.ownQN += qtyNew; }
+    else {
+      const cur = entry.sharedWith.get(tag.eoId) || { eoId: tag.eoId, client: tag.client, qty: 0 };
+      cur.qty += qty;
+      entry.sharedWith.set(tag.eoId, cur);
+    }
+  };
+  FABRIC_TYPES.forEach((ft) => { (need?.[ft.key] || []).forEach((r) => fold(ft, r, true, null)); });
+  (alsoOnDate || []).forEach((o) => { FABRIC_TYPES.forEach((ft) => { (o?.need?.[ft.key] || []).forEach((r) => fold(ft, r, false, { eoId: o.eoId, client: o.client })); }); });
+  const lines = [];
+  byKey.forEach((entry) => {
+    const stockEntry = stockIdx?.[entry.kind]?.get(entry.colourKey);
+    const stock = stockEntry || { old: 0, new: 0 };
+    const { needOld, needNew } = tierDeficits({ Q: entry.Q, QO: entry.QO, QN: entry.QN }, stock);
+    const buy = needOld + needNew;
+    if (!(buy > 0)) return;
+    lines.push({
+      kind: entry.kind, label: entry.label, unit: entry.unit, emoji: entry.emoji, stockKey: entry.stockKey,
+      colour: entry.colour, colourKey: entry.colourKey,
+      qty: r2(entry.ownQ), qtyOld: r2(entry.ownQO), qtyNew: r2(entry.ownQN), pooledQty: r2(entry.Q),
+      stockOld: r2(stock.old), stockNew: r2(stock.new),
+      inStock: !!stockEntry, hiddenInBuild: !!stockEntry?.hiddenInBuild, photo: stockEntry?.photo || "", hex: stockEntry?.hex || "",
+      needOld: r2(needOld), needNew: r2(needNew), buy: r2(buy),
+      sharedWith: [...entry.sharedWith.values()].map((s) => ({ ...s, qty: r2(s.qty) })),
+    });
+  });
+  lines.sort((a, b) => (KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind)) || (b.buy - a.buy));
+  return { lines, unassigned };
+}
+
+// One event's own fabric-buy lines, pooled against every other live event on the SAME date (same shelf,
+// same day - see fabricBuyLinesFromNeed's own `alsoOnDate` note). This is what IMS Dept Ops' per-event
+// "Fabric to buy" card shows; it is NOT what Studio's Deal Check Buying tab shows (that calls
+// fabricBuyLinesFromNeed directly with no `alsoOnDate`, since Studio has no visibility into other deals).
+export function eventFabricBuyLines({ eo, eventOrders, needOf, stockIdx }) {
+  if (!eo) return { lines: [], unassigned: [] };
+  const d = eoDate(eo);
+  const need = needOf(eo);
+  const alsoOnDate = sameDayOrders({ eventOrders, date: d, exclId: eo.id }).map((o) => ({ eoId: o.id, client: o.clientName || "Event", need: needOf(o) }));
+  return fabricBuyLinesFromNeed(need, stockIdx, { alsoOnDate });
 }

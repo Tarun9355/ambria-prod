@@ -524,6 +524,8 @@ Changed in the 48 hours before the event ¦ इवेंट से पहले 
 in the Inventory blocked tile ¦ इन्वेंटरी ब्लॉक्ड टाइल के कुल में शामिल
 Replaced ¦ बदला गया
 Removed ¦ हटाया गया
+Swapped out ¦ बदलकर हटाया गया
+Quantity cut ¦ मात्रा घटाई गई
 no rental ¦ कोई किराया नहीं
 This venue is not assigned to you ¦ यह वेन्यू आपको असाइन नहीं है
 Ask Planning to add you as this event's site supervisor if you should receive it. ¦ अगर इसका सामान आपको लेना है, तो प्लानिंग से कहें कि आपको इस इवेंट का साइट सुपरवाइज़र जोड़ें।
@@ -563,6 +565,15 @@ Loaded — a truck with items on it (or a trip gone) can't be removed ¦ लद�
 Search guest name or venue… ¦ गेस्ट का नाम या वेन्यू खोजें…
 No event matches this — try the guest's first name or the venue. ¦ कोई इवेंट नहीं मिला — गेस्ट का पहला नाम या वेन्यू लिखकर देखें।
 — choose — ¦ — चुनें —
+Fabric to buy for this event ¦ इस इवेंट के लिए खरीदना है फैब्रिक
+Billed in Deal Check, more than the shelf holds — bought automatically, not blocked from stock ¦ डील चेक में बिल किया गया, स्टॉक से ज़्यादा — अपने आप खरीदा जाता है, स्टॉक से ब्लॉक नहीं
+to buy ¦ खरीदना है
+Not in Fabric Stock ¦ फैब्रिक स्टॉक में नहीं
+Hidden in Build ¦ बिल्ड में छुपा हुआ
+Adding to stock… ¦ स्टॉक में जोड़ा जा रहा है…
+Not raised yet — the system raises it automatically while IMS is open ¦ अभी तक नहीं बनाया गया — IMS खुला रहने पर सिस्टम अपने आप बना देगा
+Purchases for this event ¦ इस इवेंट की खरीदारी
+whole event ¦ पूरा इवेंट
 `;
 
 export const UI_HI_MORE = Object.fromEntries(LIST.split("\n").map(l => l.split(" ¦ ")).filter(p => p.length === 2 && p[0].trim()).map(([en, hi]) => [en.trim(), hi.trim()]));

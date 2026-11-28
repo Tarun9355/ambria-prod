@@ -3160,6 +3160,7 @@ export default function IMS() {
             onGoToCalendar={canSeeCalendar ? goToCalendar : undefined}
             rateCardCategories={rateCardCategories} rcItems={studioRcItems} rcCats={studioRcCats}
             supervisors={supervisors}
+            purchase={purchase}
           />
         ) : activeTab === "finance" ? (
           <FinanceTab

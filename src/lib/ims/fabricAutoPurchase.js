@@ -60,6 +60,95 @@ export function fabricPOTarget(p) {
 const fabricLabel = (kind) => FABRIC_TYPES.find((f) => f.key === kind)?.label || kind;
 const fabricUnit = (kind) => FABRIC_TYPES.find((f) => f.key === kind)?.unit || "pcs";
 
+// Dept Ops' per-event "Fabric to buy" card needs to show "to buy" against the SAME effective stock the
+// planner itself buys against - not just the raw shelf. The planner's own date-walk (planFabricAutoPOs,
+// cumOld/cumNew below) treats an earlier-needDate Open/Crediting PO for the same (kind, colour, tier) as
+// stock that will genuinely be there "very soon" (it's either already raised for an earlier date, or about
+// to be credited any pass now) - so a later date's own real shortfall is smaller than raw stock alone would
+// suggest. Before this, the card's own "to buy" figure was worked out against raw stock only, disagreeing
+// with what the planner actually raises for a later date whenever an earlier date's PO already covers part
+// of it (regression review follow-up, 2026-11-28, finding #1: event A needs 10 on Dec 1, event B needs 30
+// on Dec 5, stock 0 - the planner correctly raises A for 10 and B for only 20, but the card said "30 to buy"
+// next to "PO raised · 20 pcs", inviting ops to manually over-buy the apparent gap). Returns a NEW stockIdx
+// (same Map-per-kind shape fabricStockIndex produces) with every qualifying earlier PO's qty folded into the
+// matching tier's field - `tierDeficits` then does the same cross-tier substitution (spare New standing in
+// for an Old need) it always does, with no special-casing needed here. Never mutates its input.
+export function fabricEffectiveStockIndex(stockIdx, purchase, beforeDate) {
+  if (!beforeDate || !Array.isArray(purchase) || !purchase.length) return stockIdx;
+  let touched = false;
+  const out = {};
+  FABRIC_TYPES.forEach((ft) => { out[ft.key] = new Map(stockIdx?.[ft.key] || []); });
+  purchase.forEach((p) => {
+    if (!isFabricAutoPO(p) || (p.status !== "Open" && p.status !== "Crediting")) return;
+    const f = p.fabric;
+    if (!f?.kind || !out[f.kind] || !f.needDate || !(f.needDate < beforeDate)) return;
+    const ck = f.colourKey || colourKey(f.colour);
+    const cur = out[f.kind].get(ck) || { name: f.colour || ck, old: 0, new: 0, hiddenInBuild: false, photo: "", hex: "" };
+    const next = { ...cur };
+    // A billed PO's cover is frozen at what was actually bought (billed.actualQty), not the original plan
+    // (planFabricAutoPOs/the credit step both already key off this same figure - matching it here keeps
+    // this card agreeing with what the planner/credit step actually do, same fix as fabricPOStatusFor's
+    // own sum below).
+    const coverQty = Number(p.billed ? (p.billed.actualQty ?? p.qty) : p.qty) || 0;
+    if (f.tier === "new") next.new += coverQty; else next.old += coverQty;
+    out[f.kind].set(ck, next);
+    touched = true;
+  });
+  return touched ? out : stockIdx;
+}
+
+// Read-only: what (if anything) has already happened for one (fabric, colour, tier, needDate) slot, for
+// Dept Ops' per-event "Fabric to buy" card to show next to its own live shortfall line - "has this already
+// been turned into a PO, or is ops about to buy it a second time?". Never writes anything.
+// A PO still "Open" but with `billed` set is money already spent (frozen against the planner's own
+// resize/cancel, see runPass) - shown as "billed" rather than "raised" so ops doesn't think it's still
+// just a plan. A system-cancelled PO (the planner's own release, not a person's) is treated as absent here,
+// the same way the planner itself treats it as free to recreate - fall through to the "covered" check.
+// `need`: this slot's own tier-aware shortfall BEFORE folding in earlier-PO cover (the caller already has
+// this - it's exactly what fabricEffectiveStockIndex's own "to buy" figure is netting AGAINST). Used only to
+// make "covered" quantity-aware: an earlier PO existing is not the same as it being ENOUGH (regression
+// review follow-up, finding #2 - a 10-piece earlier PO used to read "covered" even when this slot needed
+// 30). Omit `need` (or pass 0) to keep the old existence-only behaviour for any other caller.
+export function fabricPOStatusFor({ purchase, kind, colour, tier, needDate, need = 0 }) {
+  const ck = colourKey(colour);
+  const id = fabricPoId(kind, ck, tier, needDate);
+  const po = (purchase || []).find((p) => isFabricAutoPO(p) && p.id === id);
+  if (po) {
+    if (po.status === "Cancelled" && po.cancelled?.by !== "system") return { state: "cancelled", po };
+    if (po.status === "Crediting") return { state: "crediting", po };
+    if (po.status === "Credited") return { state: "credited", po };
+    if (po.status === "Open") return { state: po.billed ? "billed" : "raised", po };
+    // system-cancelled, or anything else unexpected - treated as absent, same as the planner's own rule
+  }
+  // "covered": no PO of its own, but every earlier-needDate PO for the SAME kind+colour+tier, SUMMED (not
+  // just the latest one's existence), adds up to at least this slot's own need - that fabric will genuinely
+  // be on the shelf by this slot's own date. Tier-exact only: cross-tier substitution is `tierDeficits`' own
+  // job inside fabricEffectiveStockIndex's consumer, already folded into `need` before this is ever called -
+  // matching cross-tier here too would double-count the same New stock a second time.
+  let sum = 0, latest = null;
+  (purchase || []).forEach((p) => {
+    if (!isFabricAutoPO(p) || (p.status !== "Open" && p.status !== "Crediting")) return;
+    const f = p.fabric;
+    if (!f || f.kind !== kind || (f.colourKey || colourKey(f.colour)) !== ck || f.tier !== tier) return;
+    const d = f.needDate;
+    if (!d || !(d < needDate)) return;
+    sum += Number(p.billed ? (p.billed.actualQty ?? p.qty) : p.qty) || 0;
+    if (!latest || d > latest.fabric.needDate) latest = p;
+  });
+  if (latest && sum >= (Number(need) || 0)) return { state: "covered", po: latest };
+  return { state: "none", po: null };
+}
+
+// Every fabric-auto PO already linked to this event (via its own events[].eoId - the events that drove its
+// creation), excluding a system-cancelled one (same "treated as gone" rule as fabricPOStatusFor), oldest
+// need-date first. For a "Purchases for this event" list of POs a per-event card's own current lines don't
+// already cover (e.g. a Credited PO from a date that's since fallen out of forward demand).
+export function fabricPOsOfEvent(purchase, eoId) {
+  return (purchase || [])
+    .filter((p) => isFabricAutoPO(p) && !(p.status === "Cancelled" && p.cancelled?.by === "system") && Array.isArray(p.events) && p.events.some((e) => e?.eoId === eoId))
+    .sort((a, b) => String(a.fabric?.needDate || "").localeCompare(String(b.fabric?.needDate || "")));
+}
+
 function poCreate({ kind, colour, ck, tier, needDate, qty, dayDemand, today }) {
   const ft = FABRIC_TYPES.find((f) => f.key === kind);
   const events = (dayDemand.events || []).map((e) => ({ eoId: e.eoId, client: e.client, date: e.date, qty: round(tier === "new" ? e.qtyNew : e.qtyOld) }));
