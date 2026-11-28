@@ -7,24 +7,29 @@ const inv = {
   curtainStock: [{ colour: "Ivory", stockPieces: 0, stockPiecesNew: 0 }, { colour: "Black", stockPieces: 5, stockPiecesNew: 0 }, { colour: "  ", stockPieces: 9 }],
 };
 
-describe("fabricColourOptions — only colours the fabric stock holds", () => {
+describe("fabricColourOptions — every colour with an offered row, stock or not", () => {
   const m = fabricColourOptions(inv);
-  it("lists a colour that has stock, with the fabrics it has stock in", () => {
-    expect([...m.get("Ivory").in].sort()).toEqual(["liza", "masking"]); // none of it in Velvet
+  it("lists a colour with an offered row, and separately says which fabrics actually have stock", () => {
+    expect([...m.get("Ivory").in].sort()).toEqual(["curtain", "liza", "masking"]); // curtain has a row, just zero stock
+    expect([...m.get("Ivory").stocked].sort()).toEqual(["liza", "masking"]); // none of it in Velvet
     expect(m.get("Ivory").photo).toBe("ivory.jpg");
-    expect([...m.get("Navy Blue").in]).toEqual(["masking"]); // new stock alone counts
+    expect([...m.get("Navy Blue").in]).toEqual(["masking"]);
+    expect([...m.get("Navy Blue").stocked]).toEqual(["masking"]); // new stock alone counts
     expect([...m.get("Black").in]).toEqual(["curtain"]);
+    expect([...m.get("Black").stocked]).toEqual(["curtain"]);
   });
-  it("leaves out a colour with nothing in stock, one switched off for Build, and a blank name", () => {
-    expect(m.has("Magenta")).toBe(false);
-    expect(m.has("Maroon")).toBe(false);
-    expect([...m.keys()].sort()).toEqual(["Black", "Ivory", "Navy Blue"]);
+  it("still lists a zero-stock colour (owner ask: stays pickable in Build), but leaves out one switched off for Build and a blank name", () => {
+    expect(m.has("Magenta")).toBe(true); // 0 stock, not hidden - still offered
+    expect([...m.get("Magenta").in]).toEqual(["liza"]);
+    expect(m.get("Magenta").stocked.size).toBe(0); // nothing on the shelf though
+    expect(m.has("Maroon")).toBe(false); // hideInBuild - never offered unless picked
+    expect([...m.keys()].sort()).toEqual(["Black", "Ivory", "Magenta", "Navy Blue"]);
   });
-  it("a colour already picked stays listed, but is not offered for a fabric that has none", () => {
-    const k = fabricColourOptions(inv, ["Magenta", "Maroon"]);
-    expect(k.has("Magenta")).toBe(true);
-    expect(k.get("Magenta").in.size).toBe(0);
-    expect(k.get("Maroon").in.size).toBe(0);
+  it("a colour picked on the deal stays listed even when its only row is switched off for Build", () => {
+    const k = fabricColourOptions(inv, ["Maroon"]);
+    expect(k.has("Maroon")).toBe(true);
+    expect(k.get("Maroon").in.size).toBe(0); // a hidden row still never counts as offered
+    expect(k.get("Maroon").stocked.size).toBe(0);
   });
   it("no stock at all: nothing", () => {
     expect(fabricColourOptions(null).size).toBe(0);

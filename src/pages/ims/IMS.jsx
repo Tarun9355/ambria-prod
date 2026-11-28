@@ -34,6 +34,7 @@ import CalendarTab from "./CalendarTab.jsx";
 import FlowersTab from "./FlowersTab.jsx";
 import ApprovalsTab from "./ApprovalsTab.jsx";
 import { useEventOrderAutoConfirm } from "../../lib/ims/eventAutoConfirm";
+import { useFabricAutoPurchase } from "../../lib/ims/fabricAutoPurchase";
 import { AMEND_SK, canApprove } from "../../lib/ims/amend";
 import { fetchMyLabourAccess, labourPunchDepts } from "../../lib/ims/labourAttendance";
 import AppSwitcher from "../../components/AppSwitcher.jsx";
@@ -2741,6 +2742,28 @@ export default function IMS() {
     }));
   }, [trackWrite]);
 
+  // General-purpose, AWAITABLE truss/fabric stock write - unlike setTrussInv above (fire-and-forget,
+  // optimistic-then-reconciled), the fabric auto-purchase engine (lib/ims/fabricAutoPurchase.js) needs to
+  // know for certain whether its stock credit actually landed before it marks a purchase order "Credited" -
+  // crediting a PO whose stock write silently failed would make it vanish from Supply with nothing to show
+  // for it. Joins the SAME write chain as setTrussInv/saveTrussRate so it can never interleave with either.
+  const applyTrussInvNow = useCallback((updater) => {
+    if (!trussInvLoadedRef.current) return Promise.resolve(false);
+    const job = trussWriteChainRef.current.catch(() => {}).then(async () => {
+      const { data: row, error: re } = await supabase.from("truss_inventory").select("data").eq("key", "main").maybeSingle();
+      if (re || !row?.data || typeof row.data !== "object") return false;
+      const fresh = row.data;
+      const next = withRatesOf(typeof updater === "function" ? updater(fresh) : updater, fresh);
+      const { error: e } = await retryingUpsert("truss_inventory", { key: "main", data: next }, "key");
+      if (e) return false;
+      setTrussInvState(next);
+      return true;
+    });
+    trussWriteChainRef.current = job;
+    trackWrite(job);
+    return job;
+  }, [trackWrite]);
+
   // ONE truss / fabric rate, Admin only, logged with the person's name (lib/ims/trussRates - owner report 2026-11-26: the Old fabric
   // rates were set to 0 and nobody could tell who). Applied to the row as it is in the database NOW, not to this tab's copy: the whole
   // row is one JSON value, and a tab left open since the morning used to write its old copy of every rate back with any edit.
@@ -2795,7 +2818,15 @@ export default function IMS() {
   useEventOrderAutoConfirm({
     eventOrders, setEventOrders, inventory: items, blocks, applyBlocksRpc, saveEventOrders,
     projects, setProjects, functions, setFunctions, purchase, setPurchase,
-    settings, studio, trussInv, setTrussInv, ready: autoConfirmReady,
+    settings, studio, ready: autoConfirmReady,
+  });
+  // Fabric shortfalls → purchase orders, fully automatic (owner decision, 2026-11-28) - see
+  // lib/ims/fabricAutoPurchase.js's own header for why this replaces executeFabricBlocks above. Gated on
+  // the SAME readiness as auto-confirm: every table its own maths reads (event_orders, trussInv, purchase
+  // orders, settings, inventory) must have genuinely loaded first.
+  useFabricAutoPurchase({
+    eventOrders, inventory: items, settings, trussInv, purchase, setPurchase,
+    applyTrussInvNow, ready: autoConfirmReady,
   });
 
   const handleLogout = async () => {
@@ -3114,6 +3145,7 @@ export default function IMS() {
             projects={projects} functions={functions}
             prodRequests={prodRequests} setProdRequests={setProdRequests}
             studio={studio} authUser={user} settings={settings}
+            trussInv={trussInv}
           />
         ) : activeTab === "planning" ? (
           <PlanningTab

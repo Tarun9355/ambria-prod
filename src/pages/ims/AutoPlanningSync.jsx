@@ -3,6 +3,7 @@ import { onPlanningInputChange } from "../../lib/planningInputBus";
 import { affectedOrderIds } from "../../lib/ims/affectedOrders";
 import { supabase } from "../../lib/supabase";
 import { latestPlanningInputStamp, planningNeedsSync } from "../../lib/studio/planningSync.js";
+import { takeSettingsLock } from "../../lib/ims/settingsLock.js";
 
 // ── THE WHOLE "SYNC PLANNING" SWEEP, BY ITSELF (owner ask 2026-11-11) ──
 // Every few minutes one open IMS screen - the first to take the lock - runs the same sweep "Sync planning · N events" runs (3
@@ -22,17 +23,7 @@ const SWEPT_KEY = "ambria-planning-swept-at-v2";
 const SKIPPED_KEY = "ambria-planning-skipped-v1";
 const readSwept = () => { try { return Number(localStorage.getItem(SWEPT_KEY)) || 0; } catch { return 0; } };
 const readSkipped = () => { try { return JSON.parse(localStorage.getItem(SKIPPED_KEY) || "{}") || {}; } catch { return {}; } };
-const parseLock = (v) => { let x = v; for (let i = 0; i < 2; i++) { if (typeof x === "string") { try { x = JSON.parse(x); } catch { return null; } } } return x && typeof x === "object" ? x : null; };
-async function takeSweepLock() {
-  const read = async () => { const { data, error } = await supabase.from("settings").select("value").eq("key", SWEEP_LOCK_KEY).maybeSingle(); if (error) throw error; return parseLock(data?.value); };
-  const cur = await read();
-  if (cur && cur.by !== myTab && Date.now() - Number(cur.at || 0) < LOCK_MS) return false;
-  const { error } = await supabase.from("settings").upsert({ key: SWEEP_LOCK_KEY, value: JSON.stringify({ by: myTab, at: Date.now() }) }, { onConflict: "key" });
-  if (error) return false;
-  await new Promise((r) => setTimeout(r, 1500)); // another screen writing at the same moment: whoever's write landed last holds it
-  const after = await read();
-  return after?.by === myTab;
-}
+const takeSweepLock = () => takeSettingsLock(SWEEP_LOCK_KEY, LOCK_MS, myTab);
 
 // ── PLANNING FOLLOWS EVERY CHANGE BY ITSELF (owner ask 2026-11-11) ──
 // An inventory item, flower recipe, mandi flower or fixed venue saved in this tab (lib/planningInputBus) re-syncs, in the

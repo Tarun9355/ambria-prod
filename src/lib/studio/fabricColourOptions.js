@@ -1,7 +1,12 @@
-// The colours Build's Fabric Palette offers: only what the fabric stock (IMS → Planning → Fabric Stock: Liza, Wall Masking, Velvet Curtains) actually holds.
-// A stock row counts for its fabric when something is in it (old + new above 0) and it is not switched off for Build ("In Build" toggle, row.hideInBuild).
+// The colours Build's Fabric Palette offers: every colour the fabric stock (IMS → Planning → Fabric Stock: Liza, Wall Masking,
+// Velvet Curtains) has a row for, as long as that row is not switched off for Build ("In Build" toggle, row.hideInBuild) - a row
+// with zero stock still stays listed (owner ask, 2026-11-28): the salesperson can still pick the colour, and once the deal sells,
+// IMS's own fabric-shortfall auto-PO (lib/ims/fabricAutoPurchase.js) picks up that it needs buying. `stocked` is the narrower set -
+// which of those offered fabrics actually have something (old + new above 0) on the shelf right now - purely informational (the
+// picker dims the icon and shows a "No stock" hint for an offered-but-unstocked fabric, StudioBuild.jsx), never gating selection.
 // A colour already picked stays listed whatever its stock, so it can still be un-picked.
-// Returns Map<colour name, { name, photo, in: Set<"liza" | "masking" | "curtain"> }> - `in` is the fabrics the colour is offered for.
+// Returns Map<colour name, { name, photo, in: Set<"liza" | "masking" | "curtain">, stocked: Set<same> }> - `in` is every fabric the
+// colour is offered for (has a row, not hidden); `stocked` is the subset of those with real stock today.
 // One colour is one entry whatever its capitals or spacing: Liza's "Navy blue" and Wall Masking's "Navy Blue" listed twice.
 // The name shown is the spelling already picked on the deal if there is one (so the pick stays ticked), else the first stock row's.
 const FABRICS = [["liza", "lizaStock"], ["masking", "maskingStock"], ["curtain", "curtainStock"]];
@@ -16,18 +21,19 @@ export function fabricColourOptions(trussInv, pickedNames = []) {
       const raw = String(s?.colour || "").trim().replace(/\s+/g, " ");
       const k = colourKey(raw);
       if (!k) return;
+      const offered = !s.hideInBuild;
       const held = (Number(s.stockKg) || 0) + (Number(s.stockKgNew) || 0) + (Number(s.stockPieces) || 0) + (Number(s.stockPiecesNew) || 0) > 0;
-      const offered = held && !s.hideInBuild;
       if (!offered && !pickedSpelling.has(k)) return;
-      if (!byKey.has(k)) byKey.set(k, { name: pickedSpelling.get(k) || raw, photo: "", in: new Set() });
+      if (!byKey.has(k)) byKey.set(k, { name: pickedSpelling.get(k) || raw, photo: "", in: new Set(), stocked: new Set() });
       const e = byKey.get(k);
       if (offered) e.in.add(material);
+      if (offered && held) e.stocked.add(material);
       if (!e.photo && s.photo) e.photo = s.photo;
     });
   });
   // A colour picked on the deal that no stock row has at all - deleted from Fabric Stock, or an old pick such as "PASTELS" from
   // before the palette came from stock - is still listed, flagged removed, so it can be found and un-picked.
-  pickedSpelling.forEach((name, k) => { if (!byKey.has(k)) byKey.set(k, { name, photo: "", in: new Set(), removed: true }); });
+  pickedSpelling.forEach((name, k) => { if (!byKey.has(k)) byKey.set(k, { name, photo: "", in: new Set(), stocked: new Set(), removed: true }); });
   return new Map([...byKey.values()].map((e) => [e.name, e]));
 }
 

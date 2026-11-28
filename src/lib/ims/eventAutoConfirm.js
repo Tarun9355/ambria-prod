@@ -10,8 +10,11 @@
 //      reservations into the `blocks` table, flips the EO to "blocked".
 //   3. createProjectFromEO — auto-creates the Project + Function rows Planning/Dept Ops/Inventory
 //      availability all depend on.
-//   4. autoGeneratePOs / executeFabricBlocks — auto-raises Purchase Orders for unmatched/floral/
-//      consumable items and fabric shortfalls.
+//   4. autoGeneratePOs — auto-raises Purchase Orders for unmatched/floral/consumable items. Fabric
+//      shortfalls are a SEPARATE engine now (lib/ims/fabricAutoPurchase.js's useFabricAutoPurchase,
+//      called once in IMS.jsx alongside this hook) — it used to run from here (executeFabricBlocks,
+//      removed 2026-11-28) but needs to notice a date passing with no data otherwise changing, which this
+//      pipeline (driven purely by a SOLD event arriving) never does on its own.
 //
 // `releaseBlocks` (cancel an event + free its held inventory) is exported standalone — the IMS
 // Calendar tab uses it directly for its per-event "Cancel" button; it isn't part of the
@@ -20,7 +23,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { normalizeSizeClass, sizeClassToPatternKey } from "./flowerHelpers";
 import { lookupBySubcat, walkKitUnits } from "./helpers";
 import { supabase } from "../supabase";
-import { isFoc, isTrussFoc } from "../studio/foc.js";
+import { isFoc } from "../studio/foc.js";
 import { filterLiveBlocks, heldOnDate, isLiveBlockStatus } from "./liveBlocks.js";
 import { venueKey } from "../venueKey.js";
 
@@ -363,132 +366,13 @@ export function calcAutoCrew(fnObj, projObj, settings, inventory){
 }
 
 // ─── Background auto-confirm hook — call once, unconditionally, in IMS.jsx ──────────────────
-export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventory, blocks, setBlocks, saveBlocks, applyBlocksRpc, saveEventOrders, projects, setProjects, functions, setFunctions, purchase, setPurchase, settings, studio, trussInv, setTrussInv, ready = true }){
-  // §23 Phase 2.9f (26 May 2026) — Per-colour fabric stock blocking on SOLD + auto-PO for shortfalls.
-  // Reads zoneConfig[zoneKey].{maskingAllocation, lizaAllocation, curtainAllocation} arrays from the EO,
-  // sums qty per (fabricType, colour) across all functions × zones, decrements trussInv stock,
-  // creates Purchase Orders for any shortage qty per colour per fabric type.
-  // Bundled in truss price (not client-facing) — pure internal inventory tracking.
-  function executeFabricBlocks(eo){
-    try {
-      if (!eo || !trussInv) return;
-      const fnsDetail = Array.isArray(eo.functionsDetail) ? eo.functionsDetail : null;
-      const fnList = fnsDetail && fnsDetail.length ? fnsDetail : (eo.zones ? [{ zones: eo.zones, date: eo.date, venue: typeof eo.venue==="string"?eo.venue:(eo.venue?.name||"") }] : []);
-      if (fnList.length === 0) return;
-
-      // Aggregate required qty per (fabricType, colour) across the whole event
-      const required = { masking: {}, liza: {}, curtain: {} };
-      for (const fn of fnList) {
-        const zones = fn.zones || {};
-        Object.values(zones).forEach(zc => {
-          if (!zc) return;
-          // A zone can carry more than one truss row (row 0 = the zone itself, plus any
-          // zc.extraTrussRows) — each row's own fabric allocation counts toward the total.
-          [zc, ...(zc.extraTrussRows || [])].forEach(row => {
-            if (isTrussFoc(row)) return; // FOC truss - its fabric is already up at the venue
-            (row.maskingAllocation || []).forEach(a => {
-              if (!a || !a.colour || !a.qty) return;
-              required.masking[a.colour] = (required.masking[a.colour] || 0) + Number(a.qty);
-            });
-            (row.lizaAllocation || []).forEach(a => {
-              if (!a || !a.colour || !a.qty) return;
-              required.liza[a.colour] = (required.liza[a.colour] || 0) + Number(a.qty);
-            });
-            (row.curtainAllocation || []).forEach(a => {
-              if (!a || !a.colour || !a.qty) return;
-              required.curtain[a.colour] = (required.curtain[a.colour] || 0) + Number(a.qty);
-            });
-          });
-        });
-      }
-      const totalRequired = Object.values(required.masking).reduce((s,n)=>s+n,0)
-                          + Object.values(required.liza).reduce((s,n)=>s+n,0)
-                          + Object.values(required.curtain).reduce((s,n)=>s+n,0);
-      if (totalRequired === 0) return;  // No fabric allocations on this EO — nothing to block
-
-      // Build the updated trussInv stock (decrement; never below 0) + collect shortages
-      const fmkup = trussInv.fabricFreshMarkup || { liza:40, masking:40, curtain:40 };
-      const rates = trussInv.rates || {};
-      const shortages = []; // {fabricType, colour, qty, purchasePrice, freshCost}
-      const decrementStock = (which, qtyField, fabricType, purchaseKey, markupKey) => {
-        const stock = Array.isArray(trussInv[which]) ? [...trussInv[which]] : [];
-        const next = stock.map(row => ({...row}));
-        Object.entries(required[fabricType]).forEach(([colour, qty]) => {
-          const idx = next.findIndex(r => r.colour === colour);
-          if (idx < 0) {
-            // Colour not in stock catalogue → entire qty is fresh
-            shortages.push({
-              fabricType, colour, qty,
-              purchasePrice: rates[purchaseKey] || 0,
-              freshCost: qty * (rates[purchaseKey] || 0) * ((fmkup[markupKey] || 0) / 100)
-            });
-            return;
-          }
-          const avail = Number(next[idx][qtyField]) || 0;
-          const reused = Math.min(qty, avail);
-          const fresh = Math.max(0, qty - avail);
-          next[idx][qtyField] = Math.max(0, avail - reused);
-          if (fresh > 0) {
-            shortages.push({
-              fabricType, colour, qty: fresh,
-              purchasePrice: rates[purchaseKey] || 0,
-              freshCost: fresh * (rates[purchaseKey] || 0) * ((fmkup[markupKey] || 0) / 100)
-            });
-          }
-        });
-        return next;
-      };
-
-      const nextLiza    = decrementStock("lizaStock",    "stockKg",     "liza",    "lizaKgPurchase",       "liza");
-      const nextMasking = decrementStock("maskingStock", "stockPieces", "masking", "maskingPiecePurchase", "masking");
-      const nextCurtain = decrementStock("curtainStock", "stockPieces", "curtain", "curtainPiecePurchase", "curtain");
-
-      // Persist trussInv with decremented stocks
-      setTrussInv(ti => ({ ...ti, lizaStock: nextLiza, maskingStock: nextMasking, curtainStock: nextCurtain }));
-
-      // Create Purchase Orders for shortages (one PO row per fabric × colour shortage)
-      if (shortages.length > 0) {
-        const today = new Date().toISOString().split("T")[0];
-        const fn0 = fnList[0] || {};
-        const newPOs = shortages.map((sh, i) => {
-          const itemLabel = sh.fabricType === "liza"    ? `Liza Fabric · ${sh.colour}`
-                          : sh.fabricType === "masking" ? `Wall Masking Panel (13×16ft) · ${sh.colour}`
-                          :                                `Velvet Curtain · ${sh.colour}`;
-          const unit = sh.fabricType === "liza" ? "kg" : "Piece";
-          const cat  = sh.fabricType === "liza" ? "Fabric" : sh.fabricType === "masking" ? "Wall Masking" : "Fabric";
-          return {
-            id: `PR_FAB_${Date.now()}_${i}`,
-            poNumber: `PO-FAB-${Date.now().toString(36)}-${i+1}`,
-            item: itemLabel,
-            qty: Math.ceil(sh.qty * 100) / 100,
-            unit,
-            cat,
-            reason: `Fabric shortfall on SOLD: ${eo.clientName||"event"} (${fn0.date||today})`,
-            requestedBy: "System (auto-PO)",
-            date: today,
-            estimatedCost: Math.round(sh.purchasePrice),
-            vendor: "",
-            notes: `§23 Phase 2.9f auto-PO · ${sh.fabricType} · ${sh.colour} · margin impact -₹${Math.round(sh.freshCost)}`,
-            status: "Pending",
-            actualCost: null, actualQty: null,
-            approvedBy: null, approvedDate: null,
-            vendorSnapshot: null,
-            functionAllocation: { eoId: eo.id, fabricType: sh.fabricType, colour: sh.colour, freshCost: Math.round(sh.freshCost) },
-            buildType: "fabric-shortfall"
-          };
-        });
-        setPurchase(prev => [...(Array.isArray(prev) ? prev : []), ...newPOs]);
-        // eslint-disable-next-line no-console
-        console.log(`[fabric-block] EO ${eo.id} · ${shortages.length} shortage row(s) → ${newPOs.length} auto-PO(s) created · total margin impact -₹${Math.round(shortages.reduce((s,x)=>s+x.freshCost,0))}`);
-      } else {
-        // eslint-disable-next-line no-console
-        console.log(`[fabric-block] EO ${eo.id} · all fabric in stock · no POs needed`);
-      }
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error("[fabric-block] FAILED for EO", eo?.id, e);
-    }
-  }
+export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventory, blocks, setBlocks, saveBlocks, applyBlocksRpc, saveEventOrders, projects, setProjects, functions, setFunctions, purchase, setPurchase, settings, studio, ready = true }){
+  // Per-colour fabric stock blocking + auto-PO on SOLD used to live here (§23 Phase 2.9f, executeFabricBlocks)
+  // — removed (2026-11-28, owner decision): it decremented trussInv stock the instant a deal was confirmed
+  // and never gave it back on a cancellation, ignored Old/New tiers, and priced shortages off purchase-rate
+  // keys the Admin screen had already retired. Replaced by lib/ims/fabricAutoPurchase.js's own
+  // useFabricAutoPurchase hook (called once in IMS.jsx, right after this one) — it never touches stock when
+  // a PO is raised, only once the function the fabric was bought for has actually happened.
 
   // ── Bridge: Event Order → Project + Function (multi-fn aware, 28 Apr 2026) ──
   // Tier 1.6 Phase 2 (05 May 2026): each fn.items row now carries sizeClass (S/M/B);
@@ -1086,7 +970,11 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
       // eslint-disable-next-line no-console
       console.log("[auto-confirm]", studioOrder ? "studioOrderItems" : "aiMatchEvent", "done:", results.length, "results for", eo.id);
       await executeConfirmBlocks(eo, results, {}, studioOrder ? [] : (eo.manualItems || []), {clearReviewState: false});
-      executeFabricBlocks(eo);  // §23 Phase 2.9f — auto-confirm path also blocks fabric stock + auto-PO
+      // Fabric stock blocking + auto-PO used to happen right here (executeFabricBlocks, §23 Phase 2.9f) -
+      // removed (2026-11-28): it decremented stock the instant a deal was confirmed and never gave it back
+      // on a cancellation, ignored Old/New tiers, and used retired purchase-rate keys. Replaced by
+      // lib/ims/fabricAutoPurchase.js's useFabricAutoPurchase hook (called once in IMS.jsx, alongside this
+      // hook) - it never touches stock at confirm time, only once the function it was bought for is over.
       // eslint-disable-next-line no-console
       console.log("[auto-confirm] ✓ confirmed", eo.id, eo.clientName);
       return true;
@@ -1096,7 +984,7 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
       return false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inventory, blocks, eventOrders, studio, settings, projects, functions, purchase, trussInv, applyBlocksRpc]);
+  }, [inventory, blocks, eventOrders, studio, settings, projects, functions, purchase, applyBlocksRpc]);
 
   // Auto-confirm new pending EOs + any stuck legacy "review" EOs (§2.5.1 migration).
   // - Pending: run AI match → block.
@@ -1109,7 +997,9 @@ export function useEventOrderAutoConfirm({ eventOrders, setEventOrders, inventor
     // orders, settings, truss_inventory) must have ACTUALLY loaded before this runs — a failed
     // fetch silently left one of them at an empty/placeholder default, not thrown, so without this
     // the pipeline would run anyway: aiMatchEvent would see an empty inventory/blocks and overbook,
-    // executeFabricBlocks would see every colour as short and auto-PO the whole requirement, and a
+    // the fabric auto-purchase engine (lib/ims/fabricAutoPurchase.js, gated on the same readiness check
+    // at its own call site in IMS.jsx) would see every colour as short and raise POs for the whole
+    // requirement, and a
     // placeholder `functions`/`projects` list would create a duplicate project for a returning
     // client (owner report 2026-11-05 — the same failure class as the truss_inventory wipe, applied
     // here to an unattended background job instead of a person's own edit).
