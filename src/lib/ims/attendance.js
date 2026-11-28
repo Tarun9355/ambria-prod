@@ -169,11 +169,12 @@ export const getCoordsError = () => _coordsError;
 // will fail with PERMISSION_DENIED — some mobile browsers (iOS Safari especially) still prompt
 // on every call, which flashes a prompt the user already said no to.
 export async function geolocationPermissionState() {
-  if (!navigator.geolocation) return "unsupported";
   try {
+    if (typeof navigator === "undefined" || !navigator.geolocation) return "unsupported";
+    if (!navigator.permissions || typeof navigator.permissions.query !== "function") return null;
     const p = await navigator.permissions.query({ name: "geolocation" });
-    return p.state; // "granted" | "prompt" | "denied"
-  } catch { return null; } // Safari pre-16 doesn't expose permissions.query for geolocation
+    return p?.state || null; // "granted" | "prompt" | "denied"
+  } catch { return null; } // Safari pre-16 and some mobile webviews throw on this
 }
 
 export function getCurrentCoords() {

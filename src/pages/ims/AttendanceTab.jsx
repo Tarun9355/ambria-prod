@@ -102,21 +102,28 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
   const [geoReason, setGeoReason] = useState("");        // "denied" | "unavailable" | "timeout" | "unsupported"
   useEffect(() => {
     let active = true;
+    // Any surprise here — a browser without navigator.permissions, a mobile webview that throws on
+    // query, an await rejection — MUST NOT bring the My-Attendance screen down. Owner saw a white
+    // screen on a phone after the permission-detection landed; the earlier try/catch inside
+    // geolocationPermissionState() did not guard the whole chain. This outer try/catch is the
+    // backstop: geolocation UX is fail-open the whole way through this flow.
     (async () => {
-      const state = await geolocationPermissionState();
-      if (!active) return;
-      if (state === "denied" || state === "unsupported") {
-        setGeoBlocked(true);
-        setGeoReason(state);
-        return;
+      try {
+        const state = await geolocationPermissionState();
+        if (!active) return;
+        if (state === "denied" || state === "unsupported") {
+          setGeoBlocked(true);
+          setGeoReason(state);
+          return;
+        }
+        await getCurrentCoords();
+        if (!active) return;
+        const err = getCoordsError();
+        if (err === "denied" || err === "unsupported") { setGeoBlocked(true); setGeoReason(err); }
+        else if (err) setGeoReason(err);
+      } catch {
+        // swallowed intentionally — see comment above
       }
-      // "granted" and "prompt" both can be pre-warmed. On "prompt" the first call surfaces the
-      // browser's own permission dialog, which is fine on a page the user just opened.
-      await getCurrentCoords();
-      if (!active) return;
-      const err = getCoordsError();
-      if (err === "denied" || err === "unsupported") { setGeoBlocked(true); setGeoReason(err); }
-      else if (err) setGeoReason(err); // timeout / unavailable — not blocking, just a weak signal
     })();
     return () => { active = false; };
   }, []);
