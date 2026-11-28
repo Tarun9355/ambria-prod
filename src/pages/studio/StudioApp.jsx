@@ -158,6 +158,8 @@ import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CA
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
 import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions, canCollapseAutosave } from "../../lib/studio/sessionData.js";
 import { reqByDateFrom, ownedIds, planStudioBlocks, planToOps, SRC_STUDIO_CARD } from "../../lib/studio/soldBlocksPlan.js";
+// Each crew trace stored once in event_orders.data, put back on read (lib/eoCompact.js - tablet memory, 2026-11-28).
+import { compactEoData, expandEoData } from "../../lib/eoCompact.js";
 import { applyBlockOps, shortfallsOf } from "../../lib/ims/blocksRpc.js";
 import { mergeManualSwaps } from "../../lib/studio/dealCheckCardMerge.js";
 import { isFoc, isTrussFoc, isPlatformFoc, withoutTrussFoc, buildWithoutTrussFoc, cardIsFoc as sharedCardIsFoc, parseCardKeyLite } from "../../lib/studio/foc.js";
@@ -1159,9 +1161,10 @@ function rowToAlloc(row) { return { ...(row.pool || {}), date: row.date, events:
 function zoneNotesOf(elNotes) {
   return Object.fromEntries(Object.entries(elNotes || {}).map(([zk, v]) => [zk, String(v || "").trim()]).filter(([, v]) => v));
 }
-function rowToEO(row) { return { ...(row?.data || {}), id: row.id, status: row.status ?? row?.data?.status }; }
+// data passes through expandEoData (each crew trace stored once - lib/eoCompact.js); eoToRow compacts it back.
+function rowToEO(row) { return { ...(expandEoData(row?.data) || {}), id: row.id, status: row.status ?? row?.data?.status }; }
 function eoToRow(eo) {
-  return { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo };
+  return { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: compactEoData(eo) };
 }
 async function loadEoRows() {
   const all = []; const SIZE = 1000;
@@ -4775,14 +4778,14 @@ export default function StudioApp() {
           // report:false — this write only re-stamps a "last checked" timestamp onto data that's
           // already in sync; a failure here is a non-event (the next sweep just re-checks it), not
           // something worth a persistent banner and a "leave site?" prompt on every background pass.
-          if (Date.now() - Number(cur.deptSyncedAt) > 600000) await retryingUpdate("event_orders", eo.id, { data: { ...cur, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION } }, "id", { report: false });
+          if (Date.now() - Number(cur.deptSyncedAt) > 600000) await retryingUpdate("event_orders", eo.id, { data: compactEoData({ ...cur, deptSyncedAt: Date.now(), deptSnapVer: PLANNING_SNAPSHOT_VERSION }) }, "id", { report: false });
           return;
         }
-        await retryingUpdate("event_orders", eo.id, { data: applySnap(cur) });
+        await retryingUpdate("event_orders", eo.id, { data: compactEoData(applySnap(cur)) });
       } else {
         // No table row yet → create it from the local EO (first sync).
         const merged = applySnap(eo);
-        await retryingUpsert("event_orders", { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: merged });
+        await retryingUpsert("event_orders", { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: compactEoData(merged) });
       }
     } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName]);
@@ -4860,7 +4863,7 @@ export default function StudioApp() {
       const cur = row.data;
       if (cur.layoutSig === laySig) return; // already in sync — no write
       const withLayout = (fns) => Array.isArray(fns) ? fns.map((f, i) => { const k = f?.fnIdx ?? i; return (f && layout.has(k)) ? { ...f, ...layout.get(k) } : f; }) : fns; // fnIdx, else position (see persistDeptSnapshot)
-      await retryingUpdate("event_orders", eo.id, { data: { ...cur, functionsDetail: withLayout(cur.functionsDetail), layoutSig: laySig } });
+      await retryingUpdate("event_orders", eo.id, { data: compactEoData({ ...cur, functionsDetail: withLayout(cur.functionsDetail), layoutSig: laySig }) });
     } catch (e) { /* best-effort, same as persistDeptSnapshot/syncDealValueNow */ }
   }, [eventOrders, activeClientId, clientName]);
   // Pushes the just-applied deal value straight onto the mirrored event_orders row, immediately —
@@ -4875,7 +4878,7 @@ export default function StudioApp() {
     if (!eo) return;
     try {
       const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
-      if (row && row.data) await retryingUpdate("event_orders", eo.id, { data: { ...row.data, dealValue } });
+      if (row && row.data) await retryingUpdate("event_orders", eo.id, { data: compactEoData({ ...row.data, dealValue }) });
     } catch (e) { /* best-effort */ }
   }, [eventOrders, activeClientId, clientName, canStudio]);
   // ═══ LMS LEAD → CONTRACT AUTO-RELINK ═══
@@ -10400,7 +10403,7 @@ export default function StudioApp() {
           return;
         }
         if (!changed) return;
-        await retryingUpdate("event_orders", eo.id, { data: next });
+        await retryingUpdate("event_orders", eo.id, { data: compactEoData(next) });
       } catch { /* best effort — Apply Changes (a full, trusted rebuild from Studio's live function list) is the backstop */ }
       finally { fnRemovalInFlightRef.current = Math.max(0, fnRemovalInFlightRef.current - 1); }
     };

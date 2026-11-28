@@ -6,6 +6,7 @@ import { useAuth } from "../../lib/AuthContext";
 import { changeOwnPassword } from "../../lib/auth";
 import { Modal } from "../../components/ui";
 import { supabase, fetchAll, updateRow, deleteRow } from "../../lib/supabase";
+import { compactEoData, expandEoData } from "../../lib/eoCompact.js";
 import { rowToItem, itemToRow, diffInventory } from "../../lib/inventory/adapter";
 import { notePlanningInputChange } from "../../lib/planningInputBus";
 import AutoPlanningSync from "./AutoPlanningSync.jsx";
@@ -223,7 +224,8 @@ const prodToRow = (p) => ({ id: p.id, item_id: p.inventoryId ?? null, fn_id: p.f
 
 // event_orders — read-mostly here (Truss uses it as a legacy fallback; Events tab is a
 // later phase). Full object carried so the eventual Events build is forward-compatible.
-const rowToEO = (row) => ({ ...(row.data || {}), id: row.id, status: row.status ?? row.data?.status });
+// data passes through expandEoData (each crew trace stored once - lib/eoCompact.js, tablet memory 2026-11-28); every write compacts it.
+const rowToEO = (row) => ({ ...(expandEoData(row.data) || {}), id: row.id, status: row.status ?? row.data?.status });
 // An event order held with no deal in it - no client, no functions: what a dataless realtime change used to leave behind.
 // Never written whole over a real row (setEventOrders).
 const isStubEO = (eo) => !!eo && !eo.clientName && !eo.clientId && !(Array.isArray(eo.functionsDetail) && eo.functionsDetail.length);
@@ -2516,13 +2518,13 @@ export default function IMS() {
           if (isStubEO(eo)) {
             const { data: row } = await supabase.from("event_orders").select("data").eq("id", eo.id).maybeSingle();
             if (row && row.data && !isStubEO(row.data)) {
-              const { error: e } = await writeWithRetry(() => supabase.from("event_orders").update({ status: eo.status ?? row.data.status ?? "pending", data: { ...row.data, ...eo } }).eq("id", eo.id),
+              const { error: e } = await writeWithRetry(() => supabase.from("event_orders").update({ status: eo.status ?? row.data.status ?? "pending", data: compactEoData({ ...row.data, ...eo }) }).eq("id", eo.id),
                 { target: `event_orders:${eo.id}`, label: "event_orders row", retryable: false });
               if (e) setError(`Save failed: ${e.message}`);
               continue;
             }
           }
-          const { error: e } = await retryingUpsert("event_orders", { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: eo });
+          const { error: e } = await retryingUpsert("event_orders", { id: eo.id, client_name: eo.clientName ?? null, event_id: eo.eventId ?? null, fn_id: eo.fnId ?? null, status: eo.status ?? "pending", items: eo.items || [], manual_items: eo.manualItems || [], decisions: eo.decisions || {}, data: compactEoData(eo) });
           if (e) setError(`Save failed: ${e.message}`);
         }
       }
