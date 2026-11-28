@@ -7,6 +7,8 @@ import { useAuth } from "../../lib/AuthContext";
 import { deriveUsername } from "../../lib/auth";
 import RoleAccessModal from "./RoleAccessModal.jsx";
 import UserAccessModal from "./UserAccessModal.jsx";
+import StaffImportModal from "./StaffImportModal.jsx";
+import { ATTENDANCE_ONLY_DEPTS } from "../../lib/ims/staffImport";
 import { userHasAnyOverride } from "../../lib/ims/tabAccess";
 
 // App-access default derived from role (the one addition to the reference).
@@ -39,6 +41,7 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
   const [newRoleName, setNewRoleName]=useState("");
   const [renameRole, setRenameRole]=useState(null); // {old, draft}
   const [userSearch, setUserSearch]=useState("");
+  const [importOpen, setImportOpen]=useState(false);
 
   // Dynamic roles from settings (fallback to hardcoded ROLES)
   const dynamicRoles = Array.isArray(settings?.rolesList) ? settings.rolesList : ROLES;
@@ -193,6 +196,12 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
         <button onClick={openAdd} disabled={!canManageUsers} title={canManageUsers ? undefined : "Requires \"Manage Users & Permissions\""}
           className={"px-4 py-2 rounded-lg text-sm shrink-0 "+(canManageUsers?"bg-indigo-600 hover:bg-indigo-700 text-white":"bg-gray-200 text-gray-400 cursor-not-allowed")}>+ Add User</button>
       </div>
+      {/* Bulk: a contact sheet of labour / vendors, each into their department with a login of their own (StaffImportModal). */}
+      <div className="flex justify-end -mt-2">
+        <button onClick={()=>setImportOpen(true)} disabled={!canManageUsers} title={canManageUsers ? "Create logins for a whole sheet of staff at once" : "Requires \"Manage Users & Permissions\""}
+          className={"text-xs font-medium px-3 py-1.5 rounded-lg border "+(canManageUsers?"border-indigo-200 text-indigo-700 hover:bg-indigo-50":"border-gray-200 text-gray-400 cursor-not-allowed")}>⬆ Import staff from a sheet (CSV)</button>
+      </div>
+      {importOpen && <StaffImportModal open onClose={()=>setImportOpen(false)} users={users} settings={settings} setSettings={setSettings} />}
 
       <div className="bg-white border rounded-xl overflow-hidden">
         <table className="w-full text-sm">
@@ -299,7 +308,7 @@ export default function UsersTab({ users, setUsers, addUser, settings, setSettin
             <div>
               <label className="text-xs text-gray-500">Department access <span className="text-gray-400">(none ticked = sees every department)</span></label>
               <div className="flex gap-2 mt-1 flex-wrap">
-                {DEPTS.map((d) => {
+                {[...DEPTS, ...ATTENDANCE_ONLY_DEPTS].map((d) => {
                   const on = (form.departments || []).includes(d);
                   return (
                     <button key={d} type="button" onClick={()=>toggleDept(d)}

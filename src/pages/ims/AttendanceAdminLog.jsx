@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "../../components/ui";
 import { fetchRangePunches, todayStr, punchLabel, punchLocationLabel } from "../../lib/ims/attendance";
-import { DEPTS, userDepartments } from "../../lib/ims/deptClassify";
+import { DEPTS as BUILD_DEPTS, userDepartments } from "../../lib/ims/deptClassify";
+import { ATTENDANCE_ONLY_DEPTS } from "../../lib/ims/staffImport";
+// Attendance groups by the build departments plus the attendance-only ones (ADD - owner ask 2026-11-28).
+const DEPTS = [...BUILD_DEPTS, ...ATTENDANCE_ONLY_DEPTS];
 import { IconPin, IconCalendar, IconChevron, IconCheck, IconSearch, IconUsers, IconCamera, IconX } from "../../components/icons.jsx";
 import AttendanceMonthLog from "./AttendanceMonthLog.jsx";
 
