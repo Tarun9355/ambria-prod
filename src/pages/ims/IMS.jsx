@@ -1451,7 +1451,10 @@ export default function IMS() {
     // loadOkRef inline per-fetch instead would let an earlier, already-settled fetch's table look
     // "loaded" even on a run where some OTHER fetch in the batch still throws and the destructuring
     // below never runs at all, so none of these setters actually applied anything that run.
-    const safeFetch = (t) => fetchAll(t).then((rows) => ({ rows, ok: true })).catch((e) => { console.warn(`[IMS] ${t} fetch failed:`, e?.message || e); return { rows: [], ok: false }; });
+    const safeFetch = (t) => fetchAll(t).then((rows) => ({ rows, ok: true })).catch((e) => { console.warn(`[IMS] ${t} fetch failed:`, e?.message || e); return { rows: [], ok: false, error: e?.message || String(e || "") }; });
+    // The load-failure banner says WHY (owner report 2026-11-28: "12 things didn't load" with no reason - a dropped connection,
+    // an expired login and a real server error all read the same). The fetch's own message, short, after "Failed to load".
+    const loadErr = (f, msg) => new Error(`Failed to load${f?.error ? ` (${String(f.error).slice(0, 120)})` : ""} — ${msg}`);
     (async () => {
       try {
         const [invFetch, fnFetch, projFetch, venRows, poFetch, ohRows, supRows, userRows, prodRows, eoFetch, allocFetch, platformAllocFetch, battaAllocFetch, rcRows, trussFetch, catRows, setRows, blockFetch, rcCatRows, mandiFetch, patternFetch, labourTypeRows, venueLabourRows, printMaterialRows, carpetMaterialRows, platformRateRows, maskingRateRows, trussRateRows, heavyElementRangeRows, trussLabourRangeRows, fabricBangaliRangeRows, attendanceLocationRows, attendanceTrainingRows, synonymGroupRows, markedDateRows] = await Promise.all([
@@ -1473,7 +1476,7 @@ export default function IMS() {
           // from a real, successful fetch that just found zero rows (a fresh install), so the code
           // below can refuse to treat a failure as "this venue genuinely has no truss_inventory yet"
           // (see trussInvLoadedRef's own comment for the incident this closes).
-          fetchAll("truss_inventory").then((rows) => ({ rows, ok: true })).catch((e) => { console.warn("[IMS] truss_inventory fetch failed:", e?.message || e); return { rows: [], ok: false }; }),
+          fetchAll("truss_inventory").then((rows) => ({ rows, ok: true })).catch((e) => { console.warn("[IMS] truss_inventory fetch failed:", e?.message || e); return { rows: [], ok: false, error: e?.message || String(e || "") }; }),
           fetchAll("categories").catch(() => []),
           safeFetch("settings"),
           safeFetch("blocks"),
@@ -1529,7 +1532,7 @@ export default function IMS() {
           // The fetch itself failed — trussInv is still sitting at the INIT_TRUSS_INV placeholder,
           // not real data. Visible, not swallowed: see trussInvLoadedRef's own comment.
           setError("Truss/fabric inventory failed to load — Fabric Stock and Truss & Batta Config are read-only until you reload the page (editing now would save an empty placeholder over the real data).");
-          reportTrussInvLoadFailed(new Error("Failed to load — Fabric Stock and Truss & Batta Config are read-only until this is retried or the page is reloaded."));
+          reportTrussInvLoadFailed(loadErr(trussFetch, "Fabric Stock and Truss & Batta Config are read-only until this is retried or the page is reloaded."));
         }
         setCats(catRows.map((c) => c.name).filter(Boolean));
         // Mandi flower catalogue — the `mandi_flowers` TABLE (migration 039), not the
@@ -1576,7 +1579,7 @@ export default function IMS() {
         if (setRows.ok) { applySettingsRows(setRows.rows); clearSaveProblem("load:settings"); }
         else {
           setError("Settings failed to load — admin config (roles, department tools, date pricing, …) is read-only until you reload the page.");
-          reportSettingsLoadFailed(new Error("Failed to load — admin config (roles, department tools, date pricing, …) is read-only until this is retried or the page is reloaded."));
+          reportSettingsLoadFailed(loadErr(setRows, "admin config (roles, department tools, date pricing, …) is read-only until this is retried or the page is reloaded."));
         }
         // Rate card: read from the shared `rate_card` TABLE (migrated off the RC_SK blob).
         setStudioRcItems(rcRows.map(rowToRcItem).filter(Boolean));
@@ -1589,27 +1592,27 @@ export default function IMS() {
           if (f.ok) markTableLoaded(t); else markTableFailed(t);
         }
         if (invFetch.ok) clearSaveProblem("load:inventory");
-        else reportInventoryLoadFailed(new Error("Failed to load — the item list may be incomplete until this is retried or the page is reloaded."));
+        else reportInventoryLoadFailed(loadErr(invFetch, "the item list may be incomplete until this is retried or the page is reloaded."));
         if (mandiFetch.ok) clearSaveProblem("load:mandi_flowers");
-        else reportMandiLoadFailed(new Error("Failed to load — Studio recipe pricing is skipped until this is retried or the page is reloaded."));
+        else reportMandiLoadFailed(loadErr(mandiFetch, "Studio recipe pricing is skipped until this is retried or the page is reloaded."));
         if (patternFetch.ok) clearSaveProblem("load:flower_patterns");
-        else reportFlowerPatternsLoadFailed(new Error("Failed to load — Studio recipe pricing is skipped until this is retried or the page is reloaded."));
+        else reportFlowerPatternsLoadFailed(loadErr(patternFetch, "Studio recipe pricing is skipped until this is retried or the page is reloaded."));
         if (fnFetch.ok) clearSaveProblem("load:functions");
-        else reportFunctionsLoadFailed(new Error("Failed to load — the functions list may be incomplete until this is retried or the page is reloaded."));
+        else reportFunctionsLoadFailed(loadErr(fnFetch, "the functions list may be incomplete until this is retried or the page is reloaded."));
         if (projFetch.ok) clearSaveProblem("load:projects");
-        else reportProjectsLoadFailed(new Error("Failed to load — the projects list may be incomplete until this is retried or the page is reloaded."));
+        else reportProjectsLoadFailed(loadErr(projFetch, "the projects list may be incomplete until this is retried or the page is reloaded."));
         if (poFetch.ok) clearSaveProblem("load:purchase_orders");
-        else reportPurchaseOrdersLoadFailed(new Error("Failed to load — the purchase orders list may be incomplete until this is retried or the page is reloaded."));
+        else reportPurchaseOrdersLoadFailed(loadErr(poFetch, "the purchase orders list may be incomplete until this is retried or the page is reloaded."));
         if (eoFetch.ok) clearSaveProblem("load:event_orders");
-        else reportEventOrdersLoadFailed(new Error("Failed to load — the event orders list may be incomplete until this is retried or the page is reloaded."));
+        else reportEventOrdersLoadFailed(loadErr(eoFetch, "the event orders list may be incomplete until this is retried or the page is reloaded."));
         if (blockFetch.ok) clearSaveProblem("load:blocks");
-        else reportBlocksLoadFailed(new Error("Failed to load — editing block reservations is refused until this is retried or the page is reloaded."));
+        else reportBlocksLoadFailed(loadErr(blockFetch, "editing block reservations is refused until this is retried or the page is reloaded."));
         if (allocFetch.ok) clearSaveProblem("load:truss_allocations");
-        else reportTrussAllocLoadFailed(new Error("Failed to load — editing truss allocations is refused until this is retried or the page is reloaded."));
+        else reportTrussAllocLoadFailed(loadErr(allocFetch, "editing truss allocations is refused until this is retried or the page is reloaded."));
         if (platformAllocFetch.ok) clearSaveProblem("load:platform_allocations");
-        else reportPlatformAllocLoadFailed(new Error("Failed to load — editing platform allocations is refused until this is retried or the page is reloaded."));
+        else reportPlatformAllocLoadFailed(loadErr(platformAllocFetch, "editing platform allocations is refused until this is retried or the page is reloaded."));
         if (battaAllocFetch.ok) clearSaveProblem("load:batta_allocations");
-        else reportBattaAllocLoadFailed(new Error("Failed to load — editing batta allocations is refused until this is retried or the page is reloaded."));
+        else reportBattaAllocLoadFailed(loadErr(battaAllocFetch, "editing batta allocations is refused until this is retried or the page is reloaded."));
         setLoading(false);
       } catch (e) {
         if (active) { setError(e.message || "Failed to load IMS data"); setLoading(false); }
