@@ -25,6 +25,19 @@
   --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
+/* ── MOBILE CHROME ──
+   overscroll-behavior stops the iOS/Chrome rubber-band on vertical overscroll — a swipe past the
+   top used to pull the whole app down from under the fixed bars, which read as "poora app niche
+   jara hai" on a phone. The page still scrolls normally; only the elastic bounce is suppressed.
+   touch-action: manipulation disables double-tap-to-zoom (pinch is already turned off at the
+   viewport) so a quick repeated tap on the Punch In button fires the second tap instead of being
+   held for a zoom gesture that no longer exists. */
+html, body {
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+}
+
 :root {
   /* Ambria is a light-themed UI (white cards / gray-50 bg). Pin the scheme to light so
      OS dark mode never flips text/native form controls to white-on-white. */

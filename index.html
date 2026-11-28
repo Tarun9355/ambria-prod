@@ -2,7 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Pinned to 1:1 scale: pinch-zoom rescales the whole chrome of the app, which on a phone
+         made the sticky header, the Punch button and the fixed bars drift off their anchors
+         (owner report, 2026-11-28: "squeeze kra toh pura hi ho gya"). An app shell with its own
+         controls and reflow isn't the right surface for the browser's own zoom; it belongs to a
+         document, not an app. viewport-fit=cover lets the layout paint under the iOS notch so
+         status-bar blur reads correctly against theme-color above. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>Ambria</title>
     <meta name="description" content="Wedding & Event Décor Management" />
     <!--
