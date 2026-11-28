@@ -18,7 +18,7 @@ import { labourPunchDepts } from "../../lib/ims/labourAttendance";
 import { isAttendanceManager, userDepartments } from "../../lib/ims/deptClassify";
 import {
   IconHourglass, IconPlay, IconStop, IconClipboard, IconPin,
-  IconCamera, IconClipboardCheck, IconX, IconArrowRight, IconChevron, IconClock, IconCheck,
+  IconCamera, IconClipboardCheck, IconX, IconArrowRight, IconChevron, IconClock, IconCheck, IconGear,
 } from "../../components/icons.jsx";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -89,6 +89,16 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
   // a long scrolling list of today's punches; desktop always shows it expanded regardless (see the
   // "hidden lg:block" pairing below, the standard Tailwind way to make a collapse mobile-only).
   const [todayOpen, setTodayOpen] = useState(false);
+  // "My details" drawer — gear icon on the greeting card opens the month calendar + personal
+  // attendance details on demand (owner ask 2026-11-28). Calendar still stays out of the home
+  // layout until the day's first punch; this gives the user a way to pull it up any time.
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  useEffect(() => {
+    if (!detailsOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") setDetailsOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [detailsOpen]);
   const savingRef = useRef(false);
   // The clock the page reads (greeting, "worked today", the open session's length) - a minute is its finest step.
   const [now, setNow] = useState(() => Date.now());
@@ -375,8 +385,19 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
               what pressing it will ask for, step by step (no surprise on the way in). Only the button is loud. */}
           <section aria-label="Today" className="rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm overflow-hidden">
             <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_320px]">
-              <div className="p-5 sm:p-7 min-w-0">
-                <p className="text-sm text-gray-500">{new Date(now).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
+              <div className="relative p-5 sm:p-7 min-w-0">
+                {/* Gear in the top-right corner opens the user's full attendance details (month
+                    calendar, hours, incomplete days) in a dedicated drawer — the home layout
+                    stays uncluttered, the details are one tap away when the user wants them. */}
+                <button
+                  type="button"
+                  onClick={() => setDetailsOpen(true)}
+                  aria-label="Open my attendance details"
+                  title="My attendance details"
+                  className="absolute top-3 right-3 sm:top-4 sm:right-4 w-9 h-9 rounded-xl text-gray-500 bg-white/0 hover:bg-gray-100 hover:text-gray-900 flex items-center justify-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+                  <IconGear size={16} />
+                </button>
+                <p className="text-sm text-gray-500 pr-10">{new Date(now).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
                 <h2 className="mt-1 text-2xl sm:text-[28px] leading-tight font-semibold tracking-tight text-gray-900 truncate">{greeting}{firstName ? `, ${firstName}` : ""}</h2>
                 <div className="mt-3 min-h-7" aria-live="polite">
                   {loadingStatus ? (
@@ -409,24 +430,37 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
 
                 <DayStrip punches={dayPunches} now={now} />
 
-                <dl className="mt-6 grid grid-cols-3 gap-4">
+                <dl className="mt-6 grid grid-cols-3 gap-2 sm:gap-3">
                   {[
-                    ["First in", firstIn ? fmtTime(firstIn.at) : "—"],
-                    [state === "in" ? "Status" : "Last out", state === "in" ? "Working" : lastOut ? fmtTime(lastOut.at) : "—"],
-                    ["Worked today", dayPunches.length ? fmtDur(workedToday) : "—"],
-                  ].map(([k, v], i) => (
-                    <div key={k} className={"min-w-0 " + (i ? "pl-4 border-l border-gray-100" : "")}>
-                      <dt className="text-xs text-gray-500 truncate">{k}</dt>
-                      <dd className="mt-1 text-lg sm:text-xl font-semibold text-gray-900 tabular-nums truncate">{v}</dd>
+                    { label: "First in",   value: firstIn ? fmtTime(firstIn.at) : "—", dot: firstIn ? "bg-emerald-500" : "bg-gray-300" },
+                    { label: state === "in" ? "Status" : "Last out",
+                      value: state === "in" ? "Working" : lastOut ? fmtTime(lastOut.at) : "—",
+                      dot: state === "in" ? "bg-emerald-500 motion-safe:animate-pulse" : lastOut ? "bg-amber-500" : "bg-gray-300" },
+                    { label: "Worked today", value: dayPunches.length ? fmtDur(workedToday) : "—", dot: dayPunches.length ? "bg-blue-500" : "bg-gray-300" },
+                  ].map((s) => (
+                    <div key={s.label} className="min-w-0 rounded-xl bg-gray-50/80 ring-1 ring-gray-100 px-3 py-2.5">
+                      <dt className="flex items-center gap-1.5 text-[11px] font-medium text-gray-500 uppercase tracking-wider truncate">
+                        <span className={"w-1.5 h-1.5 rounded-full " + s.dot} aria-hidden="true" />{s.label}
+                      </dt>
+                      <dd className="mt-1 text-lg sm:text-xl font-semibold text-gray-900 tabular-nums tracking-tight truncate">{s.value}</dd>
                     </div>
                   ))}
                 </dl>
               </div>
 
-              <aside aria-label="Punch" className="border-t md:border-t-0 md:border-l border-gray-100 bg-gray-50/70 p-5 sm:p-7 flex flex-col justify-center gap-5">
-                <div>
-                  <div className="text-xs text-gray-500">Time now</div>
-                  <div className="mt-0.5 text-3xl font-semibold tracking-tight text-gray-900 tabular-nums">{new Date(now).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</div>
+              <aside aria-label="Punch" className={"relative border-t md:border-t-0 md:border-l border-gray-100 p-5 sm:p-7 flex flex-col justify-center gap-5 overflow-hidden "
+                + (state === "in"
+                    ? "bg-gradient-to-br from-emerald-50 via-gray-50/70 to-gray-50/70"
+                    : "bg-gradient-to-br from-blue-50/60 via-gray-50/70 to-gray-50/70")}>
+                {/* Decorative colored halo in the corner reinforces the current state — green while
+                    on duty, blue at rest. Hidden from AT (aria-hidden). The gradient already
+                    carries most of the state cue; this adds a touch of depth without reading as
+                    noise. */}
+                <span aria-hidden="true" className={"pointer-events-none absolute -top-10 -right-10 w-40 h-40 rounded-full blur-2xl opacity-60 "
+                  + (state === "in" ? "bg-emerald-200/60" : "bg-blue-200/50")} />
+                <div className="relative">
+                  <div className="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Time now</div>
+                  <div className="mt-1 text-4xl font-bold tracking-tight text-gray-900 tabular-nums leading-none">{new Date(now).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</div>
                 </div>
                 <button
                   disabled={loadingStatus}
@@ -467,13 +501,12 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
             </div>
           </section>
 
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-stretch">
-            {/* ── TODAY'S PUNCHES ── a timeline, with the time spent between each in and out.
-                Takes 3/5 of the row when the calendar is also visible; stretches to the full 5/5
-                before the first punch (the calendar sits hidden until then — owner ask 2026-11-28
-                "jab tak punch in na ho tab tk calendar mat dikhao") so the card does not read as
-                squeezed into one corner of a half-empty grid. */}
-            <section aria-label="Today's punches" className={"order-2 lg:order-1 h-full flex flex-col rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm " + (dayPunches.length > 0 ? "lg:col-span-3" : "lg:col-span-5")}>
+          {/* ── TODAY'S PUNCHES ── a timeline, with the time spent between each in and out.
+              Takes the full row — calendar lives in its own drawer behind the gear in the greeting
+              card (owner ask 2026-11-28 "yahan se hata do"), so the home layout is one card wide
+              under the greeting instead of a half-empty two-column grid. */}
+          <div>
+            <section aria-label="Today's punches" className="h-full flex flex-col rounded-2xl bg-white ring-1 ring-gray-200/70 shadow-sm">
               <button onClick={() => setTodayOpen((o) => !o)} aria-expanded={todayOpen}
                 className="w-full flex items-center justify-between gap-3 px-5 sm:px-6 py-4 text-left lg:cursor-default lg:pointer-events-none">
                 <span className="min-w-0">
@@ -501,21 +534,34 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                       const isIn = p.type === "in";
                       const endMs = next?.type === "out" ? new Date(next.at).getTime() : (isIn && !next ? now : null);
                       const span = isIn && endMs != null ? endMs - new Date(p.at).getTime() : null;
+                      // The connector line below this punch is coloured by what runs through it:
+                      // an "in" → an eventual "out" means the user was on duty on that segment
+                      // (emerald); anything else — the gap between an out and the next in, or a
+                      // trailing standalone — stays neutral. Signals the shape of the day at a
+                      // glance without a legend.
+                      const connectorTone = isIn && (next?.type === "out" || !next)
+                        ? "bg-gradient-to-b from-emerald-300 to-emerald-100"
+                        : "bg-gradient-to-b from-gray-200 to-gray-100";
                       return (
-                        <li key={p.id} className="relative flex gap-3.5 pb-5 last:pb-0">
-                          {i < dayPunches.length - 1 && <span aria-hidden="true" className="absolute left-[15px] top-9 bottom-1 w-px bg-gray-200" />}
-                          <span aria-hidden="true" className={"relative z-10 w-8 h-8 shrink-0 rounded-full ring-4 ring-white flex items-center justify-center "
-                            + (isIn ? "bg-green-50 text-green-700" : p.auto_closed ? "bg-amber-50 text-amber-700" : "bg-gray-100 text-gray-600")}>
-                            {isIn ? <IconPlay size={13} /> : <IconStop size={13} />}
+                        <li key={p.id} className="group relative flex gap-4 pb-6 last:pb-0">
+                          {i < dayPunches.length - 1 && <span aria-hidden="true" className={"absolute left-[19px] top-10 bottom-1 w-[3px] rounded-full " + connectorTone} />}
+                          <span aria-hidden="true" className={"relative z-10 w-10 h-10 shrink-0 rounded-full ring-4 ring-white flex items-center justify-center shadow-[0_2px_8px_-2px_rgba(15,23,42,0.18)] "
+                            + (isIn
+                                ? "bg-gradient-to-br from-emerald-100 to-emerald-50 text-emerald-700"
+                                : p.auto_closed
+                                  ? "bg-gradient-to-br from-amber-100 to-amber-50 text-amber-700"
+                                  : "bg-gradient-to-br from-gray-200 to-gray-100 text-gray-600")}>
+                            {isIn ? <IconPlay size={15} /> : <IconStop size={15} />}
                           </span>
-                          <div className="min-w-0 flex-1 pt-1">
+                          <div className="min-w-0 flex-1 pt-1.5">
                             <div className="flex items-baseline justify-between gap-3">
-                              <span className={"text-sm font-semibold " + (p.auto_closed ? "text-amber-700" : "text-gray-900")}>{punchLabel(p)}</span>
-                              <time className="shrink-0 text-sm font-semibold text-gray-900 tabular-nums" dateTime={p.at}>{fmtTime(p.at)}</time>
+                              <span className={"text-sm font-semibold tracking-tight " + (isIn ? "text-emerald-800" : p.auto_closed ? "text-amber-800" : "text-gray-900")}>{punchLabel(p)}</span>
+                              <time className="shrink-0 text-base font-bold text-gray-900 tabular-nums tracking-tight" dateTime={p.at}>{fmtTime(p.at)}</time>
                             </div>
-                            <div className="mt-0.5 flex items-center gap-1 text-xs text-gray-500 min-w-0"><IconPin size={11} /><span className="truncate">{punchLocationLabel(p)}</span></div>
+                            <div className="mt-1 flex items-center gap-1 text-xs text-gray-500 min-w-0"><IconPin size={11} /><span className="truncate">{punchLocationLabel(p)}</span></div>
                             {span != null && span > 0 && (
-                              <div className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-gray-50 ring-1 ring-gray-100 px-2 py-0.5 text-xs text-gray-600 tabular-nums">
+                              <div className={"mt-2.5 inline-flex items-center gap-1.5 rounded-full ring-1 px-2.5 py-0.5 text-xs font-semibold tabular-nums "
+                                + (next ? "bg-emerald-50 ring-emerald-200 text-emerald-800" : "bg-blue-50 ring-blue-200 text-blue-800 motion-safe:animate-pulse")}>
                                 <IconHourglass size={11} /> {fmtDur(span / 3600000)}{next ? "" : " so far"}
                               </div>
                             )}
@@ -528,15 +574,10 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
               </div>
             </section>
 
-            {/* Calendar stays hidden until the day's first punch lands — owner ask 2026-11-28:
-                "jab tak punch in na ho tab tk calendar mat dikhao". The calendar is a review of a
-                day in motion; rendering it in zeros before the day has even started reads as a
-                blank dashboard. Reappears the moment dayPunches goes from 0 → 1. */}
-            {dayPunches.length > 0 && (
-              <div className="order-1 lg:order-2 lg:col-span-2 h-full">
-                <MyAttendanceCalendar authUser={authUser} />
-              </div>
-            )}
+            {/* Calendar removed from the home layout — owner ask 2026-11-28: "yahan se hata do".
+                The gear icon in the greeting card header now opens the full month calendar and
+                personal attendance details in a dedicated drawer, so the home stays focused on
+                "today" (greeting, status, the one action) without any second-screen content. */}
           </div>
         </>
       )}
@@ -559,6 +600,32 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
             <LabourPunchPanel authUser={authUser} users={users} settings={settings} myAccess={myLabourAccess} onAccessChanged={reloadLabourAccess} />
           )}
         </div>
+      )}
+
+      {detailsOpen && createPortal(
+        // My Attendance details drawer: the full month calendar + weekly / monthly tiles the home
+        // layout already uses, shown in a focused overlay so the user can review their own log
+        // without the day's punch controls competing for attention. Closed by the backdrop, the X,
+        // or Esc (the key handler lives inside the drawer below via a dedicated effect).
+        <div role="dialog" aria-modal="true" aria-label="My attendance details" className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm p-3 sm:p-6 flex items-start sm:items-center justify-center overflow-y-auto"
+          onClick={(e) => { if (e.target === e.currentTarget) setDetailsOpen(false); }}>
+          <div className="w-full max-w-xl bg-white rounded-2xl shadow-[0_24px_60px_-12px_rgba(17,24,39,0.35)] ring-1 ring-gray-200/70">
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
+              <div>
+                <h3 className="text-base font-semibold text-gray-900">My attendance</h3>
+                <p className="mt-0.5 text-xs text-gray-500">Your month at a glance — tap a worked day to see its punches.</p>
+              </div>
+              <button type="button" onClick={() => setDetailsOpen(false)} aria-label="Close"
+                className="shrink-0 w-10 h-10 rounded-xl text-gray-500 hover:text-gray-900 hover:bg-gray-100 flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 transition-colors">
+                <IconX size={16} />
+              </button>
+            </div>
+            <div className="p-3 sm:p-4">
+              <MyAttendanceCalendar authUser={authUser} />
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
       {flow && createPortal(
