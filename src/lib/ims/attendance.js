@@ -5,12 +5,13 @@
 import { supabase } from "../supabase";
 import { userDepartments } from "./deptClassify";
 
-// The build/support departments a punch-in briefing can be scoped to — kept in sync with the
-// LABOUR_DEPTS list so every crew a supervisor can punch has its own briefing slot. Transport and
-// ADD were added back (owner ask 2026-11-28) — drivers and ADD staff also get their own on-site
-// quiz now, scoped to their own department.
-export const ATTENDANCE_QUIZ_DEPTS = ["Furniture", "Floral", "Structure", "Tenting", "Transport", "Lighting", "Fabric", "ADD"];
-export const ATTENDANCE_QUIZ_DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵", ADD: "🧰" };
+// The build/support departments a punch-in briefing can be scoped to — the 7 build depts plus
+// Transport (drivers get their own safety quiz, owner ask 2026-11-28). ADD is attendance-only
+// (vendor-side add-ons), it has no own briefing and does not need a quiz slot — a late owner
+// correction, 2026-11-28: "ADD nahi kare isme". Staff whose dept is ADD skip the briefing at
+// punch-in (attendanceQuizDept returns null for them) same as a user with no quiz dept at all.
+export const ATTENDANCE_QUIZ_DEPTS = ["Furniture", "Floral", "Structure", "Tenting", "Transport", "Lighting", "Fabric"];
+export const ATTENDANCE_QUIZ_DEPT_ICON = { Furniture: "🛋️", Floral: "🌸", Structure: "🏛️", Tenting: "⛺", Transport: "🚚", Lighting: "💡", Fabric: "🧵" };
 
 /**
  * Which of the 6 quiz departments this punch belongs to — the one department a user has, when
@@ -101,6 +102,19 @@ export async function fetchDayPunches(userId, dateStr) {
 // `currentState` wrong until the end of the day. The guard is advisory — a race between the read
 // and the write is still possible until proper RLS / a server-side unique index per (user_id,
 // date, type, bucket) lands — but it closes the window from "always" to "once in a while".
+// Admin-only overrides — a dispute, a bad timestamp, a stray row that shouldn't be there.
+// The table used to be append-only; owner ask 2026-11-28 opens it for admin edits from the app
+// instead of forcing an SQL round-trip. The caller gates this on authUser.role === "Admin".
+export async function updatePunchRow(id, patch) {
+  const { data, error } = await supabase.from("attendance").update(patch).eq("id", id).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function deletePunchRow(id) {
+  const { error } = await supabase.from("attendance").delete().eq("id", id);
+  if (error) throw error;
+}
+
 export async function insertPunch(row) {
   if (row?.user_id && row?.date && row?.type) {
     const { data: last } = await supabase

@@ -85,6 +85,18 @@ export async function fetchAllActiveLabours() {
 // busy gate tapping Punch In twice on the same labour inside a second used to insert two `in` rows
 // back-to-back (see attendance.js header for why). Advisory only; proper RLS + a server unique
 // index per (labour_id, date, type, bucket) would close this fully.
+// Admin-only overrides on a labour punch row — same shape as attendance.updatePunchRow /
+// deletePunchRow. Owner ask 2026-11-28.
+export async function updateLabourPunchRow(id, patch) {
+  const { data, error } = await supabase.from("labour_attendance").update(patch).eq("id", id).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function deleteLabourPunchRow(id) {
+  const { error } = await supabase.from("labour_attendance").delete().eq("id", id);
+  if (error) throw error;
+}
+
 export async function insertLabourPunch(row) {
   if (row?.labour_id && row?.date && row?.type) {
     const { data: last } = await supabase

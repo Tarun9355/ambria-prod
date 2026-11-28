@@ -545,13 +545,26 @@ export default function AttendanceTab({ authUser, settings, setSettings, users, 
                       return (
                         <li key={p.id} className="group relative flex gap-4 pb-6 last:pb-0">
                           {i < dayPunches.length - 1 && <span aria-hidden="true" className={"absolute left-[19px] top-10 bottom-1 w-[3px] rounded-full " + connectorTone} />}
-                          <span aria-hidden="true" className={"relative z-10 w-10 h-10 shrink-0 rounded-full ring-4 ring-white flex items-center justify-center shadow-[0_2px_8px_-2px_rgba(15,23,42,0.18)] "
+                          {/* Photo takes the place of the type icon — a user recognises their own
+                              selfie instantly; the status pill + the colour ring still say in / out
+                              / auto for a glance. Fallback to the play/stop glyph on a missing
+                              photo (older rows + auto-closed outs don't carry one). Owner ask
+                              2026-11-28: "yahan pe photo dikha do instead of icons". */}
+                          <span aria-hidden="true" className={"relative z-10 w-10 h-10 shrink-0 rounded-full overflow-hidden ring-4 ring-white flex items-center justify-center shadow-[0_2px_8px_-2px_rgba(15,23,42,0.18)] "
+                            + "ring-offset-2 ring-offset-white "
                             + (isIn
-                                ? "bg-gradient-to-br from-emerald-100 to-emerald-50 text-emerald-700"
+                                ? "outline outline-2 outline-emerald-400/70"
                                 : p.auto_closed
-                                  ? "bg-gradient-to-br from-amber-100 to-amber-50 text-amber-700"
-                                  : "bg-gradient-to-br from-gray-200 to-gray-100 text-gray-600")}>
-                            {isIn ? <IconPlay size={15} /> : <IconStop size={15} />}
+                                  ? "outline outline-2 outline-amber-400/70"
+                                  : "outline outline-2 outline-gray-300")
+                            + (p.photo ? " bg-gray-100" : isIn
+                                ? " bg-gradient-to-br from-emerald-100 to-emerald-50 text-emerald-700"
+                                : p.auto_closed
+                                  ? " bg-gradient-to-br from-amber-100 to-amber-50 text-amber-700"
+                                  : " bg-gradient-to-br from-gray-200 to-gray-100 text-gray-600")}>
+                            {p.photo
+                              ? <img src={p.photo} alt="" loading="lazy" className="w-full h-full object-cover" />
+                              : (isIn ? <IconPlay size={15} /> : <IconStop size={15} />)}
                           </span>
                           <div className="min-w-0 flex-1 pt-1.5">
                             <div className="flex items-baseline justify-between gap-3">

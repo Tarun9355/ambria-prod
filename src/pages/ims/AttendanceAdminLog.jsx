@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Modal } from "../../components/ui";
-import { fetchRangePunches, todayStr, punchLabel, punchLocationLabel } from "../../lib/ims/attendance";
+import { Modal, useConfirm } from "../../components/ui";
+import { fetchRangePunches, todayStr, punchLabel, punchLocationLabel, updatePunchRow, deletePunchRow } from "../../lib/ims/attendance";
 import { DEPTS as BUILD_DEPTS, userDepartments } from "../../lib/ims/deptClassify";
 import { ATTENDANCE_ONLY_DEPTS } from "../../lib/ims/staffImport";
 // Attendance groups by the build departments plus the attendance-only ones (ADD - owner ask 2026-11-28).
@@ -197,7 +197,51 @@ export default function AttendanceAdminLog({ users, authUser }) {
   const [reload, setReload] = useState(0);      // bumped by "Try again" after a failed load
   const [search, setSearch] = useState("");
   const [dept, setDept] = useState("all");
+  // Clicking a stat tile narrows the list to that type — "in" shows only punch-ins, "out" shows
+  // only punch-outs, "all" (Staff tile or re-click) resets. Owner ask 2026-11-28: "clickable bna do".
+  const [typeFilter, setTypeFilter] = useState("all");
   const [viewing, setViewing] = useState(null); // the punch row whose photo is open big
+  // Admin-only override (owner ask 2026-11-28: "admin ke pass option dedo overwrite krne ka punch
+  // in punch out and delete krne ka records"). Non-admins never see the controls.
+  const [editing, setEditing] = useState(null); // the punch row open in the edit modal
+  const [editTime, setEditTime] = useState("");  // "HH:MM" draft from the time input
+  const [editType, setEditType] = useState("in");
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [confirmPunch, confirmPunchDialog] = useConfirm();
+  const openEdit = (p) => {
+    const d = new Date(p.at);
+    const hh = String(d.getHours()).padStart(2, "0"); const mm = String(d.getMinutes()).padStart(2, "0");
+    setEditTime(`${hh}:${mm}`); setEditType(p.type || "in"); setEditError(""); setEditing(p);
+  };
+  const saveEdit = async () => {
+    if (!editing) return;
+    const m = /^(\d{1,2}):(\d{2})$/.exec(editTime);
+    if (!m) { setEditError("Enter a time as HH:MM (24-hour)."); return; }
+    const hh = Number(m[1]), mm = Number(m[2]);
+    if (hh > 23 || mm > 59) { setEditError("That time isn't valid."); return; }
+    const next = new Date(editing.at); next.setHours(hh, mm, 0, 0);
+    setEditBusy(true); setEditError("");
+    try {
+      const updated = await updatePunchRow(editing.id, { type: editType, at: next.toISOString() });
+      setRows((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      setEditing(null);
+    } catch (e) { setEditError(e?.message || "Couldn't save the change."); }
+    setEditBusy(false);
+  };
+  const deletePunch = async (p) => {
+    const ok = await confirmPunch({
+      title: "Delete this punch?",
+      body: `${punchLabel(p)} at ${fmtTime(p.at)} for ${p.user_name || "this user"}. This can't be undone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deletePunchRow(p.id);
+      setRows((prev) => prev.filter((r) => r.id !== p.id));
+    } catch (e) { setError(e?.message || "Couldn't delete that punch."); }
+  };
 
   // user_id -> department(s), from the real roster (IMS -> Admin -> Users & Roles), not guessed
   // from the attendance rows themselves — a punch row has no department of its own.
@@ -251,13 +295,19 @@ export default function AttendanceAdminLog({ users, authUser }) {
   }
 
   const term = search.trim().toLowerCase();
-  const isFiltered = !!term || dept !== "all";
+  const isFiltered = !!term || dept !== "all" || typeFilter !== "all";
   // Dept-manager scope first, so search / dept chip only ever narrow from an already-filtered set.
   const scoped = !myDepts ? rows : rows.filter((r) => (deptByUserId[r.user_id] || []).some((d) => myDepts.includes(d)));
   const searched = term ? scoped.filter((r) => (r.user_name || "").toLowerCase().includes(term)) : scoped;
-  const filtered = dept === "all" ? searched
+  const deptFiltered = dept === "all" ? searched
     : dept === "Admin" ? searched.filter((r) => isAdminByUserId[r.user_id])
     : searched.filter((r) => (deptByUserId[r.user_id] || []).includes(dept));
+  // typeFilter applies LAST so the stat tiles' own counts stay honest against the dept/search
+  // narrowed set — "6 staff, 10 punch-ins" is for whatever dept the user picked, then clicking
+  // Punch-ins drops the list to just those 10 rows (headline numbers don't flinch mid-click).
+  const filtered = typeFilter === "in" ? deptFiltered.filter((r) => r.type === "in")
+    : typeFilter === "out" ? deptFiltered.filter((r) => r.type !== "in")
+    : deptFiltered;
 
   // Grouped by department only in the "all" view — a specific department's own filter above
   // already narrows the flat list to just that one, so a repeated section header would be noise.
@@ -279,13 +329,14 @@ export default function AttendanceAdminLog({ users, authUser }) {
     return Object.entries(byDept).filter(([, list]) => list.length);
   })();
 
-  // The day at a glance, over whatever the search / department filter currently shows. Each tile
-  // carries a semantic dot (gray = roster, green = in, amber = out) so the trio scans at the pace
-  // of colour, not numeral comparison.
+  // The day at a glance, over whatever the search / department filter currently shows. Numbers
+  // come from deptFiltered (not filtered) so the headline counts stay honest while the row list
+  // below is narrowed to the active type. Each tile is a toggle: click once to narrow to that
+  // type, click again (or click Staff) to clear.
   const dayStats = [
-    { label: "Staff",       value: new Set(filtered.map((r) => r.user_id)).size, dot: "bg-gray-400",    hint: "unique people" },
-    { label: "Punch-ins",   value: filtered.filter((r) => r.type === "in").length, dot: "bg-emerald-500", hint: "in today" },
-    { label: "Punch-outs",  value: filtered.filter((r) => r.type !== "in").length, dot: "bg-amber-500",   hint: "out today" },
+    { label: "Staff",       value: new Set(deptFiltered.map((r) => r.user_id)).size, dot: "bg-gray-400",    hint: "unique people", type: "all" },
+    { label: "Punch-ins",   value: deptFiltered.filter((r) => r.type === "in").length, dot: "bg-emerald-500", hint: "in today",     type: "in" },
+    { label: "Punch-outs",  value: deptFiltered.filter((r) => r.type !== "in").length, dot: "bg-amber-500",   hint: "out today",   type: "out" },
   ];
 
   const dateLabel = new Date(date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -344,6 +395,18 @@ export default function AttendanceAdminLog({ users, authUser }) {
           )}
         </div>
         <time dateTime={p.at} className="shrink-0 text-sm font-semibold text-gray-800 tabular-nums tracking-tight">{fmtTime(p.at)}</time>
+        {isAdminUser && (
+          <div className="shrink-0 flex items-center gap-1 ml-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+            <button type="button" onClick={() => openEdit(p)} aria-label="Edit this punch" title="Edit punch"
+              className="w-8 h-8 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+            </button>
+            <button type="button" onClick={() => deletePunch(p)} aria-label="Delete this punch" title="Delete punch"
+              className="w-8 h-8 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14" /></svg>
+            </button>
+          </div>
+        )}
       </li>
     );
   };
@@ -452,7 +515,7 @@ export default function AttendanceAdminLog({ users, authUser }) {
               {isFiltered ? "Try another name or department." : date === today ? "Punches show up here as staff punch in and out." : "Nobody punched in or out that day."}
             </p>
             {isFiltered && (
-              <button type="button" onClick={() => { setSearch(""); setDept("all"); }}
+              <button type="button" onClick={() => { setSearch(""); setDept("all"); setTypeFilter("all"); }}
                 className="mt-4 inline-flex items-center justify-center gap-2 h-10 px-4 rounded-xl bg-white ring-1 ring-gray-200 text-gray-700 text-sm font-semibold hover:bg-gray-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
                 <IconX size={14} /> Clear filters
               </button>
@@ -460,17 +523,24 @@ export default function AttendanceAdminLog({ users, authUser }) {
           </div>
         ) : (
           <>
-            <dl className="mx-5 mt-4 grid grid-cols-3 rounded-xl bg-gray-50/80 ring-1 ring-gray-100 divide-x divide-gray-100 overflow-hidden">
-              {dayStats.map((s) => (
-                <div key={s.label} className="px-4 py-3 min-w-0">
-                  <dt className="flex items-center gap-1.5 text-[11px] font-medium text-gray-500 uppercase tracking-wider truncate">
-                    <span className={"w-1.5 h-1.5 rounded-full " + s.dot} aria-hidden="true" />{s.label}
-                  </dt>
-                  <dd className="mt-1 text-2xl font-semibold text-gray-900 tabular-nums leading-none tracking-tight">{s.value}</dd>
-                  <dd className="mt-1 text-[11px] text-gray-500 truncate">{s.hint}</dd>
-                </div>
-              ))}
-            </dl>
+            <div className="mx-5 mt-4 grid grid-cols-3 rounded-xl ring-1 ring-gray-100 divide-x divide-gray-100 overflow-hidden" role="group" aria-label="Narrow by punch type">
+              {dayStats.map((s) => {
+                const active = typeFilter === s.type || (s.type === "all" && typeFilter === "all");
+                return (
+                  <button type="button" key={s.label}
+                    onClick={() => setTypeFilter((cur) => (cur === s.type ? "all" : s.type))}
+                    aria-pressed={active}
+                    className={"group text-left px-4 py-3 min-w-0 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset "
+                      + (active ? "bg-white shadow-[inset_0_-2px_0_rgba(37,99,235,0.6)]" : "bg-gray-50/80 hover:bg-white")}>
+                    <span className="flex items-center gap-1.5 text-[11px] font-medium text-gray-500 uppercase tracking-wider truncate">
+                      <span className={"w-1.5 h-1.5 rounded-full " + s.dot} aria-hidden="true" />{s.label}
+                    </span>
+                    <span className="block mt-1 text-2xl font-semibold text-gray-900 tabular-nums leading-none tracking-tight">{s.value}</span>
+                    <span className="block mt-1 text-[11px] text-gray-500 truncate">{active && s.type !== "all" ? "showing these" : s.hint}</span>
+                  </button>
+                );
+              })}
+            </div>
             {groups ? (
               <div className="mt-4 pb-2">
                 {groups.map(([d, list]) => {
@@ -521,6 +591,42 @@ export default function AttendanceAdminLog({ users, authUser }) {
           </div>
         )}
       </Modal>
+
+      {/* Admin-only edit modal: change the type (in/out) and the time for a punch. Date is fixed
+          to the row's own date — a punch was never supposed to move between days, and letting it
+          would leave the day grouping lying. Delete has its own confirm (useConfirm above). */}
+      <Modal open={!!editing} onClose={() => (editBusy ? null : setEditing(null))} title={editing ? `Edit ${editing.user_name || "punch"}` : ""}>
+        {editing && (
+          <div className="space-y-3">
+            <div>
+              <div className="text-xs font-semibold text-gray-700 mb-1.5">Type</div>
+              <div className="inline-flex rounded-xl bg-gray-100 p-1">
+                {[["in", "Punch In"], ["out", "Punch Out"]].map(([v, l]) => (
+                  <button key={v} type="button" onClick={() => setEditType(v)} aria-pressed={editType === v}
+                    className={"h-9 px-4 rounded-lg text-xs font-semibold transition-colors "
+                      + (editType === v ? "bg-white text-gray-900 shadow-sm ring-1 ring-gray-200/70" : "text-gray-600 hover:text-gray-900")}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label htmlFor="edit-time" className="block text-xs font-semibold text-gray-700 mb-1.5">Time (24-hour)</label>
+              <input id="edit-time" type="time" value={editTime} onChange={(e) => setEditTime(e.target.value)}
+                className="w-full h-10 rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500" />
+              <p className="mt-1 text-xs text-gray-500">Date stays the same ({new Date(editing.at + "").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}).</p>
+            </div>
+            {editError && <p role="alert" className="text-xs text-red-600">{editError}</p>}
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setEditing(null)} disabled={editBusy}
+                className="h-10 px-4 rounded-xl bg-white ring-1 ring-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-60">Cancel</button>
+              <button type="button" onClick={saveEdit} disabled={editBusy}
+                className="h-10 px-5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:opacity-60 disabled:cursor-wait">
+                {editBusy ? "Saving…" : "Save change"}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+      {confirmPunchDialog}
     </section>
   );
 }
