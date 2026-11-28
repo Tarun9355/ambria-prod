@@ -282,6 +282,26 @@ export function snapshotContentEqual(a, b) {
  * migration had no way to build rows except by copying it — and a copy of a row-shape function
  * is exactly the thing that drifts and writes subtly wrong rows.
  */
+/**
+ * Did the deal lose a function since `prev` was saved? True when `prev` holds a build (a studio_sessions row or an
+ * fnSnapshots entry) for a function index at or past `totalFns`, the number of functions the deal has now.
+ *
+ * Why it matters (owner report 2026-11-28: copy a function in, delete Function 1, keep working, save - the deleted function
+ * came back and the work was lost): a rolling autosave collapses into the SAME session id, so its upsert rewrites only the
+ * rows of the functions that still exist - row `${id}:1` of the function that shifted away is never deleted (row deletion is
+ * disabled on purpose) and stays in that session forever, read back by rowsToSessions as a real function's build. A save
+ * that follows a removal must therefore start a new session instead of collapsing into the old one.
+ */
+export function sessionHasFnBeyond(prev, totalFns) {
+  if (!prev || typeof prev !== "object") return false;
+  const n = Number(totalFns) || 0;
+  const rows = Array.isArray(prev._fnRows) ? prev._fnRows : null;
+  if (rows && rows.length) return rows.some((r) => r && Number(r.fn_idx) >= n);
+  const snaps = prev.fnSnapshots && typeof prev.fnSnapshots === "object" ? prev.fnSnapshots : null;
+  if (!snaps) return false;
+  return Object.keys(snaps).some((k) => /^\d+$/.test(k) && snaps[k] && Number(k) >= n);
+}
+
 export function sessionToRows(clientId, s) {
   if (!s || !s.id || !clientId) return [];
   const snaps = (s.fnSnapshots && typeof s.fnSnapshots === "object") ? s.fnSnapshots : {};

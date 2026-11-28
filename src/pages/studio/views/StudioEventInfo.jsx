@@ -2035,6 +2035,11 @@ export default function StudioEventInfo({ ctx }) {
           })}
 
           <button className="ei-btn ei-add" onClick={() => {
+            // A new function starts EMPTY (owner report 2026-11-28). fnBuilds can still hold a build at this index from a
+            // removed function - a leftover session row read back on load - and the new function used to open showing it,
+            // as if the deleted function had come back.
+            const newIdx = 1 + extraFunctions.length;
+            setFnBuilds(prev => { if (!prev || !(newIdx in prev)) return prev; const next = { ...prev }; delete next[newIdx]; return next; });
             setExtraFunctions(prev => [...prev, { type: "", date: "", venue: venue || "", shift: "", pax: "" }]);
             setExpandedFnIdx(1 + extraFunctions.length);
           }} style={{width:"100%",padding:"12px 14px",borderRadius:12,border:`1px dashed ${accent}55`,background:isDark?"rgba(201,169,110,0.04)":"#FFFCF4",color:gold,cursor:"pointer",fontSize:12,fontWeight:600,marginTop:6,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>

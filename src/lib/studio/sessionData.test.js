@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual, findLatestBuild, sessionToRows, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions } from "./sessionData";
+import { fnSnapHasData, sessionHasData, autoSaveWouldDestroy, snapshotContentEqual, findLatestBuild, sessionToRows, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions, sessionHasFnBeyond } from "./sessionData";
 
 const withVideo = { sourceVideo: { id: "vid_1", title: "Poolside Haldi" } };
 const withZones = { zoneElements: { stage: ["truss"] } };
@@ -505,5 +505,46 @@ describe("mergeLmsFunctions — an LMS load adds what LMS has that Studio doesn'
     ];
     const r = mergeLmsFunctions([{ type: "", date: "", shift: "" }], lms, { landingFnIdx: 0 });
     expect(r.toAppend.map((t) => `${t.type}-${t.shift}`)).toEqual(["Haldi-Lunch", "Haldi-Dinner", "Sangeet-Dinner"]);
+  });
+});
+
+// Owner report 2026-11-28: copy a function in, delete Function 1, keep working, save - the deleted function came back.
+// A rolling autosave that collapses into the SAME session id upserts only the functions still present; the removed
+// function's old row is never deleted. This replays that against a table keyed by row id.
+describe("a removed function's row left behind by an in-place autosave", () => {
+  const upsert = (table, rows) => { rows.forEach((r) => { table[r.id] = r; }); return table; };
+  const wedding = { zoneElements: { stage: ["truss"] }, fnType: "Wedding", fnDate: "2026-12-05" };
+  const copied = { zoneElements: { stage: ["arch"] }, fnType: "Reception", fnDate: "2026-12-06" };
+  const copiedWithWork = { zoneElements: { stage: ["arch", "drape", "chandelier"] }, fnType: "Reception", fnDate: "2026-12-06" };
+
+  it("reusing the session id keeps the deleted function's row in that session", () => {
+    const before = { id: "SES_A", savedAt: 1, savedActiveFnIdx: 0, fnSnapshots: { 0: wedding, 1: copied } };
+    const table = upsert({}, sessionToRows("c1", before));
+    // Function 1 deleted: the copy is now index 0; the collapsed save keeps id SES_A
+    const after = { id: "SES_A", savedAt: 2, savedActiveFnIdx: 0, fnSnapshots: { 0: copiedWithWork } };
+    upsert(table, sessionToRows("c1", after));
+    const rowsOfA = Object.values(table).filter((r) => r.session_id === "SES_A").sort((a, b) => a.fn_idx - b.fn_idx);
+    expect(rowsOfA.map((r) => r.fn_idx)).toEqual([0, 1]);           // index 1 is still there...
+    expect(rowsOfA[1].build.zoneElements).toEqual(copied.zoneElements); // ...holding the copy's OLD build
+    expect(rowsOfA[1].saved_at).toBe(1);
+  });
+
+  it("sessionHasFnBeyond spots it, so that save starts a new session instead", () => {
+    const prevFromRows = { _fnRows: [{ fn_idx: 0, has_data: true }, { fn_idx: 1, has_data: true }] };
+    expect(sessionHasFnBeyond(prevFromRows, 1)).toBe(true);   // the deal has 1 function now
+    expect(sessionHasFnBeyond(prevFromRows, 2)).toBe(false);  // nothing removed
+    expect(sessionHasFnBeyond({ fnSnapshots: { 0: wedding, 1: copied } }, 1)).toBe(true);
+    expect(sessionHasFnBeyond({ fnSnapshots: { 0: wedding } }, 1)).toBe(false);
+    // a held-back function (duplicate guard) sits INSIDE the range - still collapses, as before
+    expect(sessionHasFnBeyond({ fnSnapshots: { 0: wedding, 1: copied } }, 3)).toBe(false);
+    expect(sessionHasFnBeyond(null, 1)).toBe(false);
+  });
+
+  it("a fresh session id carries only the functions the deal has now", () => {
+    const table = upsert({}, sessionToRows("c1", { id: "SES_A", savedAt: 1, fnSnapshots: { 0: wedding, 1: copied } }));
+    upsert(table, sessionToRows("c1", { id: "SES_B", savedAt: 2, fnSnapshots: { 0: copiedWithWork } }));
+    const rowsOfB = Object.values(table).filter((r) => r.session_id === "SES_B");
+    expect(rowsOfB.map((r) => r.fn_idx)).toEqual([0]);
+    expect(rowsOfB[0].build.zoneElements).toEqual(copiedWithWork.zoneElements);
   });
 });

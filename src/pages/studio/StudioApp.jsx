@@ -156,7 +156,7 @@ import { logPhotoCorrection, fetchPhotoCorrections } from "../../lib/studio/phot
 import { createMatcher, normalize, STRUCT_KW, STRUCTURAL_CATS as RAW_SCAFFOLD_CATS, MATCH, assembleSynonymDictionaryFromRows } from "../../lib/studio/tagging/matcher.js";
 // One place that merges an aiTagImage() result onto a library photo (spec §9-B / §12.2).
 import { applyAiTagResult } from "../../lib/studio/tagging/applyResult.js";
-import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions } from "../../lib/studio/sessionData.js";
+import { fnSnapHasData as fnSnapHasDataPure, fnSnapHasBuild, autoSaveWouldDestroy, snapshotContentEqual, sessionToRows, findLatestBuild, restoreTarget, suspiciousDuplicateFnIdxs, duplicateSourceVideoFnIdxs, mergeLmsFunctions, sessionHasFnBeyond } from "../../lib/studio/sessionData.js";
 import { reqByDateFrom, ownedIds, planStudioBlocks, planToOps, SRC_STUDIO_CARD } from "../../lib/studio/soldBlocksPlan.js";
 import { applyBlockOps, shortfallsOf } from "../../lib/ims/blocksRpc.js";
 import { mergeManualSwaps } from "../../lib/studio/dealCheckCardMerge.js";
@@ -9865,7 +9865,13 @@ export default function StudioApp() {
       // deleting the other's. A legacy draft with no `savedBy` recorded also fails this check and is
       // treated the same safe way (append, don't assume it's safe to collapse).
       const savedByMe = (prevSessions[0]?.savedBy || null) === (authUser?.name || "—");
-      const collapseInPlace = opts.auto && prevSessions[0]?.auto && !sessionBoundaryRef.current && savedByMe;
+      // ...AND unless a function was removed since that draft (it holds a build for an index this deal no longer has):
+      // collapsing reuses its session id, the upsert rewrites only the functions still here, and the removed function's
+      // old row stays in that session - read back on the next load as if it were still a function (sessionHasFnBeyond,
+      // owner report 2026-11-28: deleted Function 1 came back and the remaining function's work was lost). A fresh
+      // session holds exactly the functions the deal has now.
+      const collapseInPlace = opts.auto && prevSessions[0]?.auto && !sessionBoundaryRef.current && savedByMe
+        && !sessionHasFnBeyond(prevSessions[0], totalFns);
       // THE ACTUAL FIX for the "DELETION DISABLED" note below: reuse the row this save is replacing's
       // own id when collapsing in place. `snapshot.id` was minted fresh ("SES_"+Date.now()) above,
       // unconditionally, before collapseInPlace was even known — so "collapsing in place" only ever
