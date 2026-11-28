@@ -1430,25 +1430,37 @@ export const looseFabricQty = (zCfg) => {
 };
 // mults (optional): { masking, liza, curtain } - Deal Check passes the row's own dcFabricMult; the
 // guest price (calcStructCost, Build) never does, so it is always 1x there.
+// One fabric kind's own ₹/unit at a given tier — New falls back to Old whenever the admin has left
+// the New rate blank (same rule calcZoneFabricCost's own addFab always applied inline; pulled out so
+// the Buying tab's "≈ ₹ at the Old/New rate" informational line reads off the exact same number Deal
+// Check actually bills, instead of a second copy of this fallback logic drifting from it).
+const FABRIC_RATE_KEYS = { liza: ["lizaKgRate", "lizaKgRateNew"], masking: ["maskingPieceRate", "maskingPieceRateNew"], curtain: ["curtainPieceRate", "curtainPieceRateNew"] };
+export const fabricRentalRate = (rates, kind, tier) => {
+  const keys = FABRIC_RATE_KEYS[kind];
+  if (!keys) return 0;
+  const [oldKey, newKey] = keys;
+  const oldRate = Number(rates?.[oldKey]) || 0;
+  if (tier !== "new") return oldRate;
+  const newRaw = rates?.[newKey];
+  return (newRaw === undefined || newRaw === null || newRaw === "") ? oldRate : (Number(newRaw) || 0);
+};
+
 export const calcZoneFabricCost = (zCfg, trussInv, paletteAnchors, density, mults) => {
   if (!zCfg || !trussInv) return 0;
   if (isTrussFoc(zCfg)) return 0; // FOC truss - its drape, masking and loose fabric are already up at the venue
   const fab = calcZoneFabric(zCfg, trussInv, density || "moderate");
   const loose = looseFabricQty(zCfg);
   const rates = trussInv.rates || {};
-  const useNew = !!zCfg.useNewFabric;
+  const tier = zCfg.useNewFabric ? "new" : "old";
   let cost = 0;
-  const addFab = (totalQty, rentalKey, rentalKeyNew, part) => {
+  const addFab = (totalQty, kind) => {
     if (!totalQty || totalQty <= 0) return;
-    const m = dcFabricMultOf({ dcFabricMult: mults }, part);
-    const oldRate = Number(rates[rentalKey]) || 0;
-    const newRateRaw = rates[rentalKeyNew];
-    const newRate = (newRateRaw === undefined || newRateRaw === null || newRateRaw === "") ? oldRate : (Number(newRateRaw) || 0);
-    cost += totalQty * (useNew ? newRate : oldRate) * m;
+    const m = dcFabricMultOf({ dcFabricMult: mults }, kind);
+    cost += totalQty * fabricRentalRate(rates, kind, tier) * m;
   };
-  addFab(fab.maskingPieces + loose.masking, "maskingPieceRate", "maskingPieceRateNew", "masking");
-  addFab(fab.lizaKg        + loose.liza,    "lizaKgRate",       "lizaKgRateNew",       "liza");
-  addFab(fab.curtainPieces + loose.curtain, "curtainPieceRate", "curtainPieceRateNew", "curtain");
+  addFab(fab.maskingPieces + loose.masking, "masking");
+  addFab(fab.lizaKg        + loose.liza,    "liza");
+  addFab(fab.curtainPieces + loose.curtain, "curtain");
   return cost;
 };
 

@@ -845,7 +845,7 @@ export default function DCTrussTab({ ctx }) {
                                               <AllocChips allocs={allocs} unitLabel={unitLabel} />
                                               {hasShort ? (
                                                 <span style={{...NUM,fontSize:12,color:"#B45309",whiteSpace:"nowrap",fontWeight:700}}>
-                                                  ⚠️ {shortQty}{unitLabel} beyond physical stock · <span title={discounted?"Repeat-zone discount applied":undefined} style={{color:discounted?"#10B981":undefined}}>{fmtRs(totals.total)}</span> <span style={{color:INK_2,fontWeight:400}}>(whole line billed at the same {useNewFabric?"New":"Old"} rate — go source the rest)</span>
+                                                  ⚠️ {shortQty}{unitLabel} beyond physical stock (this zone alone) · <span title={discounted?"Repeat-zone discount applied":undefined} style={{color:discounted?"#10B981":undefined}}>{fmtRs(totals.total)}</span> <span style={{color:INK_2,fontWeight:400}}>(whole line billed at the same {useNewFabric?"New":"Old"} rate — total to buy in 🛒 Buying)</span>
                                                 </span>
                                               ) : allocs.length > 0 ? (
                                                 <span style={{...NUM,fontSize:12,color:"#059669",whiteSpace:"nowrap",fontWeight:600}}>✓ in stock · <span title={discounted?"Repeat-zone discount applied":undefined} style={{color:discounted?"#10B981":INK,fontWeight:700}}>{fmtRs(totals.total)}</span> <span style={{color:INK_2,fontWeight:400}}>rental</span></span>

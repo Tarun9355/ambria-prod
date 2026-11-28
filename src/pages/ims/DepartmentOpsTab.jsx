@@ -59,7 +59,8 @@ import { rankSites } from "../../lib/ims/siteSearch"; // Dismantle → "Add a si
 import { truckDetailsLocked, truckLoadedOf } from "../../lib/ims/truckLock";
 import { atVenueOfEvent, atVenueByRow } from "../../lib/ims/atVenue";
 import { makeFabricNeedCache } from "../../lib/ims/fabricNeed"; // fabric per colour, as the Fabric block reads it
-import { FABRIC_TYPES, eoDate, colourKey, fabricStockIndex, eventFabricRows, upcomingEventShortfalls } from "../../lib/ims/fabricShortfall"; // shared with the fabric auto-purchase engine
+import { FABRIC_TYPES, eoDate, colourKey, fabricStockIndex, eventFabricRows, upcomingEventShortfalls, isFabricDemandEvent, eventFabricBuyLines } from "../../lib/ims/fabricShortfall"; // shared with the fabric auto-purchase engine
+import { fabricPOStatusFor, fabricPOsOfEvent, fabricEffectiveStockIndex } from "../../lib/ims/fabricAutoPurchase"; // this event's own fabric POs - raised/billed/crediting/credited/cancelled, same engine Supply reads
 import { lateChangesOf } from "../../lib/ims/lateChanges"; // changed in the 48 hours before the event
 import { scopeLineToFn, qtyMapsOfFn } from "../../lib/ims/siteFunctionScope"; // one function's share of a load line (a trip that goes to one function)
 import { truckKeyOf, mappedStockRowsOf, kitPartOfDeptOf, blockedGroupedFor, blockedFlatFor, mergeLegacyTrucks, standingPartsAtVenue } from "../../lib/ims/deptLoadList"; // what a department loads (shared with Site) // fixed / repeat / FOC: at the venue, not loaded // vehicle / driver fixed once a truck is loaded
@@ -857,7 +858,7 @@ function TruckTextBox({ value, onCommit, clean, ...rest }) {
   );
 }
 
-export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, applyBlocksRpc = null, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [], rcItems = [] }) {
+export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null, prodRequests = [], functions = [], eventOrders, setEventOrders, inventory, setInventory, blocks, applyBlocksRpc = null, settings, setSettings, trussInv, setTrussInv, authUser, amendRequests, focusEventId, focusSearch, focusLeadEntry, onFocusHandled, onGoToCalendar, autoPdfFor, onAutoPdfDone, supervisors = [], rateCardCategories = [], rcItems = [], purchase = [] }) {
   const catDeptCfg = (settings && settings.categoryDepartments && typeof settings.categoryDepartments === "object") ? settings.categoryDepartments : {};
   const catToDept = (cat) => sharedCatToDept(cat, catDeptCfg);
   // A labour usage row belongs to the department Deal Check charged it to (ur.dept — the item's own
@@ -2162,15 +2163,18 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     () => buildFinish(invScoped ? [sel?.functionsDetail?.[invFn]] : sel?.functionsDetail, inventory, settings?.printMaterials),
     [sel, invScoped, invFn, inventory, settings?.printMaterials]);
   const invShownTotal = invShown.reduce((s, x) => s + (Number(x.total) || 0), 0);
-  // ── CHANGED IN THE 48 HOURS BEFORE THE EVENT ── (owner ask 2026-11-27) an item swapped in, or taken out, from 48 hours before the
-  // event's first day: listed in its own section under Inventory blocked, not in the list itself. A swapped-in item's rental stays in
-  // the Inventory blocked total (the tile and the head of the list); a removed one is for information, no rental. Trucks, challans and the
-  // Site page load as before. Read from this department's change log (Studio's Sold-deal edits, amendRequests).
+  // ── CHANGED IN THE 48 HOURS BEFORE THE EVENT ── (owner ask 2026-11-27, revised 2026-11-28) an item swapped in, or
+  // removed / cut / swapped out, from 48 hours before the event's first day: listed in its own section under Inventory
+  // blocked, not in the list itself. A swapped-in item's rental stays in the Inventory blocked total (the tile and the
+  // head of the list); a removed, cut or swapped-OUT line still costs its own rental too (peak qty held minus what the
+  // plan holds now - lib/ims/lateChanges, same figure Deal Check's P&L tab adds to that department's actual rental, so
+  // the two can never disagree). Trucks, challans and the Site page load as before. Read from this department's change
+  // log (Studio's Sold-deal edits, amendRequests).
   const lateChanges = lateChangesOf({ sel, dept, amendRequests, inventory }); // lib/ims/lateChanges
   const isLateSwap = (it) => lateChanges.swaps.has(it?.name);
   const [lateOpen, setLateOpen] = useState(false); // the late-changes section is shut until tapped (owner ask 2026-11-27)
-  // the late-removed items' rental, added to the Inventory blocked TILE only (owner ask 2026-11-27: not the list's own head)
-  const lateRemovedTotal = lateChanges.removed.reduce((s, r) => s + (Number(r.total) || 0), 0);
+  // removed/cut/swapped-out lines' rental, added to the Inventory blocked TILE only (owner ask 2026-11-27: not the list's own head)
+  const lateChargesTotal = lateChanges.charges.reduce((s, r) => s + (Number(r.total) || 0), 0);
   const lateSwapRows = invShown.filter(isLateSwap);
   const inMpFn = (d) => {
     const fd = mpFnDate(mpFns[mpFn]);
@@ -3814,6 +3818,45 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
     return upcomingEventShortfalls({ eventOrders, needOf: fabricNeedFor, stockIdx: fabricAvail, today })
       .map(r => ({ ...r, hex: fabricHex(FABRIC_TYPES.find(f => f.key === r.kind)?.stockKey, r.colour) }));
   }, [dept, eventOrders, fabricAvail, today, settings, trussInv, fabricNeedFor]);
+
+  // This event's own "fabric to buy" — the SAME maths Studio's Deal Check Buying tab shows and the
+  // auto-purchase engine actually buys against (lib/ims/fabricShortfall.js), pooled against every
+  // other live event on the same date (lib/ims/fabricShortfall.js's own alsoOnDate, same pooling
+  // upcomingFabricShort/eventFabricRows already do), plus each line's own PO status (fabricAutoPurchase.js)
+  // so ops can tell "already raised/bought/credited" from "not yet — IMS hasn't run its scan" at a glance.
+  const fabricBuy = useMemo(() => {
+    if (dept !== "Fabric" || !sel || onsiteOnly) return { lines: [], unassigned: [], otherPOs: [] };
+    const d = eoDate(sel);
+    const isDemand = isFabricDemandEvent(sel, today);
+    // Two passes against two different stock views: `raw` (plain shelf stock, no earlier-PO cover folded
+    // in) is what this slot would need with NOTHING else in flight - the right baseline for "is an earlier
+    // PO actually enough" (fed into fabricPOStatusFor's `need`, finding #2). `covered` (shelf stock PLUS
+    // every earlier-needDate Open/Crediting PO for the same kind+colour+tier, fabricEffectiveStockIndex) is
+    // the SAME effective stock the planner itself buys against - the right figure for the "to buy" qty
+    // actually shown, so it never disagrees with what the planner really raises for a later date (finding
+    // #1). Cross-tier substitution (spare New covering an Old need) falls out of tierDeficits itself in
+    // BOTH passes, so a tier that's already fully covered - same-date or cross-date - never reaches
+    // fabricPOStatusFor at all (guarded by needOld/needNew > 0 below), closing the false "Not raised yet"
+    // this used to show for a cross-date New-covers-Old slot too (finding #3).
+    const raw = isDemand ? eventFabricBuyLines({ eo: sel, eventOrders, needOf: fabricNeedFor, stockIdx: fabricAvail }) : { lines: [], unassigned: [] };
+    const stockIdxWithCover = isDemand ? fabricEffectiveStockIndex(fabricAvail, purchase, d) : fabricAvail;
+    const { lines, unassigned } = isDemand
+      ? eventFabricBuyLines({ eo: sel, eventOrders, needOf: fabricNeedFor, stockIdx: stockIdxWithCover })
+      : { lines: [], unassigned: [] };
+    const rawByKey = new Map(raw.lines.map(l => [`${l.kind}|${l.colourKey}`, l]));
+    const withPo = lines.map(l => {
+      const rawL = rawByKey.get(`${l.kind}|${l.colourKey}`);
+      return {
+        ...l, hex: fabricHex(l.stockKey, l.colour),
+        po: {
+          old: l.needOld > 0 ? fabricPOStatusFor({ purchase, kind: l.kind, colour: l.colour, tier: "old", needDate: d, need: rawL?.needOld ?? l.needOld }) : null,
+          new: l.needNew > 0 ? fabricPOStatusFor({ purchase, kind: l.kind, colour: l.colour, tier: "new", needDate: d, need: rawL?.needNew ?? l.needNew }) : null,
+        },
+      };
+    });
+    const shown = new Set(withPo.flatMap(l => [l.po.old?.po?.id, l.po.new?.po?.id]).filter(Boolean));
+    return { lines: withPo, unassigned, otherPOs: fabricPOsOfEvent(purchase, sel.id).filter(p => !shown.has(p.id)) };
+  }, [dept, sel, onsiteOnly, today, eventOrders, fabricNeedFor, fabricAvail, purchase, settings, trussInv]);
 
   // A plain name→value breakdown table — Truss Labour's pillar count and Fabric Bangali's sqft are
   // each a straight SUM per contributing element/zone (no per-row batch/need division the way
@@ -5877,7 +5920,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   const bad = rows.filter(r => r.status === "short").length;
                   return { k: "fabreq", icon: "🧵", title: "Fabric plan", sub: bad ? <span className="text-red-600 font-semibold">{bad} need{bad === 1 ? "s" : ""} attention · {decided} of {rows.length} decided</span> : `${decided} of ${rows.length} decided`, ...(bad ? { tone: "bg-red-50", alert: true } : {}) };
                 })(),
-                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(invBase.length, "item") + " held" + (truckExtraRows.length ? ` · +${n(truckExtraRows.length, "item")} on trucks` : ""), value: fmt(invBlockedTotal + truckExtraTotal + lateRemovedTotal), shortList: invShortItems },
+                { k: "inv", icon: "📦", title: "Inventory blocked", sub: n(invBase.length, "item") + " held" + (truckExtraRows.length ? ` · +${n(truckExtraRows.length, "item")} on trucks` : ""), value: fmt(invBlockedTotal + truckExtraTotal + lateChargesTotal), shortList: invShortItems, buyList: fabricBuy.lines },
                 dept === "Tenting" && carpetPlanOf().rows.length > 0 && (() => {
                   const rows = carpetPlanOf().rows;
                   const decided = rows.filter(r => r.status === "decided").length;
@@ -5928,6 +5971,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           <div className="text-[13px] font-semibold text-gray-900 leading-snug">{t.title}</div>
                           <div className="text-[11px] text-gray-500 leading-snug mt-0.5">{t.sub}</div>
                           {t.shortList?.length > 0 && <div className="mt-1 text-[11px] font-semibold text-red-700 leading-snug" title={`Short: ${shortNames(t.shortList, 99)}`}><span aria-hidden="true">⛔</span> {`Short: ${shortNames(t.shortList, 2)}`}</div>}
+                          {t.buyList?.length > 0 && <div className="mt-1 text-[11px] font-semibold text-amber-800 leading-snug">{"🧵 To buy: " + t.buyList.slice(0, 2).map(l => `${l.colour} ${l.label} ${l.buy}${l.unit}`).join(" · ") + (t.buyList.length > 2 ? ` +${t.buyList.length - 2} more` : "")}</div>}
                           {(() => {
                             const c = (changedByEo.get(sel.id) || []).find(x => x.dept === dept && x.section === t.k);
                             return c ? <div className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5" title={`${c.label} · ${c.by} · ${agoText(c.at, lockNow)}${c.text ? ` — ${c.text}` : ""}`}>{`⚠ Updated ${agoText(c.at, lockNow)}`}</div> : null;
@@ -6059,6 +6103,84 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
               )}
               {invWholeOnly > 0 && (
                 <div className="m-2.5 mb-0 px-2.5 py-2 rounded-xl bg-gray-50 text-[11px] text-gray-500">{invWholeOnly} item{invWholeOnly === 1 ? " is" : "s are"} not in any of this function's zones (production, fabric and the like) — see All functions.</div>
+              )}
+              {/* ── FABRIC TO BUY FOR THIS EVENT ── (owner ask 2026-11-28, Kanishk QA: "that information has to
+                  go to IMS dept ops... so ops knows to purchase that item") — the OPPOSITE of the blocked-items
+                  list above: those are physical stock held with no Deal Check price; this is billed in Deal
+                  Check (the Truss tab's own per-zone shortfall warning) with NO physical stock to back it.
+                  Same maths Studio's own Deal Check Buying tab shows, pooled against every other live event on
+                  this event's date (same shelf, same day) and joined to each tier's real PO status - so ops can
+                  tell "already raised/bought/credited" from "not yet, IMS hasn't run its scan" at a glance. */}
+              {dept === "Fabric" && !onsiteOnly && (fabricBuy.lines.length > 0 || fabricBuy.unassigned.length > 0 || fabricBuy.otherPOs.length > 0) && (
+                <div className="m-2.5 mb-0 rounded-xl bg-rose-50/70 ring-1 ring-rose-200 overflow-hidden">
+                  <div className="px-3 pt-2 pb-1.5">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-rose-700">🧵 Fabric to buy for this event{invScoped ? " · whole event" : ""}</div>
+                    <div className="text-[10.5px] text-rose-700/80 mt-0.5">Billed in Deal Check, more than the shelf holds — bought automatically, not blocked from stock.</div>
+                  </div>
+                  {fabricBuy.lines.length > 0 && (
+                    <div className="divide-y divide-rose-100/70">
+                      {fabricBuy.lines.map(l => {
+                        const poText = (po, tierLabel) => {
+                          if (!po) return null;
+                          const s = po.state;
+                          const map = {
+                            raised: `PO raised · ${po.po?.poNumber || ""} · ${po.po?.qty ?? ""} ${l.unit}`,
+                            billed: `Bought · ${po.po?.billed?.vendor || "vendor logged"}`,
+                            crediting: "Adding to stock…",
+                            credited: `Received into stock ${po.po?.credited?.at ? new Date(po.po.credited.at).toLocaleDateString("en-IN") : ""}`,
+                            cancelled: `Cancelled by ${po.po?.cancelled?.by || "ops"} — not being bought`,
+                            covered: `Covered by ${po.po?.poNumber || "an earlier PO"} (bought for ${po.po?.fabric?.needDate || "an earlier date"})`,
+                            none: "Not raised yet — the system raises it automatically while IMS is open",
+                          };
+                          return <div key={tierLabel} className={"text-[10.5px] " + (s === "cancelled" ? "text-red-700 font-semibold" : s === "credited" ? "text-emerald-700" : "text-gray-500")}>{tierLabel}: {map[s]}</div>;
+                        };
+                        return (
+                          <div key={`${l.kind}|${l.colourKey}`} className="px-3 py-2 flex items-start gap-2.5">
+                            {l.photo
+                              ? <img loading="lazy" decoding="async" src={l.photo} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0 border border-rose-200" />
+                              : <span className="w-9 h-9 rounded-lg shrink-0 flex items-center justify-center text-base" style={{ background: l.hex || "#F7F1E0" }}>{l.emoji}</span>}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="text-[12.5px] font-semibold text-gray-900 truncate">{l.label} · {l.colour}</div>
+                                <div className="shrink-0 text-right">
+                                  <div className="text-[13.5px] font-bold text-gray-900 tabular-nums">{l.buy} {l.unit} <span className="text-[10.5px] font-semibold text-gray-500">to buy</span></div>
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {l.needOld > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-700">Old {l.needOld}</span>}
+                                {l.needNew > 0 && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-violet-100 text-violet-700">New {l.needNew}</span>}
+                                {!l.inStock && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-700">Not in Fabric Stock</span>}
+                                {l.hiddenInBuild && <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">Hidden in Build</span>}
+                              </div>
+                              <div className="text-[10.5px] text-gray-500 mt-1 tabular-nums">needs {l.qty} {l.unit} · in stock {l.stockOld} old + {l.stockNew} new{l.sharedWith.length > 0 ? ` · same day as ${l.sharedWith.map(s => s.client).join(", ")}` : ""}</div>
+                              {poText(l.po.old, "Old")}
+                              {poText(l.po.new, "New")}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {fabricBuy.unassigned.length > 0 && (
+                    <div className="px-3 py-2 border-t border-rose-100/70">
+                      {fabricBuy.unassigned.map((u, i) => (
+                        <div key={i} className="text-[10.5px] text-gray-500">{u.qty} {u.unit} of {u.label} has no colour picked — it can't be bought until one is picked (Deal Check → Truss).</div>
+                      ))}
+                    </div>
+                  )}
+                  {fabricBuy.otherPOs.length > 0 && (
+                    <div className="px-3 py-2 border-t border-rose-100/70">
+                      <div className="text-[9.5px] font-semibold uppercase tracking-[0.06em] text-gray-400 mb-1">Purchases for this event</div>
+                      {fabricBuy.otherPOs.map(p => (
+                        <div key={p.id} className="text-[10.5px] text-gray-600 flex items-center justify-between gap-2">
+                          <span className="truncate">{p.item || p.fabric?.colour || "Fabric"}</span>
+                          <span className={"shrink-0 font-semibold " + (p.status === "Credited" ? "text-emerald-700" : p.status === "Cancelled" ? "text-red-700" : "text-gray-500")}>{p.status}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="px-3 py-1.5 border-t border-rose-100/70 text-[9.5px] text-rose-700/70">Purchase orders: Supply → Purchase → 🧵 Fabric — bought automatically</div>
+                </div>
               )}
               {/* ── ARTIFICIAL FLOWERS & GREENS ── (owner ask 2026-11-11) Floral's held stock includes the artificial bunches Deal Check
                   worked out (floralPlan.artificial): flowers and greens in bunches and kg, and the flowers by colour - how many kg of each
@@ -6608,8 +6730,8 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                   );
                 })()
               )}
-              {/* ── CHANGED IN THE 48 HOURS BEFORE THE EVENT ── swapped in (rental counted in the total above) and taken out (no rental) */}
-              {(lateSwapRows.length > 0 || lateChanges.removed.length > 0) && (
+              {/* ── CHANGED IN THE 48 HOURS BEFORE THE EVENT ── swapped in (rental counted in the total above) and removed/cut/swapped out (billed below, added to the tile) */}
+              {(lateSwapRows.length > 0 || lateChanges.charges.length > 0) && (
                 <div className="m-2.5 rounded-xl ring-1 ring-amber-200 bg-amber-50/50 overflow-hidden">
                   <button type="button" onClick={() => setLateOpen(o => !o)} aria-expanded={lateOpen} className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left cursor-pointer hover:bg-amber-50">
                     <span className="text-[12px] font-semibold text-amber-900 inline-flex items-center gap-1.5">
@@ -6617,9 +6739,9 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         <svg width="10" height="10" viewBox="0 0 14 14" fill="none"><path d="M5 3.5 L8.5 7 L5 10.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                       </span>
                       <span aria-hidden="true">🔁</span> {"Changed in the 48 hours before the event"}
-                      <span className="text-[10.5px] font-semibold px-1.5 rounded-full bg-amber-100 text-amber-800 tabular-nums">{lateSwapRows.length + lateChanges.removed.length}</span>
+                      <span className="text-[10.5px] font-semibold px-1.5 rounded-full bg-amber-100 text-amber-800 tabular-nums">{lateSwapRows.length + lateChanges.charges.length}</span>
                     </span>
-                    {(lateSwapRows.length > 0 || lateRemovedTotal > 0) && <span className="shrink-0 text-[11px] font-semibold text-amber-900 tabular-nums">{fmt(lateSwapRows.reduce((s, x) => s + (Number(x.total) || 0), 0) + lateRemovedTotal)} <span className="font-normal text-amber-700">{"in the Inventory blocked tile"}</span></span>}
+                    {(lateSwapRows.length > 0 || lateChargesTotal > 0) && <span className="shrink-0 text-[11px] font-semibold text-amber-900 tabular-nums">{fmt(lateSwapRows.reduce((s, x) => s + (Number(x.total) || 0), 0) + lateChargesTotal)} <span className="font-normal text-amber-700">{"in the Inventory blocked tile"}</span></span>}
                   </button>
                   {lateOpen && <div className="divide-y divide-amber-100 bg-white">
                     {lateSwapRows.map(it => { const c = lateChanges.swaps.get(it.name) || {}; return (
@@ -6636,20 +6758,27 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                         <span className="shrink-0 w-20 text-right text-xs font-semibold text-gray-900 tabular-nums">{fmt(it.total)}</span>
                       </div>
                     ); })}
-                    {lateChanges.removed.map((r, i) => (
-                      <div key={"lateout:" + i} className="px-3 py-2 flex items-center gap-2.5">
-                        {r.photo ? <img src={thumbUrl(r.photo, 32)} loading="lazy" alt="" className="w-8 h-8 rounded-lg object-cover shrink-0 opacity-60" /> : <span className="w-8 h-8 rounded-lg bg-gray-50 shrink-0" />}
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs font-medium text-gray-500 line-through truncate">{r.name}</div>
-                          <div className="text-[10.5px] text-gray-500 truncate">
-                            <span className="font-semibold text-red-700">{"Removed"}</span>
-                            {r.at ? <> · {new Date(r.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</> : null}{r.by ? <> · {r.by}</> : null}
+                    {lateChanges.charges.map((r, i) => {
+                      const lineThrough = r.kind !== "cut"; // a cut still has some in the plan - never struck through
+                      const label = r.kind === "swapped" ? <><span className="font-semibold text-amber-700">{"Swapped out"}</span> {"→"} {r.swappedFor}</>
+                        : r.kind === "cut" ? <><span className="font-semibold text-gray-700">{"Quantity cut"}</span> · {r.from} {"→"} {r.to}</>
+                        : <span className="font-semibold text-red-700">{"Removed"}</span>;
+                      return (
+                        <div key={"latechg:" + i} className="px-3 py-2 flex items-center gap-2.5">
+                          {r.photo ? <img src={thumbUrl(r.photo, 32)} loading="lazy" alt="" className={"w-8 h-8 rounded-lg object-cover shrink-0" + (lineThrough ? " opacity-60" : "")} /> : <span className="w-8 h-8 rounded-lg bg-gray-50 shrink-0" />}
+                          <div className="min-w-0 flex-1">
+                            <div className={"text-xs font-medium truncate" + (lineThrough ? " text-gray-500 line-through" : " text-gray-900")}>{r.name}</div>
+                            <div className="text-[10.5px] text-gray-500 truncate">
+                              {label}
+                              {r.fn ? <> · {r.fn}</> : null}
+                              {r.at ? <> · {new Date(r.at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</> : null}{r.by ? <> · {r.by}</> : null}
+                            </div>
                           </div>
+                          {r.qty > 0 && <span className="shrink-0 text-xs text-gray-400 tabular-nums">×{r.qty}</span>}
+                          <span className="shrink-0 w-20 text-right text-xs font-semibold text-gray-900 tabular-nums" title={r.rate > 0 ? `${r.qty} × ${fmt(r.rate)}` : "No rate set for this item"}>{r.rate > 0 ? fmt(r.total) : "—"}</span>
                         </div>
-                        {r.qty > 0 && <span className="shrink-0 text-xs text-gray-400 tabular-nums">×{r.qty}</span>}
-                        <span className="shrink-0 w-20 text-right text-xs font-semibold text-gray-900 tabular-nums" title={r.rate > 0 ? `${r.qty} × ${fmt(r.rate)}` : "No rate set for this item"}>{r.rate > 0 ? fmt(r.total) : "—"}</span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>}
                 </div>
               )}
@@ -8416,6 +8545,7 @@ export default function DepartmentOpsTab({ onsiteOnly = false, pickerSlot = null
                           <div className="text-[13px] font-semibold text-gray-900 leading-snug">{t.title}</div>
                           <div className="text-[11px] text-gray-500 leading-snug mt-0.5">{t.sub}</div>
                           {t.shortList?.length > 0 && <div className="mt-1 text-[11px] font-semibold text-red-700 leading-snug" title={`Short: ${shortNames(t.shortList, 99)}`}><span aria-hidden="true">⛔</span> {`Short: ${shortNames(t.shortList, 2)}`}</div>}
+                          {t.buyList?.length > 0 && <div className="mt-1 text-[11px] font-semibold text-amber-800 leading-snug">{"🧵 To buy: " + t.buyList.slice(0, 2).map(l => `${l.colour} ${l.label} ${l.buy}${l.unit}`).join(" · ") + (t.buyList.length > 2 ? ` +${t.buyList.length - 2} more` : "")}</div>}
                           {(() => {
                             const c = (changedByEo.get(sel.id) || []).find(x => x.dept === dept && x.section === t.k);
                             return c ? <div className="mt-1 inline-flex items-center gap-1 text-[10.5px] font-semibold text-amber-800 bg-amber-100 rounded-full px-2 py-0.5" title={`${c.label} · ${c.by} · ${agoText(c.at, lockNow)}${c.text ? ` — ${c.text}` : ""}`}>{`⚠ Updated ${agoText(c.at, lockNow)}`}</div> : null;
